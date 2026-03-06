@@ -1,7 +1,7 @@
 # Guia de Lançamento e Liquidez Gênese da Lunex DEX
 
 **Versão 1.0.0**  
-**Ink! Version:** 5.1.1  
+**Ink! Version:** 4.2.1  
 **Rede Alvo:** Lunes Network (`wss://ws.lunes.io`)  
 **Última Atualização:** Agosto 2024
 
@@ -9,7 +9,7 @@ Este guia fornece o passo a passo técnico para realizar o deploy completo dos c
 
 **📋 Pré-requisitos Técnicos:**
 - Rust toolchain: `nightly` (atualizado)
-- `cargo-contract`: Versão compatível com ink! 5.1.1
+- `cargo-contract`: Versão compatível com ink! 4.2.1
 - `typechain-compiler`: Para geração de artifacts TypeScript
 - Rede Lunes configurada e acessível
 

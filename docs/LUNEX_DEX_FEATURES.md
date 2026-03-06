@@ -62,14 +62,25 @@ Exemplo: Adicionar liquidez LUNES/USDT
 ### **2. 🏦 Staking de $LUNES**
 
 #### **Stake para Rewards**
+
 - **Moeda:** $LUNES (token nativo da Rede Lunes - 8 casas decimais)
 - **Mínimo:** 1.000 LUNES
 - **Duração:** 7 dias a 365 dias
-- **Recompensa:** 10% anual (base rate)
+- **Sistema de Tiers por Duração:**
+
+| Tier | Duração | APY |
+|------|---------|-----|
+| 🥉 Bronze | 7-30 dias | 8% |
+| 🥈 Silver | 31-90 dias | 10% |
+| 🥇 Gold | 91-180 dias | 12% |
+| 💎 Platinum | 181+ dias | 15% |
+
+- **Early Adopter Bonus:** Top 1000 (+10%), Top 500 (+25%), Top 100 (+50%)
 - **Claim:** Recompensas podem ser reclamadas durante o período
 
 ```
-Exemplo: Stake de 10.000 LUNES por 90 dias
+Exemplo: Stake de 10.000 LUNES por 90 dias (Tier Silver)
+- APY: 10%
 - Recompensa diária: ~2.74 LUNES
 - Recompensa total (90 dias): ~247 LUNES
 - Pode retirar antes, mas com penalty de 5%
@@ -178,12 +189,14 @@ Casos de uso:
 ## 📊 **Benefícios para Diferentes Perfis de Usuário**
 
 ### **👤 Trader (Negociante)**
+
 ```
 ✅ Troca instantânea entre tokens
 ✅ Proteção contra slippage
 ✅ Sem necessidade de order books
 ✅ Liquidez sempre disponível
-✅ Taxas previsíveis (0.3%)
+✅ Taxas previsíveis (0.5% total)
+✅ Trading Rewards por volume (Tiers)
 ```
 
 ### **💧 Liquidity Provider (LP)**

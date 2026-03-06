@@ -1,14 +1,14 @@
 # Manual de Listagem de Tokens na Lunex DEX
 
 **Versão 1.0.0**  
-**Ink! Version:** 5.1.1  
+**Ink! Version:** 4.2.1  
 **Rede Alvo:** Lunes Network (`wss://ws.lunes.io`)  
-**Última Atualização:** Agosto 2024
+**Última Atualização:** Dezembro de 2025
 
 Bem-vindo ao guia oficial para listagem de tokens na Lunex DEX. Este documento detalha as políticas, os requisitos e os processos para que seu projeto possa ser negociado em nossa plataforma de forma segura e transparente.
 
 **📋 Especificações Técnicas:**
-- **Framework:** ink! 5.1.1 (Polkadot Smart Contracts)
+- **Framework:** ink! 4.2.1 (Polkadot Smart Contracts)
 - **Padrão de Token:** PSP22 (Polkadot Standard Proposal)
 - **Arquitetura:** Baseada em Uniswap V2 (AMM - Automated Market Maker)
 - **Segurança:** Implementa reentrancy guards, input validation e checked arithmetic

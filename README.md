@@ -1,14 +1,14 @@
 # 🌟 Lunex DEX - Decentralized Exchange on Lunes Blockchain 🌟
 
 **Versão 1.0.0**  
-**Ink! Version:** 5.1.1  
+**Ink! Version:** 4.2.1  
 **Rede Alvo:** Lunes Network (`wss://ws.lunes.io`)  
 **Última Atualização:** Agosto 2024
 
 Welcome to Lunex DEX, a cutting-edge decentralized exchange built on the Lunes blockchain! Featuring innovative staking, governance, trading rewards, and a complete DeFi ecosystem with the lowest fees and highest security standards.
 
 **📋 Especificações Técnicas:**
-- **Framework:** ink! 5.1.1 (Polkadot Smart Contracts)
+- **Framework:** ink! 4.2.1 (Polkadot Smart Contracts)
 - **Padrão de Token:** PSP22 (Polkadot Standard Proposal)
 - **Arquitetura:** Baseada em Uniswap V2 (AMM - Automated Market Maker)
 - **Segurança:** Implementa reentrancy guards, input validation e checked arithmetic
@@ -321,7 +321,7 @@ We welcome contributions! Please follow these guidelines:
 ## 📦 Versions
 
 ### Current Stack (2025)
-- **ink!**: 5.1.1 (stable)
+- **ink!**: 4.2.1 (stable)
 - **Rust**: stable toolchain (2025 edition)
 - **Substrate**: Compatible
 - **cargo-contract**: latest
@@ -329,11 +329,11 @@ We welcome contributions! Please follow these guidelines:
 ### Dependencies
 - **scale-codec**: 3.x
 - **scale-info**: 2.10
-- **ink_env**: 5.1.1
-- **ink_storage**: 5.1.1
+- **ink_env**: 4.2.1
+- **ink_storage**: 4.2.1
 
 ### Technology Evolution
-- **Migration Completed**: ink! 4.0 → ink! 5.1.1
+- **Migration Completed**: ink! 4.0 → ink! 4.2.1
 - **Security Enhanced**: OpenZeppelin compliance
 - **Gas Optimized**: Production-ready efficiency
 - **Testing**: 100% coverage maintained

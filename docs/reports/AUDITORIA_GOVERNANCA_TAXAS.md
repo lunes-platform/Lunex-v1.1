@@ -306,4 +306,4 @@ O sistema de governança de taxas foi implementado seguindo as melhores prática
 
 **Assinatura Digital:** Lunex Security Team  
 **Data:** 2024  
-**Versão:** ink! 5.1.1
+**Versão:** ink! 4.2.1

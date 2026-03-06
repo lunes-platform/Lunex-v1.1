@@ -1,8 +1,8 @@
-# 🚀 Plano de Refatoração Lunex DEX - Upgrade para INK 5.1.1
+# 🚀 Plano de Refatoração Lunex DEX - Upgrade para INK 4.2.1
 
 ## 📋 Resumo Executivo
 
-Este documento detalha o plano completo de refatoração e atualização do Lunex DEX da versão INK 4.0 para INK 5.1.1, com foco em:
+Este documento detalha o plano completo de refatoração e atualização do Lunex DEX da versão INK 4.0 para INK 4.2.1, com foco em:
 - **Segurança máxima** em todos os contratos
 - **Compatibilidade PSP22** aprimorada
 - **Metodologia TDD** (Test-Driven Development)
@@ -14,7 +14,7 @@ Este documento detalha o plano completo de refatoração e atualização do Lune
 ## 🎯 Objetivos Principais
 
 ### 1. **Migração Técnica**
-- ✅ Upgrade INK 4.0 → INK 5.1.1
+- ✅ Upgrade INK 4.0 → INK 4.2.1
 - ✅ Substituir OpenBrush por Cardinal-Cryptography/PSP22 v2.0
 - ✅ Atualizar dependências e toolchain
 - ✅ Modernizar estrutura de código
@@ -48,8 +48,8 @@ Este documento detalha o plano completo de refatoração e atualização do Lune
 ink = { version = "4.0.0", default-features = false }
 openbrush = { git = "https://github.com/727-Ventures/openbrush-contracts", version = "3.0.0" }
 
-# Depois (INK 5.1.1)
-ink = { version = "5.1.1", default-features = false }
+# Depois (INK 4.2.1)
+ink = { version = "4.2.1", default-features = false }
 psp22 = { version = "2.0", default-features = false, features = ["ink-as-dependency"] }
 ```
 
@@ -58,10 +58,10 @@ psp22 = { version = "2.0", default-features = false, features = ["ink-as-depende
 ## 🗓️ Cronograma de Execução
 
 ### **Fase 1: Preparação e Setup (Semana 1-2)**
-- [ ] Configurar ambiente INK 5.1.1
+- [ ] Configurar ambiente INK 4.2.1
 - [ ] Atualizar cargo-contract para versão 4.x
 - [ ] Criar branch de desenvolvimento
-- [ ] Configurar CI/CD para INK 5.1.1
+- [ ] Configurar CI/CD para INK 4.2.1
 
 ### **Fase 2: Migração Base (Semana 3-4)**
 - [ ] Migrar estrutura básica dos contratos
@@ -95,7 +95,7 @@ psp22 = { version = "2.0", default-features = false, features = ["ink-as-depende
 
 ```toml
 [dependencies]
-ink = { version = "5.1.1", default-features = false }
+ink = { version = "4.2.1", default-features = false }
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2.10", default-features = false, features = ["derive"], optional = true }
 psp22 = { version = "2.0", default-features = false, features = ["ink-as-dependency"] }
@@ -118,7 +118,7 @@ use ink_lang as ink;
 use ink_env;
 use ink_storage;
 
-// Depois (INK 5.1.1)
+// Depois (INK 4.2.1)
 use ink;
 use ink::env;
 use ink::storage;
@@ -378,7 +378,7 @@ pub fn approve_token(&mut self, token: AccountId) -> Result<(), RegistryError> {
 ## 📚 Documentação e Recursos
 
 ### **Recursos de Referência:**
-- [INK 5.1.1 Documentation](https://use.ink/)
+- [INK 4.2.1 Documentation](https://use.ink/)
 - [Cardinal-Cryptography PSP22](https://github.com/Cardinal-Cryptography/PSP22)
 - [Substrate Contracts Pallet](https://docs.substrate.io/reference/frame-pallets/#contracts)
 - [Lunes Network Documentation](https://docs.lunes.io/)

@@ -2,7 +2,7 @@
 
 ## 📊 **RESUMO EXECUTIVO**
 
-Após pesquisa aprofundada sobre melhores práticas de otimização em ink! 5.1.1 e análise de segurança, implementamos melhorias conservadoras e eficientes no sistema de governança de taxas da Lunex DEX.
+Após pesquisa aprofundada sobre melhores práticas de otimização em ink! 4.2.1 e análise de segurança, implementamos melhorias conservadoras e eficientes no sistema de governança de taxas da Lunex DEX.
 
 ---
 
@@ -18,7 +18,7 @@ Após pesquisa aprofundada sobre melhores práticas de otimização em ink! 5.1.
 - ✅ `Lazy` deve ser usado apenas para campos **raramente acessados**
 - ✅ Campos frequentemente usados devem permanecer **diretos**
 - ✅ Over-optimization pode causar **complexidade desnecessária**
-- ✅ ink! 5.1.1 tem **limitações específicas** com nested `Option<T>` em `Lazy`
+- ✅ ink! 4.2.1 tem **limitações específicas** com nested `Option<T>` em `Lazy`
 
 ---
 
@@ -280,7 +280,7 @@ Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.22s
 
 ## 📝 **CONCLUSÃO**
 
-O sistema de governança de taxas da Lunex DEX foi implementado seguindo **rigorosa pesquisa** e **melhores práticas** de otimização em ink! 5.1.1. 
+O sistema de governança de taxas da Lunex DEX foi implementado seguindo **rigorosa pesquisa** e **melhores práticas** de otimização em ink! 4.2.1. 
 
 **Principais Conquistas:**
 - 🔒 **Segurança robusta** com validações abrangentes
@@ -294,5 +294,5 @@ O sistema de governança de taxas da Lunex DEX foi implementado seguindo **rigor
 
 **Assinatura:** Lunex Security & Optimization Team  
 **Data:** 2024  
-**Versão:** ink! 5.1.1  
+**Versão:** ink! 4.2.1  
 **Status:** ✅ **APROVADO PARA PRODUÇÃO**

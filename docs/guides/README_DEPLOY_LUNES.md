@@ -4,7 +4,7 @@
 
 ### 🌟 **Visão Geral**
 
-A **Lunex DEX** é um protocolo DeFi completo construído com ink! 5.1.1 para o ecossistema Substrate, especificamente otimizado para o blockchain **Lunes**. Este guia fornece instruções passo-a-passo para deploy e configuração.
+A **Lunex DEX** é um protocolo DeFi completo construído com ink! 4.2.1 para o ecossistema Substrate, especificamente otimizado para o blockchain **Lunes**. Este guia fornece instruções passo-a-passo para deploy e configuração.
 
 ---
 

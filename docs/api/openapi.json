@@ -1,0 +1,585 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Lunex DEX API",
+        "version": "1.0.0",
+        "description": "Complete API for Lunex Decentralized Exchange on Lunes Network",
+        "contact": {
+            "name": "Lunex DEX Team",
+            "email": "api@lunex.io"
+        }
+    },
+    "servers": [
+        {
+            "url": "https://api.lunex.io/v1",
+            "description": "Production server"
+        },
+        {
+            "url": "https://api-testnet.lunex.io/v1",
+            "description": "Testnet server"
+        },
+        {
+            "url": "http://localhost:3000/v1",
+            "description": "Local development"
+        }
+    ],
+    "tags": [
+        {
+            "name": "Authentication",
+            "description": "Wallet-based authentication endpoints"
+        },
+        {
+            "name": "Factory",
+            "description": "Pair creation and management"
+        },
+        {
+            "name": "Router",
+            "description": "Liquidity and swap operations"
+        },
+        {
+            "name": "Pair",
+            "description": "Individual pair information"
+        },
+        {
+            "name": "WNative",
+            "description": "LUNES wrapping/unwrapping"
+        },
+        {
+            "name": "Staking",
+            "description": "Staking and governance"
+        },
+        {
+            "name": "Trading Rewards",
+            "description": "Trading incentives and rewards"
+        }
+    ],
+    "paths": {
+        "/auth/nonce": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Get nonce for signing",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "address": {
+                                        "type": "string",
+                                        "example": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+                                    }
+                                },
+                                "required": [
+                                    "address"
+                                ]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Nonce generated successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/NonceResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Authenticate with signed nonce",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LoginRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Authentication successful",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/AuthResponse"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/UnauthorizedError"
+                    }
+                }
+            }
+        },
+        "/factory/pairs": {
+            "get": {
+                "tags": [
+                    "Factory"
+                ],
+                "summary": "Get all trading pairs",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "default": 1
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "default": 20,
+                            "maximum": 100
+                        }
+                    },
+                    {
+                        "name": "sort",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "createdAt",
+                                "volume",
+                                "liquidity"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "order",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "asc",
+                                "desc"
+                            ]
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of pairs",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PairsListResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/router/quote": {
+            "get": {
+                "tags": [
+                    "Router"
+                ],
+                "summary": "Get swap quote",
+                "parameters": [
+                    {
+                        "name": "amountIn",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "path",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "description": "JSON encoded array of token addresses"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Quote calculated successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/QuoteResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/router/swap-exact-in": {
+            "post": {
+                "tags": [
+                    "Router"
+                ],
+                "summary": "Swap exact tokens for tokens",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SwapExactInRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Swap executed successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SwapResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "$ref": "#/components/responses/BadRequestError"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/UnauthorizedError"
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        },
+        "schemas": {
+            "NonceResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "nonce": {
+                                "type": "string",
+                                "example": "sign-this-nonce-abc123xyz"
+                            },
+                            "expiresIn": {
+                                "type": "integer",
+                                "example": 300
+                            }
+                        }
+                    }
+                }
+            },
+            "LoginRequest": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "string"
+                    },
+                    "signature": {
+                        "type": "string"
+                    },
+                    "nonce": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "address",
+                    "signature",
+                    "nonce"
+                ]
+            },
+            "AuthResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "token": {
+                                "type": "string"
+                            },
+                            "expiresIn": {
+                                "type": "integer"
+                            },
+                            "refreshToken": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "PairsListResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "pairs": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/components/schemas/PairInfo"
+                                }
+                            },
+                            "pagination": {
+                                "$ref": "#/components/schemas/Pagination"
+                            }
+                        }
+                    }
+                }
+            },
+            "PairInfo": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "string"
+                    },
+                    "token0": {
+                        "$ref": "#/components/schemas/TokenInfo"
+                    },
+                    "token1": {
+                        "$ref": "#/components/schemas/TokenInfo"
+                    },
+                    "reserve0": {
+                        "type": "string"
+                    },
+                    "reserve1": {
+                        "type": "string"
+                    },
+                    "totalSupply": {
+                        "type": "string"
+                    },
+                    "createdAt": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "volume24h": {
+                        "type": "string"
+                    },
+                    "tvl": {
+                        "type": "string"
+                    }
+                }
+            },
+            "TokenInfo": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "string"
+                    },
+                    "symbol": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "decimals": {
+                        "type": "integer"
+                    },
+                    "logoURI": {
+                        "type": "string"
+                    }
+                }
+            },
+            "Pagination": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "integer"
+                    },
+                    "limit": {
+                        "type": "integer"
+                    },
+                    "total": {
+                        "type": "integer"
+                    },
+                    "totalPages": {
+                        "type": "integer"
+                    }
+                }
+            },
+            "QuoteResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "amountIn": {
+                                "type": "string"
+                            },
+                            "amountOut": {
+                                "type": "string"
+                            },
+                            "path": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "priceImpact": {
+                                "type": "string"
+                            },
+                            "minimumReceived": {
+                                "type": "string"
+                            },
+                            "fee": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "SwapExactInRequest": {
+                "type": "object",
+                "properties": {
+                    "amountIn": {
+                        "type": "string"
+                    },
+                    "amountOutMin": {
+                        "type": "string"
+                    },
+                    "path": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "to": {
+                        "type": "string"
+                    },
+                    "deadline": {
+                        "type": "integer"
+                    },
+                    "gasLimit": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "amountIn",
+                    "amountOutMin",
+                    "path",
+                    "to",
+                    "deadline"
+                ]
+            },
+            "SwapResponse": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean"
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "amountIn": {
+                                "type": "string"
+                            },
+                            "amountOut": {
+                                "type": "string"
+                            },
+                            "transactionHash": {
+                                "type": "string"
+                            },
+                            "blockNumber": {
+                                "type": "integer"
+                            },
+                            "gasUsed": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "Error": {
+                "type": "object",
+                "properties": {
+                    "success": {
+                        "type": "boolean",
+                        "example": false
+                    },
+                    "error": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "type": "string"
+                            },
+                            "message": {
+                                "type": "string"
+                            },
+                            "details": {
+                                "type": "object"
+                            }
+                        }
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "requestId": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "responses": {
+            "UnauthorizedError": {
+                "description": "Authentication required",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/Error"
+                        }
+                    }
+                }
+            },
+            "BadRequestError": {
+                "description": "Invalid request parameters",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/Error"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

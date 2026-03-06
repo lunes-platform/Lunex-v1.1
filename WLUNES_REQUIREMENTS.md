@@ -1,14 +1,14 @@
 # Requisitos para o Contrato WLUNES (Wrapped LUNES)
 
 **Versão 1.0.0**  
-**Ink! Version:** 5.1.1  
+**Ink! Version:** 4.2.1  
 **Rede Alvo:** Lunes Network (`wss://ws.lunes.io`)  
 **Última Atualização:** Agosto 2024
 
 Este documento define os requisitos técnicos e funcionais para o desenvolvimento do contrato `WLUNES` (Wrapped LUNES), que é essencial para permitir que a moeda nativa LUNES seja negociada na Lunex DEX.
 
 **📋 Especificações Técnicas:**
-- **Framework:** ink! 5.1.1 (Polkadot Smart Contracts)
+- **Framework:** ink! 4.2.1 (Polkadot Smart Contracts)
 - **Padrão de Token:** PSP22 (Polkadot Standard Proposal)
 - **Relação:** 1:1 com LUNES nativo
 - **Decimais:** 8 (consistente com a precisão da moeda nativa)
