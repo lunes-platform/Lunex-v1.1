@@ -1,0 +1,2057 @@
+{
+  "source": {
+    "hash": "0xe6379525d76d504b8b57e0c50180b1b739db4494524e666667d4e11c4500c733",
+    "language": "ink! 4.3.0",
+    "compiler": "rustc 1.85.0",
+    "build_info": {
+      "build_mode": "Release",
+      "cargo_contract_version": "3.2.0",
+      "rust_toolchain": "stable-x86_64-apple-darwin",
+      "wasm_opt_settings": {
+        "keep_debug_symbols": false,
+        "optimization_passes": "Z"
+      }
+    }
+  },
+  "contract": {
+    "name": "copy_vault",
+    "version": "0.1.0",
+    "authors": [
+      "Lunes Team <dev@lunes.io>"
+    ]
+  },
+  "spec": {
+    "constructors": [
+      {
+        "args": [
+          {
+            "label": "leader",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "performance_fee_bps",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          "Create a new Copy Vault",
+          "",
+          "* `leader` - The trader who will execute trades",
+          "* `performance_fee_bps` - Fee on profits (max 5000 = 50%)"
+        ],
+        "label": "new",
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink_primitives",
+            "ConstructorResult"
+          ],
+          "type": 8
+        },
+        "selector": "0x9bae9d5e"
+      }
+    ],
+    "docs": [
+      " # Lunex Copy Vault Contract",
+      "",
+      " Trustless vault for copy trading. Followers deposit collateral and receive",
+      " vault shares proportional to NAV. Only the leader (vault owner) can execute",
+      " trades. Performance fees are charged only on profit.",
+      "",
+      " ## Key Features:",
+      " - Deposit/withdraw with share-based accounting",
+      " - Leader-only trade execution",
+      " - Performance fee (max 50%, only on profit)",
+      " - 24h cooldown for large withdrawals (>10% of vault)",
+      " - Max drawdown circuit breaker (auto-pauses trading)",
+      " - Emergency time-locked withdrawal",
+      "",
+      " ## Security Features:",
+      " - Reentrancy protection",
+      " - Checked arithmetic everywhere",
+      " - Only leader can execute trades",
+      " - Followers can always withdraw (with cooldown for large amounts)",
+      " - Circuit breaker at configurable max drawdown"
+    ],
+    "environment": {
+      "accountId": {
+        "displayName": [
+          "AccountId"
+        ],
+        "type": 0
+      },
+      "balance": {
+        "displayName": [
+          "Balance"
+        ],
+        "type": 4
+      },
+      "blockNumber": {
+        "displayName": [
+          "BlockNumber"
+        ],
+        "type": 5
+      },
+      "chainExtension": {
+        "displayName": [
+          "ChainExtension"
+        ],
+        "type": 29
+      },
+      "hash": {
+        "displayName": [
+          "Hash"
+        ],
+        "type": 28
+      },
+      "maxEventTopics": 4,
+      "timestamp": {
+        "displayName": [
+          "Timestamp"
+        ],
+        "type": 6
+      }
+    },
+    "events": [
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "depositor",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "shares_minted",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "share_price",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "Deposited"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "depositor",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "shares_burned",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount_received",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "performance_fee",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "Withdrawn"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "leader",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "pair",
+            "type": {
+              "displayName": [
+                "Vec"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "side",
+            "type": {
+              "displayName": [
+                "TradeSide"
+              ],
+              "type": 16
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "vault_equity_after",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TradeExecuted"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "vault",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "current_equity",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "high_water_mark",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "drawdown_bps",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "CircuitBreakerTriggered"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "depositor",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "shares",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "unlock_at",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "EmergencyWithdrawalRequested"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "old_fee_bps",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_fee_bps",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "PerformanceFeeChanged"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "VaultPausedEvent"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "VaultUnpausedEvent"
+      }
+    ],
+    "lang_error": {
+      "displayName": [
+        "ink",
+        "LangError"
+      ],
+      "type": 10
+    },
+    "messages": [
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Deposit native tokens into the vault.",
+          " Mints shares proportional to current NAV."
+        ],
+        "label": "deposit",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 11
+        },
+        "selector": "0x2d10c9bd"
+      },
+      {
+        "args": [
+          {
+            "label": "shares",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Withdraw by burning shares. Receives proportional equity minus performance fee on profit."
+        ],
+        "label": "withdraw",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 11
+        },
+        "selector": "0x410fcc9d"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Request emergency withdrawal (time-locked, bypasses all restrictions)"
+        ],
+        "label": "request_emergency_withdrawal",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 14
+        },
+        "selector": "0x443c2197"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Execute emergency withdrawal after unlock period"
+        ],
+        "label": "execute_emergency_withdrawal",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 11
+        },
+        "selector": "0x8ec91e28"
+      },
+      {
+        "args": [
+          {
+            "label": "pair",
+            "type": {
+              "displayName": [
+                "Vec"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "label": "side",
+            "type": {
+              "displayName": [
+                "TradeSide"
+              ],
+              "type": 16
+            }
+          },
+          {
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Execute a trade on behalf of the vault (leader only).",
+          " This records the trade and adjusts vault equity.",
+          " The actual swap is executed off-chain via the router contract."
+        ],
+        "label": "execute_trade",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x6bf421ce"
+      },
+      {
+        "args": [
+          {
+            "label": "new_equity",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Update vault equity after trade settlement (leader or admin)"
+        ],
+        "label": "update_equity",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x43e5924d"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Pause the vault (admin only)"
+        ],
+        "label": "pause",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x81e0c604"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Unpause the vault (admin only)"
+        ],
+        "label": "unpause",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x67616649"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Resume trading after circuit breaker (admin only)"
+        ],
+        "label": "resume_trading",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x6633162f"
+      },
+      {
+        "args": [
+          {
+            "label": "new_fee_bps",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Set performance fee (admin only, max 50%)"
+        ],
+        "label": "set_performance_fee",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x485b40ed"
+      },
+      {
+        "args": [
+          {
+            "label": "drawdown_bps",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Set maximum drawdown before circuit breaker triggers (admin only)"
+        ],
+        "label": "set_max_drawdown",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x81dc7a92"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get vault equity (total native balance)"
+        ],
+        "label": "get_vault_equity",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 19
+        },
+        "selector": "0xd60a1d76"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get current share price (equity / total_shares)"
+        ],
+        "label": "get_share_price",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 19
+        },
+        "selector": "0xe69f8eb4"
+      },
+      {
+        "args": [
+          {
+            "label": "depositor",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Get a depositor's share balance and current value"
+        ],
+        "label": "get_depositor_info",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0x3098ca1f"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get vault stats"
+        ],
+        "label": "get_vault_stats",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 22
+        },
+        "selector": "0xd83080a1"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get vault leader"
+        ],
+        "label": "get_leader",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 24
+        },
+        "selector": "0x87aba724"
+      },
+      {
+        "args": [
+          {
+            "label": "count",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Get recent trades"
+        ],
+        "label": "get_recent_trades",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 25
+        },
+        "selector": "0xc64b3114"
+      }
+    ]
+  },
+  "storage": {
+    "root": {
+      "layout": {
+        "struct": {
+          "fields": [
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "leader"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "admin"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "paused"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "trading_halted"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "locked"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_shares"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0xf68d1e67",
+                      "ty": 4
+                    }
+                  },
+                  "root_key": "0xf68d1e67"
+                }
+              },
+              "name": "shares"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0xdb3d9446",
+                      "ty": 4
+                    }
+                  },
+                  "root_key": "0xdb3d9446"
+                }
+              },
+              "name": "cost_basis"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "high_water_mark"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_equity"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "performance_fee_bps"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_fees_collected"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "max_drawdown_bps"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "struct": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x6ea076d6",
+                              "ty": 4
+                            }
+                          },
+                          "name": "shares"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x6ea076d6",
+                              "ty": 6
+                            }
+                          },
+                          "name": "requested_at"
+                        }
+                      ],
+                      "name": "WithdrawalRequest"
+                    }
+                  },
+                  "root_key": "0x6ea076d6"
+                }
+              },
+              "name": "withdrawal_requests"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x3db81e33",
+                      "ty": 6
+                    }
+                  },
+                  "root_key": "0x3db81e33"
+                }
+              },
+              "name": "emergency_unlocks"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "trade_count"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "struct": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x585bea47",
+                              "ty": 7
+                            }
+                          },
+                          "name": "pair"
+                        },
+                        {
+                          "layout": {
+                            "enum": {
+                              "dispatchKey": "0x585bea47",
+                              "name": "TradeSide",
+                              "variants": {
+                                "0": {
+                                  "fields": [],
+                                  "name": "Buy"
+                                },
+                                "1": {
+                                  "fields": [],
+                                  "name": "Sell"
+                                }
+                              }
+                            }
+                          },
+                          "name": "side"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x585bea47",
+                              "ty": 4
+                            }
+                          },
+                          "name": "amount"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x585bea47",
+                              "ty": 6
+                            }
+                          },
+                          "name": "timestamp"
+                        }
+                      ],
+                      "name": "TradeRecord"
+                    }
+                  },
+                  "root_key": "0x585bea47"
+                }
+              },
+              "name": "trade_history"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_deposited"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_withdrawn"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "active_depositors"
+            }
+          ],
+          "name": "CopyVault"
+        }
+      },
+      "root_key": "0x00000000"
+    }
+  },
+  "types": [
+    {
+      "id": 0,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "AccountId"
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "type": {
+        "def": {
+          "array": {
+            "len": 32,
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": {
+        "def": {
+          "primitive": "u8"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": {
+        "def": {
+          "primitive": "bool"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": {
+        "def": {
+          "primitive": "u128"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": {
+        "def": {
+          "primitive": "u32"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": {
+        "def": {
+          "primitive": "u64"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": {
+        "def": {
+          "sequence": {
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 9
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "type": {
+        "def": {
+          "tuple": []
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 1,
+                "name": "CouldNotReadInput"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "LangError"
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 12
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 12
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          },
+          {
+            "name": "E",
+            "type": 13
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "NotLeader"
+              },
+              {
+                "index": 1,
+                "name": "NotAdmin"
+              },
+              {
+                "index": 2,
+                "name": "ZeroAmount"
+              },
+              {
+                "index": 3,
+                "name": "InsufficientShares"
+              },
+              {
+                "index": 4,
+                "name": "BelowMinimumDeposit"
+              },
+              {
+                "index": 5,
+                "name": "VaultPaused"
+              },
+              {
+                "index": 6,
+                "name": "VaultNotPaused"
+              },
+              {
+                "index": 7,
+                "name": "TradingHalted"
+              },
+              {
+                "index": 8,
+                "name": "CooldownActive"
+              },
+              {
+                "index": 9,
+                "name": "FeeTooHigh"
+              },
+              {
+                "index": 10,
+                "name": "Overflow"
+              },
+              {
+                "index": 11,
+                "name": "Reentrancy"
+              },
+              {
+                "index": 12,
+                "name": "TransferFailed"
+              },
+              {
+                "index": 13,
+                "name": "EquityMismatch"
+              },
+              {
+                "index": 14,
+                "name": "EmergencyNotUnlocked"
+              },
+              {
+                "index": 15,
+                "name": "TradeExceedsLimit"
+              },
+              {
+                "index": 16,
+                "name": "SharePriceZero"
+              },
+              {
+                "index": 17,
+                "name": "MaxDrawdownExceeded"
+              },
+              {
+                "index": 18,
+                "name": "InvalidPair"
+              }
+            ]
+          }
+        },
+        "path": [
+          "copy_vault",
+          "copy_vault",
+          "VaultError"
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 15
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 15
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 6
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 6
+          },
+          {
+            "name": "E",
+            "type": 13
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "Buy"
+              },
+              {
+                "index": 1,
+                "name": "Sell"
+              }
+            ]
+          }
+        },
+        "path": [
+          "copy_vault",
+          "copy_vault",
+          "TradeSide"
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 18
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 18
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 9
+          },
+          {
+            "name": "E",
+            "type": 13
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 21
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 21
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "type": {
+        "def": {
+          "tuple": [
+            4,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 23
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 23
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "type": {
+        "def": {
+          "tuple": [
+            4,
+            4,
+            4,
+            5,
+            5,
+            5,
+            3,
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 26
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 26
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "type": {
+        "def": {
+          "sequence": {
+            "type": 27
+          }
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "name": "pair",
+                "type": 7,
+                "typeName": "Vec<u8>"
+              },
+              {
+                "name": "side",
+                "type": 16,
+                "typeName": "TradeSide"
+              },
+              {
+                "name": "amount",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "timestamp",
+                "type": 6,
+                "typeName": "Timestamp"
+              }
+            ]
+          }
+        },
+        "path": [
+          "copy_vault",
+          "copy_vault",
+          "TradeRecord"
+        ]
+      }
+    },
+    {
+      "id": 28,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "Hash"
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "type": {
+        "def": {
+          "variant": {}
+        },
+        "path": [
+          "ink_env",
+          "types",
+          "NoChainExtension"
+        ]
+      }
+    }
+  ],
+  "version": "4"
+}

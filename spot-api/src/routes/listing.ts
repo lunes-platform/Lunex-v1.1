@@ -1,0 +1,190 @@
+import { NextFunction, Router, Request, Response } from 'express'
+import { ListingTier, ListingStatus } from '@prisma/client'
+import {
+  getAllTierConfigs,
+  createListing,
+  activateListing,
+  rejectListing,
+  getListingById,
+  getListingByToken,
+  getListings,
+  getOwnerListings,
+  withdrawLock,
+  getListingStats,
+  processExpiredLocks,
+  CreateListingInput,
+  TIER_CONFIG,
+  TierKey,
+} from '../services/listingService'
+import { log } from '../utils/logger'
+import { config } from '../config'
+import { z } from 'zod'
+
+const router = Router()
+
+// ─── Admin guard ─────────────────────────────────────────────────
+// Same pattern as pairs.ts — Bearer token matching ADMIN_SECRET env var.
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const secret = config.adminSecret
+  if (!secret) {
+    return res.status(503).json({ error: 'Admin secret not configured on this server' })
+  }
+  const auth = req.headers['authorization'] ?? ''
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+  if (!token || token !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  next()
+}
+
+// ─── Validation schemas ────────────────────────────────────────────
+
+const CreateListingSchema = z.object({
+  ownerAddress: z.string().min(1),
+  tokenAddress: z.string().min(1),
+  tokenName: z.string().min(1),
+  tokenSymbol: z.string().min(1),
+  tier: z.enum(['BASIC', 'VERIFIED', 'FEATURED']),
+  lpTokenAddress: z.string().min(1),
+  lpAmount: z.union([z.string(), z.number()]),
+  lunesLiquidity: z.union([z.string(), z.number()]),
+  tokenLiquidity: z.union([z.string(), z.number()]),
+  description: z.string().optional(),
+  website: z.string().optional(),
+  logoUrl: z.string().optional(),
+})
+
+// ── GET /api/v1/listing/tiers ─────────────────────────────────────
+// Public: returns all tier configs with fee distribution breakdown
+router.get('/tiers', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tiers = await getAllTierConfigs()
+    res.json({ tiers })
+  } catch (err) { next(err) }
+})
+
+// ── GET /api/v1/listing/stats ─────────────────────────────────────
+// Public: aggregate stats (total locked, by tier/status)
+router.get('/stats', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const stats = await getListingStats()
+    res.json(stats)
+  } catch (err) { next(err) }
+})
+
+// ── GET /api/v1/listing ───────────────────────────────────────────
+// Public: paginated listing index
+router.get('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const tier = req.query.tier as ListingTier | undefined
+    const status = req.query.status as ListingStatus | undefined
+    const limit = Math.min(parseInt(String(req.query.limit ?? '50'), 10), 100)
+    const offset = parseInt(String(req.query.offset ?? '0'), 10)
+
+    const listings = await getListings({ tier, status, limit, offset })
+    res.json({ listings, limit, offset })
+  } catch (err) { next(err) }
+})
+
+// ── GET /api/v1/listing/token/:tokenAddress ───────────────────────
+router.get('/token/:tokenAddress', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const listing = await getListingByToken(req.params.tokenAddress)
+    if (!listing) return res.status(404).json({ error: 'Token not listed' })
+    res.json(listing)
+  } catch (err) { next(err) }
+})
+
+// ── GET /api/v1/listing/owner/:address ───────────────────────────
+router.get('/owner/:address', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const listings = await getOwnerListings(req.params.address)
+    res.json({ listings })
+  } catch (err) { next(err) }
+})
+
+// ── GET /api/v1/listing/:id ───────────────────────────────────────
+router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const listing = await getListingById(req.params.id)
+    if (!listing) return res.status(404).json({ error: 'Listing not found' })
+    res.json(listing)
+  } catch (err) { next(err) }
+})
+
+// ── POST /api/v1/listing ──────────────────────────────────────────
+// Create a new token listing (requires wallet signature in production)
+router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = CreateListingSchema.safeParse(req.body)
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Validation failed', details: parsed.error.issues })
+    }
+
+    const { tier, ...rest } = parsed.data
+    const tierKey = tier.toUpperCase() as TierKey
+    if (!TIER_CONFIG[tierKey]) {
+      return res.status(400).json({ error: `Invalid tier. Valid values: BASIC, VERIFIED, FEATURED` })
+    }
+
+    const listing = await createListing({ ...rest, tier: tierKey } as CreateListingInput)
+
+    res.status(201).json({
+      message: 'Listing created — pending on-chain confirmation',
+      listing,
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : ''
+    if (msg.includes('already listed') || msg.includes('Insufficient')) {
+      return res.status(400).json({ error: msg })
+    }
+    next(err)
+  }
+})
+
+// ── POST /api/v1/listing/:id/activate ────────────────────────────
+// B2 FIX: requires admin auth — called by trusted relayer after on-chain confirmation
+router.post('/:id/activate', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { onChainListingId } = req.body
+    const listing = await activateListing(req.params.id, onChainListingId)
+    res.json({ message: 'Listing activated', listing })
+  } catch (err) { next(err) }
+})
+
+// ── POST /api/v1/listing/:id/reject ──────────────────────────────
+// B2 FIX: requires admin auth
+router.post('/:id/reject', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const listing = await rejectListing(req.params.id)
+    res.json({ message: 'Listing rejected', listing })
+  } catch (err) { next(err) }
+})
+
+// ── POST /api/v1/listing/lock/:lockId/withdraw ────────────────────
+router.post('/lock/:lockId/withdraw', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { ownerAddress, txHash } = req.body
+    if (!ownerAddress) {
+      return res.status(400).json({ error: 'ownerAddress required' })
+    }
+    const lock = await withdrawLock(req.params.lockId, ownerAddress, txHash)
+    res.json({ message: 'Lock withdrawn', lock })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : ''
+    if (msg.includes('Not the lock owner') || msg.includes('Already withdrawn') || msg.includes('expires')) {
+      return res.status(400).json({ error: msg })
+    }
+    next(err)
+  }
+})
+
+// ── POST /api/v1/listing/admin/process-expired-locks ─────────────
+// B2 FIX: requires admin auth — cron trigger, must not be public
+router.post('/admin/process-expired-locks', requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const count = await processExpiredLocks()
+    res.json({ message: `Processed ${count} expired locks` })
+  } catch (err) { next(err) }
+})
+
+export default router

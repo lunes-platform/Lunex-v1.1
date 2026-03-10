@@ -1,0 +1,8 @@
+node_modules
+dist
+.env
+.env.*
+*.log
+coverage
+__tests__
+.nyc_output

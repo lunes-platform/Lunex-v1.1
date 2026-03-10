@@ -1,361 +1,256 @@
-# 🌟 Lunex DEX - Decentralized Exchange on Lunes Blockchain 🌟
+# Lunex DEX
 
-**Versão 1.0.0**  
-**Ink! Version:** 4.2.1  
-**Rede Alvo:** Lunes Network (`wss://ws.lunes.io`)  
-**Última Atualização:** Agosto 2024
+> Non-custodial decentralized exchange built on the Lunes blockchain. Spot trading, copy trading, margin, staking, governance, and AI agent API — all in one protocol.
 
-Welcome to Lunex DEX, a cutting-edge decentralized exchange built on the Lunes blockchain! Featuring innovative staking, governance, trading rewards, and a complete DeFi ecosystem with the lowest fees and highest security standards.
-
-**📋 Especificações Técnicas:**
-- **Framework:** ink! 4.2.1 (Polkadot Smart Contracts)
-- **Padrão de Token:** PSP22 (Polkadot Standard Proposal)
-- **Arquitetura:** Baseada em Uniswap V2 (AMM - Automated Market Maker)
-- **Segurança:** Implementa reentrancy guards, input validation e checked arithmetic
-- **Toolchain:** Rust nightly (atualizado)
-
-## 🚀 **Key Features**
-- **Complete DEX** with Factory, Router, and Pair contracts
-- **Native Staking** with LUNES token and governance voting
-- **Trading Rewards** with anti-fraud protection and tier system
-- **Hybrid Token Listing** (admin + community governance)
-- **Advanced Security** with comprehensive audit and optimization
-
-## 📜 Table of Contents
-1. [Architecture Overview](#architecture-overview)
-2. [Smart Contracts](#smart-contracts)
-3. [Advanced Features](#advanced-features)
-4. [Getting Started](#getting-started)
-5. [Development Setup](#development-setup)
-6. [Deployment](#deployment)
-7. [Testing](#testing)
-8. [Security](#security)
-9. [Networks](#networks)
-10. [Documentation](#documentation)
-11. [Contributing](#contributing)
-12. [Status](#status)
-13. [Versions](#versions)
-14. [License](#license)
-
-## 🏗️ Architecture Overview
-
-Lunex DEX is built with a modular architecture that ensures scalability, security, and maintainability:
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   🏭 Factory    │────│   🔄 Pair       │────│  🛣️ Router      │
-│   Contract      │    │   Contracts     │    │   Contract      │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-    ┌─────────────────────────────┼─────────────────────────────┐
-    │                             │                             │
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  🥩 Staking     │    │  🎁 Trading     │    │  🪙 WNative     │
-│  + Governance   │    │   Rewards       │    │   Token         │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
-### Core Philosophy
-- **Uniswap V2 Compatible**: Battle-tested AMM model
-- **Native LUNES Integration**: 8 decimal places support
-- **0.5% Total Fee Structure**: Optimized distribution
-- **Community Governance**: Democratic token listing
-- **Anti-Fraud Protection**: Advanced security measures
-
-## 🔧 Smart Contracts
-
-### Core DEX Contracts
-| Contract | Description | Features |
-|----------|-------------|----------|
-| **🏭 Factory** | Creates and manages trading pairs | Deterministic pair creation, fee management |
-| **🔄 Pair** | Individual AMM pools | Uniswap V2 compatibility, optimized gas usage |
-| **🛣️ Router** | Main trading interface | Multi-hop swaps, slippage protection |
-| **🪙 WNative** | Wrapped LUNES token | Native token wrapping/unwrapping |
-
-### Advanced Contracts
-| Contract | Description | Features |
-|----------|-------------|----------|
-| **🥩 Staking** | LUNES staking + governance | Tiered rewards, proposal voting, paginatedrewards |
-| **🎁 Trading Rewards** | Volume-based rewards | Anti-fraud protection, configurable parameters, epoch system |
-
-## 🚀 Advanced Features
-
-### Fee Distribution (0.5% Total)
-- **60%** → Liquidity Providers (0.3%)
-- **15%** → Development/Team (0.075%)
-- **15%** → Trading Rewards (0.075%)
-- **10%** → Staking Rewards (0.05%)
-
-### Staking System
-- **Tiered Rewards**: Bronze, Silver, Gold, Platinum (up to 15% APY)
-- **Governance Power**: Vote on token listings and protocol changes
-- **Early Adopter Bonuses**: Special rewards for first 100/500/1000 stakers
-
-### Trading Rewards
-- **Volume Tiers**: Bronze → Platinum based on monthly volume
-- **Anti-Fraud**: Cooldown periods, volume limits, blacklist system
-- **Configurable Parameters**: Admin-adjustable fraud prevention
-- **Epoch System**: Weekly/monthly reward distributions
-
-### Governance Features
-- **Hybrid Listing**: Admin + community-driven token approval
-- **Dynamic Fees**: Community can adjust proposal fees (starts at 1,000 LUNES)
-- **Fee Redistribution**: Rejected proposals fund development and rewards
-
-## 🚀 Getting Started
-
-### For Users
-1. **Connect Lunes Wallet** → Access the DEX interface
-2. **Stake LUNES** → Earn rewards and governance power  
-3. **Add Liquidity** → Earn fees from trading pairs
-4. **Trade Tokens** → Low fees, high security
-5. **Claim Rewards** → From staking and trading activity
-
-### For Developers
-1. **Clone Repository** → Get the latest code
-2. **Setup Environment** → Rust, ink!, cargo-contract
-3. **Build Contracts** → Compile and test
-4. **Deploy to Lunes** → Use provided scripts
-5. **Integrate** → Connect your dApp
-
-## 🛠️ Development Setup
-
-### Prerequisites
-- **Rust** (stable toolchain)
-- **cargo-contract** CLI (latest version)
-- **Node.js** and **Yarn** (for scripts)
-- **Lunes Network** access
-
-### Installation
-```bash
-# Clone repository
-git clone https://github.com/lunes-platform/lunex-dex.git
-cd lunex-dex
-
-# Install Rust dependencies
-rustup target add wasm32-unknown-unknown
-cargo install cargo-contract --force --locked
-
-# Install Node.js dependencies  
-yarn install
-
-# Build all contracts
-cargo build --workspace
-
-# Run all tests
-cargo test --workspace
-```
-
-## 🚀 Deployment
-
-### Deploy to Lunes Network
-```bash
-# Deploy to testnet
-yarn deploy:testnet
-
-# Deploy to mainnet  
-yarn deploy:mainnet
-
-# Admin list tokens (for initial setup)
-yarn admin-list-token
-
-# Verify deployment
-yarn verify:deployment
-```
-
-### Available Scripts
-```bash
-# Build contracts
-yarn compile:all
-
-# Deploy contracts
-yarn deploy:lunes
-
-# List tokens via governance
-yarn list-token
-
-# Verify deployment
-yarn verify:deployment
-```
-
-## 🧪 Testing
-
-### Unit Tests (76 tests total)
-```bash
-# Run all contract unit tests
-cargo test --workspace
-
-# Test specific contract
-cd uniswap-v2/contracts/factory && cargo test
-cd uniswap-v2/contracts/router && cargo test  
-cd uniswap-v2/contracts/staking && cargo test
-cd uniswap-v2/contracts/rewards && cargo test
-cd uniswap-v2/contracts/wnative && cargo test
-```
-
-### Integration Tests
-```bash
-# Run TypeScript integration tests
-yarn test
-
-# Run Rust integration tests
-cargo test --test integration_e2e
-```
-
-### Test Coverage
-- **Factory Contract**: 10/10 tests ✅
-- **Router Contract**: 18/18 tests ✅  
-- **Pair Contract**: 10/10 tests ✅
-- **Staking Contract**: 12/12 tests ✅
-- **Trading Rewards**: 13/13 tests ✅
-- **WNative Contract**: 13/13 tests ✅
-
-## 🔒 Security
-
-### Security Measures
-- **Reentrancy Protection** → Guards against malicious calls
-- **Access Control** → Role-based permissions
-- **Input Validation** → Comprehensive parameter checking
-- **Overflow Protection** → Safe arithmetic operations
-- **Anti-Fraud System** → Trading rewards protection
-
-### Audit Status (2025)
-- ✅ **OpenZeppelin Security Review** compliance
-- ✅ **Code Review** by security experts  
-- ✅ **Gas Optimization** analysis
-- ✅ **Stress Testing** completed
-- ✅ **Production Deployment** ready
-- 🔄 **Third-party Audit** scheduled Q1 2025
-
-## 🌐 Networks
-
-### Lunes Blockchain
-- **Testnet**: `wss://ws-test.lunes.io`
-- **Mainnet**: 
-  - `wss://ws.lunes.io`
-  - `wss://ws-lunes-main-01.lunes.io`
-  - `wss://ws-lunes-main-02.lunes.io`
-  - `wss://ws-archive.lunes.io`
-
-### Native Token
-- **Symbol**: LUNES
-- **Decimals**: 8
-- **Network**: Lunes (Substrate-based)
-
-## 📚 Documentation
-
-- `docs/guides/` → Deployment and usage guides
-- `docs/reports/` → Security audits and reports  
-- `docs/` → Technical documentation
-- `examples/` → Configuration examples
-- `scripts/` → Deployment and management scripts
-
-### Key Documents
-- [📖 Deployment Guide](docs/guides/README_DEPLOY_LUNES.md)
-- [🔒 Security Report](docs/reports/AUDITORIA_SEGURANCA_E_GAS_COMPLETA.md)
-- [🎯 Quick Start](docs/guides/QUICK_START_GUIDE.md)
-- [✅ Verification](docs/guides/VERIFICATION_GUIDE.md)
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these guidelines:
-
-### Development Process
-1. **Fork** the repository
-2. **Create** feature branch (`git checkout -b feature/amazing-feature`)
-3. **Test** your changes (`cargo test --workspace`)
-4. **Commit** with clear messages (`git commit -m 'Add amazing feature'`)
-5. **Push** to branch (`git push origin feature/amazing-feature`)
-6. **Open** a Pull Request
-
-### Code Standards
-- **Rust**: Follow `rustfmt` and `clippy` recommendations
-- **Tests**: Maintain 100% test coverage for new features
-- **Security**: All changes must pass security review
-- **Documentation**: Update relevant docs and comments
-
-### Areas for Contribution
-- 🔒 **Security audits** and improvements
-- ⚡ **Gas optimization** enhancements  
-- 🧪 **Testing** expansion and edge cases
-- 📚 **Documentation** and tutorials
-- 🌐 **Frontend** development (coming soon)
-
-## 🏆 Credits
-
-### Core Team
-- **Jorge William** - Lead Developer ([GitHub](https://github.com/Jorgewra))
-- **Adelson Santos** - Smart Contract Architect ([GitHub](https://github.com/AdevSantos))
-
-### Acknowledgments
-- **Lunes Platform** - Blockchain infrastructure
-- **ink!** - Smart contract framework
-- **OpenBrush** - Security standards reference
-- **Uniswap V2** - AMM model inspiration
-
-## ✅ Status
-
-### Current Phase: Production Ready ✅ (2025)
-
-| Component | Status | Progress |
-|-----------|---------|----------|
-| **Core DEX** | ✅ Complete | Factory, Router, Pair contracts |
-| **Staking & Governance** | ✅ Complete | LUNES staking, voting, proposals |
-| **Trading Rewards** | ✅ Complete | Anti-fraud, tiers, epoch system |
-| **Security Audit** | ✅ Complete | OpenZeppelin compliance |
-| **Gas Optimization** | ✅ Complete | Optimized for production |
-| **Testing Suite** | ✅ Complete | 76/76 tests passing |
-| **Documentation** | ✅ Complete | Comprehensive guides |
-| **Deployment Scripts** | ✅ Complete | Automated deployment |
-| **Mainnet Ready** | ✅ Complete | Lunes Network compatible |
-
-### Roadmap 2025
-- 🔄 **External Audit** (Q1 2025)
-- 🌐 **Frontend Interface** (Q2 2025)  
-- 📱 **Mobile App** (Q3 2025)
-- 🔗 **Cross-chain Bridge** (Q4 2025)
-- 🌍 **Multi-chain Support** (Q4 2025)
-
-## 📦 Versions
-
-### Current Stack (2025)
-- **ink!**: 4.2.1 (stable)
-- **Rust**: stable toolchain (2025 edition)
-- **Substrate**: Compatible
-- **cargo-contract**: latest
-
-### Dependencies
-- **scale-codec**: 3.x
-- **scale-info**: 2.10
-- **ink_env**: 4.2.1
-- **ink_storage**: 4.2.1
-
-### Technology Evolution
-- **Migration Completed**: ink! 4.0 → ink! 4.2.1
-- **Security Enhanced**: OpenZeppelin compliance
-- **Gas Optimized**: Production-ready efficiency
-- **Testing**: 100% coverage maintained
-
-## 📄 License
-
-Lunex DEX is open source and released under the [Apache 2.0 License](LICENSE.md).
-
-### Key Points
-- ✅ **Commercial use** allowed
-- ✅ **Modification** allowed  
-- ✅ **Distribution** allowed
-- ✅ **Private use** allowed
-- ⚠️ **Trademark use** not granted
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org)
+[![License](https://img.shields.io/badge/License-Proprietary-red)](./LICENSE.md)
 
 ---
 
-<div align="center">
+## What is Lunex?
 
-**🌟 Built with ❤️ for the Lunes ecosystem 🌟**
+Lunex is a full-stack DEX protocol on the [Lunes Network](https://lunes.io) (Substrate/Polkadot). It provides:
 
-[🌐 Lunes Platform](https://lunes.io) • [📧 Contact](mailto:contact@lunes.io) • [💬 Community](https://t.me/lunesplatform)
+- **Spot Trading** — On-chain order book with sr25519 signature-based authentication
+- **Copy Trading** — Follow top traders' vaults with performance fee logic
+- **Margin Trading** — Leveraged positions with automated liquidation
+- **AI Agents API** — Programmatic trading via API keys with staking-based limits
+- **Social Trading** — Leaderboards, trade ideas, leader profiles
+- **Affiliate System** — Multi-level commission distribution (up to 5 levels)
+- **Token Listing** — Permissioned listing with on-chain liquidity locks
 
-</div>
+---
 
+## Quick Start (Development)
+
+### Prerequisites
+
+- Node.js ≥ 20
+- PostgreSQL ≥ 15
+- Redis ≥ 7
+- Docker (optional, for full stack)
+
+### 1. Clone & Install
+
+```bash
+git clone <repo-url>
+cd Lunex
+yarn install
+```
+
+### 2. Configure Environment
+
+```bash
+# Backend API
+cp spot-api/.env.example spot-api/.env
+# Edit: DATABASE_URL, REDIS_URL, ADMIN_SECRET
+
+# Frontend
+cp lunes-dex-main/.env.example lunes-dex-main/.env
+# Edit: VITE_API_URL, VITE_WS_URL
+```
+
+### 3. Database Setup
+
+```bash
+cd spot-api
+npx prisma migrate dev
+npx prisma generate
+```
+
+### 4. Start Services
+
+```bash
+# Backend API (port 4000) + WebSocket (port 4001)
+cd spot-api && yarn dev
+
+# Frontend (port 3000)
+cd lunes-dex-main && yarn dev
+```
+
+### 5. Docker (Full Stack)
+
+```bash
+docker-compose -f docker-compose.dev.yml up
+```
+
+---
+
+## System Architecture
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌──────────────────┐
+│  lunes-dex-main │────▶│   spot-api      │────▶│   PostgreSQL     │
+│  (React/Vite)   │     │   (Express 5)   │     │   (Prisma ORM)   │
+└─────────────────┘     │   Port 4000     │     └──────────────────┘
+                        │   WS: 4001      │     ┌──────────────────┐
+                        └────────┬────────┘────▶│   Redis          │
+                                 │              │   (Nonces/Cache) │
+                        ┌────────▼────────┐     └──────────────────┘
+                        │  Lunes Node     │     ┌──────────────────┐
+                        │  (Substrate RPC)│────▶│  SubQuery        │
+                        └─────────────────┘     │  (Block Indexer) │
+                                                └──────────────────┘
+```
+
+For detailed architecture, see [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+
+---
+
+## Project Structure
+
+```
+Lunex/
+├── spot-api/          # Backend REST API + WebSocket server
+│   ├── prisma/        # Database schema & migrations
+│   ├── src/
+│   │   ├── routes/    # 15 API route modules
+│   │   ├── services/  # 24 business logic services
+│   │   ├── middleware/ # Auth, error, pagination, metrics
+│   │   └── utils/     # Logger, Redis, Metrics, Signing
+├── lunes-dex-main/    # React frontend (Vite)
+│   ├── src/
+│   │   ├── components/ # UI components
+│   │   ├── context/    # SpotContext, SDKContext
+│   │   └── services/   # API client layer
+├── contracts/         # ink! smart contracts (Rust)
+│   ├── factory/       # AMM pair factory
+│   ├── pair/          # Liquidity pair
+│   └── marketplace/   # Order book contract
+├── sdk/               # TypeScript SDK for external integrations
+├── subquery-node/     # SubQuery indexer for Lunes events
+├── mcp/               # Model Context Protocol server
+├── docs/              # Documentation
+└── scripts/           # Deployment & utility scripts
+```
+
+---
+
+## API Reference
+
+Base URL: `http://localhost:4000/api/v1`
+
+| Module | Prefix | Description |
+|--------|--------|-------------|
+| Pairs | `/pairs` | Trading pairs, ticker, sync |
+| Orders | `/orders` | Create, cancel, list orders |
+| Trades | `/trades` | Trade history, user trades |
+| Orderbook | `/orderbook` | Order book snapshot |
+| Candles | `/candles` | OHLCV candlestick data |
+| Social | `/social` | Leaders, ideas, follow, vaults |
+| Copy Trade | `/copytrade` | Copy vault positions & signals |
+| Margin | `/margin` | Leveraged positions |
+| Affiliate | `/affiliate` | Referrals, commissions, payouts |
+| Agents | `/agents` | AI agent registration & API keys |
+| Smart Router | `/route` | Best-route quotes & execution |
+| Asymmetric | `/asymmetric` | Asymmetric order matching |
+| Listing | `/listing` | Token listing & lock management |
+| Governance | `/governance` | Vote check, record, history |
+
+Full API docs: [docs/API.md](./docs/API.md)
+
+### WebSocket
+
+Connect to `ws://localhost:4001` and subscribe to channels:
+
+```js
+// Subscribe
+ws.send(JSON.stringify({ type: 'subscribe', channel: 'orderbook:LUNES/LUSDT' }))
+ws.send(JSON.stringify({ type: 'subscribe', channel: 'trades:LUNES/LUSDT' }))
+ws.send(JSON.stringify({ type: 'subscribe', channel: 'ticker:LUNES/LUSDT' }))
+ws.send(JSON.stringify({ type: 'subscribe', channel: 'user:<walletAddress>' }))
+```
+
+---
+
+## Environment Variables
+
+See [spot-api/.env.example](./spot-api/.env.example) for the full list. Critical variables:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `DATABASE_URL` | PostgreSQL connection string | ✅ |
+| `REDIS_URL` | Redis connection string | ✅ |
+| `ADMIN_SECRET` | Bearer token for admin routes | ✅ prod |
+| `RELAYER_SEED` | Relayer wallet seed for settlements | ✅ prod |
+| `LUNES_WS_URL` | Lunes node WebSocket RPC | ✅ |
+| `FACTORY_CONTRACT_ADDRESS` | Deployed factory contract | ✅ |
+| `SPOT_CONTRACT_ADDRESS` | Deployed spot contract | ✅ |
+| `SUBQUERY_ENDPOINT` | SubQuery indexer URL | Optional |
+| `LOG_LEVEL` | Logging level (info/debug/warn) | Optional |
+
+---
+
+## SDK
+
+```bash
+yarn add @lunex/sdk
+```
+
+```typescript
+import { LunexSDK } from '@lunex/sdk'
+
+const sdk = new LunexSDK({ apiUrl: 'https://api.lunex.io' })
+const pairs = await sdk.spot.getPairs()
+```
+
+See [SDK documentation](./sdk/README.md) for full SDK reference.
+
+---
+
+## Smart Contracts
+
+Contracts are written in [ink! 4.x](https://use.ink/) (Rust) and deployed on the Lunes Network.
+
+| Contract | Purpose |
+|----------|---------|
+| `factory` | Deploys and tracks AMM pair contracts |
+| `pair` | PSP22-compatible AMM liquidity pair |
+| `marketplace` | On-chain order book |
+
+Build:
+```bash
+cargo contract build --release
+```
+
+---
+
+## Testing
+
+```bash
+# Unit & integration tests
+cd spot-api && yarn test
+
+# Specific test
+yarn test -- --testPathPattern=affiliate
+
+# E2E tests
+yarn test:e2e
+```
+
+Test files in `spot-api/__tests__/`:
+- `agent.e2e.test.ts` — Agent registration flow
+- `affiliate.test.ts` — Commission logic & referral chain
+- `botSandbox.test.ts` — Bot execution sandbox
+- `governance.e2e.test.ts` — Vote cooldown enforcement
+- `tradeApi.e2e.test.ts` — Trade API E2E
+
+---
+
+## Deployment
+
+See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for production deployment guide.
+
+Quick production checklist:
+- [ ] Set `NODE_ENV=production`
+- [ ] Configure `ADMIN_SECRET` (use `openssl rand -base64 32`)
+- [ ] Point `DATABASE_URL` to production PostgreSQL
+- [ ] Configure `REDIS_URL` to production Redis cluster
+- [ ] Set `CORS_ALLOWED_ORIGINS` to production frontend domain
+- [ ] Set `TRUST_PROXY=true` if behind nginx/load balancer
+
+---
+
+## License
+
+See [LICENSE.md](./LICENSE.md) and [NOTICE.md](./NOTICE.md).

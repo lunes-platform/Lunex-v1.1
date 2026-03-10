@@ -1,0 +1,34 @@
+import React, { ReactNode } from "react"
+import * as B from "../../components/bases"
+import * as S from "./styles"
+import TabBar from "../../pages/home/tabBar"
+
+interface PageLayoutProps {
+    children: ReactNode
+    /** Width of the main content box. Defaults to 592px (Swap size) */
+    maxWidth?: string
+    /** Custom TabBar index. Active index defaults to swap/home (1) */
+    activeTab?: number
+    showTradeSubNav?: boolean
+}
+
+const PageLayout: React.FC<PageLayoutProps> = ({
+    children,
+    maxWidth = "592px",
+}) => {
+    return (
+        <B.Container height="100vh" padding="80px 8px" bg="transparent">
+            <TabBar />
+
+            <S.GlowBox maxWidth={maxWidth}>
+                {children}
+            </S.GlowBox>
+
+            <S.PageFooter>
+                Lunex: Developed with love on the Lunes blockchain ❤️
+            </S.PageFooter>
+        </B.Container>
+    )
+}
+
+export default PageLayout

@@ -1,0 +1,222 @@
+{
+    "source": {
+        "hash": "0x00",
+        "language": "ink! 4.0.0",
+        "compiler": "rustc"
+    },
+    "contract": {
+        "name": "staking",
+        "version": "0.1.0",
+        "authors": [
+            "Lunex"
+        ]
+    },
+    "spec": {
+        "constructors": [],
+        "docs": [],
+        "events": [],
+        "messages": [
+            {
+                "args": [
+                    {
+                        "label": "amount",
+                        "type": {
+                            "displayName": [
+                                "Balance"
+                            ],
+                            "type": 0
+                        }
+                    }
+                ],
+                "docs": [
+                    "Stake LP tokens"
+                ],
+                "label": "stake",
+                "mutates": true,
+                "payable": false,
+                "returnType": {
+                    "displayName": [
+                        "Result"
+                    ],
+                    "type": 1
+                },
+                "selector": "0x00000001"
+            },
+            {
+                "args": [
+                    {
+                        "label": "amount",
+                        "type": {
+                            "displayName": [
+                                "Balance"
+                            ],
+                            "type": 0
+                        }
+                    }
+                ],
+                "docs": [
+                    "Unstake LP tokens"
+                ],
+                "label": "unstake",
+                "mutates": true,
+                "payable": false,
+                "returnType": {
+                    "displayName": [
+                        "Result"
+                    ],
+                    "type": 1
+                },
+                "selector": "0x00000002"
+            },
+            {
+                "args": [],
+                "docs": [
+                    "Claim pending rewards"
+                ],
+                "label": "claim_rewards",
+                "mutates": true,
+                "payable": false,
+                "returnType": {
+                    "displayName": [
+                        "Result"
+                    ],
+                    "type": 1
+                },
+                "selector": "0x00000003"
+            },
+            {
+                "args": [
+                    {
+                        "label": "account",
+                        "type": {
+                            "displayName": [
+                                "AccountId"
+                            ],
+                            "type": 2
+                        }
+                    }
+                ],
+                "docs": [
+                    "Get user staking info"
+                ],
+                "label": "get_user_info",
+                "mutates": false,
+                "payable": false,
+                "returnType": {
+                    "displayName": [
+                        "StakingInfo"
+                    ],
+                    "type": 3
+                },
+                "selector": "0x00000004"
+            }
+        ]
+    },
+    "types": [
+        {
+            "id": 0,
+            "type": {
+                "def": {
+                    "primitive": "u128"
+                }
+            }
+        },
+        {
+            "id": 1,
+            "type": {
+                "def": {
+                    "variant": {
+                        "variants": [
+                            {
+                                "index": 0,
+                                "name": "Ok"
+                            },
+                            {
+                                "index": 1,
+                                "name": "Err"
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "id": 2,
+            "type": {
+                "def": {
+                    "composite": {
+                        "fields": [
+                            {
+                                "type": 4,
+                                "typeName": "[u8; 32]"
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "id": 3,
+            "type": {
+                "def": {
+                    "composite": {
+                        "fields": [
+                            {
+                                "name": "totalStaked",
+                                "type": 0,
+                                "typeName": "Balance"
+                            },
+                            {
+                                "name": "userStaked",
+                                "type": 0,
+                                "typeName": "Balance"
+                            },
+                            {
+                                "name": "pendingRewards",
+                                "type": 0,
+                                "typeName": "Balance"
+                            },
+                            {
+                                "name": "apr",
+                                "type": 0,
+                                "typeName": "Balance"
+                            },
+                            {
+                                "name": "lockPeriod",
+                                "type": 5,
+                                "typeName": "u64"
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "id": 4,
+            "type": {
+                "def": {
+                    "array": {
+                        "len": 32,
+                        "type": 6
+                    }
+                }
+            }
+        },
+        {
+            "id": 5,
+            "type": {
+                "def": {
+                    "primitive": "u64"
+                }
+            }
+        },
+        {
+            "id": 6,
+            "type": {
+                "def": {
+                    "primitive": "u8"
+                }
+            }
+        }
+    ]
+}

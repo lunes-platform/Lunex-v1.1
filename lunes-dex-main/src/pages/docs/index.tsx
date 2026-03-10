@@ -306,6 +306,27 @@ const Sidebar = styled.aside`
   overflow-y: auto;
   min-width: 0;
 
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+
+  &:hover {
+    scrollbar-color: rgba(142, 97, 255, 0.25) transparent;
+  }
+
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 4px;
+  }
+  &:hover::-webkit-scrollbar-thumb {
+    background: rgba(142, 97, 255, 0.25);
+  }
+
   @media (max-width: 920px) {
     position: static;
     height: auto;
@@ -356,10 +377,13 @@ const SearchInput = styled.input`
   }
 `
 
-const SidebarItem = styled.button<{ active: boolean }>`
+const SidebarItem = styled.div<{ active: boolean }>`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   width: 100%;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
   white-space: normal;
   border: 1px solid
     ${({ active }) => (active ? 'rgba(142,97,255,0.35)' : 'transparent')};
@@ -397,6 +421,7 @@ const SidebarItemDescription = styled.div`
   font-size: 12px;
   line-height: 1.55;
   color: #7d7d87;
+  white-space: normal;
   overflow-wrap: break-word;
   word-break: break-word;
 `
@@ -792,6 +817,7 @@ const RailLinkDescription = styled.div`
   font-size: 12px;
   color: #8d8d97;
   line-height: 1.5;
+  white-space: normal;
   overflow-wrap: break-word;
   word-break: break-word;
 `
@@ -955,6 +981,34 @@ const OverviewSection = () => (
         </tr>
         <tr>
           <td>
+            <InlineCode>/governance</InlineCode>
+          </td>
+          <td>Vote on token listings and proposals</td>
+          <td>Community members with staked LUNES</td>
+        </tr>
+        <tr>
+          <td>
+            <InlineCode>/rewards</InlineCode>
+          </td>
+          <td>Track trading volume tiers and claim incentives</td>
+          <td>Active traders looking to maximize return</td>
+        </tr>
+        <tr>
+          <td>
+            <InlineCode>/affiliates</InlineCode>
+          </td>
+          <td>Manage referrals and claim commissions across 5 levels</td>
+          <td>Users building their referral network</td>
+        </tr>
+        <tr>
+          <td>
+            <InlineCode>/pool/asymmetric</InlineCode>
+          </td>
+          <td>Liquidity with parametric invariant curves (Asymmetric V2)</td>
+          <td>Advanced LPs wanting granular single-sided exposure</td>
+        </tr>
+        <tr>
+          <td>
             <InlineCode>/docs</InlineCode>
           </td>
           <td>Operational and technical support</td>
@@ -1097,9 +1151,9 @@ const GettingStartedSection = () => (
     </Checklist>
 
     <Callout variant="warning">
-      <strong>Don't skip steps.</strong> Most DeFi operational incidents come
+      <strong>Don&apos;t skip steps.</strong> Most DeFi operational incidents come
       from wrong network, excessive approval, incorrect token or execution with
-      size above the pair's liquidity.
+      size above the pair&apos;s liquidity.
     </Callout>
   </>
 )
@@ -1257,7 +1311,7 @@ const CopytradeSection = () => (
         <tr>
           <td>AUM</td>
           <td>How much capital the strategy has attracted</td>
-          <td>Helps measure market confidence, but doesn't replace analysis</td>
+          <td>Helps measure market confidence, but doesn&apos;t replace analysis</td>
         </tr>
         <tr>
           <td>Fee</td>
@@ -1270,11 +1324,11 @@ const CopytradeSection = () => (
     <H2>Due diligence checklist</H2>
     <Checklist>
       <li>
-        Read the leader's bio, history and positioning before depositing.
+        Read the leader&apos;s bio, history and positioning before depositing.
       </li>
       <li>Check if the results are compatible with the risk taken.</li>
       <li>
-        Avoid allocating significant capital in strategies you don't understand.
+        Avoid allocating significant capital in strategies you don&apos;t understand.
       </li>
       <li>
         Start small and observe execution for more than one market cycle.
@@ -1332,7 +1386,7 @@ const LiquiditySection = () => (
       Providing liquidity is a different activity from directional trading.
       You trade part of the pure upside potential for fee generation and
       participation in incentive programs. It works best when you understand
-      the pair's behavior and the risk of{' '}
+      the pair&apos;s behavior and the risk of{' '}
       <strong>impermanent loss</strong>.
     </P>
 
@@ -1359,7 +1413,7 @@ const LiquiditySection = () => (
         <tr>
           <td>Active reward programs</td>
           <td>Improves total return</td>
-          <td>Don't use temporary incentives as the sole criterion</td>
+          <td>Don&apos;t use temporary incentives as the sole criterion</td>
         </tr>
       </tbody>
     </Table>
@@ -1457,7 +1511,17 @@ const DevelopersSection = () => (
           <td>
             <InlineCode>sdk/src</InlineCode>
           </td>
-          <td>External TypeScript integration for applications and automations</td>
+          <td>External TypeScript integration for applications and automations
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <InlineCode>agentService</InlineCode>
+          </td>
+          <td>
+            <InlineCode>spot-api/src/services/agentService.ts</InlineCode>
+          </td>
+          <td>AI agent registration, staking, API key management and trade execution</td>
         </tr>
         <tr>
           <td>
@@ -1466,10 +1530,161 @@ const DevelopersSection = () => (
           <td>
             <InlineCode>mcp/lunex-agent-mcp</InlineCode>
           </td>
-          <td>OpenClaw agents and automations with structured tools</td>
+          <td>OpenClaw agents and automations with structured tools (28 tools)</td>
         </tr>
       </tbody>
     </Table>
+
+    <SectionDivider />
+
+    <H2>Authentication — Signature-based</H2>
+    <P>
+      Lunex does <strong>not</strong> use JWT tokens or API keys for trading authentication.
+      Every authenticated operation requires a <strong>sr25519 cryptographic signature</strong>{' '}
+      from the user&apos;s Substrate wallet. Your identity is your wallet address.
+    </P>
+
+    <Callout>
+      <strong>No login screen, no tokens.</strong> Public endpoints (pairs, ticker, orderbook,
+      candles, trades) are open. Only order submission and cancellation require a signature.
+    </Callout>
+
+    <H3>How it works</H3>
+    <Steps>
+      <Step>
+        <StepNumber>1</StepNumber>
+        <StepBody>
+          <StepTitle>Build the message</StepTitle>
+          <StepText>
+            Construct a deterministic string with order parameters and a unique nonce.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>2</StepNumber>
+        <StepBody>
+          <StepTitle>Sign with your wallet</StepTitle>
+          <StepText>
+            Use your Substrate wallet (Polkadot.js, Talisman, SubWallet) to sign the message
+            with your sr25519 private key. This never leaves your device.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>3</StepNumber>
+        <StepBody>
+          <StepTitle>Send signature + address</StepTitle>
+          <StepText>
+            Include <InlineCode>signature</InlineCode> and{' '}
+            <InlineCode>makerAddress</InlineCode> in the request body. The backend verifies
+            the signature against your public key.
+          </StepText>
+        </StepBody>
+      </Step>
+    </Steps>
+
+    <H3>Message format</H3>
+    <Table>
+      <thead>
+        <tr>
+          <th>Action</th>
+          <th>Message pattern</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Create order</td>
+          <td><InlineCode>lunex-order:{'<pair>'}:{'<side>'}:{'<type>'}:{'<price>'}:{'<stopPrice>'}:{'<amount>'}:{'<nonce>'}</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Cancel order</td>
+          <td><InlineCode>lunex-cancel:{'<orderId>'}</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Margin collateral</td>
+          <td><InlineCode>lunex-margin-collateral:{'<action>'}:{'<token>'}:{'<amount>'}</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Margin open</td>
+          <td><InlineCode>lunex-margin-open:{'<pair>'}:{'<side>'}:{'<collateral>'}:{'<leverage>'}</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Margin close</td>
+          <td><InlineCode>lunex-margin-close:{'<positionId>'}</InlineCode></td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H3>Example — signing with Polkadot.js</H3>
+    <Code>{`import { Keyring } from '@polkadot/keyring'
+import { cryptoWaitReady } from '@polkadot/util-crypto'
+import { u8aToHex } from '@polkadot/util'
+
+await cryptoWaitReady()
+
+const keyring = new Keyring({ type: 'sr25519' })
+const pair = keyring.addFromUri('//Alice') // or your seed/mnemonic
+
+const nonce = Date.now() + '-' + Math.random().toString(36).slice(2, 10)
+const message = \`lunex-order:BTC/USDT:BUY:LIMIT:62000:0:0.01:\${nonce}\`
+
+const signature = u8aToHex(pair.sign(message))
+
+// Send to API
+const response = await fetch('http://localhost:4000/api/v1/orders', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    pairSymbol: 'BTC/USDT',
+    side: 'BUY',
+    type: 'LIMIT',
+    price: '62000',
+    amount: '0.01',
+    nonce,
+    signature,
+    makerAddress: pair.address,
+  })
+})`}</Code>
+
+    <H3>Copytrade leader API key</H3>
+    <P>
+      For copytrade signal automation, leaders can generate a dedicated API key
+      without exposing their wallet. This is the only API key flow in the system.
+    </P>
+    <Code>{`// 1. Request a challenge
+GET /api/v1/copytrade/leaders/{leaderId}/api-key/challenge
+
+// 2. Sign the returned challenge message with your wallet
+
+// 3. Submit the signature to rotate/create the key
+POST /api/v1/copytrade/leaders/{leaderId}/api-key/rotate
+Body: { signature: "0x...", address: "5F..." }
+
+// 4. Use the returned API key for submit_copytrade_signal
+POST /api/v1/copytrade/signals
+Header: X-Leader-Api-Key: <your-key>`}</Code>
+
+    <H3>AI Agent API key authentication</H3>
+    <P>
+      AI agents and bots use API key authentication (<InlineCode>X-API-Key</InlineCode> header)
+      for all trading endpoints. API keys are SHA-256 hashed on the server. Keys have scoped
+      permissions (<InlineCode>TRADE_SPOT</InlineCode>, <InlineCode>READ_MARKET</InlineCode>, etc.)
+      and tier-based rate limits.
+    </P>
+    <Code>{`// Agent trading endpoints (require X-API-Key header)
+POST /api/v1/trade/swap       // Execute market swap
+POST /api/v1/trade/limit      // Place limit order
+POST /api/v1/trade/cancel      // Cancel order
+GET  /api/v1/trade/orders      // List open orders
+GET  /api/v1/trade/portfolio   // Balances & positions`}</Code>
+
+    <Callout variant="warning">
+      <strong>Security:</strong> never expose your seed phrase or private key in code.
+      Always sign messages client-side. The API only receives the signature, never the key.
+      For bots, store API keys in environment variables, never in source code.
+    </Callout>
+
+    <SectionDivider />
 
     <H2>Integration best practices</H2>
     <Checklist>
@@ -1528,6 +1743,517 @@ await marginApi.resetPriceHealth('LUNES/USDT')`}</Code>
       <InlineCode>/metrics</InlineCode> and the{' '}
       <InlineCode>margin price health</InlineCode> contract for alerts and preventive UX.
     </Callout>
+
+    <SectionDivider />
+
+    <H2>SDK — @lunex/sdk</H2>
+    <P>
+      The official Lunex TypeScript SDK provides a complete programmatic interface for
+      all DEX operations: swap, liquidity, staking, governance, rewards, and real-time
+      WebSocket events. It is the recommended starting point for external integrations.
+    </P>
+
+    <H3>Installation</H3>
+    <Code>{`npm install @lunex/sdk`}</Code>
+
+    <H3>Quick start</H3>
+    <Code>{`import LunexSDK from '@lunex/sdk'
+
+const sdk = new LunexSDK({
+  baseURL: 'https://api.lunex.io/v1',
+  wsURL: 'wss://api.lunex.io',     // optional
+  timeout: 30000,                    // optional
+})
+
+// Get all pairs
+const { pairs } = await sdk.factory.getAllPairs({
+  page: 1, limit: 20, sort: 'volume', order: 'desc'
+})
+
+// Get quote for a swap
+const quote = await sdk.router.getQuote(amountIn, [tokenA, tokenB])
+
+// Execute swap
+const result = await sdk.router.swapExactTokensForTokens({
+  amountIn: '1000000000',
+  amountOutMin: '987000000',
+  path: [tokenA, tokenB],
+  to: userAddress,
+  deadline: sdk.utils.calculateDeadline(20)
+})`}</Code>
+
+    <H3>SDK modules</H3>
+    <Table>
+      <thead>
+        <tr>
+          <th>Module</th>
+          <th>Access</th>
+          <th>What it does</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><InlineCode>sdk.auth</InlineCode></td>
+          <td>login, refresh, logout</td>
+          <td>Wallet authentication flow</td>
+        </tr>
+        <tr>
+          <td><InlineCode>sdk.factory</InlineCode></td>
+          <td>getAllPairs, getPairByTokens, createPair, getStats</td>
+          <td>Pair discovery and factory operations</td>
+        </tr>
+        <tr>
+          <td><InlineCode>sdk.router</InlineCode></td>
+          <td>getQuote, addLiquidity, removeLiquidity, swapExact*</td>
+          <td>Swaps and liquidity management</td>
+        </tr>
+        <tr>
+          <td><InlineCode>sdk.staking</InlineCode></td>
+          <td>stake, unstake, claimRewards, createProposal, vote</td>
+          <td>Staking + governance</td>
+        </tr>
+        <tr>
+          <td><InlineCode>sdk.rewards</InlineCode></td>
+          <td>getPosition, claimRewards, getLeaderboard, getCurrentEpoch</td>
+          <td>Trading rewards program</td>
+        </tr>
+        <tr>
+          <td><InlineCode>sdk.wnative</InlineCode></td>
+          <td>wrap, unwrap, getBalance, isHealthy</td>
+          <td>LUNES ↔ WLUNES wrapping</td>
+        </tr>
+        <tr>
+          <td><InlineCode>sdk.utils</InlineCode></td>
+          <td>formatAmount, parseAmount, calculateDeadline</td>
+          <td>Formatting and calculation helpers</td>
+        </tr>
+        <tr>
+          <td><InlineCode>sdk.agents</InlineCode></td>
+          <td>register, listAgents, createApiKey, revokeApiKey, swap, limitOrder, portfolio, stake</td>
+          <td>AI agent management and authenticated trading</td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H3>WebSocket real-time events</H3>
+    <Code>{`sdk.connectWebSocket(authToken)
+
+sdk.on('swap:executed', (data) => console.log('Swap:', data))
+sdk.on('price:update',  (data) => console.log('Price:', data.price0))
+sdk.on('proposal:created', (data) => console.log('Proposal:', data))
+
+sdk.subscribeToPair(pairAddress)
+sdk.disconnectWebSocket()`}</Code>
+
+    <H3>Error handling</H3>
+    <Code>{`try {
+  const result = await sdk.router.swapExactTokensForTokens({ ... })
+} catch (error: any) {
+  switch (error.code) {
+    case 'SWAP_001': // Slippage exceeded
+    case 'SWAP_002': // Deadline expired
+    case 'AUTH_002': // Session expired — re-authenticate
+    default: console.error(error.message)
+  }
+}`}</Code>
+
+    <SectionDivider />
+
+    <H2>MCP — Lunex Agent MCP Server</H2>
+    <P>
+      The Lunex MCP server uses the Model Context Protocol (stdio transport) to expose
+      Lunex spot market data, authenticated trading, social trading, and copytrade
+      workflows to AI agents. It wraps the <InlineCode>spot-api</InlineCode> backend.
+    </P>
+
+    <Callout variant="warning">
+      <strong>Scope:</strong> the MCP server only supports spot, social, and copytrade.
+      It does <strong>not</strong> support AMM swap, router, liquidity, farming, or staking.
+      Unsupported requests return an explicit scope refusal.
+    </Callout>
+
+    <H3>Available tools (28)</H3>
+    <Table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th>Tools</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Scope</td>
+          <td><InlineCode>get_server_scope</InlineCode>, <InlineCode>get_lunex_health</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Market data</td>
+          <td><InlineCode>list_pairs</InlineCode>, <InlineCode>get_pair_ticker</InlineCode>, <InlineCode>get_orderbook</InlineCode>, <InlineCode>get_recent_trades</InlineCode>, <InlineCode>get_candles</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Spot trading</td>
+          <td><InlineCode>prepare_spot_order_signature</InlineCode>, <InlineCode>create_spot_order</InlineCode>, <InlineCode>prepare_spot_cancel_signature</InlineCode>, <InlineCode>cancel_spot_order</InlineCode>, <InlineCode>get_user_orders</InlineCode>, <InlineCode>get_user_trade_history</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Social</td>
+          <td><InlineCode>list_social_leaders</InlineCode>, <InlineCode>get_leader_profile</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Copytrade</td>
+          <td><InlineCode>list_copytrade_vaults</InlineCode>, <InlineCode>get_copytrade_vault</InlineCode>, <InlineCode>get_copytrade_positions</InlineCode>, <InlineCode>get_copytrade_activity</InlineCode>, <InlineCode>get_vault_executions</InlineCode></td>
+        </tr>
+        <tr>
+          <td>Leader automation</td>
+          <td><InlineCode>create_leader_api_key_challenge</InlineCode>, <InlineCode>rotate_leader_api_key</InlineCode>, <InlineCode>submit_copytrade_signal</InlineCode></td>
+        </tr>
+        <tr>
+          <td>AI Agents</td>
+          <td><InlineCode>register_agent</InlineCode>, <InlineCode>list_agents</InlineCode>, <InlineCode>agent_swap</InlineCode>, <InlineCode>agent_limit_order</InlineCode>, <InlineCode>agent_portfolio</InlineCode></td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H3>MCP resources</H3>
+    <Checklist>
+      <li><InlineCode>lunex://scope</InlineCode> — current server scope and supported domains</li>
+      <li><InlineCode>lunex://docs/spot-authenticated-trading</InlineCode> — secure signing workflow docs</li>
+      <li><InlineCode>lunex://config/runtime</InlineCode> — runtime configuration</li>
+      <li><InlineCode>lunex://config/openclaw</InlineCode> — OpenClaw-specific config</li>
+    </Checklist>
+
+    <H3>MCP prompts</H3>
+    <Checklist>
+      <li><InlineCode>openclaw_scope_guard</InlineCode> — confirms scope before acting</li>
+      <li><InlineCode>openclaw_authenticated_spot_trade</InlineCode> — guided secure spot trade flow</li>
+      <li><InlineCode>openclaw_social_copytrade_scan</InlineCode> — social/copytrade discovery scan</li>
+    </Checklist>
+
+    <H3>Setup</H3>
+    <Code>{`# Install and build
+cd mcp/lunex-agent-mcp
+npm install
+npm run build
+
+# Start (stdio transport)
+npm start
+
+# Environment variables (.env)
+LUNEX_SPOT_API_URL=http://127.0.0.1:4010
+LUNEX_LEADER_API_KEY=          # optional, for submit_copytrade_signal`}</Code>
+
+    <H3>Claude Desktop / Cursor config</H3>
+    <Code>{`{
+  "mcpServers": {
+    "lunex-spot-social-copytrade": {
+      "command": "node",
+      "args": [
+        "/path/to/Lunex/mcp/lunex-agent-mcp/dist/index.js"
+      ],
+      "env": {
+        "LUNEX_SPOT_API_URL": "http://127.0.0.1:4010",
+        "LUNEX_LEADER_API_KEY": ""
+      }
+    }
+  }
+}`}</Code>
+
+    <SectionDivider />
+
+    <H2>OpenClaw integration</H2>
+    <P>
+      OpenClaw is a platform for autonomous AI agents. The Lunex MCP server ships
+      with a ready-to-use <InlineCode>openclaw.mcp.json</InlineCode> config and
+      an example session transcript showing the recommended agent flow.
+    </P>
+
+    <H3>Recommended autonomous flow</H3>
+    <Steps>
+      <Step>
+        <StepNumber>1</StepNumber>
+        <StepBody>
+          <StepTitle>Confirm scope</StepTitle>
+          <StepText>
+            Call <InlineCode>get_server_scope</InlineCode> to verify supported domains.
+            Refuse swap/staking/liquidity/router/farming requests.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>2</StepNumber>
+        <StepBody>
+          <StepTitle>Read dynamic docs</StepTitle>
+          <StepText>
+            Read <InlineCode>lunex://docs/spot-authenticated-trading</InlineCode> and{' '}
+            <InlineCode>lunex://config/openclaw</InlineCode> for runtime docs/config.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>3</StepNumber>
+        <StepBody>
+          <StepTitle>Build market context</StepTitle>
+          <StepText>
+            Call <InlineCode>list_pairs</InlineCode>, <InlineCode>get_pair_ticker</InlineCode>,{' '}
+            <InlineCode>get_orderbook</InlineCode>, <InlineCode>get_recent_trades</InlineCode>,{' '}
+            and <InlineCode>get_candles</InlineCode> to understand the market.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>4</StepNumber>
+        <StepBody>
+          <StepTitle>Prepare and sign orders</StepTitle>
+          <StepText>
+            Call <InlineCode>prepare_spot_order_signature</InlineCode>, sign externally
+            with the wallet, then call <InlineCode>create_spot_order</InlineCode>.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>5</StepNumber>
+        <StepBody>
+          <StepTitle>Monitor and automate</StepTitle>
+          <StepText>
+            Use <InlineCode>get_user_orders</InlineCode>,{' '}
+            <InlineCode>get_user_trade_history</InlineCode>, and copytrade tools
+            for post-trade monitoring and automation.
+          </StepText>
+        </StepBody>
+      </Step>
+    </Steps>
+
+    <H3>Authenticated spot trade example</H3>
+    <Code>{`// 1. Agent prepares the order payload via MCP
+tool: prepare_spot_order_signature
+args: {
+  pairSymbol: "BTC/USDT",
+  side: "BUY",
+  type: "LIMIT",
+  amount: "0.0100",
+  makerAddress: "5FExampleTraderAddress",
+  price: "62000"
+}
+
+// 2. MCP returns a message to sign:
+// "lunex-order:BTC/USDT:BUY:LIMIT:62000:0.0100:{nonce}"
+
+// 3. External wallet signs the message (outside MCP)
+
+// 4. Agent submits the signed order via MCP
+tool: create_spot_order
+args: {
+  pairSymbol: "BTC/USDT",
+  side: "BUY",
+  type: "LIMIT",
+  amount: "0.0100",
+  makerAddress: "5FExampleTraderAddress",
+  price: "62000",
+  nonce: "{nonce}",
+  signature: "0xREAL_EXTERNAL_SIGNATURE"
+}`}</Code>
+
+    <H3>Copytrade signal submission</H3>
+    <Code>{`// For AI leaders automating copytrade signals
+tool: submit_copytrade_signal
+args: {
+  pairSymbol: "LUNES/USDT",
+  side: "BUY",
+  amount: "100",
+  apiKey: "leader-api-key-here"
+}
+
+// To rotate a leader API key securely:
+// 1. create_leader_api_key_challenge → returns message
+// 2. Sign externally with leader wallet
+// 3. rotate_leader_api_key → returns new key`}</Code>
+
+    <Callout variant="success">
+      <strong>OpenClaw config file:</strong> the ready-to-use config is at{' '}
+      <InlineCode>mcp/lunex-agent-mcp/openclaw.mcp.json</InlineCode>. Copy it into
+      your OpenClaw workspace. A complete session example is in{' '}
+      <InlineCode>OPENCLAW_SESSION_EXAMPLE.md</InlineCode>.
+    </Callout>
+
+    <SectionDivider />
+
+    <H2>AI Trading Network</H2>
+    <P>
+      The Lunex AI Trading Network enables autonomous bots and AI agents to register,
+      authenticate, trade, and be followed through copy vaults. The system supports
+      bots trading, humans following bots, bots following bots, performance ranking,
+      and automatic copy trading.
+    </P>
+
+    <H3>Agent identity and registration</H3>
+    <P>
+      Bots register via the Agent Identity API and receive an API key for all trading operations.
+      Agents can set their type, framework, and strategy description.
+    </P>
+    <Code>{`// Register an AI agent
+POST /api/v1/agents/register
+Body: {
+  "walletAddress": "5F...",
+  "agentType": "AI_AGENT",       // AI_AGENT | OPENCLAW_BOT | ALGO_BOT
+  "framework": "OpenClaw",        // optional
+  "strategyDescription": "..."    // optional
+}
+
+// Response includes:
+// { id, walletAddress, apiKey, stakingTier, ... }
+
+// Staking tiers (collateral required to operate)
+// Tier 0 (Free)   — 5 trades/min, basic access
+// Tier 1 (Bronze) — 20 trades/min, higher limits
+// Tier 2 (Silver) — 60 trades/min, priority execution
+// Tier 3 (Gold)   — 120 trades/min, full access`}</Code>
+
+    <H3>Agent API key management</H3>
+    <Code>{`// List API keys
+GET /api/v1/agents/{id}/api-keys
+Header: X-API-Key: <agent-key>
+
+// Create scoped API key
+POST /api/v1/agents/{id}/api-keys
+Body: {
+  "label": "trading-bot-prod",
+  "permissions": ["TRADE_SPOT", "READ_MARKET"]
+}
+
+// Revoke API key
+DELETE /api/v1/agents/{id}/api-keys/{keyId}`}</Code>
+
+    <H3>Agent trading via SDK</H3>
+    <Code>{`import LunexSDK from '@lunex/sdk'
+
+const sdk = new LunexSDK({ baseURL: 'http://localhost:4000' })
+
+// Register agent
+const agent = await sdk.agents.register({
+  walletAddress: '5F...',
+  agentType: 'AI_AGENT',
+  framework: 'OpenClaw'
+})
+
+// Trade with API key
+const swap = await sdk.agents.swap(agent.apiKey, {
+  pairId: 'BTC/USDT',
+  side: 'BUY',
+  amount: 100
+})
+
+// Place limit order
+const order = await sdk.agents.limitOrder(agent.apiKey, {
+  pairId: 'BTC/USDT',
+  side: 'SELL',
+  price: 65000,
+  amount: 0.01
+})
+
+// Get portfolio
+const portfolio = await sdk.agents.portfolio(agent.apiKey)`}</Code>
+
+    <H3>Agent MCP tools</H3>
+    <P>
+      The MCP server exposes 5 agent tools for AI-controlled trading.
+      Set the <InlineCode>LUNEX_AGENT_API_KEY</InlineCode> environment variable
+      for automatic authentication.
+    </P>
+    <Code>{`# MCP agent tools
+register_agent     — Register a new AI agent
+list_agents        — Browse the agent leaderboard
+agent_swap         — Execute a market swap
+agent_limit_order  — Place a limit order
+agent_portfolio    — Get balances and open positions
+
+# Environment variable
+LUNEX_AGENT_API_KEY=<your-agent-key>`}</Code>
+
+    <H3>Copy Vault (on-chain)</H3>
+    <P>
+      The Copy Vault is an ink! 4.x smart contract that enables trustless copy trading.
+      Followers deposit collateral and receive vault shares proportional to NAV.
+      Only the leader can execute trades. Performance fees are charged only on profit.
+    </P>
+    <Table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Deposit</td>
+          <td>Share-based accounting proportional to NAV</td>
+        </tr>
+        <tr>
+          <td>Withdraw</td>
+          <td>Burns shares, performance fee only on profit (max 50%)</td>
+        </tr>
+        <tr>
+          <td>Trade</td>
+          <td>Leader-only, max 20% of vault per trade</td>
+        </tr>
+        <tr>
+          <td>Large withdrawal</td>
+          <td>24h cooldown for withdrawals exceeding 10% of vault</td>
+        </tr>
+        <tr>
+          <td>Circuit breaker</td>
+          <td>Auto-halts trading at configurable max drawdown (default 30%)</td>
+        </tr>
+        <tr>
+          <td>Emergency exit</td>
+          <td>72h time-locked withdrawal, bypasses all restrictions, no fee</td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H3>Bot sandbox security</H3>
+    <P>
+      All agent trades pass through a 3-layer security middleware: rate limiter,
+      anomaly detector, and API key rotation enforcement.
+    </P>
+    <Table>
+      <thead>
+        <tr>
+          <th>Layer</th>
+          <th>Protection</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Rate limiter</td>
+          <td>Sliding window per-minute and per-hour limits based on staking tier</td>
+        </tr>
+        <tr>
+          <td>Anomaly detector</td>
+          <td>Detects wash trading, pattern repetition, and velocity spikes. Auto-slashes at score 100</td>
+        </tr>
+        <tr>
+          <td>Key rotation</td>
+          <td>X-Key-Rotation-Warning header when keys expire within 7 days</td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H3>Bot registry UI</H3>
+    <P>
+      The platform includes a dedicated Bot Registry page at{' '}
+      <InlineCode>/social/bots</InlineCode> where users can register agents, manage
+      API keys, and browse the bot leaderboard with performance metrics (ROI, Sharpe,
+      max drawdown, trade count).
+    </P>
+
+    <H3>Security notes</H3>
+    <Checklist>
+      <li>Use environment variables for API keys, never hardcode in prompts.</li>
+      <li>Wallet signing must always happen outside the MCP server.</li>
+      <li>Treat <InlineCode>submit_copytrade_signal</InlineCode> as a privileged action.</li>
+      <li>Run the MCP server on a trusted local network boundary.</li>
+      <li>Store agent API keys securely — they are SHA-256 hashed server-side.</li>
+      <li>Bot staking collateral is required for higher tiers — this prevents spam.</li>
+      <li>Monitor anomaly detection warnings — repeated violations trigger auto-slashing.</li>
+    </Checklist>
   </>
 )
 
@@ -1569,7 +2295,7 @@ const SecuritySection = () => (
         <tr>
           <td>Excessive approval</td>
           <td>User approves more than needed for a contract</td>
-          <td>Approve only what's necessary and review allowances</td>
+          <td>Approve only what&apos;s necessary and review allowances</td>
         </tr>
         <tr>
           <td>Bad slippage</td>
@@ -1634,14 +2360,14 @@ const FAQSection = () => (
     <H3>Where can I find support?</H3>
     <P>
       Use the official Lunex/Lunes institutional links, community channels
-      and the repository's technical documentation when you need to dive deeper
+      and the repository&apos;s technical documentation when you need to dive deeper
       into integrations.
     </P>
 
     <H2>Quick troubleshooting</H2>
     <Checklist>
       <li>
-        If the wallet won't connect, check the extension, active account and
+        If the wallet won&apos;t connect, check the extension, active account and
         browser permissions.
       </li>
       <li>
@@ -1716,7 +2442,7 @@ const Docs: React.FC = () => {
           <SearchIcon />
           <SearchInput
             value={search}
-            onChange={event => setSearch(event.target.value)}
+            onChange={(event: React.ChangeEvent<HTMLInputElement>) => setSearch(event.target.value)}
             placeholder="Search by topic, profile or resource"
           />
         </SearchBox>

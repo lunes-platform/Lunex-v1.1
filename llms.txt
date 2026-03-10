@@ -1,0 +1,74 @@
+# Lunex DEX
+> Non-custodial decentralized exchange on the Lunes Network (Substrate/Polkadot). Spot trading, copy trading, margin, AI agents, social trading, and governance in one protocol.
+
+## Core Files
+- [README.md]: Project overview and quick start
+- [spot-api/src/index.ts]: API server entry point
+- [spot-api/src/routes/]: 15 REST API route modules
+- [spot-api/src/services/]: 24 business logic services
+- [spot-api/prisma/schema.prisma]: Database schema
+- [lunes-dex-main/src/]: React frontend (Vite)
+- [contracts/]: ink! smart contracts (Rust)
+- [sdk/]: TypeScript SDK for external integrations
+- [subquery-node/]: Block event indexer
+- [docs/API.md]: Full API reference
+- [docs/ARCHITECTURE.md]: System architecture and ADRs
+- [docs/DEPLOYMENT.md]: Production deployment guide
+
+## API Base URL
+`/api/v1` — REST over HTTP + WebSocket on port 4001
+
+## Key Concepts
+
+- **sr25519 Signatures**: All wallet writes (orders, follows, deposits) require a Substrate sr25519 signed message with a nonce
+- **Admin Bearer Token**: Route guarded admin operations (pair registration, listing activation, payout batches)
+- **Agent API Key**: AI trading agents authenticate with `lnx_<key>` via `X-API-Key` header
+- **Nonce Replay Protection**: All nonces stored in Redis with TTL to prevent replay attacks
+- **Order Matching**: FIFO price-time priority in-memory orderbook, persisted to PostgreSQL
+- **Smart Router V2**: Automatically selects best execution source (Orderbook / AMM / Asymmetric)
+- **Affiliate Commission**: 5-level referral chain, rates: 4% → 3% → 1.5% → 1% → 0.5%
+- **Copy Trading**: Leader creates a vault; followers deposit LUSDT; vault mirrors leader trades
+- **Staking Tiers**: Agents stake LUNES to unlock higher trading limits (4 tiers)
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend API | Express 5, TypeScript 5, Zod |
+| Database | PostgreSQL 15, Prisma ORM |
+| Cache/Nonces | Redis 7 |
+| Frontend | React 18, Vite, styled-components |
+| Blockchain | Lunes (Substrate/Polkadot), Polkadot.js |
+| Contracts | ink! 4.x (Rust) |
+| Indexer | SubQuery (GraphQL) |
+| Observability | Pino logs, Prometheus metrics |
+
+## API Modules
+
+| Module | Prefix | Auth |
+|--------|--------|------|
+| Pairs | `/pairs` | Public / Admin |
+| Orders | `/orders` | sr25519 |
+| Trades | `/trades` | Public |
+| Orderbook | `/orderbook` | Public |
+| Candles | `/candles` | Public |
+| Smart Router | `/route` | Public / Agent Key |
+| Social | `/social` | Public / sr25519 |
+| Copy Trade | `/copytrade` | Public / sr25519 / Leader Key |
+| Margin | `/margin` | sr25519 |
+| Affiliate | `/affiliate` | Public / Admin |
+| AI Agents | `/agents` | Public |
+| Asymmetric | `/asymmetric` | Agent Key |
+| Listing | `/listing` | Public / Admin |
+| Governance | `/governance` | Public |
+
+## Environment Variables (critical)
+
+- `DATABASE_URL` — PostgreSQL connection string
+- `REDIS_URL` — Redis connection string
+- `ADMIN_SECRET` — Bearer token for admin routes
+- `RELAYER_SEED` — Relayer wallet for on-chain settlement
+- `LUNES_WS_URL` — Lunes node WebSocket endpoint
+- `FACTORY_CONTRACT_ADDRESS` — Deployed AMM factory
+- `SPOT_CONTRACT_ADDRESS` — Deployed spot contract
+- `SUBQUERY_ENDPOINT` — Optional: SubQuery indexer URL

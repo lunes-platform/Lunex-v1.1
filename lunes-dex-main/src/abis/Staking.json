@@ -1,0 +1,3960 @@
+{
+  "source": {
+    "hash": "0xad39c07041b1a8a7ac40ac9c57e22caaefe7cd169facc96fe865377cb93e9a3e",
+    "language": "ink! 4.3.0",
+    "compiler": "rustc 1.82.0",
+    "build_info": {
+      "build_mode": "Release",
+      "cargo_contract_version": "5.0.3",
+      "rust_toolchain": "stable-x86_64-apple-darwin",
+      "wasm_opt_settings": {
+        "keep_debug_symbols": false,
+        "optimization_passes": "Z"
+      }
+    }
+  },
+  "contract": {
+    "name": "staking_contract",
+    "version": "0.1.0",
+    "authors": [
+      "Lunes Team <dev@lunes.io>"
+    ]
+  },
+  "image": null,
+  "spec": {
+    "constructors": [
+      {
+        "args": [
+          {
+            "label": "treasury_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          "Creates a new staking contract"
+        ],
+        "label": "new",
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink_primitives",
+            "ConstructorResult"
+          ],
+          "type": 9
+        },
+        "selector": "0x9bae9d5e"
+      }
+    ],
+    "docs": [
+      " # Lunex Staking Contract",
+      "",
+      " This contract allows users to stake $LUNES (native token) and earn rewards.",
+      " It also provides governance features for project listing proposals.",
+      "",
+      " ## Key Features:",
+      " - Stake $LUNES tokens and earn rewards",
+      " - Unstake with optional penalty periods",
+      " - Governance voting for project listings",
+      " - Reward distribution based on staking duration and amount",
+      " - Anti-whale mechanisms for fair distribution",
+      "",
+      " ## Security Features:",
+      " - Reentrancy protection",
+      " - Access control for admin functions",
+      " - Input validation and overflow protection",
+      " - Deadline-based operations",
+      " - Slashing protection for malicious behavior"
+    ],
+    "environment": {
+      "accountId": {
+        "displayName": [
+          "AccountId"
+        ],
+        "type": 0
+      },
+      "balance": {
+        "displayName": [
+          "Balance"
+        ],
+        "type": 4
+      },
+      "blockNumber": {
+        "displayName": [
+          "BlockNumber"
+        ],
+        "type": 5
+      },
+      "chainExtension": {
+        "displayName": [
+          "ChainExtension"
+        ],
+        "type": 42
+      },
+      "hash": {
+        "displayName": [
+          "Hash"
+        ],
+        "type": 41
+      },
+      "maxEventTopics": 4,
+      "timestamp": {
+        "displayName": [
+          "Timestamp"
+        ],
+        "type": 6
+      }
+    },
+    "events": [
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "staker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "duration",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [
+          "Staking events"
+        ],
+        "label": "Staked"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "staker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "rewards",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "penalty",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "Unstaked"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "staker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "RewardsClaimed"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "proposer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "project_name",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "token_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "voting_deadline",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "ProposalCreated"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "voter",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "vote_power",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "in_favor",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "Voted"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "approved",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "votes_for",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "votes_against",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "ProposalExecuted"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [
+          "=== NOVOS EVENTOS PARA PREMIAÇÃO ==="
+        ],
+        "label": "TradingRewardsFunded"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "total_amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "stakers_count",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TradingRewardsDistributed"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "processed_stakers",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "rewards_distributed",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "start_index",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "end_index",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "is_complete",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TradingRewardsDistributionProgress"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "staker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "bonus_type",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "GovernanceBonusAwarded"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "staker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "GovernanceBonusClaimed"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "staker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "old_tier",
+            "type": {
+              "displayName": [
+                "StakingTier"
+              ],
+              "type": 20
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_tier",
+            "type": {
+              "displayName": [
+                "StakingTier"
+              ],
+              "type": 20
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TierUpgraded"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "reason",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "AdminTokenListed"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "tokens_listed",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "AdminBatchListingCompleted"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "old_treasury",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_treasury",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [
+          "=== EVENTOS ADMINISTRATIVOS ==="
+        ],
+        "label": "TreasuryAddressChanged"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "old_owner",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_owner",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "OwnershipTransferred"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "old_contract",
+            "type": {
+              "displayName": [
+                "Option"
+              ],
+              "type": 40
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_contract",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TradingRewardsContractChanged"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "ContractPaused"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "ContractUnpaused"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "admin",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "reason",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "AdminTokenDelisted"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "proposer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "current_fee",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "proposed_fee",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "justification",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "voting_deadline",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "FeeChangeProposed"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "old_fee",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_fee",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "changed_by",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "ProposalFeeChanged"
+      }
+    ],
+    "lang_error": {
+      "displayName": [
+        "ink",
+        "LangError"
+      ],
+      "type": 11
+    },
+    "messages": [
+      {
+        "args": [
+          {
+            "label": "new_treasury",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Set treasury address"
+        ],
+        "label": "set_treasury_address",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0xf64dcc2e"
+      },
+      {
+        "args": [
+          {
+            "label": "duration",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Stakes LUNES tokens for a specified duration"
+        ],
+        "label": "stake",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x5adb38de"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Unstakes tokens and claims rewards"
+        ],
+        "label": "unstake",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x82364901"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Claims pending rewards without unstaking"
+        ],
+        "label": "claim_rewards",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x8027650c"
+      },
+      {
+        "args": [
+          {
+            "label": "name",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "label": "description",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          },
+          {
+            "label": "token_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Creates a new project listing proposal"
+        ],
+        "label": "create_proposal",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 15
+        },
+        "selector": "0xf9fb13d3"
+      },
+      {
+        "args": [
+          {
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "label": "vote_yes",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Votes on a project listing proposal (YES or NO)",
+          " Each vote costs 10 LUNES. Users can vote once per hour.",
+          " Requirements:",
+          " - Voter must have active staking",
+          " Vote distribution:",
+          " - 10% → Rewards Pool (stakers)",
+          " - 10% → Project Liquidity Pool",
+          " - 10% → Treasury",
+          " - 70% → Team",
+          " Project needs 10,000 YES votes minimum to be approved."
+        ],
+        "label": "vote",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x083be260"
+      },
+      {
+        "args": [
+          {
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Executes a proposal after voting period ends",
+          " Project is approved if it reaches MIN_VOTES_FOR_APPROVAL (10,000 votes)"
+        ],
+        "label": "execute_proposal",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0xde5bbbbc"
+      },
+      {
+        "args": [
+          {
+            "label": "account",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Gets stake information for an account"
+        ],
+        "label": "get_stake",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x65dc64a4"
+      },
+      {
+        "args": [
+          {
+            "label": "account",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Gets current rewards for a staker"
+        ],
+        "label": "get_pending_rewards",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 22
+        },
+        "selector": "0xe287096a"
+      },
+      {
+        "args": [
+          {
+            "label": "account",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Gets voting power for an account"
+        ],
+        "label": "get_voting_power",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 22
+        },
+        "selector": "0x4a2df742"
+      },
+      {
+        "args": [
+          {
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Gets proposal information"
+        ],
+        "label": "get_proposal",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 24
+        },
+        "selector": "0xba4dc5ec"
+      },
+      {
+        "args": [
+          {
+            "label": "token_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Checks if a project is approved for listing"
+        ],
+        "label": "is_project_approved",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 28
+        },
+        "selector": "0x7c381a03"
+      },
+      {
+        "args": [
+          {
+            "label": "token_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "reason",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Lista token diretamente via admin (sem governança)",
+          " Usado para tokens iniciais e casos especiais"
+        ],
+        "label": "admin_list_token",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x8e1704ea"
+      },
+      {
+        "args": [
+          {
+            "label": "tokens",
+            "type": {
+              "displayName": [
+                "Vec"
+              ],
+              "type": 29
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Lista múltiplos tokens de uma vez (batch)",
+          " Útil para configuração inicial da DEX"
+        ],
+        "label": "admin_batch_list_tokens",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 15
+        },
+        "selector": "0xb9666721"
+      },
+      {
+        "args": [
+          {
+            "label": "token_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "reason",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Remove token da lista (apenas admin)",
+          " Para casos extremos onde um token precisa ser removido"
+        ],
+        "label": "admin_delist_token",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x38be91a2"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Obter estatísticas de listagem"
+        ],
+        "label": "get_listing_stats",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 31
+        },
+        "selector": "0xf12c1e84"
+      },
+      {
+        "args": [
+          {
+            "label": "new_fee",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "justification",
+            "type": {
+              "displayName": [
+                "String"
+              ],
+              "type": 7
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Propor alteração na taxa de proposta (via governança)"
+        ],
+        "label": "propose_fee_change",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 15
+        },
+        "selector": "0xb94e70e9"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Obter taxa atual de proposta"
+        ],
+        "label": "get_current_proposal_fee",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 33
+        },
+        "selector": "0xc80c3189"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Gets contract statistics"
+        ],
+        "label": "get_stats",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 34
+        },
+        "selector": "0x0b58aa38"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Pauses the contract (admin only)"
+        ],
+        "label": "pause",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x81e0c604"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Unpauses the contract (admin only)"
+        ],
+        "label": "unpause",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x67616649"
+      },
+      {
+        "args": [
+          {
+            "label": "new_owner",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Transfers ownership (admin only)"
+        ],
+        "label": "transfer_ownership",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x107e33ea"
+      },
+      {
+        "args": [
+          {
+            "label": "contract_address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " === FUNÇÕES DE INTEGRAÇÃO COM TRADING REWARDS ===",
+          " Define o endereço do contrato de trading rewards (apenas admin)"
+        ],
+        "label": "set_trading_rewards_contract",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0xe7f39fe0"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Recebe trading rewards do contrato de rewards (apenas contrato autorizado)"
+        ],
+        "label": "fund_staking_rewards",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x201f2814"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Distribui trading rewards para todos os stakers ativos (apenas admin)",
+          " Para compatibilidade, distribui tudo em uma página"
+        ],
+        "label": "distribute_trading_rewards",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0xf5cf946f"
+      },
+      {
+        "args": [
+          {
+            "label": "start_index",
+            "type": {
+              "displayName": [
+                "Option"
+              ],
+              "type": 36
+            }
+          },
+          {
+            "label": "batch_size",
+            "type": {
+              "displayName": [
+                "Option"
+              ],
+              "type": 36
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Distribui trading rewards com paginação para melhor eficiência de gas (apenas admin)",
+          "",
+          " # Parâmetros",
+          " - `start_index`: Índice inicial para distribuição (None = do início)",
+          " - `batch_size`: Número máximo de stakers para processar (None = todos restantes, max 100)",
+          "",
+          " # Retorna",
+          " - `Ok((processed_count, is_complete, next_index))`:",
+          "   - processed_count: número de stakers processados",
+          "   - is_complete: se a distribuição foi finalizada",
+          "   - next_index: próximo índice para continuar (se não completo)"
+        ],
+        "label": "distribute_trading_rewards_paginated",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 37
+        },
+        "selector": "0xaa7b5315"
+      },
+      {
+        "args": [
+          {
+            "label": "voter",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " === FUNÇÕES DE GOVERNANÇA EXPANDIDA ===",
+          " Registra participação em votação (chamado pelo sistema de governança)"
+        ],
+        "label": "record_vote_participation",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0xd42cb090"
+      },
+      {
+        "args": [
+          {
+            "label": "proposer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Recompensa por proposta aprovada (chamado pelo sistema de governança)"
+        ],
+        "label": "reward_approved_proposal",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x8d2ad5f2"
+      },
+      {
+        "args": [
+          {
+            "label": "proposer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Recompensa por proposta implementada (chamado pelo sistema de governança)"
+        ],
+        "label": "reward_implemented_proposal",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0xa6cc83d0"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Permite que o staker reivindique seus bônus de governança"
+        ],
+        "label": "claim_governance_bonus",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 22
+        },
+        "selector": "0xd11a03fd"
+      }
+    ]
+  },
+  "storage": {
+    "root": {
+      "layout": {
+        "struct": {
+          "fields": [
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "owner"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "treasury_address"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "paused"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "locked"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_staked"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_rewards_distributed"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "active_stakers"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "struct": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x329bb9b5",
+                              "ty": 4
+                            }
+                          },
+                          "name": "amount"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x329bb9b5",
+                              "ty": 6
+                            }
+                          },
+                          "name": "start_time"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x329bb9b5",
+                              "ty": 6
+                            }
+                          },
+                          "name": "duration"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x329bb9b5",
+                              "ty": 6
+                            }
+                          },
+                          "name": "last_claim"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x329bb9b5",
+                              "ty": 4
+                            }
+                          },
+                          "name": "pending_rewards"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x329bb9b5",
+                              "ty": 3
+                            }
+                          },
+                          "name": "active"
+                        },
+                        {
+                          "layout": {
+                            "enum": {
+                              "dispatchKey": "0x329bb9b5",
+                              "name": "StakingTier",
+                              "variants": {
+                                "0": {
+                                  "fields": [],
+                                  "name": "Bronze"
+                                },
+                                "1": {
+                                  "fields": [],
+                                  "name": "Silver"
+                                },
+                                "2": {
+                                  "fields": [],
+                                  "name": "Gold"
+                                },
+                                "3": {
+                                  "fields": [],
+                                  "name": "Platinum"
+                                }
+                              }
+                            }
+                          },
+                          "name": "tier"
+                        },
+                        {
+                          "layout": {
+                            "enum": {
+                              "dispatchKey": "0x329bb9b5",
+                              "name": "EarlyAdopterTier",
+                              "variants": {
+                                "0": {
+                                  "fields": [],
+                                  "name": "None"
+                                },
+                                "1": {
+                                  "fields": [],
+                                  "name": "Top1000"
+                                },
+                                "2": {
+                                  "fields": [],
+                                  "name": "Top500"
+                                },
+                                "3": {
+                                  "fields": [],
+                                  "name": "Top100"
+                                }
+                              }
+                            }
+                          },
+                          "name": "early_adopter_tier"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x329bb9b5",
+                              "ty": 5
+                            }
+                          },
+                          "name": "governance_participation"
+                        }
+                      ],
+                      "name": "StakePosition"
+                    }
+                  },
+                  "root_key": "0x329bb9b5"
+                }
+              },
+              "name": "stakes"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x8be54fd9",
+                      "ty": 0
+                    }
+                  },
+                  "root_key": "0x8be54fd9"
+                }
+              },
+              "name": "staker_addresses"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "staker_index"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "struct": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 5
+                            }
+                          },
+                          "name": "id"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 7
+                            }
+                          },
+                          "name": "name"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 7
+                            }
+                          },
+                          "name": "description"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 0
+                            }
+                          },
+                          "name": "token_address"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 0
+                            }
+                          },
+                          "name": "proposer"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 6
+                            }
+                          },
+                          "name": "vote_count"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 4
+                            }
+                          },
+                          "name": "votes_for"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 4
+                            }
+                          },
+                          "name": "votes_against"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 6
+                            }
+                          },
+                          "name": "voting_deadline"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 3
+                            }
+                          },
+                          "name": "executed"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 3
+                            }
+                          },
+                          "name": "active"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 4
+                            }
+                          },
+                          "name": "fee"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 3
+                            }
+                          },
+                          "name": "fee_refunded"
+                        },
+                        {
+                          "layout": {
+                            "enum": {
+                              "dispatchKey": "0xbe58b26c",
+                              "name": "Option",
+                              "variants": {
+                                "0": {
+                                  "fields": [],
+                                  "name": "None"
+                                },
+                                "1": {
+                                  "fields": [
+                                    {
+                                      "layout": {
+                                        "leaf": {
+                                          "key": "0xbe58b26c",
+                                          "ty": 4
+                                        }
+                                      },
+                                      "name": "0"
+                                    }
+                                  ],
+                                  "name": "Some"
+                                }
+                              }
+                            }
+                          },
+                          "name": "new_fee_amount"
+                        }
+                      ],
+                      "name": "ProjectProposal"
+                    }
+                  },
+                  "root_key": "0xbe58b26c"
+                }
+              },
+              "name": "proposals"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "next_proposal_id"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x9bba1e27",
+                      "ty": 3
+                    }
+                  },
+                  "root_key": "0x9bba1e27"
+                }
+              },
+              "name": "user_votes"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x7fe010b1",
+                      "ty": 3
+                    }
+                  },
+                  "root_key": "0x7fe010b1"
+                }
+              },
+              "name": "approved_projects"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "trading_rewards_pool"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x00000000",
+                              "ty": 0
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "trading_rewards_contract"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0xe368b3c1",
+                      "ty": 5
+                    }
+                  },
+                  "root_key": "0xe368b3c1"
+                }
+              },
+              "name": "tier_multipliers"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x6b8c722c",
+                      "ty": 4
+                    }
+                  },
+                  "root_key": "0x6b8c722c"
+                }
+              },
+              "name": "governance_bonuses"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x4c1b1de4",
+                      "ty": 5
+                    }
+                  },
+                  "root_key": "0x4c1b1de4"
+                }
+              },
+              "name": "early_adopter_counts"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "struct": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x26e1bc63",
+                              "ty": 8
+                            }
+                          },
+                          "name": "name"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x26e1bc63",
+                              "ty": 5
+                            }
+                          },
+                          "name": "bonus_rate"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x26e1bc63",
+                              "ty": 6
+                            }
+                          },
+                          "name": "start_time"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x26e1bc63",
+                              "ty": 6
+                            }
+                          },
+                          "name": "end_time"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x26e1bc63",
+                              "ty": 3
+                            }
+                          },
+                          "name": "active"
+                        }
+                      ],
+                      "name": "Campaign"
+                    }
+                  },
+                  "root_key": "0x26e1bc63"
+                }
+              },
+              "name": "active_campaigns"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "next_campaign_id"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_trading_rewards_distributed"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "current_proposal_fee"
+            }
+          ],
+          "name": "StakingContract"
+        }
+      },
+      "root_key": "0x00000000"
+    }
+  },
+  "types": [
+    {
+      "id": 0,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "AccountId"
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "type": {
+        "def": {
+          "array": {
+            "len": 32,
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": {
+        "def": {
+          "primitive": "u8"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": {
+        "def": {
+          "primitive": "bool"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": {
+        "def": {
+          "primitive": "u128"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": {
+        "def": {
+          "primitive": "u32"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": {
+        "def": {
+          "primitive": "u64"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": {
+        "def": {
+          "primitive": "str"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": {
+        "def": {
+          "sequence": {
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 10
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "type": {
+        "def": {
+          "tuple": []
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 1,
+                "name": "CouldNotReadInput"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "LangError"
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 13
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 14
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 10
+          },
+          {
+            "name": "E",
+            "type": 14
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "InsufficientBalance"
+              },
+              {
+                "index": 1,
+                "name": "NoActiveStake"
+              },
+              {
+                "index": 2,
+                "name": "MinimumStakeNotMet"
+              },
+              {
+                "index": 3,
+                "name": "StakingPeriodNotCompleted"
+              },
+              {
+                "index": 4,
+                "name": "AccessDenied"
+              },
+              {
+                "index": 5,
+                "name": "InvalidDuration"
+              },
+              {
+                "index": 6,
+                "name": "ContractPaused"
+              },
+              {
+                "index": 7,
+                "name": "EarlyUnstaking"
+              },
+              {
+                "index": 8,
+                "name": "MaxStakersReached"
+              },
+              {
+                "index": 9,
+                "name": "InvalidProposal"
+              },
+              {
+                "index": 10,
+                "name": "AlreadyVoted"
+              },
+              {
+                "index": 11,
+                "name": "VotingPeriodExpired"
+              },
+              {
+                "index": 12,
+                "name": "InsufficientVotingPower"
+              },
+              {
+                "index": 13,
+                "name": "InsufficientFee"
+              },
+              {
+                "index": 14,
+                "name": "Overflow"
+              },
+              {
+                "index": 15,
+                "name": "ZeroAddress"
+              },
+              {
+                "index": 16,
+                "name": "Reentrancy"
+              },
+              {
+                "index": 17,
+                "name": "ZeroAmount"
+              },
+              {
+                "index": 18,
+                "name": "NoRewardsToClaim"
+              },
+              {
+                "index": 19,
+                "name": "AlreadyListed"
+              },
+              {
+                "index": 20,
+                "name": "TokenNotListed"
+              },
+              {
+                "index": 21,
+                "name": "TooManyTokens"
+              },
+              {
+                "index": 22,
+                "name": "InvalidAmount"
+              },
+              {
+                "index": 23,
+                "name": "NoStakeFound"
+              }
+            ]
+          }
+        },
+        "path": [
+          "staking_contract",
+          "staking_contract",
+          "StakingError"
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 16
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 16
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 5
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 14
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 5
+          },
+          {
+            "name": "E",
+            "type": 14
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 18
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 18
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 19
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 19
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "name": "amount",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "start_time",
+                "type": 6,
+                "typeName": "Timestamp"
+              },
+              {
+                "name": "duration",
+                "type": 6,
+                "typeName": "u64"
+              },
+              {
+                "name": "last_claim",
+                "type": 6,
+                "typeName": "Timestamp"
+              },
+              {
+                "name": "pending_rewards",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "active",
+                "type": 3,
+                "typeName": "bool"
+              },
+              {
+                "name": "tier",
+                "type": 20,
+                "typeName": "StakingTier"
+              },
+              {
+                "name": "early_adopter_tier",
+                "type": 21,
+                "typeName": "EarlyAdopterTier"
+              },
+              {
+                "name": "governance_participation",
+                "type": 5,
+                "typeName": "u32"
+              }
+            ]
+          }
+        },
+        "path": [
+          "staking_contract",
+          "staking_contract",
+          "StakePosition"
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "Bronze"
+              },
+              {
+                "index": 1,
+                "name": "Silver"
+              },
+              {
+                "index": 2,
+                "name": "Gold"
+              },
+              {
+                "index": 3,
+                "name": "Platinum"
+              }
+            ]
+          }
+        },
+        "path": [
+          "staking_contract",
+          "staking_contract",
+          "StakingTier"
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "index": 1,
+                "name": "Top1000"
+              },
+              {
+                "index": 2,
+                "name": "Top500"
+              },
+              {
+                "index": 3,
+                "name": "Top100"
+              }
+            ]
+          }
+        },
+        "path": [
+          "staking_contract",
+          "staking_contract",
+          "EarlyAdopterTier"
+        ]
+      }
+    },
+    {
+      "id": 22,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 23
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 23
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 14
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          },
+          {
+            "name": "E",
+            "type": 14
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 25
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 25
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 26
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 26
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "name": "id",
+                "type": 5,
+                "typeName": "u32"
+              },
+              {
+                "name": "name",
+                "type": 7,
+                "typeName": "String"
+              },
+              {
+                "name": "description",
+                "type": 7,
+                "typeName": "String"
+              },
+              {
+                "name": "token_address",
+                "type": 0,
+                "typeName": "AccountId"
+              },
+              {
+                "name": "proposer",
+                "type": 0,
+                "typeName": "AccountId"
+              },
+              {
+                "name": "vote_count",
+                "type": 6,
+                "typeName": "u64"
+              },
+              {
+                "name": "votes_for",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "votes_against",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "voting_deadline",
+                "type": 6,
+                "typeName": "Timestamp"
+              },
+              {
+                "name": "executed",
+                "type": 3,
+                "typeName": "bool"
+              },
+              {
+                "name": "active",
+                "type": 3,
+                "typeName": "bool"
+              },
+              {
+                "name": "fee",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "fee_refunded",
+                "type": 3,
+                "typeName": "bool"
+              },
+              {
+                "name": "new_fee_amount",
+                "type": 27,
+                "typeName": "Option<Balance>"
+              }
+            ]
+          }
+        },
+        "path": [
+          "staking_contract",
+          "staking_contract",
+          "ProjectProposal"
+        ]
+      }
+    },
+    {
+      "id": 27,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 28,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 3
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 3
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "type": {
+        "def": {
+          "sequence": {
+            "type": 30
+          }
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": {
+        "def": {
+          "tuple": [
+            0,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 32
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 32
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 32,
+      "type": {
+        "def": {
+          "tuple": [
+            5,
+            5,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 34,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 35
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 35
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 35,
+      "type": {
+        "def": {
+          "tuple": [
+            4,
+            4,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "id": 36,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 5
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 5
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 37,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 38
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 38
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 38,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 39
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 14
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 39
+          },
+          {
+            "name": "E",
+            "type": 14
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 39,
+      "type": {
+        "def": {
+          "tuple": [
+            5,
+            3,
+            36
+          ]
+        }
+      }
+    },
+    {
+      "id": 40,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 41,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "Hash"
+        ]
+      }
+    },
+    {
+      "id": 42,
+      "type": {
+        "def": {
+          "variant": {}
+        },
+        "path": [
+          "ink_env",
+          "types",
+          "NoChainExtension"
+        ]
+      }
+    }
+  ],
+  "version": "4"
+}
