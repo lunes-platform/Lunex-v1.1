@@ -19,6 +19,10 @@ import LayoutDefault from '../components/layout'
 import Docs from 'pages/docs'
 import Affiliates from 'pages/affiliates'
 import ProtocolStats from 'pages/protocolStats'
+import StrategyMarketplace from 'pages/strategies'
+import StrategyDetail from 'pages/strategies/Detail'
+import AgentDashboard from 'pages/agent'
+import AgentGetStarted from 'pages/agents/GetStarted'
 
 const AppRoutes = () => {
   return (
@@ -46,6 +50,10 @@ const AppRoutes = () => {
       <Route path="/affiliates" element={<Affiliates />} />
       <Route path="/referral" element={<Affiliates />} />
       <Route path="/protocol-stats" element={<ProtocolStats />} />
+      <Route path="/strategies" element={<StrategyMarketplace />} />
+      <Route path="/strategies/:id" element={<StrategyDetail />} />
+      <Route path="/agent" element={<AgentDashboard />} />
+      <Route path="/agents/get-started" element={<AgentGetStarted />} />
     </Routes>
   )
 }
