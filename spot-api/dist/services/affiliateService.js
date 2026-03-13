@@ -7,7 +7,6 @@ exports.affiliateService = void 0;
 const crypto_1 = __importDefault(require("crypto"));
 const library_1 = require("@prisma/client/runtime/library");
 const db_1 = __importDefault(require("../db"));
-const prismaAny = db_1.default;
 // Aggressive model: 4% → 3% → 1.5% → 1% → 0.5%
 const AFFILIATE_RATES_BPS = [400, 300, 150, 100, 50];
 const MAX_LEVELS = 5;
@@ -22,7 +21,7 @@ exports.affiliateService = {
      * Get or generate a referral code for an address
      */
     async getOrCreateReferralCode(address) {
-        const existing = await prismaAny.referral.findFirst({
+        const existing = await db_1.default.referral.findFirst({
             where: { referrerAddress: address },
             select: { referralCode: true },
         });
@@ -32,59 +31,42 @@ exports.affiliateService = {
     },
     /**
      * Register a new referral. Links refereeAddress to the owner of the referralCode.
-     * Computes chain depth (level) — max 5 levels.
      */
     async registerReferral(refereeAddress, referralCode) {
-        const alreadyReferred = await prismaAny.referral.findUnique({
+        const alreadyReferred = await db_1.default.referral.findUnique({
             where: { refereeAddress },
         });
         if (alreadyReferred) {
             throw new Error('Address already has a referrer');
         }
         // Find the referrer — look for someone whose code matches
-        const referrerRef = await prismaAny.referral.findFirst({
+        const referrerRef = await db_1.default.referral.findFirst({
             where: { referralCode },
             select: { referrerAddress: true },
         });
-        // The referralCode may belong to a user who has never been referred themselves
-        // In that case, find the address that generates this code
-        let referrerAddress = null;
-        if (referrerRef) {
-            referrerAddress = referrerRef.referrerAddress;
-        }
-        else {
-            // The code is generated from an address hash — try to find existing referrals with this code
-            // or accept the code as-is (first-time referrer)
-        }
-        // If we still can't find the referrer from DB, the code is from a new address
-        // We store the referral with level 1
-        const referral = await prismaAny.referral.create({
-            data: {
-                referrerAddress: referrerAddress || `code:${referralCode}`,
-                refereeAddress,
-                referralCode,
-                level: 1,
-            },
-        });
+        const referralData = {
+            referrerAddress: referrerRef?.referrerAddress ?? `code:${referralCode}`,
+            refereeAddress,
+            referralCode,
+            level: 1,
+        };
+        const referral = await db_1.default.referral.create({ data: referralData });
         return referral;
     },
     /**
      * Walk up the referral chain from a given address, returning ancestors up to MAX_LEVELS.
-     * Returns array of { address, level } where level 1 = direct referrer.
+     * Uses a single loop with sequential findUnique — max 5 queries total (bounded depth).
      */
     async getReferralChain(address) {
         const chain = [];
         let currentAddress = address;
         for (let level = 1; level <= MAX_LEVELS; level++) {
-            const referral = await prismaAny.referral.findUnique({
+            const referral = await db_1.default.referral.findUnique({
                 where: { refereeAddress: currentAddress },
             });
             if (!referral)
                 break;
-            chain.push({
-                address: referral.referrerAddress,
-                level,
-            });
+            chain.push({ address: referral.referrerAddress, level });
             currentAddress = referral.referrerAddress;
         }
         return chain;
@@ -108,7 +90,7 @@ exports.affiliateService = {
             const commissionAmount = (fee * rateBps) / BPS_DENOMINATOR;
             if (commissionAmount <= 0)
                 continue;
-            const commission = await prismaAny.affiliateCommission.create({
+            const commission = await db_1.default.affiliateCommission.create({
                 data: {
                     beneficiaryAddr: ancestor.address,
                     sourceAddr,
@@ -130,31 +112,26 @@ exports.affiliateService = {
      * Dashboard: aggregate earnings for an affiliate
      */
     async getDashboard(address) {
-        // Earnings by level
-        const earningsByLevel = await prismaAny.affiliateCommission.groupBy({
-            by: ['level', 'feeToken'],
-            where: { beneficiaryAddr: address },
-            _sum: { commissionAmount: true },
-            _count: true,
-        });
-        // Total unpaid
-        const unpaid = await prismaAny.affiliateCommission.aggregate({
-            where: { beneficiaryAddr: address, isPaid: false },
-            _sum: { commissionAmount: true },
-            _count: true,
-        });
-        // Total paid
-        const paid = await prismaAny.affiliateCommission.aggregate({
-            where: { beneficiaryAddr: address, isPaid: true },
-            _sum: { commissionAmount: true },
-            _count: true,
-        });
-        // Direct referral count
-        const directReferrals = await prismaAny.referral.count({
-            where: { referrerAddress: address },
-        });
-        // Get referral code
-        const referralCode = await this.getOrCreateReferralCode(address);
+        const [earningsByLevel, unpaid, paid, directReferrals, referralCode] = await Promise.all([
+            db_1.default.affiliateCommission.groupBy({
+                by: ['level', 'feeToken'],
+                where: { beneficiaryAddr: address },
+                _sum: { commissionAmount: true },
+                _count: true,
+            }),
+            db_1.default.affiliateCommission.aggregate({
+                where: { beneficiaryAddr: address, isPaid: false },
+                _sum: { commissionAmount: true },
+                _count: true,
+            }),
+            db_1.default.affiliateCommission.aggregate({
+                where: { beneficiaryAddr: address, isPaid: true },
+                _sum: { commissionAmount: true },
+                _count: true,
+            }),
+            db_1.default.referral.count({ where: { referrerAddress: address } }),
+            this.getOrCreateReferralCode(address),
+        ]);
         return {
             referralCode,
             directReferrals,
@@ -162,7 +139,7 @@ exports.affiliateService = {
                 level: e.level,
                 token: e.feeToken,
                 totalEarned: parseFloat(e._sum.commissionAmount?.toString() || '0'),
-                tradeCount: e._count,
+                tradeCount: typeof e._count === 'number' ? e._count : 0,
             })),
             totalUnpaid: parseFloat(unpaid._sum.commissionAmount?.toString() || '0'),
             unpaidCount: unpaid._count,
@@ -176,48 +153,59 @@ exports.affiliateService = {
         };
     },
     /**
-     * Referral tree: get downstream referees for an address
+     * Referral tree: get downstream referees for an address.
+     *
+     * B1 FIX: Instead of 2 queries per referee in a loop (N+1),
+     * we batch-fetch all counts and earnings in a single groupBy + aggregate
+     * at each depth level before building the node list.
      */
     async getReferralTree(address, maxDepth = 3) {
-        const tree = await this._buildTree(address, 1, maxDepth);
-        return tree;
+        return this._buildTreeBatched(address, 1, maxDepth);
     },
-    async _buildTree(address, currentDepth, maxDepth) {
+    async _buildTreeBatched(address, currentDepth, maxDepth) {
         if (currentDepth > maxDepth)
             return [];
-        const directs = await prismaAny.referral.findMany({
+        const directs = await db_1.default.referral.findMany({
             where: { referrerAddress: address },
             select: { refereeAddress: true, createdAt: true },
             orderBy: { createdAt: 'desc' },
             take: 50,
         });
-        const nodes = [];
-        for (const ref of directs) {
-            const subCount = await prismaAny.referral.count({
-                where: { referrerAddress: ref.refereeAddress },
-            });
-            const earnings = await prismaAny.affiliateCommission.aggregate({
-                where: { sourceAddr: ref.refereeAddress },
+        if (directs.length === 0)
+            return [];
+        const refereeAddresses = directs.map((d) => d.refereeAddress);
+        // B1 FIX: Batch all counts and earnings in 2 queries instead of 2×N
+        const [subCountsRaw, earningsRaw] = await Promise.all([
+            db_1.default.referral.groupBy({
+                by: ['referrerAddress'],
+                where: { referrerAddress: { in: refereeAddresses } },
+                _count: { id: true },
+            }),
+            db_1.default.affiliateCommission.groupBy({
+                by: ['sourceAddr'],
+                where: { sourceAddr: { in: refereeAddresses } },
                 _sum: { commissionAmount: true },
-            });
-            nodes.push({
-                address: ref.refereeAddress,
-                joinedAt: ref.createdAt,
-                level: currentDepth,
-                subReferrals: subCount,
-                totalFeeGenerated: parseFloat(earnings._sum.commissionAmount?.toString() || '0'),
-                children: currentDepth < maxDepth
-                    ? await this._buildTree(ref.refereeAddress, currentDepth + 1, maxDepth)
-                    : [],
-            });
-        }
-        return nodes;
+            }),
+        ]);
+        const subCountMap = new Map(subCountsRaw.map((r) => [r.referrerAddress, r._count.id]));
+        const earningsMap = new Map(earningsRaw.map((r) => [r.sourceAddr, r._sum.commissionAmount]));
+        const childrenResults = currentDepth < maxDepth
+            ? await Promise.all(refereeAddresses.map((addr) => this._buildTreeBatched(addr, currentDepth + 1, maxDepth)))
+            : refereeAddresses.map(() => []);
+        return directs.map((ref, i) => ({
+            address: ref.refereeAddress,
+            joinedAt: ref.createdAt,
+            level: currentDepth,
+            subReferrals: subCountMap.get(ref.refereeAddress) ?? 0,
+            totalFeeGenerated: parseFloat(earningsMap.get(ref.refereeAddress)?.toString() || '0'),
+            children: childrenResults[i],
+        }));
     },
     /**
-     * Payout history: list completed batches for an address
+     * Payout history: list completed commissions for an address
      */
     async getPayoutHistory(address, limit = 20) {
-        const commissions = await prismaAny.affiliateCommission.findMany({
+        const commissions = await db_1.default.affiliateCommission.findMany({
             where: { beneficiaryAddr: address, isPaid: true },
             orderBy: { createdAt: 'desc' },
             take: limit,
@@ -241,40 +229,37 @@ exports.affiliateService = {
         const now = new Date();
         const periodEnd = now;
         const periodStart = new Date(now.getTime() - PAYOUT_INTERVAL_DAYS * 24 * 60 * 60 * 1000);
-        const batch = await prismaAny.affiliatePayoutBatch.create({
-            data: {
-                periodStart,
-                periodEnd,
-                status: 'PROCESSING',
-            },
+        const batch = await db_1.default.affiliatePayoutBatch.create({
+            data: { periodStart, periodEnd, status: 'PROCESSING' },
         });
         try {
-            const unpaid = await prismaAny.affiliateCommission.findMany({
+            const unpaid = await db_1.default.affiliateCommission.findMany({
                 where: { isPaid: false, createdAt: { lte: periodEnd } },
             });
             if (unpaid.length === 0) {
-                await prismaAny.affiliatePayoutBatch.update({
+                await db_1.default.affiliatePayoutBatch.update({
                     where: { id: batch.id },
                     data: { status: 'COMPLETED', processedAt: now, totalPaid: new library_1.Decimal('0') },
                 });
                 return { batchId: batch.id, processed: 0, totalPaid: 0 };
             }
             let totalPaid = new library_1.Decimal('0');
+            // Batch the updates in a single transaction instead of per-loop awaits
+            await db_1.default.$transaction(unpaid.map((commission) => db_1.default.affiliateCommission.update({
+                where: { id: commission.id },
+                data: { isPaid: true, batchId: batch.id },
+            })));
             for (const commission of unpaid) {
-                await prismaAny.affiliateCommission.update({
-                    where: { id: commission.id },
-                    data: { isPaid: true, batchId: batch.id },
-                });
                 totalPaid = totalPaid.plus(commission.commissionAmount);
             }
-            await prismaAny.affiliatePayoutBatch.update({
+            await db_1.default.affiliatePayoutBatch.update({
                 where: { id: batch.id },
                 data: { status: 'COMPLETED', processedAt: now, totalPaid },
             });
             return { batchId: batch.id, processed: unpaid.length, totalPaid: parseFloat(totalPaid.toString()) };
         }
         catch (error) {
-            await prismaAny.affiliatePayoutBatch.update({
+            await db_1.default.affiliatePayoutBatch.update({
                 where: { id: batch.id },
                 data: { status: 'FAILED' },
             });

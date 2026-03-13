@@ -25,16 +25,37 @@ declare class SocialIndexerService {
     private getRecoveryStartBlock;
     private processRange;
     private processBlock;
+    private syncFromSubquery;
     syncOnce(): Promise<{
         enabled: boolean;
         processedBlocks: number;
         indexedEvents: number;
         prismaReady?: undefined;
+        source?: undefined;
         latestBlock?: undefined;
         lastProcessedBlock?: undefined;
         recovered?: undefined;
     } | {
         enabled: boolean;
+        processedBlocks: number;
+        indexedEvents: number;
+        prismaReady: boolean;
+        source?: undefined;
+        latestBlock?: undefined;
+        lastProcessedBlock?: undefined;
+        recovered?: undefined;
+    } | {
+        enabled: boolean;
+        source: string;
+        processedBlocks: number;
+        indexedEvents: number;
+        latestBlock: number;
+        prismaReady: boolean;
+        lastProcessedBlock?: undefined;
+        recovered?: undefined;
+    } | {
+        enabled: boolean;
+        source: string;
         processedBlocks: number;
         indexedEvents: number;
         prismaReady: boolean;
@@ -48,6 +69,7 @@ declare class SocialIndexerService {
         latestBlock: number;
         lastProcessedBlock: any;
         prismaReady?: undefined;
+        source?: undefined;
         recovered?: undefined;
     } | {
         enabled: boolean;
@@ -57,6 +79,7 @@ declare class SocialIndexerService {
         lastProcessedBlock: number;
         recovered: boolean;
         prismaReady?: undefined;
+        source?: undefined;
     }>;
 }
 export declare const socialIndexerService: SocialIndexerService;

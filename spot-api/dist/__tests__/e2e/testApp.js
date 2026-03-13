@@ -15,6 +15,7 @@ const social_1 = __importDefault(require("../../routes/social"));
 const copytrade_1 = __importDefault(require("../../routes/copytrade"));
 const margin_1 = __importDefault(require("../../routes/margin"));
 const affiliate_1 = __importDefault(require("../../routes/affiliate"));
+const agents_1 = __importDefault(require("../../routes/agents"));
 const marginService_1 = require("../../services/marginService");
 const app = (0, express_1.default)();
 app.use((0, helmet_1.default)());
@@ -29,6 +30,7 @@ app.use('/api/v1/social', social_1.default);
 app.use('/api/v1/copytrade', copytrade_1.default);
 app.use('/api/v1/margin', margin_1.default);
 app.use('/api/v1/affiliate', affiliate_1.default);
+app.use('/api/v1/agents', agents_1.default);
 app.get('/health', (_req, res) => {
     res.json({
         status: 'ok',

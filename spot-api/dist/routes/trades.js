@@ -4,7 +4,7 @@ const express_1 = require("express");
 const tradeService_1 = require("../services/tradeService");
 const validation_1 = require("../utils/validation");
 const router = (0, express_1.Router)();
-router.get('/settlement/status', async (req, res) => {
+router.get('/settlement/status', async (req, res, next) => {
     try {
         const parsed = validation_1.TradeSettlementQuerySchema.safeParse(req.query);
         if (!parsed.success) {
@@ -14,10 +14,10 @@ router.get('/settlement/status', async (req, res) => {
         res.json({ trades });
     }
     catch (err) {
-        res.status(500).json({ error: err.message });
+        next(err);
     }
 });
-router.post('/settlement/retry', async (req, res) => {
+router.post('/settlement/retry', async (req, res, next) => {
     try {
         const parsed = validation_1.RetryTradeSettlementsSchema.safeParse(req.body);
         if (!parsed.success) {
@@ -27,23 +27,28 @@ router.post('/settlement/retry', async (req, res) => {
         res.json(result);
     }
     catch (err) {
-        res.status(500).json({ error: err.message });
+        next(err);
     }
 });
-// GET /api/v1/trades/:symbol — Recent trades for a pair
-router.get('/:symbol', async (req, res) => {
+router.get('/:symbol', async (req, res, next) => {
     try {
-        const limit = parseInt(req.query.limit) || 50;
-        const trades = await tradeService_1.tradeService.getRecentTrades(req.params.symbol, limit);
+        const symbol = req.query.symbol ?? req.params.symbol;
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+        const trades = await tradeService_1.tradeService.getRecentTrades(symbol, limit);
         res.json({ trades });
     }
     catch (err) {
-        res.status(400).json({ error: err.message });
+        next(err);
     }
 });
-// GET /api/v1/trades?address=... — User trade history
-router.get('/', async (req, res) => {
+router.get('/', async (req, res, next) => {
     try {
+        // If ?symbol= is provided, return recent trades for that pair
+        if (req.query.symbol && typeof req.query.symbol === 'string') {
+            const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+            const trades = await tradeService_1.tradeService.getRecentTrades(req.query.symbol, limit);
+            return res.json({ trades });
+        }
         const { address } = req.query;
         if (!address || typeof address !== 'string') {
             return res.status(400).json({ error: 'address required' });
@@ -55,7 +60,7 @@ router.get('/', async (req, res) => {
         res.json({ trades });
     }
     catch (err) {
-        res.status(500).json({ error: err.message });
+        next(err);
     }
 });
 exports.default = router;

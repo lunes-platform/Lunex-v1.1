@@ -87,7 +87,7 @@ export const Landing: React.FC = () => {
           <S.NavLink href="#ai-agents">AI Agents</S.NavLink>
           <S.NavLink href="#copytrade">Copytrade</S.NavLink>
           <S.NavLink href="#ecosystem">Ecosystem</S.NavLink>
-          <S.NavLink href="https://docs.lunes.io" target="_blank" rel="noopener noreferrer">Docs</S.NavLink>
+          <S.NavLink href="#" onClick={(e: React.MouseEvent) => { e.preventDefault(); navigate('/docs') }}>Docs</S.NavLink>
         </S.NavLinks>
         <S.ConnectBtn onClick={() => navigate('/swap')}>Launch App</S.ConnectBtn>
       </S.Nav>
@@ -107,7 +107,7 @@ export const Landing: React.FC = () => {
           >
             Launch App <ArrowRight />
           </S.PrimaryBtn>
-          <S.SecBtn onClick={() => window.open('https://docs.lunes.io', '_blank')}>
+          <S.SecBtn onClick={() => navigate('/docs')}>
             Explore Docs <ExternalLink />
           </S.SecBtn>
         </S.HeroBtns>

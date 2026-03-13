@@ -32,6 +32,9 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.settlementService = void 0;
 const fs = __importStar(require("fs/promises"));
@@ -39,7 +42,12 @@ const path = __importStar(require("path"));
 const api_1 = require("@polkadot/api");
 const api_contract_1 = require("@polkadot/api-contract");
 const util_crypto_1 = require("@polkadot/util-crypto");
+const util_1 = require("@polkadot/util");
 const config_1 = require("../config");
+const logger_1 = require("../utils/logger");
+const db_1 = __importDefault(require("../db"));
+const auth_1 = require("../middleware/auth");
+const txWithTimeout_1 = require("../utils/txWithTimeout");
 function normalizeMethodKey(key) {
     return key.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -62,6 +70,44 @@ function decimalToUnits(value, decimals) {
     const fraction = BigInt((fractionPart + '0'.repeat(decimals)).slice(0, decimals) || '0');
     const result = whole + fraction;
     return negative ? -result : result;
+}
+/**
+ * Convert an order signature string to a 64-byte Uint8Array suitable for
+ * the on-chain `SignedOrder.signature: [u8; 64]` field.
+ *
+ * Three cases:
+ *   1. Real sr25519 hex signature ("0x…" or bare hex, 128 hex chars = 64 bytes)
+ *      → decode directly.
+ *   2. Agent-delegated order ("agent:<id>")
+ *      → the agent's orders are pre-validated off-chain via the agent registry;
+ *        we encode a non-zero sentinel so the contract's blank-signature guard
+ *        does not reject it. The first byte is 0x01 (agent marker), remaining
+ *        bytes are the UTF-8 of the agent id (up to 63 bytes), zero-padded.
+ *   3. Any other unexpected format
+ *      → throws, preventing an invalid settlement from reaching the chain.
+ */
+function signatureToBytes(sig) {
+    // Case 1 — real sr25519 signature
+    if ((0, util_1.isHex)(sig) || /^[0-9a-fA-F]{128}$/.test(sig)) {
+        const hex = sig.startsWith('0x') ? sig : `0x${sig}`;
+        const bytes = (0, util_1.hexToU8a)(hex);
+        if (bytes.length !== 64) {
+            throw new Error(`Invalid sr25519 signature length: expected 64 bytes, got ${bytes.length}. ` +
+                `Signature (truncated): ${sig.slice(0, 20)}…`);
+        }
+        return Array.from(bytes);
+    }
+    // Case 2 — agent-delegated order: off-chain verification already passed via
+    // assertOrderTrustedSource. Encode as non-zero sentinel for contract storage.
+    if (sig.startsWith('agent:')) {
+        const idBytes = Buffer.from(sig.slice('agent:'.length), 'utf-8').subarray(0, 63);
+        const out = new Uint8Array(64);
+        out[0] = 0x01; // agent marker — non-zero so the blank-sig guard doesn't fire
+        out.set(idBytes, 1);
+        return Array.from(out);
+    }
+    throw new Error(`Unrecognised signature format for settlement: ${sig.slice(0, 20)}…. ` +
+        `Expected a 64-byte sr25519 hex signature or "agent:<id>".`);
 }
 function nonceToU64(nonce) {
     const digits = nonce.replace(/\D/g, '');
@@ -123,7 +169,7 @@ class SpotSettlementService {
             const isNonceCancelledMethodKey = resolveMethodKeyByKind(contract, 'is_nonce_cancelled', 'query');
             const cancelOrderForMethodKey = resolveMethodKeyByKind(contract, 'cancel_order_for', 'tx');
             if (!settleMethodKey || !getBalanceMethodKey || !isNonceUsedMethodKey || !isNonceCancelledMethodKey) {
-                console.warn('[SpotSettlement] Required contract methods not found in contract metadata');
+                logger_1.log.warn('[SpotSettlement] Required contract methods not found in contract metadata');
                 return false;
             }
             this.api = api;
@@ -134,18 +180,31 @@ class SpotSettlementService {
             this.isNonceUsedMethodKey = isNonceUsedMethodKey;
             this.isNonceCancelledMethodKey = isNonceCancelledMethodKey;
             this.cancelOrderForMethodKey = cancelOrderForMethodKey;
-            console.log('[SpotSettlement] On-chain settlement enabled');
+            logger_1.log.info('[SpotSettlement] On-chain settlement enabled');
             return true;
         }
         catch (error) {
-            console.error('[SpotSettlement] Failed to initialize settlement service:', error);
+            logger_1.log.error({ err: error }, '[SpotSettlement] Failed to initialize settlement service');
             return false;
         }
     }
     toAccountId(address, isNative) {
         if (!this.api)
             throw new Error('Settlement API not initialized');
-        return isNative ? this.api.createType('AccountId', new Uint8Array(32)) : this.api.createType('AccountId', address);
+        if (isNative) {
+            // Native token (LUNES) must be represented by a known placeholder AccountId
+            // that matches the on-chain constant in the Spot contract (typically 0x00...00 or a specific sentinel).
+            // Configure NATIVE_TOKEN_ADDRESS in .env to match the contract's expectation.
+            const nativeAddr = config_1.config.blockchain.nativeTokenAddress;
+            if (!nativeAddr) {
+                logger_1.log.warn('[SpotSettlement] NATIVE_TOKEN_ADDRESS not set in config — falling back to zero AccountId. ' +
+                    'This may cause settlement failures for native-token pairs. ' +
+                    'Set NATIVE_TOKEN_ADDRESS in your .env to the sentinel address expected by the Spot contract.');
+                return this.api.createType('AccountId', new Uint8Array(32));
+            }
+            return this.api.createType('AccountId', nativeAddr);
+        }
+        return this.api.createType('AccountId', address);
     }
     toUserAccountId(address) {
         if (!this.api)
@@ -212,9 +271,62 @@ class SpotSettlementService {
             filled_amount: decimalToUnits(order.filledAmount, pair.baseDecimals).toString(),
             nonce: nonceToU64(order.nonce).toString(),
             expiry: order.expiresAt ? String(order.expiresAt.getTime()) : '0',
+            // sr25519 signature bytes stored on-chain for auditability.
+            // Off-chain verification is done in assertOrderTrustedSource() before
+            // this call. See verify_order_signature() in spot_settlement/lib.rs.
+            signature: signatureToBytes(order.signature),
         };
     }
+    buildOrderSignatureMessage(pair, order) {
+        return (0, auth_1.buildSpotOrderMessage)({
+            pairSymbol: pair.symbol,
+            side: order.side,
+            type: order.type,
+            price: order.price,
+            stopPrice: order.stopPrice || undefined,
+            amount: order.amount,
+            nonce: order.nonce,
+        });
+    }
+    async assertOrderTrustedSource(pair, order) {
+        if (!order.signature || order.signature.length < 8) {
+            throw new Error(`Missing order signature for ${order.makerAddress}`);
+        }
+        if (order.signature.startsWith('agent:')) {
+            const agentId = order.signature.slice('agent:'.length);
+            if (!agentId) {
+                throw new Error(`Malformed agent signature for ${order.makerAddress}`);
+            }
+            const agent = await db_1.default.agent.findUnique({
+                where: { id: agentId },
+                select: {
+                    id: true,
+                    walletAddress: true,
+                    isActive: true,
+                    isBanned: true,
+                },
+            });
+            if (!agent || agent.walletAddress !== order.makerAddress || !agent.isActive || agent.isBanned) {
+                throw new Error(`Untrusted agent order origin for ${order.makerAddress}`);
+            }
+            return;
+        }
+        if (order.signature.startsWith('manual:')) {
+            throw new Error(`Unsupported synthetic signature for ${order.makerAddress}`);
+        }
+        const isValid = await (0, auth_1.verifyAddressSignature)(this.buildOrderSignatureMessage(pair, order), order.signature, order.makerAddress);
+        if (!isValid) {
+            throw new Error(`Invalid order signature for ${order.makerAddress}`);
+        }
+    }
+    async assertSettlementInputTrusted(input) {
+        await Promise.all([
+            this.assertOrderTrustedSource(input.pair, input.makerOrder),
+            this.assertOrderTrustedSource(input.pair, input.takerOrder),
+        ]);
+    }
     async submitSettlement(input) {
+        await this.assertSettlementInputTrusted(input);
         const isReady = await this.ensureReady();
         if (!isReady || !this.contract || !this.relayer || !this.settleMethodKey) {
             return null;
@@ -232,7 +344,7 @@ class SpotSettlementService {
         if (result.isErr) {
             throw new Error(`[SpotSettlement] Query failed for trade ${input.tradeId}: ${result.toString()}`);
         }
-        return await new Promise((resolve, reject) => {
+        const txPromise = new Promise((resolve, reject) => {
             let unsub;
             txMethod({ gasLimit: gasRequired, storageDepositLimit: null }, makerOrder, takerOrder, fillAmount, fillPrice)
                 .signAndSend(this.relayer, (txResult) => {
@@ -254,6 +366,7 @@ class SpotSettlementService {
             })
                 .catch(reject);
         });
+        return (0, txWithTimeout_1.withTxTimeout)(`settle_trade:${input.tradeId}`, txPromise);
     }
     async settleTrades(inputs) {
         const settlements = [];
@@ -272,7 +385,7 @@ class SpotSettlementService {
                 }
             }
             catch (error) {
-                console.error(`[SpotSettlement] Failed to settle trade ${input.tradeId}:`, error);
+                logger_1.log.error({ err: error, tradeId: input.tradeId }, '[SpotSettlement] Failed to settle trade');
                 settlements.push({
                     tradeId: input.tradeId,
                     status: 'FAILED',
@@ -288,21 +401,21 @@ class SpotSettlementService {
             return null;
         const txMethod = this.getTxMethod(this.cancelOrderForMethodKey);
         if (!txMethod) {
-            console.warn('[SpotSettlement] cancel_order_for method not found in contract metadata');
+            logger_1.log.warn('[SpotSettlement] cancel_order_for method not found in contract metadata');
             return null;
         }
         const maker = this.toUserAccountId(makerAddress);
         const nonceValue = nonceToU64(nonce).toString();
         const queryMethod = this.getQueryMethod(this.cancelOrderForMethodKey);
         if (!queryMethod) {
-            console.warn('[SpotSettlement] cancel_order_for query binding not found in contract metadata');
+            logger_1.log.warn('[SpotSettlement] cancel_order_for query binding not found in contract metadata');
             return null;
         }
         const { gasRequired, result } = await queryMethod(this.relayer.address, { gasLimit: -1, storageDepositLimit: null }, maker, nonceValue);
         if (result.isErr) {
             throw new Error(`[SpotSettlement] Failed to simulate cancel_order_for for ${makerAddress}`);
         }
-        return await new Promise((resolve, reject) => {
+        const cancelPromise = new Promise((resolve, reject) => {
             let unsub;
             txMethod({ gasLimit: gasRequired, storageDepositLimit: null }, maker, nonceValue)
                 .signAndSend(this.relayer, (txResult) => {
@@ -324,6 +437,7 @@ class SpotSettlementService {
             })
                 .catch(reject);
         });
+        return (0, txWithTimeout_1.withTxTimeout)(`cancel_order_for:${makerAddress}:${nonce}`, cancelPromise);
     }
 }
 exports.settlementService = new SpotSettlementService();

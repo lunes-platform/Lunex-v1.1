@@ -4,13 +4,22 @@ const express_1 = require("express");
 const orderService_1 = require("../services/orderService");
 const validation_1 = require("../utils/validation");
 const auth_1 = require("../middleware/auth");
+const SIGNED_ORDER_TTL_MS = 5 * 60 * 1000;
 const router = (0, express_1.Router)();
-// POST /api/v1/orders — Create a new order
-router.post('/', async (req, res) => {
+router.post('/', async (req, res, next) => {
     try {
         const parsed = validation_1.CreateOrderSchema.safeParse(req.body);
         if (!parsed.success) {
             return res.status(400).json({ error: 'Validation failed', details: parsed.error.issues });
+        }
+        // Validate timestamp freshness
+        if (Math.abs(Date.now() - parsed.data.timestamp) > SIGNED_ORDER_TTL_MS) {
+            return res.status(401).json({ error: 'Expired order signature' });
+        }
+        // Prevent nonce replay
+        const nonceKey = `nonce:spot-order:${parsed.data.makerAddress}:${parsed.data.nonce}`;
+        if (await (0, auth_1.isNonceUsed)(nonceKey)) {
+            return res.status(401).json({ error: 'Order nonce already used' });
         }
         const isValid = await (0, auth_1.verifyAddressSignature)((0, auth_1.buildSpotOrderMessage)({
             pairSymbol: parsed.data.pairSymbol,
@@ -20,37 +29,35 @@ router.post('/', async (req, res) => {
             stopPrice: parsed.data.stopPrice,
             amount: parsed.data.amount,
             nonce: parsed.data.nonce,
+            timestamp: parsed.data.timestamp,
         }), parsed.data.signature, parsed.data.makerAddress);
-        if (!isValid) {
+        if (!isValid)
             return res.status(401).json({ error: 'Invalid signature' });
-        }
+        await (0, auth_1.markNonceUsed)(nonceKey);
         const order = await orderService_1.orderService.createOrder(parsed.data);
         res.status(201).json({ order });
     }
     catch (err) {
-        res.status(400).json({ error: err.message });
+        next(err);
     }
 });
-// DELETE /api/v1/orders/:id — Cancel an order
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', async (req, res, next) => {
     try {
         const parsed = validation_1.CancelOrderSchema.safeParse(req.body);
         if (!parsed.success) {
             return res.status(400).json({ error: 'Validation failed', details: parsed.error.issues });
         }
         const isValid = await (0, auth_1.verifyAddressSignature)((0, auth_1.buildSpotCancelMessage)(req.params.id), parsed.data.signature, parsed.data.makerAddress);
-        if (!isValid) {
+        if (!isValid)
             return res.status(401).json({ error: 'Invalid signature' });
-        }
         const order = await orderService_1.orderService.cancelOrder(req.params.id, parsed.data.makerAddress);
         res.json({ order });
     }
     catch (err) {
-        res.status(400).json({ error: err.message });
+        next(err);
     }
 });
-// GET /api/v1/orders?makerAddress=...&status=...
-router.get('/', async (req, res) => {
+router.get('/', async (req, res, next) => {
     try {
         const { makerAddress, status } = req.query;
         if (!makerAddress || typeof makerAddress !== 'string') {
@@ -63,7 +70,7 @@ router.get('/', async (req, res) => {
         res.json({ orders });
     }
     catch (err) {
-        res.status(500).json({ error: err.message });
+        next(err);
     }
 });
 exports.default = router;

@@ -2,15 +2,28 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CopyTradeApiKeySchema = exports.CopyTradeApiKeyChallengeSchema = exports.CopyTradeActivityQuerySchema = exports.CopyTradeSignalSchema = exports.CopyVaultWithdrawSchema = exports.CopyVaultDepositSchema = exports.CreateIdeaCommentSchema = exports.UpsertLeaderProfileSchema = exports.LeaderProfileByAddressSchema = exports.FollowLeaderSchema = exports.SocialLeadersQuerySchema = exports.CandleQuerySchema = exports.RetryTradeSettlementsSchema = exports.TradeSettlementQuerySchema = exports.TradeSettlementStatusSchema = exports.PaginationSchema = exports.MarginLiquidatePositionSchema = exports.MarginClosePositionSchema = exports.MarginOpenPositionSchema = exports.MarginCollateralSchema = exports.MarginPriceHealthResetSchema = exports.MarginPriceHealthQuerySchema = exports.MarginOverviewQuerySchema = exports.CancelOrderSchema = exports.CreateOrderSchema = void 0;
 const zod_1 = require("zod");
+const SignedWalletActionSchema = zod_1.z.object({
+    nonce: zod_1.z.string().min(8),
+    timestamp: zod_1.z.coerce.number().int().positive(),
+    signature: zod_1.z.string().min(8),
+});
+const positiveDecimalString = zod_1.z
+    .string()
+    .min(1)
+    .refine((v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0;
+}, { message: 'Must be a positive number' });
 exports.CreateOrderSchema = zod_1.z.object({
-    pairSymbol: zod_1.z.string().min(1),
+    pairSymbol: zod_1.z.string().min(1).max(32).regex(/^[A-Z0-9]+\/[A-Z0-9]+$/, { message: 'Invalid pair symbol format (e.g. LUNES/LUSDT)' }),
     side: zod_1.z.enum(['BUY', 'SELL']),
     type: zod_1.z.enum(['LIMIT', 'MARKET', 'STOP', 'STOP_LIMIT']),
-    price: zod_1.z.string().optional(), // Required for LIMIT, STOP_LIMIT
-    stopPrice: zod_1.z.string().optional(), // Required for STOP, STOP_LIMIT
-    amount: zod_1.z.string().min(1),
+    price: positiveDecimalString.optional(), // Required for LIMIT, STOP_LIMIT
+    stopPrice: positiveDecimalString.optional(), // Required for STOP, STOP_LIMIT
+    amount: positiveDecimalString,
     timeInForce: zod_1.z.enum(['GTC', 'IOC', 'FOK']).default('GTC'),
     nonce: zod_1.z.string().min(1),
+    timestamp: zod_1.z.coerce.number().int().positive(),
     signature: zod_1.z.string().min(1),
     makerAddress: zod_1.z.string().min(1),
     expiresAt: zod_1.z.string().datetime().optional(),
@@ -32,24 +45,20 @@ exports.MarginCollateralSchema = zod_1.z.object({
     address: zod_1.z.string().min(3),
     token: zod_1.z.string().trim().min(2).max(32).default('USDT'),
     amount: zod_1.z.string().min(1),
-    signature: zod_1.z.string().min(1),
-});
+}).merge(SignedWalletActionSchema);
 exports.MarginOpenPositionSchema = zod_1.z.object({
     address: zod_1.z.string().min(3),
     pairSymbol: zod_1.z.string().min(3),
     side: zod_1.z.enum(['BUY', 'SELL']),
     collateralAmount: zod_1.z.string().min(1),
     leverage: zod_1.z.string().min(1),
-    signature: zod_1.z.string().min(1),
-});
+}).merge(SignedWalletActionSchema);
 exports.MarginClosePositionSchema = zod_1.z.object({
     address: zod_1.z.string().min(3),
-    signature: zod_1.z.string().min(1),
-});
+}).merge(SignedWalletActionSchema);
 exports.MarginLiquidatePositionSchema = zod_1.z.object({
     liquidatorAddress: zod_1.z.string().min(3),
-    signature: zod_1.z.string().min(1),
-});
+}).merge(SignedWalletActionSchema);
 exports.PaginationSchema = zod_1.z.object({
     limit: zod_1.z.coerce.number().int().min(1).max(100).default(50),
     offset: zod_1.z.coerce.number().int().min(0).default(0),
@@ -73,14 +82,14 @@ exports.SocialLeadersQuerySchema = zod_1.z.object({
     sortBy: zod_1.z.enum(['roi30d', 'followers', 'winRate', 'sharpe']).default('roi30d'),
     limit: zod_1.z.coerce.number().int().min(1).max(100).default(50),
 });
-exports.FollowLeaderSchema = zod_1.z.object({
+exports.FollowLeaderSchema = SignedWalletActionSchema.extend({
     address: zod_1.z.string().min(3),
 });
 exports.LeaderProfileByAddressSchema = zod_1.z.object({
     address: zod_1.z.string().min(3),
     viewerAddress: zod_1.z.string().min(3).optional(),
 });
-exports.UpsertLeaderProfileSchema = zod_1.z.object({
+exports.UpsertLeaderProfileSchema = SignedWalletActionSchema.extend({
     address: zod_1.z.string().min(3),
     name: zod_1.z.string().trim().min(2).max(64),
     username: zod_1.z
@@ -96,21 +105,22 @@ exports.UpsertLeaderProfileSchema = zod_1.z.object({
     telegramUrl: zod_1.z.string().trim().url().max(300).optional().or(zod_1.z.literal('')),
     discordUrl: zod_1.z.string().trim().url().max(300).optional().or(zod_1.z.literal('')),
 });
-exports.CreateIdeaCommentSchema = zod_1.z.object({
+exports.CreateIdeaCommentSchema = SignedWalletActionSchema.extend({
     address: zod_1.z.string().min(3),
     content: zod_1.z.string().trim().min(1).max(2000),
 });
-exports.CopyVaultDepositSchema = zod_1.z.object({
+exports.CopyVaultDepositSchema = SignedWalletActionSchema.extend({
     followerAddress: zod_1.z.string().min(3),
     token: zod_1.z.string().trim().min(2).max(32),
     amount: zod_1.z.string().min(1),
 });
-exports.CopyVaultWithdrawSchema = zod_1.z.object({
+exports.CopyVaultWithdrawSchema = SignedWalletActionSchema.extend({
     followerAddress: zod_1.z.string().min(3),
     shares: zod_1.z.string().min(1),
 });
 exports.CopyTradeSignalSchema = zod_1.z.object({
     leaderId: zod_1.z.string().uuid().optional(),
+    leaderAddress: zod_1.z.string().min(3).optional(),
     pairSymbol: zod_1.z.string().min(3),
     side: zod_1.z.enum(['BUY', 'SELL']),
     source: zod_1.z.enum(['API', 'WEB3']).default('API'),
@@ -121,6 +131,9 @@ exports.CopyTradeSignalSchema = zod_1.z.object({
     maxSlippageBps: zod_1.z.coerce.number().int().min(1).max(2000).default(100),
     executionPrice: zod_1.z.string().optional(),
     realizedPnlPct: zod_1.z.string().optional(),
+    nonce: zod_1.z.string().min(8).optional(),
+    timestamp: zod_1.z.coerce.number().int().positive().optional(),
+    signature: zod_1.z.string().min(8).optional(),
 });
 exports.CopyTradeActivityQuerySchema = zod_1.z.object({
     address: zod_1.z.string().min(3).optional(),

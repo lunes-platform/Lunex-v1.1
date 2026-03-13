@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.socialAnalyticsPipeline = void 0;
 const config_1 = require("../config");
+const logger_1 = require("../utils/logger");
 const socialAnalyticsService_1 = require("./socialAnalyticsService");
 const socialIndexerService_1 = require("./socialIndexerService");
 class SocialAnalyticsPipeline {
@@ -23,7 +24,7 @@ class SocialAnalyticsPipeline {
             return { indexerResult, analyticsResult };
         }
         catch (error) {
-            console.error('[SocialAnalyticsPipeline] Run failed:', error);
+            logger_1.log.error({ err: error }, '[SocialAnalyticsPipeline] Run failed');
             return null;
         }
         finally {
@@ -38,7 +39,7 @@ class SocialAnalyticsPipeline {
         this.timer = setInterval(() => {
             void this.runOnce();
         }, config_1.config.socialAnalytics.pollIntervalMs);
-        console.log('[SocialAnalyticsPipeline] Started');
+        logger_1.log.info('[SocialAnalyticsPipeline] Started');
     }
     stop() {
         if (this.timer) {

@@ -3,16 +3,18 @@ export declare const CreateOrderSchema: z.ZodObject<{
     pairSymbol: z.ZodString;
     side: z.ZodEnum<["BUY", "SELL"]>;
     type: z.ZodEnum<["LIMIT", "MARKET", "STOP", "STOP_LIMIT"]>;
-    price: z.ZodOptional<z.ZodString>;
-    stopPrice: z.ZodOptional<z.ZodString>;
-    amount: z.ZodString;
+    price: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    stopPrice: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    amount: z.ZodEffects<z.ZodString, string, string>;
     timeInForce: z.ZodDefault<z.ZodEnum<["GTC", "IOC", "FOK"]>>;
     nonce: z.ZodString;
+    timestamp: z.ZodNumber;
     signature: z.ZodString;
     makerAddress: z.ZodString;
     expiresAt: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     amount: string;
+    timestamp: number;
     makerAddress: string;
     side: "BUY" | "SELL";
     type: "LIMIT" | "STOP_LIMIT" | "MARKET" | "STOP";
@@ -25,6 +27,7 @@ export declare const CreateOrderSchema: z.ZodObject<{
     expiresAt?: string | undefined;
 }, {
     amount: string;
+    timestamp: number;
     makerAddress: string;
     side: "BUY" | "SELL";
     type: "LIMIT" | "STOP_LIMIT" | "MARKET" | "STOP";
@@ -71,15 +74,22 @@ export declare const MarginCollateralSchema: z.ZodObject<{
     address: z.ZodString;
     token: z.ZodDefault<z.ZodString>;
     amount: z.ZodString;
+} & {
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
     signature: z.ZodString;
 }, "strip", z.ZodTypeAny, {
     amount: string;
+    timestamp: number;
     signature: string;
+    nonce: string;
     address: string;
     token: string;
 }, {
     amount: string;
+    timestamp: number;
     signature: string;
+    nonce: string;
     address: string;
     token?: string | undefined;
 }>;
@@ -89,17 +99,24 @@ export declare const MarginOpenPositionSchema: z.ZodObject<{
     side: z.ZodEnum<["BUY", "SELL"]>;
     collateralAmount: z.ZodString;
     leverage: z.ZodString;
+} & {
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
     signature: z.ZodString;
 }, "strip", z.ZodTypeAny, {
+    timestamp: number;
     side: "BUY" | "SELL";
     signature: string;
+    nonce: string;
     pairSymbol: string;
     address: string;
     collateralAmount: string;
     leverage: string;
 }, {
+    timestamp: number;
     side: "BUY" | "SELL";
     signature: string;
+    nonce: string;
     pairSymbol: string;
     address: string;
     collateralAmount: string;
@@ -107,22 +124,36 @@ export declare const MarginOpenPositionSchema: z.ZodObject<{
 }>;
 export declare const MarginClosePositionSchema: z.ZodObject<{
     address: z.ZodString;
+} & {
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
     signature: z.ZodString;
 }, "strip", z.ZodTypeAny, {
+    timestamp: number;
     signature: string;
+    nonce: string;
     address: string;
 }, {
+    timestamp: number;
     signature: string;
+    nonce: string;
     address: string;
 }>;
 export declare const MarginLiquidatePositionSchema: z.ZodObject<{
     liquidatorAddress: z.ZodString;
+} & {
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
     signature: z.ZodString;
 }, "strip", z.ZodTypeAny, {
+    timestamp: number;
     signature: string;
+    nonce: string;
     liquidatorAddress: string;
 }, {
+    timestamp: number;
     signature: string;
+    nonce: string;
     liquidatorAddress: string;
 }>;
 export declare const PaginationSchema: z.ZodObject<{
@@ -174,19 +205,29 @@ export declare const SocialLeadersQuerySchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     limit: number;
     sortBy: "roi30d" | "followers" | "winRate" | "sharpe";
-    tab?: "all" | "traders" | "bots" | undefined;
     search?: string | undefined;
+    tab?: "all" | "traders" | "bots" | undefined;
 }, {
     limit?: number | undefined;
-    tab?: "all" | "traders" | "bots" | undefined;
     search?: string | undefined;
+    tab?: "all" | "traders" | "bots" | undefined;
     sortBy?: "roi30d" | "followers" | "winRate" | "sharpe" | undefined;
 }>;
 export declare const FollowLeaderSchema: z.ZodObject<{
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
+    signature: z.ZodString;
+} & {
     address: z.ZodString;
 }, "strip", z.ZodTypeAny, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     address: string;
 }, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     address: string;
 }>;
 export declare const LeaderProfileByAddressSchema: z.ZodObject<{
@@ -200,6 +241,10 @@ export declare const LeaderProfileByAddressSchema: z.ZodObject<{
     viewerAddress?: string | undefined;
 }>;
 export declare const UpsertLeaderProfileSchema: z.ZodObject<{
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
+    signature: z.ZodString;
+} & {
     address: z.ZodString;
     name: z.ZodString;
     username: z.ZodString;
@@ -210,6 +255,9 @@ export declare const UpsertLeaderProfileSchema: z.ZodObject<{
     telegramUrl: z.ZodUnion<[z.ZodOptional<z.ZodString>, z.ZodLiteral<"">]>;
     discordUrl: z.ZodUnion<[z.ZodOptional<z.ZodString>, z.ZodLiteral<"">]>;
 }, "strip", z.ZodTypeAny, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     name: string;
     address: string;
     username: string;
@@ -220,6 +268,9 @@ export declare const UpsertLeaderProfileSchema: z.ZodObject<{
     telegramUrl?: string | undefined;
     discordUrl?: string | undefined;
 }, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     name: string;
     address: string;
     username: string;
@@ -231,40 +282,71 @@ export declare const UpsertLeaderProfileSchema: z.ZodObject<{
     discordUrl?: string | undefined;
 }>;
 export declare const CreateIdeaCommentSchema: z.ZodObject<{
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
+    signature: z.ZodString;
+} & {
     address: z.ZodString;
     content: z.ZodString;
 }, "strip", z.ZodTypeAny, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     address: string;
     content: string;
 }, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     address: string;
     content: string;
 }>;
 export declare const CopyVaultDepositSchema: z.ZodObject<{
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
+    signature: z.ZodString;
+} & {
     followerAddress: z.ZodString;
     token: z.ZodString;
     amount: z.ZodString;
 }, "strip", z.ZodTypeAny, {
     amount: string;
+    timestamp: number;
+    signature: string;
+    nonce: string;
     token: string;
     followerAddress: string;
 }, {
     amount: string;
+    timestamp: number;
+    signature: string;
+    nonce: string;
     token: string;
     followerAddress: string;
 }>;
 export declare const CopyVaultWithdrawSchema: z.ZodObject<{
+    nonce: z.ZodString;
+    timestamp: z.ZodNumber;
+    signature: z.ZodString;
+} & {
     followerAddress: z.ZodString;
     shares: z.ZodString;
 }, "strip", z.ZodTypeAny, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     followerAddress: string;
     shares: string;
 }, {
+    timestamp: number;
+    signature: string;
+    nonce: string;
     followerAddress: string;
     shares: string;
 }>;
 export declare const CopyTradeSignalSchema: z.ZodObject<{
     leaderId: z.ZodOptional<z.ZodString>;
+    leaderAddress: z.ZodOptional<z.ZodString>;
     pairSymbol: z.ZodString;
     side: z.ZodEnum<["BUY", "SELL"]>;
     source: z.ZodDefault<z.ZodEnum<["API", "WEB3"]>>;
@@ -275,16 +357,23 @@ export declare const CopyTradeSignalSchema: z.ZodObject<{
     maxSlippageBps: z.ZodDefault<z.ZodNumber>;
     executionPrice: z.ZodOptional<z.ZodString>;
     realizedPnlPct: z.ZodOptional<z.ZodString>;
+    nonce: z.ZodOptional<z.ZodString>;
+    timestamp: z.ZodOptional<z.ZodNumber>;
+    signature: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     side: "BUY" | "SELL";
+    maxSlippageBps: number;
     pairSymbol: string;
     source: "API" | "WEB3";
     amountIn: string;
     amountOutMin: string;
-    maxSlippageBps: number;
-    leaderId?: string | undefined;
-    strategyTag?: string | undefined;
+    timestamp?: number | undefined;
+    signature?: string | undefined;
+    nonce?: string | undefined;
     route?: string[] | undefined;
+    leaderId?: string | undefined;
+    leaderAddress?: string | undefined;
+    strategyTag?: string | undefined;
     executionPrice?: string | undefined;
     realizedPnlPct?: string | undefined;
 }, {
@@ -292,11 +381,15 @@ export declare const CopyTradeSignalSchema: z.ZodObject<{
     pairSymbol: string;
     amountIn: string;
     amountOutMin: string;
+    timestamp?: number | undefined;
+    signature?: string | undefined;
+    nonce?: string | undefined;
+    route?: string[] | undefined;
     leaderId?: string | undefined;
+    maxSlippageBps?: number | undefined;
+    leaderAddress?: string | undefined;
     source?: "API" | "WEB3" | undefined;
     strategyTag?: string | undefined;
-    route?: string[] | undefined;
-    maxSlippageBps?: number | undefined;
     executionPrice?: string | undefined;
     realizedPnlPct?: string | undefined;
 }>;
@@ -307,8 +400,8 @@ export declare const CopyTradeActivityQuerySchema: z.ZodObject<{
     limit: number;
     address?: string | undefined;
 }, {
-    address?: string | undefined;
     limit?: number | undefined;
+    address?: string | undefined;
 }>;
 export declare const CopyTradeApiKeyChallengeSchema: z.ZodObject<{
     leaderAddress: z.ZodString;

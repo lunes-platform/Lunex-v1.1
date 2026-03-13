@@ -49,6 +49,10 @@ class Orderbook {
                 const bestAsk = this.asks[0];
                 if (price < bestAsk.price)
                     break; // No more matches
+                // Self-trade prevention: skip orders from same address
+                if (bestAsk.makerAddress === makerAddress) {
+                    break;
+                }
                 const fillAmount = Math.min(remaining, bestAsk.remainingAmount);
                 const fillPrice = bestAsk.price; // Maker's price (price-time priority)
                 matches.push({
@@ -85,6 +89,10 @@ class Orderbook {
                 const bestBid = this.bids[0];
                 if (price > bestBid.price)
                     break;
+                // Self-trade prevention: skip orders from same address
+                if (bestBid.makerAddress === makerAddress) {
+                    break;
+                }
                 const fillAmount = Math.min(remaining, bestBid.remainingAmount);
                 const fillPrice = bestBid.price;
                 matches.push({
@@ -130,6 +138,9 @@ class Orderbook {
         if (side === 'BUY') {
             while (remaining > 0 && this.asks.length > 0) {
                 const bestAsk = this.asks[0];
+                // Self-trade prevention
+                if (bestAsk.makerAddress === makerAddress)
+                    break;
                 const fillAmount = Math.min(remaining, bestAsk.remainingAmount);
                 const fillPrice = bestAsk.price;
                 matches.push({
@@ -151,6 +162,9 @@ class Orderbook {
         else {
             while (remaining > 0 && this.bids.length > 0) {
                 const bestBid = this.bids[0];
+                // Self-trade prevention
+                if (bestBid.makerAddress === makerAddress)
+                    break;
                 const fillAmount = Math.min(remaining, bestBid.remainingAmount);
                 const fillPrice = bestBid.price;
                 matches.push({

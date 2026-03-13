@@ -5,10 +5,33 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.marginService = void 0;
 const library_1 = require("@prisma/client/runtime/library");
+/**
+ * Margin Service — Lunex Leveraged Trading
+ *
+ * Manages leveraged positions with automated risk controls:
+ *
+ * Position Lifecycle:
+ *   OPEN → (price moves) → AUTO_LIQUIDATED | MANUALLY_CLOSED
+ *
+ * Key Concepts:
+ *   - Collateral: LUSDT deposited by the trader
+ *   - Leverage: 1x-10x (configured per pair)
+ *   - Liquidation Price: (entryPrice * (1 ∓ 1/leverage)) ± margin
+ *   - Health Factor: collateral / (position size × liquidation margin)
+ *   - Funding Rate: periodic cost for holding leveraged positions overnight
+ *
+ * Liquidations:
+ *   - The marginService.checkLiquidations() cron runs on a configurable
+ *     interval and marks positions with health factor < 1 as LIQUIDATED.
+ *   - Collateral is forfeited; a LIQUIDATION TradeRecord is created.
+ *
+ * @module marginService
+ */
 const db_1 = __importDefault(require("../db"));
 const config_1 = require("../config");
 const helpers_1 = require("../utils/helpers");
 const orderbook_1 = require("../utils/orderbook");
+const logger_1 = require("../utils/logger");
 const prismaAny = db_1.default;
 const DEFAULT_COLLATERAL_TOKEN = 'USDT';
 const MIN_LEVERAGE = 1;
@@ -133,7 +156,7 @@ function recordPriceFailure(pairSymbol, reason, now) {
     };
     marginPriceMonitor.set(pairSymbol, next);
     if (!previous || previous.status === 'HEALTHY' || previous.lastFailureReason !== reason) {
-        console.error(JSON.stringify({
+        logger_1.log.error({
             event: 'margin.safe_mark_price_unavailable',
             pairSymbol,
             reason,
@@ -141,7 +164,7 @@ function recordPriceFailure(pairSymbol, reason, now) {
             consecutiveFailures: next.consecutiveFailures,
             totalFailures: next.totalFailures,
             timestamp: next.lastFailureAt,
-        }));
+        }, 'Safe mark price unavailable');
     }
 }
 function assertPairNotOperationallyBlocked(pairSymbol) {

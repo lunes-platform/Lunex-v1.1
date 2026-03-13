@@ -8,6 +8,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const util_crypto_1 = require("@polkadot/util-crypto");
 const library_1 = require("@prisma/client/runtime/library");
 const db_1 = __importDefault(require("../db"));
+const logger_1 = require("../utils/logger");
 const copytrade_1 = require("../utils/copytrade");
 const affiliateService_1 = require("./affiliateService");
 function toDecimal(value) {
@@ -428,7 +429,7 @@ exports.copytradeService = {
                 await affiliateService_1.affiliateService.distributeCommissions(result.followerAddress, result.collateralToken, result.feeAmount, 'COPYTRADE', result.withdrawalId);
             }
             catch (err) {
-                console.error('Affiliate commission on copytrade withdrawal failed:', err);
+                logger_1.log.error({ err }, 'Affiliate commission on copytrade withdrawal failed');
             }
         }
         return result;
@@ -443,6 +444,14 @@ exports.copytradeService = {
                 throw new Error('Vault not found');
             if (vault.status !== 'ACTIVE')
                 throw new Error('Vault is not active');
+            if (input.source === 'WEB3') {
+                if (!input.leaderAddress) {
+                    throw new Error('WEB3 signals require leaderAddress');
+                }
+                if (vault.leader.address !== input.leaderAddress) {
+                    throw new Error('Leader address mismatch');
+                }
+            }
             const pair = await tx.pair.findUnique({ where: { symbol: input.pairSymbol } });
             if (!pair)
                 throw new Error('Pair not found');

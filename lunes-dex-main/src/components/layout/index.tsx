@@ -2,6 +2,7 @@ import React, { ReactNode } from "react"
 import * as B from "../../components/bases"
 import * as S from "./styles"
 import TabBar from "../../pages/home/tabBar"
+import FooterTag from "../FooterTag"
 
 interface PageLayoutProps {
     children: ReactNode
@@ -30,9 +31,7 @@ const PageLayout: React.FC<PageLayoutProps> = ({
                 {children}
             </S.GlowBox>
 
-            <S.PageFooter>
-                Lunex: Developed with love on the Lunes blockchain
-            </S.PageFooter>
+            <FooterTag />
         </B.Container>
     )
 }

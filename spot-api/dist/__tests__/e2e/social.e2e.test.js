@@ -5,6 +5,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const supertest_1 = __importDefault(require("supertest"));
 const testApp_1 = __importDefault(require("./testApp"));
+jest.mock('../../middleware/auth', () => ({
+    ...jest.requireActual('../../middleware/auth'),
+    verifyWalletActionSignature: jest.fn().mockResolvedValue({ ok: true, message: 'signed-message' }),
+}));
+const signedBody = {
+    nonce: '1700000000001',
+    timestamp: 1700000000001,
+    signature: 'signed-payload',
+};
 jest.mock('../../db', () => ({
     __esModule: true,
     default: {
@@ -114,7 +123,7 @@ describe('Social API E2E', () => {
         it('should return 200 on valid like', async () => {
             const res = await (0, supertest_1.default)(testApp_1.default)
                 .post('/api/v1/social/ideas/idea-1/like')
-                .send({ address: 'test-address-123' });
+                .send({ address: 'test-address-123', ...signedBody });
             expect(res.status).toBe(200);
             expect(res.body).toHaveProperty('success', true);
         });
@@ -129,7 +138,7 @@ describe('Social API E2E', () => {
         it('should return 201 on valid comment', async () => {
             const res = await (0, supertest_1.default)(testApp_1.default)
                 .post('/api/v1/social/ideas/idea-1/comments')
-                .send({ address: 'test-addr-123', content: 'Great idea!' });
+                .send({ address: 'test-addr-123', content: 'Great idea!', ...signedBody });
             expect(res.status).toBe(201);
             expect(res.body).toHaveProperty('comment');
         });
@@ -162,6 +171,7 @@ describe('Social API E2E', () => {
                 username: 'testleader',
                 bio: 'A great trader',
                 fee: 15,
+                ...signedBody,
             });
             expect(res.status).toBe(201);
             expect(res.body).toHaveProperty('leader');
@@ -177,21 +187,22 @@ describe('Social API E2E', () => {
         it('should return 200 on valid follow', async () => {
             const res = await (0, supertest_1.default)(testApp_1.default)
                 .post('/api/v1/social/leaders/leader-1/follow')
-                .send({ address: 'follower-addr-123' });
+                .send({ address: 'follower-addr-123', ...signedBody });
             expect(res.status).toBe(200);
             expect(res.body).toHaveProperty('success', true);
         });
     });
     describe('DELETE /api/v1/social/leaders/:leaderId/follow', () => {
-        it('should return 400 without address query', async () => {
+        it('should return 400 without signed body', async () => {
             const res = await (0, supertest_1.default)(testApp_1.default)
                 .delete('/api/v1/social/leaders/leader-1/follow');
             expect(res.status).toBe(400);
-            expect(res.body).toHaveProperty('error', 'address required');
+            expect(res.body).toHaveProperty('error');
         });
         it('should return 200 on valid unfollow', async () => {
             const res = await (0, supertest_1.default)(testApp_1.default)
-                .delete('/api/v1/social/leaders/leader-1/follow?address=follower-addr');
+                .delete('/api/v1/social/leaders/leader-1/follow')
+                .send({ address: 'follower-addr', ...signedBody });
             expect(res.status).toBe(200);
         });
     });

@@ -26,8 +26,8 @@ export const wallet = [
     id: 0,
     icon: 'img/lunes-wallet.svg',
     wallet: 'Lunes Wallet',
-    // polkadot-js extension source name (also used by Lunes Wallet fork)
     source: 'polkadot-js',
+    installUrl: 'https://polkadot.js.org/extension/',
     disabled: false
   },
   {
@@ -35,6 +35,7 @@ export const wallet = [
     icon: 'img/subwallet.svg',
     wallet: 'SubWallet',
     source: 'subwallet-js',
+    installUrl: 'https://subwallet.app/download.html',
     disabled: false
   },
   {
@@ -42,6 +43,7 @@ export const wallet = [
     icon: 'img/talisman.svg',
     wallet: 'Talisman',
     source: 'talisman',
+    installUrl: 'https://talisman.xyz/download',
     disabled: false
   }
 ]

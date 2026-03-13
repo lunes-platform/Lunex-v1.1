@@ -243,7 +243,6 @@ exports.agentService = {
     },
     STAKING_TIERS,
 };
-// ─── Formatters ─────────────────────────────────────────────────
 function formatAgent(agent) {
     const { tier, limits } = resolveTier(parseFloat(agent.stakedAmount?.toString() ?? '0'));
     return {

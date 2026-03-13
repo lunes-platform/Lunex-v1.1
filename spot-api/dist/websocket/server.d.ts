@@ -1,4 +1,5 @@
-export declare function createWebSocketServer(port: number): import("ws").Server<typeof import("ws"), typeof import("http").IncomingMessage>;
+import { IncomingMessage } from 'http';
+export declare function createWebSocketServer(port: number): import("ws").Server<typeof import("ws"), typeof IncomingMessage>;
 /**
  * Broadcast a message to all clients subscribed to a channel
  */

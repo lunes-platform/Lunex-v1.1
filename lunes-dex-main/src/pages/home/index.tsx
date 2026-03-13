@@ -4,6 +4,7 @@ import * as B from 'components/bases'
 import * as S from './styles'
 import { Tooltip } from 'components/bases/tooltip'
 import TabBar from './tabBar'
+import FooterTag from 'components/FooterTag'
 import TradeSubNav from '../../components/tradeSubNav'
 //Modals
 import * as M from './modals'
@@ -296,10 +297,12 @@ const Home = () => {
 
         <B.Button
           disabled={
-            sdk.isLoading ||
-            (!selectedOption1?.id && !selectedOption2?.id) ||
-            inputValue1.length < 1 ||
-            !quote
+            sdk.isConnected && (
+              sdk.isLoading ||
+              (!selectedOption1?.id && !selectedOption2?.id) ||
+              inputValue1.length < 1 ||
+              !quote
+            )
           }
           onClick={sdk.isConnected ? handleConfirmSwap : () => sdk.connectWallet()}
         >
@@ -314,9 +317,7 @@ const Home = () => {
                   : 'Swap tokens'}
         </B.Button>
       </S.Box>
-      <S.Paragraph>
-        <strong>Lunex: </strong>Developed with love on the Lunes blockchain
-      </S.Paragraph>
+      <FooterTag />
 
       {modal === 'chooseToken' && (
         <M.ChooseToken

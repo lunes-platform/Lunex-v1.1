@@ -964,6 +964,31 @@ const OverviewSection = () => (
       </Card>
     </Grid>
 
+    <H2>Wallet & Ecosystem Integrations</H2>
+    <P>
+      Lunex ensures a seamless entry point into the ecosystem by natively supporting leading Polkadot-compatible wallets. The platform intelligently detects installed extensions and guides new users through the setup process.
+    </P>
+    <Grid>
+      <Card>
+        <CardTitle>Supported Wallets</CardTitle>
+        <CardText>
+          Native support for <strong>Lunes Wallet</strong>, <strong>SubWallet</strong>, and <strong>Talisman</strong>, alongside generic Polkadot.js compatibility.
+        </CardText>
+      </Card>
+      <Card>
+        <CardTitle>Smart Detection</CardTitle>
+        <CardText>
+          The UI detects if a wallet extension is active. If not, it provides direct installation links directly within the connection modal.
+        </CardText>
+      </Card>
+      <Card>
+        <CardTitle>Standardized UX</CardTitle>
+        <CardText>
+          A unified design language across Swap, Spot, and Copytrade, with consistent footer branding and streamlined interaction components.
+        </CardText>
+      </Card>
+    </Grid>
+
     <H2>Quick product map</H2>
     <Table>
       <thead>

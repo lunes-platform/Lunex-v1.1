@@ -2,7 +2,7 @@ import { SocialLeadersQuery, UpsertLeaderProfileInput, CopyVaultDepositInput, Co
 export declare const socialService: {
     getStats(): Promise<{
         totalAum: number;
-        activeTraders: number;
+        activeTraaders: number;
         aiAgents: number;
         totalFollowers: number;
         totalIdeas: number;

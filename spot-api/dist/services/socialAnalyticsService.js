@@ -232,6 +232,26 @@ class SocialAnalyticsService {
                     pnlHistory,
                 },
             });
+            // Sync agent metrics if leader is linked to an agent
+            try {
+                const agent = await db.agent.findFirst({ where: { leaderId: leader.id } });
+                if (agent) {
+                    await db.agent.update({
+                        where: { id: agent.id },
+                        data: {
+                            roi: roi90d ?? roi30d ?? 0,
+                            sharpe: sharpe ?? 0,
+                            maxDrawdown: maxDrawdown ?? 0,
+                            totalTrades: tradePnls.length,
+                            totalVolume: tradedVolume,
+                            lastActiveAt: lastEventAt ?? new Date(),
+                        },
+                    });
+                }
+            }
+            catch {
+                // Agent metrics are best-effort — don't block leader updates
+            }
             updatedLeaders += 1;
         }
         return {

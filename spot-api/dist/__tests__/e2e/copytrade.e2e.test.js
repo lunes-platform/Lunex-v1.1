@@ -5,6 +5,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const supertest_1 = __importDefault(require("supertest"));
 const testApp_1 = __importDefault(require("./testApp"));
+jest.mock('../../middleware/auth', () => ({
+    ...jest.requireActual('../../middleware/auth'),
+    verifyWalletActionSignature: jest.fn().mockResolvedValue({ ok: true, message: 'signed-message' }),
+}));
+const signedBody = {
+    nonce: '1700000000001',
+    timestamp: 1700000000001,
+    signature: 'signed-payload',
+};
 jest.mock('../../services/copytradeService', () => ({
     copytradeService: {
         createApiKeyChallenge: jest.fn().mockResolvedValue({ challengeId: 'ch-1', message: 'challenge' }),
@@ -80,6 +89,7 @@ describe('Copytrade API E2E', () => {
                 followerAddress: 'follower-addr-123',
                 token: 'USDT',
                 amount: '100',
+                ...signedBody,
             });
             expect(res.status).toBe(201);
         });
@@ -97,6 +107,7 @@ describe('Copytrade API E2E', () => {
                 .send({
                 followerAddress: 'follower-addr-123',
                 shares: '50',
+                ...signedBody,
             });
             expect(res.status).toBe(200);
         });
@@ -121,15 +132,17 @@ describe('Copytrade API E2E', () => {
             expect(res.status).toBe(401);
             expect(res.body).toHaveProperty('error', 'x-api-key header required for API signals');
         });
-        it('should return 201 for WEB3 source signal', async () => {
+        it('should return 201 for signed WEB3 source signal', async () => {
             const res = await (0, supertest_1.default)(testApp_1.default)
                 .post('/api/v1/copytrade/vaults/leader-1/signals')
                 .send({
+                leaderAddress: 'leader-wallet-123',
                 pairSymbol: 'LUNES/USDT',
                 side: 'BUY',
                 source: 'WEB3',
                 amountIn: '100',
                 amountOutMin: '90',
+                ...signedBody,
             });
             expect(res.status).toBe(201);
         });

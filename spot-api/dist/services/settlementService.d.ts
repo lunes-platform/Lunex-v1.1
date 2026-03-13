@@ -1,4 +1,5 @@
 type PairSettlementSnapshot = {
+    symbol: string;
     baseToken: string;
     quoteToken: string;
     isNativeBase: boolean;
@@ -8,10 +9,13 @@ type PairSettlementSnapshot = {
 type OrderSettlementSnapshot = {
     makerAddress: string;
     side: string;
+    type: string;
     price: string;
+    stopPrice?: string | null;
     amount: string;
     filledAmount: string;
     nonce: string;
+    signature: string;
     expiresAt: Date | null;
 };
 export type TradeSettlementInput = {
@@ -50,6 +54,9 @@ declare class SpotSettlementService {
     isNonceUsed(userAddress: string, nonce: string): Promise<boolean | null>;
     isNonceCancelled(userAddress: string, nonce: string): Promise<boolean | null>;
     private toSignedOrder;
+    private buildOrderSignatureMessage;
+    private assertOrderTrustedSource;
+    private assertSettlementInputTrusted;
     private submitSettlement;
     settleTrades(inputs: TradeSettlementInput[]): Promise<SettlementResult[]>;
     cancelOrderFor(makerAddress: string, nonce: string): Promise<string | null>;

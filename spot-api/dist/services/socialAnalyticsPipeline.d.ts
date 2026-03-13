@@ -8,11 +8,31 @@ declare class SocialAnalyticsPipeline {
             processedBlocks: number;
             indexedEvents: number;
             prismaReady?: undefined;
+            source?: undefined;
             latestBlock?: undefined;
             lastProcessedBlock?: undefined;
             recovered?: undefined;
         } | {
             enabled: boolean;
+            processedBlocks: number;
+            indexedEvents: number;
+            prismaReady: boolean;
+            source?: undefined;
+            latestBlock?: undefined;
+            lastProcessedBlock?: undefined;
+            recovered?: undefined;
+        } | {
+            enabled: boolean;
+            source: string;
+            processedBlocks: number;
+            indexedEvents: number;
+            latestBlock: number;
+            prismaReady: boolean;
+            lastProcessedBlock?: undefined;
+            recovered?: undefined;
+        } | {
+            enabled: boolean;
+            source: string;
             processedBlocks: number;
             indexedEvents: number;
             prismaReady: boolean;
@@ -26,6 +46,7 @@ declare class SocialAnalyticsPipeline {
             latestBlock: number;
             lastProcessedBlock: any;
             prismaReady?: undefined;
+            source?: undefined;
             recovered?: undefined;
         } | {
             enabled: boolean;
@@ -35,6 +56,7 @@ declare class SocialAnalyticsPipeline {
             lastProcessedBlock: number;
             recovered: boolean;
             prismaReady?: undefined;
+            source?: undefined;
         };
         analyticsResult: {
             updatedLeaders: number;

@@ -68,8 +68,6 @@ export const Network = styled(Button)`
         display: none;
       }
       img {
-        width: 28px;
-        height: 28px;
         margin: auto;
       }
     }

@@ -3,15 +3,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const orderbook_1 = require("../utils/orderbook");
 const router = (0, express_1.Router)();
-// GET /api/v1/orderbook/:symbol?depth=25
-router.get('/:symbol', async (req, res) => {
+function handleOrderbook(req, res, next) {
     try {
-        const { symbol } = req.params;
-        const depth = parseInt(req.query.depth) || 25;
+        const symbol = req.query.symbol ?? req.params.symbol;
+        if (!symbol)
+            return res.status(400).json({ error: 'symbol required' });
+        const depth = Math.min(parseInt(req.query.depth, 10) || 25, 200);
         const book = orderbook_1.orderbookManager.get(symbol);
-        if (!book) {
+        if (!book)
             return res.json({ bids: [], asks: [], spread: null });
-        }
         const snapshot = book.getSnapshot(depth);
         res.json({
             ...snapshot,
@@ -21,8 +21,11 @@ router.get('/:symbol', async (req, res) => {
         });
     }
     catch (err) {
-        res.status(500).json({ error: err.message });
+        next(err);
     }
-});
+}
+// Support both ?symbol=LUNES/LUSDT and /:symbol (URL-encoded: LUNES%2FLUSDT)
+router.get('/', handleOrderbook);
+router.get('/:symbol', handleOrderbook);
 exports.default = router;
 //# sourceMappingURL=orderbook.js.map

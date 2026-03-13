@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -7,6 +40,7 @@ exports.socialService = void 0;
 const db_1 = __importDefault(require("../db"));
 const config_1 = require("../config");
 const copytrade_1 = require("../utils/copytrade");
+const logger_1 = require("../utils/logger");
 function toFloat(value) {
     if (value == null)
         return 0;
@@ -193,11 +227,10 @@ function formatLeader(leader, options) {
 }
 exports.socialService = {
     async getStats() {
-        const [leaders, ideasCount, vaults] = await Promise.all([
+        const [leaders, ideasCount, vaults, totalFollowers] = await Promise.all([
             db_1.default.leader.findMany({
                 select: {
                     id: true,
-                    followersCount: true,
                     totalAum: true,
                     isAi: true,
                 },
@@ -206,6 +239,7 @@ exports.socialService = {
             db_1.default.copyVault.findMany({
                 select: { totalEquity: true },
             }),
+            db_1.default.leaderFollow.count(),
         ]);
         const analyticsSnapshotMap = await getAnalyticsSnapshotMap(leaders.map((leader) => leader.id));
         return {
@@ -213,9 +247,9 @@ exports.socialService = {
                 const snapshot = analyticsSnapshotMap.get(leader.id);
                 return sum + (snapshot ? toFloat(snapshot.currentEquity) : toFloat(leader.totalAum));
             }, 0),
-            activeTraders: leaders.filter((leader) => !leader.isAi).length,
+            activeTraaders: leaders.filter((leader) => !leader.isAi).length,
             aiAgents: leaders.filter((leader) => leader.isAi).length,
-            totalFollowers: leaders.reduce((sum, leader) => sum + leader.followersCount, 0),
+            totalFollowers,
             totalIdeas: ideasCount,
             totalVaultEquity: vaults.reduce((sum, vault) => sum + toFloat(vault.totalEquity), 0),
         };
@@ -235,24 +269,36 @@ exports.socialService = {
         }
         const leaders = await db_1.default.leader.findMany({
             where,
-            include: {
-                vault: true,
-            },
+            include: { vault: true },
         });
-        const analyticsSnapshotMap = await getAnalyticsSnapshotMap(leaders.map((leader) => leader.id));
-        const formattedLeaders = leaders.map((leader) => formatLeader(leader, {
-            analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-        }));
+        const leaderIds = leaders.map((l) => l.id);
+        const [analyticsSnapshotMap, realFollowerCounts] = await Promise.all([
+            getAnalyticsSnapshotMap(leaderIds),
+            db_1.default.leaderFollow.groupBy({
+                by: ['leaderId'],
+                where: { leaderId: { in: leaderIds } },
+                _count: { id: true },
+            }),
+        ]);
+        const followerCountMap = new Map(realFollowerCounts.map((r) => [r.leaderId, r._count.id]));
+        const formattedLeaders = leaders.map((leader) => formatLeader({ ...leader, followersCount: followerCountMap.get(leader.id) ?? 0 }, { analyticsSnapshot: analyticsSnapshotMap.get(leader.id) }));
         return sortFormattedLeaders(formattedLeaders, query.sortBy).slice(0, query.limit);
     },
     async getLeaderboard(limit = 10) {
         const leaders = await db_1.default.leader.findMany({
             include: { vault: true },
         });
-        const analyticsSnapshotMap = await getAnalyticsSnapshotMap(leaders.map((leader) => leader.id));
-        const formattedLeaders = leaders.map((leader) => formatLeader(leader, {
-            analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-        }));
+        const leaderIds = leaders.map((l) => l.id);
+        const [analyticsSnapshotMap, realFollowerCounts] = await Promise.all([
+            getAnalyticsSnapshotMap(leaderIds),
+            db_1.default.leaderFollow.groupBy({
+                by: ['leaderId'],
+                where: { leaderId: { in: leaderIds } },
+                _count: { id: true },
+            }),
+        ]);
+        const followerCountMap = new Map(realFollowerCounts.map((r) => [r.leaderId, r._count.id]));
+        const formattedLeaders = leaders.map((leader) => formatLeader({ ...leader, followersCount: followerCountMap.get(leader.id) ?? 0 }, { analyticsSnapshot: analyticsSnapshotMap.get(leader.id) }));
         return sortFormattedLeaders(formattedLeaders, 'sharpe').slice(0, limit);
     },
     async getLeaderProfile(leaderId, viewerAddress) {
@@ -572,7 +618,16 @@ exports.socialService = {
         if (depositAmount < toFloat(vault.minDeposit)) {
             throw new Error(`Minimum deposit is ${vault.minDeposit} ${vault.collateralToken}`);
         }
-        // Since we are mocking the blockchain transaction for now, we just update the DB
+        // On-chain deposit via CopyVault smart contract.
+        // DB is updated only AFTER blockchain confirmation.
+        const { copyVaultService } = await Promise.resolve().then(() => __importStar(require('./copyVaultService')));
+        const vaultWithContract = vault;
+        if (copyVaultService.isEnabled() && vaultWithContract.contractAddress) {
+            // Real blockchain transaction — contract is source of truth
+            const txResult = await copyVaultService.deposit(vaultWithContract.contractAddress, input.followerAddress, input.amount);
+            logger_1.log.info({ txHash: txResult.txHash }, '[Social] CopyVault deposit confirmed');
+        }
+        // Post-confirmation: update internal accounting (mirrors on-chain state)
         return db_1.default.$transaction(async (_tx) => {
             const tx = _tx;
             // 1. Find or create the follower's position

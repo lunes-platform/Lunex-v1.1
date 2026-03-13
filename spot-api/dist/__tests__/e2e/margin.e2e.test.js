@@ -5,6 +5,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const supertest_1 = __importDefault(require("supertest"));
 const testApp_1 = __importDefault(require("./testApp"));
+const signedBody = {
+    nonce: '1700000000001',
+    timestamp: 1700000000001,
+    signature: 'signed-payload',
+};
 jest.mock('../../services/marginService', () => ({
     marginService: {
         getOverview: jest.fn().mockResolvedValue({
@@ -61,7 +66,7 @@ jest.mock('../../services/marginService', () => ({
 }));
 jest.mock('../../middleware/auth', () => ({
     ...jest.requireActual('../../middleware/auth'),
-    verifyAddressSignature: jest.fn().mockResolvedValue(true),
+    verifyWalletActionSignature: jest.fn().mockResolvedValue({ ok: true, message: 'signed-message' }),
 }));
 describe('Margin API E2E', () => {
     describe('GET /api/v1/margin', () => {
@@ -127,7 +132,7 @@ describe('Margin API E2E', () => {
                 address: 'test-addr-123',
                 token: 'USDT',
                 amount: '1000',
-                signature: 'valid-sig-12345678',
+                ...signedBody,
             });
             expect(res.status).toBe(201);
         });
@@ -146,7 +151,7 @@ describe('Margin API E2E', () => {
                 address: 'test-addr-123',
                 token: 'USDT',
                 amount: '500',
-                signature: 'valid-sig-12345678',
+                ...signedBody,
             });
             expect(res.status).toBe(201);
         });
@@ -167,7 +172,7 @@ describe('Margin API E2E', () => {
                 side: 'BUY',
                 collateralAmount: '500',
                 leverage: '5',
-                signature: 'valid-sig-12345678',
+                ...signedBody,
             });
             expect(res.status).toBe(201);
         });
@@ -184,7 +189,7 @@ describe('Margin API E2E', () => {
                 .post('/api/v1/margin/positions/pos-1/close')
                 .send({
                 address: 'test-addr-123',
-                signature: 'valid-sig-12345678',
+                ...signedBody,
             });
             expect(res.status).toBe(200);
         });
@@ -201,7 +206,7 @@ describe('Margin API E2E', () => {
                 .post('/api/v1/margin/positions/pos-1/liquidate')
                 .send({
                 liquidatorAddress: 'liquidator-addr-123',
-                signature: 'valid-sig-12345678',
+                ...signedBody,
             });
             expect(res.status).toBe(200);
         });

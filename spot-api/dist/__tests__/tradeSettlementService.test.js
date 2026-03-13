@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const mockPrisma = {
     trade: {
         update: jest.fn(),
+        updateMany: jest.fn(),
+        findUnique: jest.fn(),
         findMany: jest.fn(),
     },
 };
@@ -22,6 +24,7 @@ describe('tradeSettlementService', () => {
     const baseInput = {
         tradeId: 'trade-1',
         pair: {
+            symbol: 'LUNES/USDT',
             baseToken: 'base-token',
             quoteToken: 'quote-token',
             isNativeBase: true,
@@ -31,19 +34,25 @@ describe('tradeSettlementService', () => {
         makerOrder: {
             makerAddress: 'maker-1',
             side: 'SELL',
+            type: 'LIMIT',
             price: '100',
+            stopPrice: null,
             amount: '1',
             filledAmount: '0',
             nonce: '1700000000001',
+            signature: 'agent:agent-1',
             expiresAt: new Date('2026-01-01T00:00:00.000Z'),
         },
         takerOrder: {
             makerAddress: 'maker-2',
             side: 'BUY',
+            type: 'MARKET',
             price: '100',
+            stopPrice: null,
             amount: '1',
             filledAmount: '0',
             nonce: '1700000000002',
+            signature: 'agent:agent-2',
             expiresAt: null,
         },
         fillAmount: '1',
@@ -74,9 +83,9 @@ describe('tradeSettlementService', () => {
     });
     it('persists settling then settled lifecycle for successful settlements', async () => {
         mockSettlementService.isEnabled.mockReturnValue(true);
-        mockPrisma.trade.update
-            .mockResolvedValueOnce({ id: 'trade-1', settlementAttempts: 1 })
-            .mockResolvedValueOnce({ id: 'trade-1' });
+        mockPrisma.trade.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.trade.findUnique.mockResolvedValue({ id: 'trade-1', settlementAttempts: 1 });
+        mockPrisma.trade.update.mockResolvedValue({ id: 'trade-1' });
         mockSettlementService.settleTrades.mockResolvedValue([
             {
                 tradeId: 'trade-1',
@@ -92,15 +101,15 @@ describe('tradeSettlementService', () => {
                 txHash: '0xabc',
             },
         ]);
-        expect(mockPrisma.trade.update).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            where: { id: 'trade-1' },
+        expect(mockPrisma.trade.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ id: 'trade-1' }),
             data: expect.objectContaining({
                 settlementStatus: 'SETTLING',
                 settlementError: null,
                 nextSettlementRetryAt: null,
             }),
         }));
-        expect(mockPrisma.trade.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        expect(mockPrisma.trade.update).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: 'trade-1' },
             data: expect.objectContaining({
                 settlementStatus: 'SETTLED',
@@ -112,9 +121,9 @@ describe('tradeSettlementService', () => {
     });
     it('persists failed settlements with retry scheduling', async () => {
         mockSettlementService.isEnabled.mockReturnValue(true);
-        mockPrisma.trade.update
-            .mockResolvedValueOnce({ id: 'trade-1', settlementAttempts: 1 })
-            .mockResolvedValueOnce({ id: 'trade-1' });
+        mockPrisma.trade.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.trade.findUnique.mockResolvedValue({ id: 'trade-1', settlementAttempts: 1 });
+        mockPrisma.trade.update.mockResolvedValue({ id: 'trade-1' });
         mockSettlementService.settleTrades.mockResolvedValue([
             {
                 tradeId: 'trade-1',
@@ -123,7 +132,7 @@ describe('tradeSettlementService', () => {
             },
         ]);
         await tradeSettlementService_1.tradeSettlementService.processNewTradeSettlements([baseInput]);
-        expect(mockPrisma.trade.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        expect(mockPrisma.trade.update).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: 'trade-1' },
             data: expect.objectContaining({
                 settlementStatus: 'FAILED',
@@ -150,9 +159,9 @@ describe('tradeSettlementService', () => {
                 },
             },
         ]);
-        mockPrisma.trade.update
-            .mockResolvedValueOnce({ id: 'trade-1', settlementAttempts: 2 })
-            .mockResolvedValueOnce({ id: 'trade-1' });
+        mockPrisma.trade.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.trade.findUnique.mockResolvedValue({ id: 'trade-1', settlementAttempts: 2 });
+        mockPrisma.trade.update.mockResolvedValue({ id: 'trade-1' });
         mockSettlementService.settleTrades.mockResolvedValue([
             {
                 tradeId: 'trade-1',

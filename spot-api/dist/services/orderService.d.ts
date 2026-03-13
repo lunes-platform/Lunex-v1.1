@@ -1,20 +1,20 @@
 import { CreateOrderInput } from '../utils/validation';
-import { Decimal } from '@prisma/client/runtime/library';
+import type { Prisma } from '@prisma/client';
 export declare const orderService: {
     /**
      * Create a new order, attempt matching, persist to DB
      */
     createOrder(input: CreateOrderInput): Promise<{
-        price: Decimal;
-        amount: Decimal;
+        price: Prisma.Decimal;
+        amount: Prisma.Decimal;
         id: string;
         pairId: string;
         makerAddress: string;
         side: import(".prisma/client").$Enums.OrderSide;
         type: import(".prisma/client").$Enums.OrderType;
-        stopPrice: Decimal | null;
-        filledAmount: Decimal;
-        remainingAmount: Decimal;
+        stopPrice: Prisma.Decimal | null;
+        filledAmount: Prisma.Decimal;
+        remainingAmount: Prisma.Decimal;
         status: import(".prisma/client").$Enums.OrderStatus;
         signature: string;
         nonce: string;
@@ -28,16 +28,16 @@ export declare const orderService: {
      * Cancel an order
      */
     cancelOrder(orderId: string, makerAddress: string): Promise<{
-        price: Decimal;
-        amount: Decimal;
+        price: Prisma.Decimal;
+        amount: Prisma.Decimal;
         id: string;
         pairId: string;
         makerAddress: string;
         side: import(".prisma/client").$Enums.OrderSide;
         type: import(".prisma/client").$Enums.OrderType;
-        stopPrice: Decimal | null;
-        filledAmount: Decimal;
-        remainingAmount: Decimal;
+        stopPrice: Prisma.Decimal | null;
+        filledAmount: Prisma.Decimal;
+        remainingAmount: Prisma.Decimal;
         status: import(".prisma/client").$Enums.OrderStatus;
         signature: string;
         nonce: string;
@@ -55,16 +55,16 @@ export declare const orderService: {
             symbol: string;
         };
     } & {
-        price: Decimal;
-        amount: Decimal;
+        price: Prisma.Decimal;
+        amount: Prisma.Decimal;
         id: string;
         pairId: string;
         makerAddress: string;
         side: import(".prisma/client").$Enums.OrderSide;
         type: import(".prisma/client").$Enums.OrderType;
-        stopPrice: Decimal | null;
-        filledAmount: Decimal;
-        remainingAmount: Decimal;
+        stopPrice: Prisma.Decimal | null;
+        filledAmount: Prisma.Decimal;
+        remainingAmount: Prisma.Decimal;
         status: import(".prisma/client").$Enums.OrderStatus;
         signature: string;
         nonce: string;
@@ -78,16 +78,16 @@ export declare const orderService: {
      * Get open orders for a pair (for API)
      */
     getOpenOrders(pairSymbol: string, limit?: number): Promise<{
-        price: Decimal;
-        amount: Decimal;
+        price: Prisma.Decimal;
+        amount: Prisma.Decimal;
         id: string;
         pairId: string;
         makerAddress: string;
         side: import(".prisma/client").$Enums.OrderSide;
         type: import(".prisma/client").$Enums.OrderType;
-        stopPrice: Decimal | null;
-        filledAmount: Decimal;
-        remainingAmount: Decimal;
+        stopPrice: Prisma.Decimal | null;
+        filledAmount: Prisma.Decimal;
+        remainingAmount: Prisma.Decimal;
         status: import(".prisma/client").$Enums.OrderStatus;
         signature: string;
         nonce: string;

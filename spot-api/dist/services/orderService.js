@@ -4,12 +4,38 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.orderService = void 0;
+/**
+ * Order Service — Lunex Spot Exchange
+ *
+ * Manages the full lifecycle of a spot order:
+ *   1. Zod validation + sr25519 signature verification
+ *   2. Nonce replay-protection check (Redis)
+ *   3. DB persistence (status: OPEN)
+ *   4. In-memory orderbook insertion
+ *   5. FIFO, price-time priority matching engine
+ *   6. Trade recording and settlement scheduling
+ *   7. WebSocket broadcast (orderbook:PAIR, user:ADDRESS)
+ *
+ * Order Types:
+ *   - LIMIT       — Rests in book until matched or cancelled
+ *   - MARKET      — Matches immediately at best available price
+ *   - STOP_LIMIT  — Triggers a LIMIT order when stop price is reached
+ *   - STOP_MARKET — Triggers a MARKET order when stop price is reached
+ *
+ * Time In Force:
+ *   - GTC (Good Till Cancel) — Rests until manually cancelled
+ *   - IOC (Immediate or Cancel) — Fills what it can, cancels remainder
+ *   - FOK (Fill or Kill) — Must fill entirely or is cancelled
+ *
+ * @module orderService
+ */
 const db_1 = __importDefault(require("../db"));
 const orderbook_1 = require("../utils/orderbook");
 const helpers_1 = require("../utils/helpers");
 const tradeService_1 = require("./tradeService");
 const library_1 = require("@prisma/client/runtime/library");
 const settlementService_1 = require("./settlementService");
+const errors_1 = require("../middleware/errors");
 const STOP_PENDING_STATUS = 'PENDING_TRIGGER';
 function decimalToUnits(value, decimals) {
     const normalized = value.trim();
@@ -49,16 +75,16 @@ function isStopTriggered(order, referencePrice) {
         : referencePrice <= stopPrice;
 }
 async function finalizeMarketLikeOrder(orderId) {
-    const updatedOrder = await db_1.default.order.findUnique({ where: { id: orderId } });
-    if (!updatedOrder)
+    const currentOrder = await db_1.default.order.findUnique({ where: { id: orderId } });
+    if (!currentOrder)
         throw new Error('Order not found after execution');
-    if (updatedOrder.remainingAmount.gt(0) && updatedOrder.status !== 'FILLED') {
+    if (currentOrder.remainingAmount.gt(0) && currentOrder.status !== 'FILLED') {
         return db_1.default.order.update({
             where: { id: orderId },
             data: { status: 'CANCELLED' },
         });
     }
-    return updatedOrder;
+    return currentOrder;
 }
 async function executeOrderOnBook(pairId, pairSymbol, order) {
     const executableAmount = (0, helpers_1.decimalToNumber)(order.remainingAmount);
@@ -154,16 +180,16 @@ async function assertValidOnChainState(pair, input) {
     const settlementEnabled = settlementService_1.settlementService.isEnabled();
     const onChainNonceUsed = await settlementService_1.settlementService.isNonceUsed(input.makerAddress, input.nonce);
     if (settlementEnabled && onChainNonceUsed === null) {
-        throw new Error('On-chain nonce validation unavailable');
+        throw errors_1.ApiError.internal('On-chain nonce validation unavailable');
     }
     if (onChainNonceUsed)
-        throw new Error('Nonce already used on-chain');
+        throw errors_1.ApiError.conflict('Nonce already used on-chain');
     const onChainNonceCancelled = await settlementService_1.settlementService.isNonceCancelled(input.makerAddress, input.nonce);
     if (settlementEnabled && onChainNonceCancelled === null) {
-        throw new Error('On-chain cancel validation unavailable');
+        throw errors_1.ApiError.internal('On-chain cancel validation unavailable');
     }
     if (onChainNonceCancelled)
-        throw new Error('Nonce already cancelled on-chain');
+        throw errors_1.ApiError.conflict('Nonce already cancelled on-chain');
     const requiredBase = input.side === 'SELL'
         ? decimalToUnits(input.amount, pair.baseDecimals)
         : 0n;
@@ -207,9 +233,9 @@ exports.orderService = {
             where: { symbol: input.pairSymbol },
         });
         if (!pair)
-            throw new Error(`Pair ${input.pairSymbol} not found`);
+            throw errors_1.ApiError.notFound(`Pair ${input.pairSymbol} not found`);
         if (!pair.isActive)
-            throw new Error(`Pair ${input.pairSymbol} is not active`);
+            throw errors_1.ApiError.badRequest(`Pair ${input.pairSymbol} is not active`);
         // 2. Validate price for executable order types
         const price = input.price || '0';
         if ((input.type === 'LIMIT' || input.type === 'STOP_LIMIT') && parseFloat(price) <= 0) {
@@ -239,7 +265,7 @@ exports.orderService = {
             },
         });
         if (existing)
-            throw new Error('Nonce already used');
+            throw errors_1.ApiError.conflict('Nonce already used');
         await assertValidOnChainState(pair, input);
         // 5. Create order in DB
         const order = await db_1.default.order.create({
@@ -274,13 +300,13 @@ exports.orderService = {
     async cancelOrder(orderId, makerAddress) {
         const order = await db_1.default.order.findUnique({ where: { id: orderId } });
         if (!order)
-            throw new Error('Order not found');
+            throw errors_1.ApiError.notFound('Order not found');
         if (order.makerAddress !== makerAddress)
-            throw new Error('Not order owner');
+            throw errors_1.ApiError.forbidden('Not order owner');
         if (order.status === 'FILLED')
-            throw new Error('Order already filled');
+            throw errors_1.ApiError.conflict('Order already filled');
         if (order.status === 'CANCELLED')
-            throw new Error('Order already cancelled');
+            throw errors_1.ApiError.conflict('Order already cancelled');
         // Remove from in-memory orderbook
         const pair = await db_1.default.pair.findUnique({ where: { id: order.pairId } });
         if (pair) {

@@ -9,6 +9,7 @@ const candleService_1 = require("./candleService");
 const library_1 = require("@prisma/client/runtime/library");
 const tradeSettlementService_1 = require("./tradeSettlementService");
 const affiliateService_1 = require("./affiliateService");
+const logger_1 = require("../utils/logger");
 const prismaAny = db_1.default;
 exports.tradeService = {
     /**
@@ -67,6 +68,7 @@ exports.tradeService = {
                 const settlementInput = {
                     tradeId: 'pending-trade-id',
                     pair: {
+                        symbol: pair.symbol,
                         baseToken: pair.baseToken,
                         quoteToken: pair.quoteToken,
                         isNativeBase: pair.isNativeBase,
@@ -76,25 +78,31 @@ exports.tradeService = {
                     makerOrder: {
                         makerAddress: makerOrder.makerAddress,
                         side: makerOrder.side,
+                        type: makerOrder.type,
                         price: makerOrder.price.toString(),
+                        stopPrice: makerOrder.stopPrice?.toString() || null,
                         amount: makerOrder.amount.toString(),
                         filledAmount: makerOrder.filledAmount.toString(),
                         nonce: makerOrder.nonce,
+                        signature: makerOrder.signature,
                         expiresAt: makerOrder.expiresAt,
                     },
                     takerOrder: {
                         makerAddress: takerOrder.makerAddress,
                         side: takerOrder.side,
+                        type: takerOrder.type,
                         price: takerOrder.price.toString(),
+                        stopPrice: takerOrder.stopPrice?.toString() || null,
                         amount: takerOrder.amount.toString(),
                         filledAmount: takerOrder.filledAmount.toString(),
                         nonce: takerOrder.nonce,
+                        signature: takerOrder.signature,
                         expiresAt: takerOrder.expiresAt,
                     },
                     fillAmount: match.fillAmount.toString(),
                     fillPrice: match.fillPrice.toString(),
                 };
-                // 5. Create trade record
+                // 5. Create trade record (settlementPayload set after to use real trade ID)
                 const newTrade = await txAny.trade.create({
                     data: {
                         pairId,
@@ -110,10 +118,7 @@ exports.tradeService = {
                         takerFee: new library_1.Decimal(takerFee.toString()),
                         settlementStatus: 'PENDING',
                         settlementAttempts: 0,
-                        settlementPayload: (0, tradeSettlementService_1.serializeSettlementInput)({
-                            ...settlementInput,
-                            tradeId: 'trade-id-placeholder',
-                        }),
+                        settlementPayload: null,
                     },
                 });
                 const persistedSettlementInput = {
@@ -135,7 +140,7 @@ exports.tradeService = {
                 await candleService_1.candleService.updateCandle(pairId, match.fillPrice, match.fillAmount, match.fillPrice * match.fillAmount);
             }
             catch (err) {
-                console.error('Failed to update candle:', err);
+                logger_1.log.error({ err }, 'Failed to update candle');
             }
         }
         await tradeSettlementService_1.tradeSettlementService.processNewTradeSettlements(settlementInputs);
@@ -155,7 +160,7 @@ exports.tradeService = {
                 }
             }
             catch (err) {
-                console.error('Affiliate commission distribution failed for trade', trade.id, err);
+                logger_1.log.error({ err, tradeId: trade.id }, 'Affiliate commission distribution failed for trade');
             }
         }
         return trades;

@@ -58,10 +58,23 @@ async function markTradesSkipped(inputs) {
 }
 async function markTradesSettling(inputs) {
     const attemptsByTradeId = new Map();
+    const claimedInputs = [];
     const startedAt = new Date();
+    // Stale threshold: a SETTLING trade whose last attempt was more than
+    // STALE_SETTLING_MS ago is considered abandoned and eligible for re-claim.
+    const staleSettlingBefore = new Date(startedAt.getTime() - STALE_SETTLING_MS);
     for (const input of inputs) {
-        const updatedTrade = await prismaAny.trade.update({
-            where: { id: input.tradeId },
+        // Optimistic claim: only update if the trade is in a retryable state.
+        // This prevents two concurrent workers from double-settling the same trade.
+        const claimed = await prismaAny.trade.updateMany({
+            where: {
+                id: input.tradeId,
+                OR: [
+                    { settlementStatus: { in: ['PENDING', 'FAILED'] } },
+                    // Allow re-claiming stale SETTLING records (abandoned by a crashed worker)
+                    { settlementStatus: 'SETTLING', lastSettlementAttemptAt: { lte: staleSettlingBefore } },
+                ],
+            },
             data: {
                 settlementStatus: 'SETTLING',
                 settlementAttempts: { increment: 1 },
@@ -70,14 +83,21 @@ async function markTradesSettling(inputs) {
                 lastSettlementAttemptAt: startedAt,
                 nextSettlementRetryAt: null,
             },
-            select: {
-                id: true,
-                settlementAttempts: true,
-            },
         });
-        attemptsByTradeId.set(updatedTrade.id, updatedTrade.settlementAttempts);
+        if (claimed.count === 0) {
+            // Another worker already claimed this trade — skip to avoid duplicate TX
+            continue;
+        }
+        const updatedTrade = await prismaAny.trade.findUnique({
+            where: { id: input.tradeId },
+            select: { id: true, settlementAttempts: true },
+        });
+        if (updatedTrade) {
+            attemptsByTradeId.set(updatedTrade.id, updatedTrade.settlementAttempts);
+            claimedInputs.push(input);
+        }
     }
-    return attemptsByTradeId;
+    return { attemptsByTradeId, claimedInputs };
 }
 async function applySettlementResults(results, attemptsByTradeId) {
     const settledAt = new Date();
@@ -118,8 +138,10 @@ async function applySettlementResults(results, attemptsByTradeId) {
     }
 }
 async function processAttempt(inputs) {
-    const attemptsByTradeId = await markTradesSettling(inputs);
-    const results = await settlementService_1.settlementService.settleTrades(inputs);
+    const { attemptsByTradeId, claimedInputs } = await markTradesSettling(inputs);
+    if (claimedInputs.length === 0)
+        return [];
+    const results = await settlementService_1.settlementService.settleTrades(claimedInputs);
     await applySettlementResults(results, attemptsByTradeId);
     return results;
 }

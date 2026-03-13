@@ -10,6 +10,8 @@ const api_1 = require("@polkadot/api");
 const api_contract_1 = require("@polkadot/api-contract");
 const db_1 = __importDefault(require("../db"));
 const config_1 = require("../config");
+const logger_1 = require("../utils/logger");
+const subqueryClient_1 = require("./subqueryClient");
 const ACCOUNT_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,64}$/;
 const PAIR_REGEX = /[A-Z0-9]{2,12}\/[A-Z0-9]{2,12}/;
 const REPO_ROOT = path_1.default.resolve(__dirname, '../../..');
@@ -17,6 +19,8 @@ const DEPLOYED_ADDRESSES_PATH = path_1.default.resolve(REPO_ROOT, 'spot-api', 'd
 const ROUTER_ABI_PATH = path_1.default.resolve(REPO_ROOT, 'lunes-dex-main', 'src', 'abis', 'Router.json');
 const PAIR_ABI_PATH = path_1.default.resolve(REPO_ROOT, 'lunes-dex-main', 'src', 'abis', 'Pair.json');
 const WNATIVE_ABI_PATH = path_1.default.resolve(REPO_ROOT, 'lunes-dex-main', 'src', 'abis', 'WNative.json');
+const COPY_VAULT_ABI_PATH = path_1.default.resolve(REPO_ROOT, 'lunes-dex-main', 'src', 'abis', 'CopyVault.json');
+const ASYMMETRIC_PAIR_ABI_PATH = path_1.default.resolve(REPO_ROOT, 'lunes-dex-main', 'src', 'abis', 'AsymmetricPair.json');
 function getAnalyticsDb() {
     const db = db_1.default;
     if (typeof db.socialAnalyticsCursor?.findUnique !== 'function' ||
@@ -88,7 +92,9 @@ function extractPairSymbol(payload) {
     return matched || null;
 }
 function deriveKind(section, method) {
-    const key = `${section}.${method}`.toLowerCase();
+    const pallet = section.toLowerCase();
+    const eventName = method.toLowerCase();
+    const key = `${pallet}.${eventName}`;
     if (key.includes('swap'))
         return 'SWAP';
     if (key.includes('liquidityadd') || key.includes('minted'))
@@ -99,16 +105,19 @@ function deriveKind(section, method) {
         return 'TRADE_OPEN';
     if (key.includes('tradeclose') || key.includes('positionclosed') || key.includes('settled'))
         return 'TRADE_CLOSE';
-    if (key.includes('deposit'))
-        return 'VAULT_DEPOSIT';
-    if (key.includes('withdraw'))
-        return 'VAULT_WITHDRAW';
+    if (eventName.includes('deposit'))
+        return pallet === 'balances' ? 'UNKNOWN' : 'VAULT_DEPOSIT';
+    if (eventName.includes('withdraw'))
+        return pallet === 'balances' ? 'UNKNOWN' : 'VAULT_WITHDRAW';
     return 'UNKNOWN';
 }
 function shouldTrackEvent(section, method) {
     const pallet = section.toLowerCase();
     const eventName = method.toLowerCase();
     const kind = deriveKind(section, method);
+    if (pallet === 'balances' && (eventName === 'deposit' || eventName === 'withdraw')) {
+        return false;
+    }
     if (kind !== 'UNKNOWN')
         return true;
     if (config_1.config.socialAnalytics.trackedPallets.includes(pallet))
@@ -174,11 +183,11 @@ class SocialIndexerService {
             this.api = await api_1.ApiPromise.create({ provider });
             await this.api.isReady;
             await this.loadKnownContracts();
-            console.log('[SocialIndexer] Connected to blockchain node');
+            logger_1.log.info('[SocialIndexer] Connected to blockchain node');
             return true;
         }
         catch (error) {
-            console.error('[SocialIndexer] Failed to initialize:', error);
+            logger_1.log.error({ err: error }, '[SocialIndexer] Failed to initialize');
             return false;
         }
     }
@@ -238,11 +247,12 @@ class SocialIndexerService {
         if (!this.api)
             return;
         try {
-            const [deployedAddresses, routerAbi, pairAbi, wnativeAbi] = await Promise.all([
+            const [deployedAddresses, routerAbi, pairAbi, wnativeAbi, copyVaultAbi] = await Promise.all([
                 readJsonFile(DEPLOYED_ADDRESSES_PATH),
                 readJsonFile(ROUTER_ABI_PATH),
                 readJsonFile(PAIR_ABI_PATH),
                 readJsonFile(WNATIVE_ABI_PATH),
+                readJsonFile(COPY_VAULT_ABI_PATH).catch(() => null),
             ]);
             const tokenEntries = Object.entries(deployedAddresses)
                 .filter(([key, value]) => {
@@ -287,9 +297,21 @@ class SocialIndexerService {
                     contract: new api_contract_1.ContractPromise(this.api, pairAbi, value),
                 });
             }
+            // Register copy vault contracts
+            if (copyVaultAbi) {
+                for (const [key, value] of Object.entries(deployedAddresses)) {
+                    if (!key.toLowerCase().startsWith('copyvault') || typeof value !== 'string' || !ACCOUNT_REGEX.test(value)) {
+                        continue;
+                    }
+                    this.knownContracts.set(value, {
+                        kind: 'copy_vault',
+                        contract: new api_contract_1.ContractPromise(this.api, copyVaultAbi, value),
+                    });
+                }
+            }
         }
         catch (error) {
-            console.warn('[SocialIndexer] Failed to load known contract decoders:', error);
+            logger_1.log.warn({ err: error }, '[SocialIndexer] Failed to load known contract decoders');
         }
     }
     getTokenSymbol(address) {
@@ -438,6 +460,71 @@ class SocialIndexerService {
                 payload,
             };
         }
+        // ─── Copy Vault Events ────────────────────────────────────
+        if (contractKind === 'copy_vault' && method === 'Deposited') {
+            return {
+                pallet: 'contracts.copy_vault',
+                method,
+                kind: 'VAULT_DEPOSIT',
+                accountAddress: String(payload.depositor ?? signer ?? ''),
+                counterpartyAddress: null,
+                pairSymbol: null,
+                amountIn: Number(payload.amount ?? 0),
+                amountOut: Number(payload.shares_minted ?? 0),
+                price: Number(payload.share_price ?? 0),
+                realizedPnl: null,
+                payload,
+            };
+        }
+        if (contractKind === 'copy_vault' && method === 'Withdrawn') {
+            return {
+                pallet: 'contracts.copy_vault',
+                method,
+                kind: 'VAULT_WITHDRAW',
+                accountAddress: String(payload.depositor ?? signer ?? ''),
+                counterpartyAddress: null,
+                pairSymbol: null,
+                amountIn: Number(payload.shares_burned ?? 0),
+                amountOut: Number(payload.amount_received ?? 0),
+                price: null,
+                realizedPnl: Number(payload.performance_fee ?? 0) * -1,
+                payload,
+            };
+        }
+        if (contractKind === 'copy_vault' && method === 'TradeExecuted') {
+            const pairBytes = payload.pair;
+            const pairStr = Array.isArray(pairBytes)
+                ? String.fromCharCode(...pairBytes)
+                : String(pairBytes ?? '');
+            return {
+                pallet: 'contracts.copy_vault',
+                method,
+                kind: 'SWAP',
+                accountAddress: String(payload.leader ?? signer ?? ''),
+                counterpartyAddress: null,
+                pairSymbol: pairStr.includes('/') ? pairStr : null,
+                amountIn: Number(payload.amount ?? 0),
+                amountOut: Number(payload.vault_equity_after ?? 0),
+                price: null,
+                realizedPnl: null,
+                payload,
+            };
+        }
+        if (contractKind === 'copy_vault' && method === 'CircuitBreakerTriggered') {
+            return {
+                pallet: 'contracts.copy_vault',
+                method,
+                kind: 'TRADE_CLOSE',
+                accountAddress: String(payload.vault ?? signer ?? ''),
+                counterpartyAddress: null,
+                pairSymbol: null,
+                amountIn: Number(payload.current_equity ?? 0),
+                amountOut: Number(payload.high_water_mark ?? 0),
+                price: null,
+                realizedPnl: null,
+                payload: { ...payload, drawdown_bps: Number(payload.drawdown_bps ?? 0) },
+            };
+        }
         return {
             pallet: `contracts.${contractKind}`,
             method,
@@ -463,7 +550,7 @@ class SocialIndexerService {
             return this.normalizeDecodedContractEvent(decoder.kind, method, payload, signer, decoder.pairSymbol);
         }
         catch (error) {
-            console.warn(`[SocialIndexer] Failed to decode contract event for ${contractAddress}:`, error);
+            logger_1.log.warn({ err: error, contractAddress }, '[SocialIndexer] Failed to decode contract event');
             return null;
         }
     }
@@ -591,6 +678,150 @@ class SocialIndexerService {
         }
         return { blockHash, indexedEvents };
     }
+    // ── SubQuery primary source ────────────────────────────────────
+    // When SUBQUERY_ENDPOINT is configured, pull events from SubQuery GraphQL
+    // instead of polling the blockchain directly. Much faster and more reliable.
+    async syncFromSubquery(leaderAddresses) {
+        const db = getAnalyticsDb();
+        if (!db || leaderAddresses.length === 0)
+            return { indexedEvents: 0, latestBlock: 0 };
+        let totalIndexed = 0;
+        const latestBlock = await subqueryClient_1.subqueryClient.getLatestIndexedBlock();
+        for (const address of leaderAddresses) {
+            const { swaps, vaultEvents, tradeEvents } = await subqueryClient_1.subqueryClient.getAllEventsByAddress(address, 1000);
+            // Map SubQuery SwapEvent → SocialIndexedEvent
+            for (const swap of swaps) {
+                const blockNumber = parseInt(swap.blockNumber, 10);
+                const existing = await db.socialIndexedEvent.findFirst({
+                    where: {
+                        chain: config_1.config.socialAnalytics.chainName,
+                        blockNumber,
+                        accountAddress: swap.trader,
+                        kind: 'SWAP',
+                        extrinsicHash: swap.extrinsicHash ?? undefined,
+                    },
+                });
+                if (existing)
+                    continue;
+                await db.socialIndexedEvent.create({
+                    data: {
+                        chain: config_1.config.socialAnalytics.chainName,
+                        blockNumber,
+                        blockHash: null,
+                        eventIndex: 0,
+                        extrinsicIndex: null,
+                        extrinsicHash: swap.extrinsicHash ?? null,
+                        pallet: 'subquery.router',
+                        method: 'Swap',
+                        kind: 'SWAP',
+                        accountAddress: swap.trader,
+                        counterpartyAddress: null,
+                        pairSymbol: swap.pairSymbol ?? null,
+                        amountIn: parseFloat(swap.amountIn) / 1e12,
+                        amountOut: parseFloat(swap.amountOut) / 1e12,
+                        price: null,
+                        realizedPnl: null,
+                        timestamp: new Date(swap.timestamp),
+                        payload: { source: 'subquery', tokenIn: swap.tokenIn, tokenOut: swap.tokenOut },
+                    },
+                });
+                totalIndexed += 1;
+            }
+            // Map SubQuery VaultEvent → SocialIndexedEvent
+            for (const vault of vaultEvents) {
+                const blockNumber = parseInt(vault.blockNumber, 10);
+                const kindMap = {
+                    DEPOSIT: 'VAULT_DEPOSIT',
+                    WITHDRAW: 'VAULT_WITHDRAW',
+                    TRADE_EXECUTED: 'SWAP',
+                    CIRCUIT_BREAKER: 'TRADE_CLOSE',
+                };
+                const kind = kindMap[vault.kind] ?? 'UNKNOWN';
+                const existing = await db.socialIndexedEvent.findFirst({
+                    where: {
+                        chain: config_1.config.socialAnalytics.chainName,
+                        blockNumber,
+                        accountAddress: vault.actor,
+                        kind,
+                        extrinsicHash: vault.extrinsicHash ?? undefined,
+                    },
+                });
+                if (existing)
+                    continue;
+                await db.socialIndexedEvent.create({
+                    data: {
+                        chain: config_1.config.socialAnalytics.chainName,
+                        blockNumber,
+                        blockHash: null,
+                        eventIndex: 0,
+                        extrinsicIndex: null,
+                        extrinsicHash: vault.extrinsicHash ?? null,
+                        pallet: 'subquery.copy_vault',
+                        method: vault.kind,
+                        kind,
+                        accountAddress: vault.leader ?? vault.actor,
+                        counterpartyAddress: vault.actor !== vault.leader ? vault.actor : null,
+                        pairSymbol: vault.pairSymbol ?? null,
+                        amountIn: vault.amountIn ? parseFloat(vault.amountIn) / 1e12 : null,
+                        amountOut: vault.amountOut ? parseFloat(vault.amountOut) / 1e12 : null,
+                        price: null,
+                        realizedPnl: null,
+                        timestamp: new Date(vault.timestamp),
+                        payload: { source: 'subquery', equityAfter: vault.equityAfter, drawdownBps: vault.drawdownBps },
+                    },
+                });
+                totalIndexed += 1;
+            }
+            // Map SubQuery TradeEvent → SocialIndexedEvent
+            for (const trade of tradeEvents) {
+                const blockNumber = parseInt(trade.blockNumber, 10);
+                const kind = trade.kind === 'CLOSE' ? 'TRADE_CLOSE' : 'TRADE_OPEN';
+                const existing = await db.socialIndexedEvent.findFirst({
+                    where: {
+                        chain: config_1.config.socialAnalytics.chainName,
+                        blockNumber,
+                        accountAddress: trade.trader,
+                        kind,
+                        extrinsicHash: trade.extrinsicHash ?? undefined,
+                    },
+                });
+                if (existing)
+                    continue;
+                await db.socialIndexedEvent.create({
+                    data: {
+                        chain: config_1.config.socialAnalytics.chainName,
+                        blockNumber,
+                        blockHash: null,
+                        eventIndex: 0,
+                        extrinsicIndex: null,
+                        extrinsicHash: trade.extrinsicHash ?? null,
+                        pallet: 'subquery.trade',
+                        method: trade.kind,
+                        kind,
+                        accountAddress: trade.trader,
+                        counterpartyAddress: null,
+                        pairSymbol: trade.pairSymbol ?? null,
+                        amountIn: trade.size ? parseFloat(trade.size) / 1e12 : null,
+                        amountOut: null,
+                        price: null,
+                        realizedPnl: trade.realizedPnl ? parseFloat(trade.realizedPnl) / 1e12 : null,
+                        timestamp: new Date(trade.timestamp),
+                        payload: { source: 'subquery', side: trade.side },
+                    },
+                });
+                totalIndexed += 1;
+            }
+        }
+        if (latestBlock > 0) {
+            await this.updateCursor({
+                status: 'IDLE',
+                lastProcessedBlock: latestBlock,
+                lastProcessedAt: new Date(),
+                lastError: null,
+            });
+        }
+        return { indexedEvents: totalIndexed, latestBlock };
+    }
     async syncOnce() {
         if (!this.isEnabled()) {
             await this.updateCursor({ status: 'DISABLED' });
@@ -600,10 +831,35 @@ class SocialIndexerService {
         if (!db) {
             return { enabled: true, processedBlocks: 0, indexedEvents: 0, prismaReady: false };
         }
+        // ── SubQuery primary path ──────────────────────────────────
+        if (config_1.config.subquery.enabled && subqueryClient_1.subqueryClient.isEnabled()) {
+            try {
+                await this.updateCursor({ status: 'RUNNING', lastError: null });
+                const leaders = await db_1.default.leader.findMany({ select: { address: true } }).catch(() => []);
+                const addresses = leaders.map((l) => l.address);
+                const result = await this.syncFromSubquery(addresses);
+                logger_1.log.info({ indexedEvents: result.indexedEvents, latestBlock: result.latestBlock }, '[SocialIndexer] SubQuery sync complete');
+                return {
+                    enabled: true,
+                    source: 'subquery',
+                    processedBlocks: 0,
+                    indexedEvents: result.indexedEvents,
+                    latestBlock: result.latestBlock,
+                    prismaReady: true,
+                };
+            }
+            catch (error) {
+                const message = error instanceof Error ? error.message : 'SubQuery sync failed';
+                logger_1.log.warn({ message }, '[SocialIndexer] SubQuery sync failed, falling back to RPC');
+                await this.updateCursor({ status: 'ERROR', lastError: `SubQuery: ${message}` });
+                // Fall through to RPC polling below
+            }
+        }
+        // ── RPC polling fallback ───────────────────────────────────
         const isReady = await this.ensureReady();
         if (!isReady || !this.api) {
             await this.updateCursor({ status: 'ERROR', lastError: 'Blockchain API unavailable' });
-            return { enabled: true, processedBlocks: 0, indexedEvents: 0, prismaReady: true };
+            return { enabled: true, source: 'rpc', processedBlocks: 0, indexedEvents: 0, prismaReady: true };
         }
         const latestHeader = await this.api.rpc.chain.getHeader();
         const latestBlock = latestHeader.number.toNumber();

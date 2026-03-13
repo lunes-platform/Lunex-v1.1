@@ -199,28 +199,21 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       const extensions = await web3Enable('Lunex DEX')
 
       if (extensions.length === 0) {
-        const walletName = walletSource === 'subwallet-js' ? 'SubWallet'
-          : walletSource === 'talisman' ? 'Talisman'
-          : 'a Polkadot-compatible wallet (Lunes Wallet, SubWallet, or Talisman)'
-        throw new Error(`No wallet extension detected. Please install ${walletName}.`)
+        throw new Error('Please install a Polkadot-compatible wallet extension')
       }
 
       const allAccounts = await web3Accounts()
 
       if (allAccounts.length === 0) {
-        throw new Error('No accounts found. Create an account in your wallet extension.')
+        throw new Error('No accounts found. Create an account in your wallet extension')
       }
 
       // Filter accounts by the selected wallet source, if provided
       let accounts = allAccounts
       if (walletSource) {
-        accounts = allAccounts.filter(acc => acc.meta.source === walletSource)
-        if (accounts.length === 0) {
-          // Fallback: show all accounts if selected wallet has none
-          const walletName = walletSource === 'subwallet-js' ? 'SubWallet'
-            : walletSource === 'talisman' ? 'Talisman'
-            : 'Lunes Wallet'
-          throw new Error(`No accounts found in ${walletName}. Please create or import an account.`)
+        const filtered = allAccounts.filter(acc => acc.meta.source === walletSource)
+        if (filtered.length > 0) {
+          accounts = filtered
         }
       }
 
