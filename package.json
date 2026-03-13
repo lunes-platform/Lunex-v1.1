@@ -1,6 +1,6 @@
 {
-  "name": "astar-examples",
-  "version": "0.1.0",
+  "name": "lunex-platform",
+  "version": "0.8.0",
   "private": true,
   "dependencies": {
     "@727-ventures/typechain-compiler": "0.5.10",
@@ -26,7 +26,7 @@
   "scripts": {
     "compile": "typechain-compiler --toolchain nightly",
     "compile:release": "typechain-compiler --release --toolchain nightly",
-    "compile:all": "cd uniswap-v2/contracts/factory && cargo contract build --release && cd ../pair && cargo contract build --release && cd ../router && cargo contract build --release && cd ../rewards && cargo contract build --release && cd ../staking && cargo contract build --release && cd ../wnative && cargo contract build --release",
+    "compile:all": "cd Lunex/contracts/factory && cargo contract build --release && cd ../pair && cargo contract build --release && cd ../router && cargo contract build --release && cd ../rewards && cargo contract build --release && cd ../staking && cargo contract build --release && cd ../wnative && cargo contract build --release",
     "test:typechain": "jest --testPathPattern \".spec.ts$\" --runInBand",
     "test:single": "jest",
     "test:unit": "cargo test",
@@ -41,6 +41,10 @@
     "deploy:testnet": "npm run deploy:lunes testnet",
     "deploy:mainnet": "npm run deploy:lunes mainnet",
     "deploy:dry-run": "npm run deploy:lunes testnet \"//Alice\" --dry-run",
+    "deploy:listing": "ts-node scripts/deploy-listing-contracts.ts",
+    "deploy:listing:dry-run": "DRY_RUN=true ts-node scripts/deploy-listing-contracts.ts",
+    "listing:relayer": "ts-node scripts/listing-relayer.ts",
+    "build:listing": "cargo contract build --release --manifest-path Lunex/contracts/liquidity_lock/Cargo.toml && cargo contract build --release --manifest-path Lunex/contracts/listing_manager/Cargo.toml",
     "list-token": "ts-node scripts/list-token.ts list-token",
     "admin-list-token": "ts-node scripts/admin-list-token.ts",
     "check-proposal": "ts-node scripts/list-token.ts check-proposal",

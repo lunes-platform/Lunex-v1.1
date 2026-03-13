@@ -3,6 +3,7 @@ import * as path from 'path'
 import { ApiPromise, Keyring, WsProvider } from '@polkadot/api'
 import { ContractPromise } from '@polkadot/api-contract'
 import { cryptoWaitReady } from '@polkadot/util-crypto'
+import { hexToU8a, isHex } from '@polkadot/util'
 import { config } from '../config'
 import { log } from '../utils/logger'
 import prisma from '../db'
@@ -74,6 +75,51 @@ function decimalToUnits(value: string, decimals: number) {
   const fraction = BigInt((fractionPart + '0'.repeat(decimals)).slice(0, decimals) || '0')
   const result = whole + fraction
   return negative ? -result : result
+}
+
+/**
+ * Convert an order signature string to a 64-byte Uint8Array suitable for
+ * the on-chain `SignedOrder.signature: [u8; 64]` field.
+ *
+ * Three cases:
+ *   1. Real sr25519 hex signature ("0x…" or bare hex, 128 hex chars = 64 bytes)
+ *      → decode directly.
+ *   2. Agent-delegated order ("agent:<id>")
+ *      → the agent's orders are pre-validated off-chain via the agent registry;
+ *        we encode a non-zero sentinel so the contract's blank-signature guard
+ *        does not reject it. The first byte is 0x01 (agent marker), remaining
+ *        bytes are the UTF-8 of the agent id (up to 63 bytes), zero-padded.
+ *   3. Any other unexpected format
+ *      → throws, preventing an invalid settlement from reaching the chain.
+ */
+function signatureToBytes(sig: string): number[] {
+  // Case 1 — real sr25519 signature
+  if (isHex(sig) || /^[0-9a-fA-F]{128}$/.test(sig)) {
+    const hex = sig.startsWith('0x') ? sig : `0x${sig}`
+    const bytes = hexToU8a(hex)
+    if (bytes.length !== 64) {
+      throw new Error(
+        `Invalid sr25519 signature length: expected 64 bytes, got ${bytes.length}. ` +
+        `Signature (truncated): ${sig.slice(0, 20)}…`,
+      )
+    }
+    return Array.from(bytes)
+  }
+
+  // Case 2 — agent-delegated order: off-chain verification already passed via
+  // assertOrderTrustedSource. Encode as non-zero sentinel for contract storage.
+  if (sig.startsWith('agent:')) {
+    const idBytes = Buffer.from(sig.slice('agent:'.length), 'utf-8').subarray(0, 63)
+    const out = new Uint8Array(64)
+    out[0] = 0x01 // agent marker — non-zero so the blank-sig guard doesn't fire
+    out.set(idBytes, 1)
+    return Array.from(out)
+  }
+
+  throw new Error(
+    `Unrecognised signature format for settlement: ${sig.slice(0, 20)}…. ` +
+    `Expected a 64-byte sr25519 hex signature or "agent:<id>".`,
+  )
 }
 
 function nonceToU64(nonce: string) {
@@ -283,6 +329,10 @@ class SpotSettlementService {
       filled_amount: decimalToUnits(order.filledAmount, pair.baseDecimals).toString(),
       nonce: nonceToU64(order.nonce).toString(),
       expiry: order.expiresAt ? String(order.expiresAt.getTime()) : '0',
+      // sr25519 signature bytes stored on-chain for auditability.
+      // Off-chain verification is done in assertOrderTrustedSource() before
+      // this call. See verify_order_signature() in spot_settlement/lib.rs.
+      signature: signatureToBytes(order.signature),
     }
   }
 

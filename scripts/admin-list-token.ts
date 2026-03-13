@@ -12,6 +12,12 @@ import { ContractPromise } from '@polkadot/api-contract';
 import { BN } from '@polkadot/util';
 import * as fs from 'fs';
 
+type ContractApi = ConstructorParameters<typeof ContractPromise>[0];
+
+function asContractApi(api: ApiPromise): ContractApi {
+  return api as unknown as ContractApi;
+}
+
 // 🌐 REDES DISPONÍVEIS
 const NETWORKS = {
   testnet: 'wss://ws-test.lunes.io',
@@ -52,7 +58,7 @@ class AdminTokenLister {
     
     // Carregar metadata do contrato de staking
     const stakingMetadata = this.loadContractMetadata('./deployments/staking-metadata.json');
-    this.stakingContract = new ContractPromise(this.api, stakingMetadata, this.config.stakingContract);
+    this.stakingContract = new ContractPromise(asContractApi(this.api), stakingMetadata, this.config.stakingContract);
     
     console.log(`✅ Conectado à ${this.config.network}`);
     console.log(`👤 Admin: ${this.adminAccount.address}`);

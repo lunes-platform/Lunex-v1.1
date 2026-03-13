@@ -4,6 +4,7 @@ import { agentAuth } from '../middleware/agentAuth'
 import { orderService } from '../services/orderService'
 import { copytradeService } from '../services/copytradeService'
 import { botRateLimiter, botAnomalyGuard, keyRotationWarning, recordLargeOrderPlaced, recordOrderCancelled } from '../services/botSandbox'
+import { executionLayerService } from '../services/executionLayerService'
 import prisma from '../db'
 import { log } from '../utils/logger'
 
@@ -123,6 +124,28 @@ router.post('/swap', async (req: Request, res: Response, next: NextFunction) => 
         const agent = req.agent!
         await validateTradeLimits(agent, parsed.data.amount)
 
+        // ── Execution Layer: validate + log ────────────────────────
+        const strategyId = typeof req.body.strategyId === 'string' ? req.body.strategyId : undefined
+        const { logId, validation } = await executionLayerService.validateAndLog({
+            agentId:       agent.id,
+            strategyId,
+            pairSymbol:    parsed.data.pairSymbol,
+            side:          parsed.data.side,
+            orderType:     'MARKET',
+            amount:        parsed.data.amount,
+            maxSlippageBps: parsed.data.maxSlippageBps,
+            source:        'API',
+        })
+
+        if (!validation.allowed) {
+            return res.status(422).json({
+                error: 'Trade rejected by risk controls',
+                reason: validation.rejectionReason,
+                checks: validation.checks,
+            })
+        }
+        // ──────────────────────────────────────────────────────────
+
         const nonce = `agent_${agent.id}_${Date.now()}`
 
         const order = await orderService.createOrder({
@@ -132,11 +155,20 @@ router.post('/swap', async (req: Request, res: Response, next: NextFunction) => 
             amount: parsed.data.amount,
             makerAddress: agent.walletAddress,
             nonce,
+            timestamp: Date.now(),
             signature: `agent:${agent.id}`,
             timeInForce: 'IOC',
         })
 
         await recordAgentTrade(agent.id, parseFloat(parsed.data.amount))
+
+        // Update execution log with order id
+        if (order?.id) {
+            await executionLayerService.updateExecutionStatus(logId, {
+                status: 'EXECUTED',
+                orderId: order.id,
+            }).catch(() => null)
+        }
 
         const signal = await emitCopyTradeSignalIfLeader(agent.id, {
             pairSymbol: parsed.data.pairSymbol,
@@ -148,6 +180,7 @@ router.post('/swap', async (req: Request, res: Response, next: NextFunction) => 
             order,
             source: 'API',
             agentId: agent.id,
+            executionLogId: logId,
             copyTradeSignal: signal ? { signalId: signal.signalId, slices: signal.slices.length } : null,
         })
     } catch (err) { next(err) }
@@ -167,8 +200,30 @@ router.post('/limit', async (req: Request, res: Response, next: NextFunction) =>
         const agent = req.agent!
         await validateTradeLimits(agent, parsed.data.amount)
 
-        const nonce = `agent_${agent.id}_${Date.now()}`
+        // ── Execution Layer: validate + log ────────────────────────
+        const strategyId = typeof req.body.strategyId === 'string' ? req.body.strategyId : undefined
         const orderType = parsed.data.stopPrice ? 'STOP_LIMIT' : 'LIMIT'
+        const { logId, validation } = await executionLayerService.validateAndLog({
+            agentId:    agent.id,
+            strategyId,
+            pairSymbol: parsed.data.pairSymbol,
+            side:       parsed.data.side,
+            orderType,
+            amount:     parsed.data.amount,
+            price:      parsed.data.price,
+            source:     'API',
+        })
+
+        if (!validation.allowed) {
+            return res.status(422).json({
+                error: 'Trade rejected by risk controls',
+                reason: validation.rejectionReason,
+                checks: validation.checks,
+            })
+        }
+        // ──────────────────────────────────────────────────────────
+
+        const nonce = `agent_${agent.id}_${Date.now()}`
 
         const order = await orderService.createOrder({
             pairSymbol: parsed.data.pairSymbol,
@@ -179,6 +234,7 @@ router.post('/limit', async (req: Request, res: Response, next: NextFunction) =>
             amount: parsed.data.amount,
             makerAddress: agent.walletAddress,
             nonce,
+            timestamp: Date.now(),
             signature: `agent:${agent.id}`,
             timeInForce: parsed.data.timeInForce ?? 'GTC',
         })
@@ -188,6 +244,13 @@ router.post('/limit', async (req: Request, res: Response, next: NextFunction) =>
         if (order) {
             const recentAvg = agent.maxPositionSize / 10
             recordLargeOrderPlaced(agent.id, order.id, parseFloat(parsed.data.amount), recentAvg)
+
+            // Update execution log with order id
+            await executionLayerService.updateExecutionStatus(logId, {
+                status: 'EXECUTED',
+                orderId: order.id,
+                executionPrice: parsed.data.price,
+            }).catch(() => null)
         }
 
         const signal = await emitCopyTradeSignalIfLeader(agent.id, {
@@ -201,6 +264,7 @@ router.post('/limit', async (req: Request, res: Response, next: NextFunction) =>
             order,
             source: 'API',
             agentId: agent.id,
+            executionLogId: logId,
             copyTradeSignal: signal ? { signalId: signal.signalId, slices: signal.slices.length } : null,
         })
     } catch (err) { next(err) }

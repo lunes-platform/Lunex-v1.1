@@ -4,8 +4,7 @@ import * as S from './styles'
 import * as B from 'components/bases'
 //Modal
 import Modal from 'components/modal'
-//Mocks
-// import tokens from './mock'
+import TokenIcon from 'components/TokenIcon'
 
 export type TokensItems = {
   id: number
@@ -69,7 +68,7 @@ const ChooseToken = ({ close, onSelect, tokens }: ChooseTokenProps) => {
               }}
             >
               <B.Paragraph colors={100} weight={700}>
-                <img src={item.icon} />
+                {item.icon ? <img src={item.icon} /> : <TokenIcon address={item.address} symbol={item.acronym} size={24} />}
                 {item.acronym}
                 <B.Span margin="0 0 0 8px" size="14px">
                   {item.token}

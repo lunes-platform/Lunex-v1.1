@@ -4,21 +4,10 @@ import { orderbookManager } from '../utils/orderbook'
 import { factoryService } from '../services/factoryService'
 import { config } from '../config'
 import { log } from '../utils/logger'
+import { requireAdmin } from '../middleware/adminGuard'
 
 const router = Router()
 
-// ─── Auth middleware for admin routes ────────────────────────────
-
-function requireAdmin(req: Request, res: Response, next: () => void) {
-  const secret = config.adminSecret
-  if (!secret) {
-    return res.status(503).json({ error: 'Admin secret not configured on this server' })
-  }
-  const auth = req.headers['authorization'] ?? ''
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-  if (!token || token !== secret) return res.status(401).json({ error: 'Unauthorized' })
-  next()
-}
 
 // ─── Public routes ───────────────────────────────────────────────
 

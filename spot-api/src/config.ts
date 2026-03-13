@@ -84,6 +84,17 @@ export const config = {
     intervalMs: parseInt(process.env.VAULT_RECONCILIATION_INTERVAL_MS || '60000', 10),
   },
 
+  rewards: {
+    enabled: process.env.REWARDS_ENABLED === 'true',
+    rewardPoolPct: parseInt(process.env.REWARD_POOL_PCT || '20', 10),
+    leaderPoolPct: parseInt(process.env.LEADER_POOL_PCT || '40', 10),
+    traderPoolPct: parseInt(process.env.TRADER_POOL_PCT || '30', 10),
+    stakerPoolPct: parseInt(process.env.STAKER_POOL_PCT || '30', 10),
+    treasuryAddress: process.env.TREASURY_ADDRESS || '',
+    stakingContractAddress: process.env.STAKING_CONTRACT_ADDRESS || '',
+    stakingContractMetadataPath: process.env.STAKING_CONTRACT_METADATA_PATH || './abis/Staking.json',
+  },
+
   // Price precision: 10^8 (same as contract)
   PRICE_PRECISION: BigInt(100_000_000),
   FEE_DENOMINATOR: BigInt(10_000),

@@ -1,5 +1,6 @@
 import { NextFunction, Router, Request, Response } from 'express'
 import { affiliateService } from '../services/affiliateService'
+import prisma from '../db'
 import { z } from 'zod'
 
 const router = Router()
@@ -69,6 +70,83 @@ router.post('/payout/process', async (_req: Request, res: Response, next: NextFu
     try {
         const result = await affiliateService.processPayoutBatch()
         res.json(result)
+    } catch (err) { next(err) }
+})
+
+// Global affiliate program stats (admin panel)
+router.get('/stats', async (_req: Request, res: Response, next: NextFunction) => {
+    try {
+        const [totalCommissions, unpaidCommissions, totalReferrals, levelBreakdown, commissionsBySource] =
+            await Promise.all([
+                prisma.affiliateCommission.aggregate({
+                    _sum: { commissionAmount: true },
+                    _count: { id: true },
+                }),
+                prisma.affiliateCommission.aggregate({
+                    where: { isPaid: false },
+                    _sum: { commissionAmount: true },
+                    _count: { id: true },
+                }),
+                prisma.referral.count(),
+                prisma.referral.groupBy({
+                    by: ['level'],
+                    _count: { id: true },
+                }),
+                prisma.affiliateCommission.groupBy({
+                    by: ['sourceType'],
+                    _sum: { commissionAmount: true },
+                    _count: { id: true },
+                }),
+            ])
+
+        res.json({
+            stats: {
+                totalCommissions: parseFloat(totalCommissions._sum.commissionAmount?.toString() || '0'),
+                totalTransactions: totalCommissions._count.id,
+                unpaidCommissions: parseFloat(unpaidCommissions._sum.commissionAmount?.toString() || '0'),
+                unpaidCount: unpaidCommissions._count.id,
+                totalReferrals,
+                levelBreakdown: levelBreakdown.map(l => ({ level: l.level, count: l._count.id })),
+                bySource: commissionsBySource.map(s => ({
+                    sourceType: s.sourceType,
+                    total: parseFloat(s._sum.commissionAmount?.toString() || '0'),
+                    count: s._count.id,
+                })),
+            },
+        })
+    } catch (err) { next(err) }
+})
+
+// Top affiliates by total commission earned (admin panel)
+router.get('/top', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit as string) || 20, 100)
+
+        const [topAffiliates, referralCounts] = await Promise.all([
+            prisma.affiliateCommission.groupBy({
+                by: ['beneficiaryAddr'],
+                _sum: { commissionAmount: true },
+                _count: { id: true },
+                orderBy: { _sum: { commissionAmount: 'desc' } },
+                take: limit,
+            }),
+            prisma.referral.groupBy({
+                by: ['referrerAddress'],
+                _count: { id: true },
+            }),
+        ])
+
+        const referralMap = Object.fromEntries(referralCounts.map(r => [r.referrerAddress, r._count.id]))
+
+        res.json({
+            top: topAffiliates.map((aff, i) => ({
+                rank: i + 1,
+                address: aff.beneficiaryAddr,
+                totalCommission: parseFloat(aff._sum.commissionAmount?.toString() || '0'),
+                transactions: aff._count.id,
+                referrals: referralMap[aff.beneficiaryAddr] ?? 0,
+            })),
+        })
     } catch (err) { next(err) }
 })
 

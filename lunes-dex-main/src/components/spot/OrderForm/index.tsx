@@ -507,7 +507,7 @@ const MarketForm: React.FC<FormProps> = ({ side, onSubmit, balanceUsdt = 0, bala
     return (
         <>
             <SlippageWarning>
-                ℹ️ Market order — price may vary (slippage ~0.1-0.5%)
+                Market order — price may vary (slippage ~0.1-0.5%)
             </SlippageWarning>
             <FieldWrapper>
                 <FieldLabel>Amount (LUNES)</FieldLabel>
@@ -711,7 +711,7 @@ const StopForm: React.FC<FormProps> = ({ side, onSubmit, balanceUsdt = 0, balanc
     return (
         <>
             <InfoBox>
-                ℹ️ When the market reaches the <strong>Stop Price</strong>, a market order will be executed.
+                When the market reaches the <strong>Stop Price</strong>, a market order will be executed.
             </InfoBox>
             <FieldWrapper>
                 <FieldLabel>
@@ -791,7 +791,7 @@ const StopLimitForm: React.FC<FormProps> = ({ side, onSubmit, balanceUsdt = 0, b
     return (
         <>
             <InfoBox>
-                ℹ️ When the <strong>Stop Price</strong> is reached, a Limit order at the <strong>Limit Price</strong> will be placed.
+                When the <strong>Stop Price</strong> is reached, a Limit order at the <strong>Limit Price</strong> will be placed.
             </InfoBox>
             <FieldWrapper>
                 <FieldLabel>
@@ -925,6 +925,7 @@ const OrderForm: React.FC = () => {
             price: orderPrice,
             stopPrice: orderStopPrice,
             amount: pendingOrder.amount.toString(),
+            timestamp: Date.now(),
             signMessage,
         })
 

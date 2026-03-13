@@ -12,6 +12,12 @@ import { ContractPromise } from '@polkadot/api-contract';
 import { BN } from '@polkadot/util';
 import * as fs from 'fs';
 
+type ContractApi = ConstructorParameters<typeof ContractPromise>[0];
+
+function asContractApi(api: ApiPromise): ContractApi {
+  return api as unknown as ContractApi;
+}
+
 // 🌐 CONFIGURAÇÃO DE REDE
 const NETWORKS = {
   testnet: 'wss://ws-test.lunes.io',
@@ -76,9 +82,9 @@ class TokenLister {
     const factoryMetadata = this.loadContractMetadata('./deployments/factory-metadata.json');
     const routerMetadata = this.loadContractMetadata('./deployments/router-metadata.json');
     
-    this.stakingContract = new ContractPromise(this.api, stakingMetadata, this.config.stakingContract);
-    this.factoryContract = new ContractPromise(this.api, factoryMetadata, this.config.factoryContract);
-    this.routerContract = new ContractPromise(this.api, routerMetadata, this.config.routerContract);
+    this.stakingContract = new ContractPromise(asContractApi(this.api), stakingMetadata, this.config.stakingContract);
+    this.factoryContract = new ContractPromise(asContractApi(this.api), factoryMetadata, this.config.factoryContract);
+    this.routerContract = new ContractPromise(asContractApi(this.api), routerMetadata, this.config.routerContract);
     
     console.log(`✅ Conectado e contratos carregados`);
   }
@@ -113,7 +119,7 @@ class TokenLister {
 
       // 4. Verificar balance para taxa de proposta
       const balance = await this.api.query.system.account(this.proposerAccount.address);
-      const freeBalance = balance.data.free.toBN();
+      const freeBalance = (balance as any).data.free.toBN();
       if (freeBalance.lt(LISTING_CONFIG.PROPOSAL_FEE.add(LISTING_CONFIG.IMPLEMENTATION_FEE))) {
         console.error(`❌ Balance insuficiente para taxas`);
         return false;
@@ -264,7 +270,7 @@ class TokenLister {
 
     // Primeiro aprovar tokens
     const tokenMetadata = this.loadContractMetadata('./deployments/psp22-metadata.json');
-    const tokenContract = new ContractPromise(this.api, tokenMetadata, tokenAddress);
+    const tokenContract = new ContractPromise(asContractApi(this.api), tokenMetadata, tokenAddress);
 
     console.log(`1. Aprovando tokens...`);
     const approveTx = tokenContract.tx.approve(
@@ -328,14 +334,14 @@ class TokenLister {
     try {
       // Carregar metadata PSP22 padrão
       const psp22Metadata = this.loadContractMetadata('./deployments/psp22-metadata.json');
-      const contract = new ContractPromise(this.api, psp22Metadata, address);
+      const contract = new ContractPromise(asContractApi(this.api), psp22Metadata, address);
 
       // Testar métodos PSP22 básicos
       const nameResult = await contract.query.name(this.proposerAccount.address, {});
       const symbolResult = await contract.query.symbol(this.proposerAccount.address, {});
       const decimalsResult = await contract.query.decimals(this.proposerAccount.address, {});
 
-      return nameResult.output && symbolResult.output && decimalsResult.output;
+      return Boolean(nameResult.output && symbolResult.output && decimalsResult.output);
     } catch {
       return false;
     }
@@ -348,7 +354,7 @@ class TokenLister {
         { gasLimit: new BN('100000000000') },
         tokenAddress
       );
-      return result.output?.toJSON() || false;
+      return Boolean(result.output?.toJSON());
     } catch {
       return false;
     }

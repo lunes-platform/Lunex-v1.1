@@ -176,9 +176,13 @@ mod complete_staking_rewards_integration_tests {
             }
 
             let amount_to_distribute = self.trading_rewards_pool;
-            for (user, position) in self.stakers.iter_mut() {
-                if position.active {
-                    let weight = self.calculate_staker_weight(position);
+            // Collect weights first (immutable phase) then apply rewards (mutable phase)
+            let user_weights: Vec<(String, u128)> = self.stakers.iter()
+                .filter(|(_, p)| p.active)
+                .map(|(u, p)| (u.clone(), self.calculate_staker_weight(p)))
+                .collect();
+            for (user, weight) in &user_weights {
+                if let Some(position) = self.stakers.get_mut(user) {
                     let reward = amount_to_distribute * weight / total_weight;
                     position.pending_rewards += reward;
                 }
@@ -209,14 +213,14 @@ mod complete_staking_rewards_integration_tests {
         }
 
         pub fn get_quantity_multiplier(&self, amount: u128) -> u128 {
-            if amount >= 20_000_000_000_000 {      // 200k+ LUNES
+            if amount >= 250_000_000_000_000 {      // 2.5M+ LUNES
                 13000  // 1.3x
-            } else if amount >= 5_000_000_000_000 { // 50k+ LUNES
+            } else if amount >= 75_000_000_000_000 { // 750k+ LUNES
                 12000  // 1.2x
-            } else if amount >= 1_000_000_000_000 { // 10k+ LUNES
+            } else if amount >= 15_000_000_000_000 { // 150k+ LUNES
                 11000  // 1.1x
             } else {
-                10000  // 1.0x
+                10000  // 1.0x (< 150k LUNES)
             }
         }
 
@@ -251,7 +255,7 @@ mod complete_staking_rewards_integration_tests {
 
         pub fn track_volume(&mut self, trader: String, volume: u128, current_time: u64) -> Result<(), String> {
             // Validações anti-fraude
-            if volume < 10_000_000_000 { // MIN_TRADE_VOLUME = 100 LUNES
+            if volume < 100_000_000_000 { // MIN_TRADE_VOLUME = 1000 LUNES
                 return Err("Volume too small".to_string());
             }
 
@@ -275,7 +279,7 @@ mod complete_staking_rewards_integration_tests {
                 current_daily = 0;
             }
 
-            if current_daily + volume > 100_000_000_000_000 { // MAX_DAILY = 1M LUNES
+            if current_daily + volume >= 100_000_000_000_000 { // MAX_DAILY = 1M LUNES
                 return Err("Daily limit exceeded".to_string());
             }
 
@@ -482,6 +486,8 @@ mod complete_staking_rewards_integration_tests {
         println!("❌ Spam bloqueado: {}", spam_result.unwrap_err());
         
         // Tentativa de trade muito rápido (cooldown)
+        // alice faz um trade válido, depois tenta de novo em 10s
+        system.trading_rewards.track_volume("alice".to_string(), 1_000_000_000_000, system.current_time).unwrap();
         system.advance_time(10); // Apenas 10 segundos
         let cooldown_result = system.trading_rewards.track_volume("alice".to_string(), 1_000_000_000_000, system.current_time);
         assert!(cooldown_result.is_err());
@@ -489,7 +495,7 @@ mod complete_staking_rewards_integration_tests {
 
         // === FASE 7: RESULTADOS FINAIS ===
         println!("\n📊 RESUMO FINAL DO SISTEMA");
-        println!("=" * 50);
+        println!("{}", "=".repeat(50));
         
         println!("💰 Total de fees coletadas: {} LUNES", system.total_fees_collected / 100_000_000);
         println!("📈 Total staked: {} LUNES", system.staking.total_staked / 100_000_000);
@@ -569,7 +575,7 @@ mod complete_staking_rewards_integration_tests {
 /// Função para rodar todos os testes
 pub fn run_all_tests() {
     println!("🚀 EXECUTANDO TODOS OS TESTES DO SISTEMA LUNEX DEX");
-    println!("=" * 60);
+    println!("{}", "=".repeat(60));
     
     // Os testes serão executados automaticamente pelo cargo test
     // Esta função serve como documentação

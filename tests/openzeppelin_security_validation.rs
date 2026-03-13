@@ -299,12 +299,12 @@ mod openzeppelin_validation {
     fn test_openzeppelin_build_determinism() {
         // Simulate checking build configuration
         let rust_version = "stable"; // From rust-toolchain.toml
-        let ink_version = "5.1.1";
+        let ink_version = "4.2.1";
         let psp22_version = "2.0";
         
         // These should be fixed versions for deterministic builds
         assert_eq!(rust_version, "stable");
-        assert_eq!(ink_version, "5.1.1");
+        assert_eq!(ink_version, "4.2.1");
         assert_eq!(psp22_version, "2.0");
         
         // Build should be reproducible with these fixed versions

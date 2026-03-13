@@ -326,6 +326,7 @@ export const routerService = {
                 amount: amountIn.toString(),
                 makerAddress,
                 nonce,
+                timestamp: Date.now(),
                 signature: agentId ? `agent:${agentId}` : `manual:${makerAddress}`,
                 timeInForce: 'IOC',
             })

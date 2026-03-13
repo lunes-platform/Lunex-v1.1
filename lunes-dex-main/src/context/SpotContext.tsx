@@ -223,6 +223,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
       try {
         const nonce = generateNonce()
+        const timestamp = Date.now()
         const messageToSign = buildSpotOrderSignMessage({
           pairSymbol: params.pairSymbol,
           side: params.side,
@@ -231,6 +232,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           stopPrice: params.stopPrice,
           amount: params.amount,
           nonce,
+          timestamp,
         })
         const signature = await params.signMessage(messageToSign)
 
@@ -243,6 +245,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           amount: params.amount,
           timeInForce: params.timeInForce,
           nonce,
+          timestamp,
           signature,
           makerAddress: walletAddress,
         })

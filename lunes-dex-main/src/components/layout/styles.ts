@@ -12,8 +12,8 @@ export const GlowBox = styled.div<{ maxWidth?: string }>`
   gap: 16px;
   position: relative;
   z-index: 2;
-  overflow-y: auto;
-  max-height: calc(100vh - 200px);
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
   box-shadow: 0px 0px 500px -70px #6c38fe;
   animation: pulse 1s infinite;
 

@@ -103,7 +103,7 @@ const ClaimButton = styled.button`
   border: none;
   border-radius: 8px;
   padding: 4px 12px;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   font-weight: 600;
   color: #000;
@@ -133,7 +133,7 @@ const Tab = styled.button<{ active: boolean }>`
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   transition: all 0.2s;
@@ -159,7 +159,7 @@ const InputHeader = styled.div`
 `
 
 const Label = styled.span`
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -172,7 +172,7 @@ const MaxButton = styled.button`
   padding: 8px 16px;
   cursor: pointer;
   
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 12px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -221,7 +221,7 @@ const InfoSection = styled.div`
 `
 
 const InfoTitle = styled.h3`
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
   font-weight: 600;
   color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -477,7 +477,7 @@ const Staking: React.FC = () => {
       {error && <ErrorMessage>{error}</ErrorMessage>}
 
       {!sdk.isConnected ? (
-        <B.Button onClick={sdk.connectWallet} width="100%" padding="16px 24px" margin="0" style={{ borderRadius: '16px' }}>
+        <B.Button onClick={() => sdk.connectWallet()} width="100%" padding="16px 24px" margin="0" style={{ borderRadius: '16px' }}>
           Connect Wallet
         </B.Button>
       ) : activeTab === 'stake' ? (

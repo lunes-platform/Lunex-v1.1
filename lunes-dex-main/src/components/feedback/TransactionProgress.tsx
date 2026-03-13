@@ -173,9 +173,9 @@ const TransactionProgress: React.FC<TransactionProgressProps> = ({
 }) => {
     const title =
         status === 'success'
-            ? '✅ Transaction Confirmed'
+            ? 'Transaction Confirmed'
             : status === 'error'
-                ? '❌ Transaction Failed'
+                ? 'Transaction Failed'
                 : 'Processing Transaction...'
 
     return (

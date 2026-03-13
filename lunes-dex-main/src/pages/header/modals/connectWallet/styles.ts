@@ -43,6 +43,12 @@ export const Network = styled(Button)`
     height: 100px;
     justify-content: space-evenly;
     flex-direction: column;
+    img {
+      width: 36px;
+      height: 36px;
+      object-fit: contain;
+      border-radius: 8px;
+    }
     strong {
       font-size: 10px;
       letter-spacing: 1px;
@@ -62,6 +68,8 @@ export const Network = styled(Button)`
         display: none;
       }
       img {
+        width: 28px;
+        height: 28px;
         margin: auto;
       }
     }

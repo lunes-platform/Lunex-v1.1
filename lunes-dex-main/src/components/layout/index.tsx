@@ -17,7 +17,13 @@ const PageLayout: React.FC<PageLayoutProps> = ({
     maxWidth = "592px",
 }) => {
     return (
-        <B.Container height="100vh" padding="80px 8px" bg="transparent">
+        <B.Container 
+            height="auto" 
+            style={{ minHeight: '100vh' }} 
+            justify="flex-start" 
+            padding="104px 16px 40px" 
+            bg="transparent"
+        >
             <TabBar />
 
             <S.GlowBox maxWidth={maxWidth}>
@@ -25,7 +31,7 @@ const PageLayout: React.FC<PageLayoutProps> = ({
             </S.GlowBox>
 
             <S.PageFooter>
-                Lunex: Developed with love on the Lunes blockchain ❤️
+                Lunex: Developed with love on the Lunes blockchain
             </S.PageFooter>
         </B.Container>
     )

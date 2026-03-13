@@ -7,6 +7,7 @@ import {
     buildAgentRegisterSignMessage,
     createSignedActionMetadata,
 } from '../../utils/signing'
+import { Button } from '../../components/bases'
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ const Modal = styled.div`
   width: 100%;
   max-width: 480px;
   border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
+  position: relative;
 `
 
 const ModalHeader = styled.div`
@@ -60,13 +62,28 @@ const Title = styled.h2`
 `
 
 const CloseBtn = styled.button`
-  background: none;
-  border: none;
-  font-size: 20px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  cursor: pointer;
-  line-height: 1;
-  &:hover { color: ${({ theme }) => theme.colors.themeColors[100]}; }
+  ${({ theme }) => `
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    cursor: pointer;
+    color: ${theme.colors.themeColors[100]};
+    border: none;
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    transition: transform 0.3s ease-in-out, color 0.2s ease;
+    transform: rotate(0deg);
+    &:hover {
+      color: ${theme.colors.themeColors[800]};
+      transition: transform 0.3s ease-in-out, color 0.2s ease;
+      transform: rotate(-180deg);
+    }
+  `}
 `
 
 const Section = styled.div`
@@ -115,11 +132,12 @@ const Slider = styled.input`
   outline: none;
   &::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
-    background: ${({ theme }) => theme.colors.themeColors[100]};
+    background: ${({ theme }) => theme.colors.primary[500]};
     cursor: pointer;
+    box-shadow: 0 0 0 3px rgba(108, 56, 255, 0.25);
   }
 `
 
@@ -151,7 +169,7 @@ const Toggle = styled.button<{ active: boolean }>`
   border-radius: 11px;
   border: none;
   cursor: pointer;
-  background: ${({ active }) => (active ? '#34d399' : '#374151')};
+  background: ${({ active, theme }) => (active ? theme.colors.primary[500] : theme.colors.themeColors[400])};
   position: relative;
   transition: background 0.2s;
 
@@ -161,28 +179,14 @@ const Toggle = styled.button<{ active: boolean }>`
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: white;
+    background: ${({ theme }) => theme.colors.themeColors[100]};
     top: 3px;
     left: ${({ active }) => (active ? '21px' : '3px')};
     transition: left 0.2s;
   }
 `
 
-const GenerateButton = styled.button<{ disabled?: boolean }>`
-  width: 100%;
-  padding: 14px;
-  border: none;
-  border-radius: 12px;
-  background: ${({ theme }) => theme.colors.themeColors[800]};
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-family: 'Inter', sans-serif;
-  font-weight: 600;
-  font-size: 14px;
-  cursor: ${({ disabled }) => (disabled ? 'not-allowed' : 'pointer')};
-  opacity: ${({ disabled }) => (disabled ? 0.5 : 1)};
-  transition: opacity 0.2s;
-  &:hover:not(:disabled) { opacity: 0.88; }
-`
+
 
 const ApiKeyBox = styled.div`
   background: ${({ theme }) => theme.colors.themeColors[700]};
@@ -339,8 +343,8 @@ const AgentDelegationPanel: React.FC<Props> = ({ onClose }) => {
         <Overlay onClick={(e) => e.target === e.currentTarget && onClose()}>
             <Modal>
                 <ModalHeader>
-                    <Title>🤖 Delegate to AI Agent</Title>
-                    <CloseBtn onClick={onClose}>×</CloseBtn>
+                    <Title>Delegate to AI Agent</Title>
+                    <CloseBtn onClick={onClose}>✕</CloseBtn>
                 </ModalHeader>
 
                 <Description>
@@ -401,16 +405,14 @@ const AgentDelegationPanel: React.FC<Props> = ({ onClose }) => {
                 </Section>
 
                 {!apiKey ? (
-                    <GenerateButton onClick={handleGenerate} disabled={isLoading || !isConnected}>
-                        {isLoading
-                            ? 'Generating...'
-                            : !isConnected
-                                ? 'Connect Wallet First'
-                                : '🔑 Generate Restricted API Key'}
-                    </GenerateButton>
+                    <Button onClick={handleGenerate} disabled={isLoading || !isConnected} loading={isLoading}>
+                        {!isConnected
+                            ? 'Connect Wallet First'
+                            : 'Generate Restricted API Key'}
+                    </Button>
                 ) : (
                     <ApiKeyBox>
-                        <ApiKeyLabel>✅ API Key Generated — Copy and store it securely</ApiKeyLabel>
+                        <ApiKeyLabel>API Key Generated — Copy and store it securely</ApiKeyLabel>
                         <ApiKeyValue>{apiKey}</ApiKeyValue>
                         <CopyButton onClick={handleCopy}>
                             {copied ? '✓ Copied!' : 'Copy Key'}

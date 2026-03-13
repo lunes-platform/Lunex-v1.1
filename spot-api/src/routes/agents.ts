@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { agentService } from '../services/agentService'
 import { agentAuth, optionalAgentAuth } from '../middleware/agentAuth'
 import { verifyWalletActionSignature } from '../middleware/auth'
+import { requireAdmin } from '../middleware/adminGuard'
 
 const router = Router()
 
@@ -39,7 +40,7 @@ const CreateApiKeyBootstrapSchema = CreateApiKeySchema.extend({
 const RecordStakeSchema = z.object({
     amount: z.coerce.number().positive(),
     token: z.string().max(32).optional(),
-    txHash: z.string().max(128).optional(),
+    txHash: z.string().min(1).max(128),   // required — on-chain proof
 })
 
 const ListAgentsSchema = z.object({
@@ -109,6 +110,13 @@ router.get('/by-wallet/:address', async (req: Request, res: Response, next: Next
     try {
         const agent = await agentService.getAgentByWallet(req.params.address)
         if (!agent) return res.status(404).json({ error: 'Agent not found for this wallet' })
+        res.json({ agent })
+    } catch (err) { next(err) }
+})
+
+router.get('/me', agentAuth(), async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const agent = await agentService.getAgentProfile(req.agent!.id)
         res.json({ agent })
     } catch (err) { next(err) }
 })
@@ -195,6 +203,15 @@ router.post('/:id/stake', agentAuth(), async (req: Request, res: Response, next:
         }
         const result = await agentService.recordStake(req.params.id, parsed.data)
         res.status(201).json(result)
+    } catch (err) { next(err) }
+})
+
+// Admin-only: confirm a stake after on-chain verification
+// POST /agents/:id/stakes/:stakeId/verify  — requires ADMIN_SECRET bearer token
+router.post('/:id/stakes/:stakeId/verify', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const result = await agentService.verifyStake(req.params.stakeId)
+        res.json(result)
     } catch (err) { next(err) }
 })
 

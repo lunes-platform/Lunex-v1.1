@@ -410,12 +410,7 @@ mod security_tests {
             current_time: u64,
             nonce: u64,
         ) -> Result<(u128, u128, u128), String> {
-            // Security checks
-            self.when_not_paused()?;
-            self.ensure_deadline(deadline, current_time)?;
-            self.use_nonce(caller.clone(), nonce)?;
-
-            // Input validation
+            // Input validation FIRST (before nonce consumption)
             if amount_a_desired == 0 || amount_b_desired == 0 {
                 return Err("Zero amount not allowed".to_string());
             }
@@ -423,6 +418,11 @@ mod security_tests {
             if amount_a_min > amount_a_desired || amount_b_min > amount_b_desired {
                 return Err("Invalid minimum amounts".to_string());
             }
+
+            // Security checks (nonce consumed only after validation)
+            self.when_not_paused()?;
+            self.ensure_deadline(deadline, current_time)?;
+            self.use_nonce(caller.clone(), nonce)?;
 
             // Get or create pair
             let pair_key = if token_a < token_b {
@@ -723,7 +723,7 @@ mod security_tests {
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Invalid minimum amounts");
 
-        // Setup: Add initial liquidity
+        // Setup: Add initial liquidity (user1, nonce 1)
         let _result = router.secure_add_liquidity(
             "user1".to_string(),
             "TOKEN_A".to_string(),
@@ -739,7 +739,7 @@ mod security_tests {
             "TOKEN_B".to_string(),
             1000, 2000,
             1100, 1800, // Expecting more than what we can get
-            9999, 2000, 1 // nonce = 1 for user2
+            9999, 2000, 1 // nonce = 1 for user2 (their first tx)
         );
         assert!(result.is_err());
         let error = result.unwrap_err();

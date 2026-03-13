@@ -2,7 +2,9 @@ import { NextFunction, Request, Response, Router } from 'express'
 import { socialService } from '../services/socialService'
 import { socialAnalyticsService } from '../services/socialAnalyticsService'
 import { verifyWalletActionSignature } from '../middleware/auth'
+import { requireAdmin } from '../middleware/adminGuard'
 import { config } from '../config'
+import prisma from '../db'
 import {
   CopyVaultDepositSchema,
   CopyVaultWithdrawSchema,
@@ -16,18 +18,6 @@ import {
 
 const router = Router()
 
-// ─── Admin guard ──────────────────────────────────────────────────
-
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const secret = config.adminSecret
-  if (!secret) {
-    return res.status(503).json({ error: 'Admin secret not configured on this server' })
-  }
-  const auth = req.headers['authorization'] ?? ''
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-  if (!token || token !== secret) return res.status(401).json({ error: 'Unauthorized' })
-  next()
-}
 
 // ─── Analytics ──────────────────────────────────────────────────
 
@@ -42,6 +32,19 @@ router.post('/analytics/recompute', requireAdmin, async (_req: Request, res: Res
   try {
     const result = await socialAnalyticsService.recomputeLeaderSnapshots()
     res.json({ result })
+  } catch (err) { next(err) }
+})
+
+router.post('/analytics/resync-followers', requireAdmin, async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const leaders = await prisma.leader.findMany({ select: { id: true } })
+    let updated = 0
+    for (const leader of leaders) {
+      const count = await prisma.leaderFollow.count({ where: { leaderId: leader.id } })
+      await prisma.leader.update({ where: { id: leader.id }, data: { followersCount: count } })
+      updated++
+    }
+    res.json({ updated, message: 'followersCount resynced from LeaderFollow table' })
   } catch (err) { next(err) }
 })
 

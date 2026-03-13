@@ -37,7 +37,7 @@ export const Table = styled.table`
 `
 
 export const Th = styled.th`
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   font-weight: 600;
   color: ${({ theme }) => theme.colors.themeColors[200]};
@@ -140,7 +140,7 @@ export const ActionButton = styled.button`
   border-radius: 8px;
   padding: 8px 16px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;

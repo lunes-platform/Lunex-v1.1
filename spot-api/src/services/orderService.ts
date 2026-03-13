@@ -31,6 +31,7 @@ import { tradeService } from './tradeService'
 import { Decimal } from '@prisma/client/runtime/library'
 import { settlementService } from './settlementService'
 import type { Prisma, OrderStatus } from '@prisma/client'
+import { ApiError } from '../middleware/errors'
 
 const STOP_PENDING_STATUS = 'PENDING_TRIGGER'
 
@@ -262,15 +263,15 @@ async function assertValidOnChainState(
   const settlementEnabled = settlementService.isEnabled()
   const onChainNonceUsed = await settlementService.isNonceUsed(input.makerAddress, input.nonce)
   if (settlementEnabled && onChainNonceUsed === null) {
-    throw new Error('On-chain nonce validation unavailable')
+    throw ApiError.internal('On-chain nonce validation unavailable')
   }
-  if (onChainNonceUsed) throw new Error('Nonce already used on-chain')
+  if (onChainNonceUsed) throw ApiError.conflict('Nonce already used on-chain')
 
   const onChainNonceCancelled = await settlementService.isNonceCancelled(input.makerAddress, input.nonce)
   if (settlementEnabled && onChainNonceCancelled === null) {
-    throw new Error('On-chain cancel validation unavailable')
+    throw ApiError.internal('On-chain cancel validation unavailable')
   }
-  if (onChainNonceCancelled) throw new Error('Nonce already cancelled on-chain')
+  if (onChainNonceCancelled) throw ApiError.conflict('Nonce already cancelled on-chain')
 
   const requiredBase = input.side === 'SELL'
     ? decimalToUnits(input.amount, pair.baseDecimals)
@@ -326,8 +327,8 @@ export const orderService = {
     const pair = await prisma.pair.findUnique({
       where: { symbol: input.pairSymbol },
     })
-    if (!pair) throw new Error(`Pair ${input.pairSymbol} not found`)
-    if (!pair.isActive) throw new Error(`Pair ${input.pairSymbol} is not active`)
+    if (!pair) throw ApiError.notFound(`Pair ${input.pairSymbol} not found`)
+    if (!pair.isActive) throw ApiError.badRequest(`Pair ${input.pairSymbol} is not active`)
 
     // 2. Validate price for executable order types
     const price = input.price || '0'
@@ -359,7 +360,7 @@ export const orderService = {
         nonce: input.nonce,
       },
     })
-    if (existing) throw new Error('Nonce already used')
+    if (existing) throw ApiError.conflict('Nonce already used')
 
     await assertValidOnChainState(pair, input)
 
@@ -399,10 +400,10 @@ export const orderService = {
    */
   async cancelOrder(orderId: string, makerAddress: string) {
     const order = await prisma.order.findUnique({ where: { id: orderId } })
-    if (!order) throw new Error('Order not found')
-    if (order.makerAddress !== makerAddress) throw new Error('Not order owner')
-    if (order.status === 'FILLED') throw new Error('Order already filled')
-    if (order.status === 'CANCELLED') throw new Error('Order already cancelled')
+    if (!order) throw ApiError.notFound('Order not found')
+    if (order.makerAddress !== makerAddress) throw ApiError.forbidden('Not order owner')
+    if (order.status === 'FILLED') throw ApiError.conflict('Order already filled')
+    if (order.status === 'CANCELLED') throw ApiError.conflict('Order already cancelled')
 
     // Remove from in-memory orderbook
     const pair = await prisma.pair.findUnique({ where: { id: order.pairId } })

@@ -14,6 +14,7 @@ export const Button = styled.button<Partial<ButtonProps>>`
     border-radius: 16px;
     font-size: ${props.size || '16px'};
     font-weight: 600;
+    font-family: 'Space Grotesk', sans-serif;
     display: flex;
     justify-content: center;
     text-align: center;

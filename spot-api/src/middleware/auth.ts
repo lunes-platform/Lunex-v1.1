@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express'
 import { cryptoWaitReady, signatureVerify } from '@polkadot/util-crypto'
 import { getRedis } from '../utils/redis'
 import { config } from '../config'
+import { log } from '../utils/logger'
 
 const SIGNED_ACTION_TTL_MS = 5 * 60 * 1000
 
@@ -15,12 +16,15 @@ function pruneSignedActionNoncesFallback(now: number) {
 }
 
 async function isNonceUsed(key: string): Promise<boolean> {
+  // Always check in-memory fallback first — covers nonces written during a Redis
+  // outage. Without this, a nonce stored in the fallback while Redis was down
+  // would be invisible once Redis recovers, enabling replay attacks.
+  if (fallbackNonces.has(key)) return true
   try {
     const result = await getRedis().get(key)
     return result !== null
   } catch {
-    // Redis unavailable — fall back to in-memory
-    return fallbackNonces.has(key)
+    return false
   }
 }
 
@@ -42,11 +46,16 @@ type SpotOrderMessageInput = {
   stopPrice?: string
   amount: string
   nonce: string
+  /** Unix ms timestamp. Required for new orders; omit only when re-verifying legacy stored orders. */
+  timestamp?: number
 }
 
 export function buildSpotOrderMessage(input: SpotOrderMessageInput) {
-  return `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}`
+  const base = `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}`
+  return input.timestamp !== undefined ? `${base}:${input.timestamp}` : base
 }
+
+export { isNonceUsed, markNonceUsed }
 
 export function buildSpotCancelMessage(orderId: string) {
   return `lunex-cancel:${orderId}`
@@ -139,16 +148,28 @@ export async function verifyWalletActionSignature(input: {
 }) {
   const timestamp = Number(input.timestamp)
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    log.warn(
+      { address: input.address, action: input.action, reason: 'invalid_timestamp' },
+      '[SECURITY] Wallet signature rejected',
+    )
     return { ok: false as const, error: 'Invalid timestamp' }
   }
 
   const now = Date.now()
   if (Math.abs(now - timestamp) > SIGNED_ACTION_TTL_MS) {
+    log.warn(
+      { address: input.address, action: input.action, reason: 'expired', drift: Math.abs(now - timestamp) },
+      '[SECURITY] Wallet signature rejected — expired TTL',
+    )
     return { ok: false as const, error: 'Expired signature' }
   }
 
   const replayKey = `nonce:${input.action}:${input.address}:${input.nonce}`
   if (await isNonceUsed(replayKey)) {
+    log.warn(
+      { address: input.address, action: input.action, nonce: input.nonce, reason: 'replay' },
+      '[SECURITY] Wallet signature rejected — nonce replay detected',
+    )
     return { ok: false as const, error: 'Signature nonce already used' }
   }
 
@@ -162,6 +183,10 @@ export async function verifyWalletActionSignature(input: {
 
   const isValid = await verifyAddressSignature(message, input.signature, input.address)
   if (!isValid) {
+    log.warn(
+      { address: input.address, action: input.action, reason: 'invalid_signature' },
+      '[SECURITY] Wallet signature rejected — sr25519 verification failed',
+    )
     return { ok: false as const, error: 'Invalid signature' }
   }
 

@@ -30,14 +30,21 @@ router.post('/settlement/retry', async (req: Request, res: Response, next: NextF
 
 router.get('/:symbol', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    const symbol = (req.query.symbol as string) ?? req.params.symbol
     const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200)
-    const trades = await tradeService.getRecentTrades(req.params.symbol, limit)
+    const trades = await tradeService.getRecentTrades(symbol, limit)
     res.json({ trades })
   } catch (err) { next(err) }
 })
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
+    // If ?symbol= is provided, return recent trades for that pair
+    if (req.query.symbol && typeof req.query.symbol === 'string') {
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200)
+      const trades = await tradeService.getRecentTrades(req.query.symbol, limit)
+      return res.json({ trades })
+    }
     const { address } = req.query
     if (!address || typeof address !== 'string') {
       return res.status(400).json({ error: 'address required' })

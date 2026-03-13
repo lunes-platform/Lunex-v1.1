@@ -26,7 +26,7 @@ export interface CurveParams {
 interface Props {
     buyParams: CurveParams
     sellParams: CurveParams
-    label?: string
+    label?: React.ReactNode
     /** Callback fired when the user drags on the chart to adjust γ. */
     onGammaChange?: (side: 'buy' | 'sell', newGamma: number) => void
     /** When true, chart is interactive — curve adjusts on drag. */

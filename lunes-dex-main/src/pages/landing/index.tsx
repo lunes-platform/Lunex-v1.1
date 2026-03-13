@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import * as S from './styles'
 import { LunexLogo } from '../../components/LunexLogo'
+import { useWebMCP } from '../../hooks/useWebMCP'
 
 // Animated counter
 const Counter: React.FC<{ end: number; suffix?: string; prefix?: string }> = ({ end, suffix = '', prefix = '' }) => {
@@ -33,6 +34,9 @@ const Counter: React.FC<{ end: number; suffix?: string; prefix?: string }> = ({ 
 export const Landing: React.FC = () => {
   const navigate = useNavigate()
   const [scrolled, setScrolled] = useState(false)
+
+  // Initialize WebMCP for AI agent interaction
+  useWebMCP()
 
   // Capture referral code from URL
   useEffect(() => {
@@ -97,7 +101,10 @@ export const Landing: React.FC = () => {
           Swap, spot trade, deploy AI agents, copy top strategies,<br className="desktop-br" /> and earn rewards in one unified protocol on Lunes.
         </S.HeroSub>
         <S.HeroBtns $delay="0.35s">
-          <S.PrimaryBtn onClick={() => navigate('/swap')}>
+          <S.PrimaryBtn
+            onClick={() => navigate('/swap')}
+            {...{ 'to-name': 'launchApp', 'to-description': 'Launch the Lunex DEX trading interface' } as any}
+          >
             Launch App <ArrowRight />
           </S.PrimaryBtn>
           <S.SecBtn onClick={() => window.open('https://docs.lunes.io', '_blank')}>
@@ -212,7 +219,10 @@ export const Landing: React.FC = () => {
               <div className="usd">≈ $45.00</div>
             </S.SwapFieldRight>
           </S.SwapField>
-          <S.SwapButton onClick={() => navigate('/swap')}>Review Route</S.SwapButton>
+          <S.SwapButton
+            onClick={() => navigate('/swap')}
+            {...{ 'to-name': 'startSwap', 'to-description': 'Open the token swap interface to exchange LUNES for lUSDT' } as any}
+          >Review Route</S.SwapButton>
           <S.SwapInfo>
             <span>Fee: 0.5%</span>
             <span>Est. execution: &lt;3s</span>
@@ -528,7 +538,7 @@ export const Landing: React.FC = () => {
               <span>Price precision</span>
             </S.ModeStats>
           </S.ModeCard>
-          <S.ModeCard className="reveal-on-scroll" $delay="0.15s" $accent="#FFD700" onClick={() => navigate('/agents')}>
+          <S.ModeCard className="reveal-on-scroll" $delay="0.15s" $accent="#FFD700" onClick={() => navigate('/agent')}>
             <S.ModeTag>Layer 3</S.ModeTag>
             <S.ModeIcon $accent="#FFD700"><Bot size={28} /></S.ModeIcon>
             <S.ModeTitle>AI Agents</S.ModeTitle>
@@ -538,7 +548,7 @@ export const Landing: React.FC = () => {
               <span>No manual trading</span>
             </S.ModeStats>
           </S.ModeCard>
-          <S.ModeCard className="reveal-on-scroll" $delay="0.2s" $accent="#A0F0D0" onClick={() => navigate('/copytrade')}>
+          <S.ModeCard className="reveal-on-scroll" $delay="0.2s" $accent="#A0F0D0" onClick={() => navigate('/spot/copytrade')}>
             <S.ModeTag>Layer 4</S.ModeTag>
             <S.ModeIcon $accent="#A0F0D0"><Copy size={28} /></S.ModeIcon>
             <S.ModeTitle>Copy Trading</S.ModeTitle>
@@ -585,7 +595,7 @@ export const Landing: React.FC = () => {
                 </S.AgentStepBody>
               </S.AgentStep>
             </S.AgentSteps>
-            <S.PrimaryBtn className="reveal-on-scroll" onClick={() => navigate('/agents')} style={{ marginTop: 32, width: 'fit-content' }}>
+            <S.PrimaryBtn className="reveal-on-scroll" onClick={() => navigate('/agent')} style={{ marginTop: 32, width: 'fit-content' }}>
               Explore AI Agents <ArrowRight />
             </S.PrimaryBtn>
           </S.AgentLeft>
@@ -705,7 +715,7 @@ export const Landing: React.FC = () => {
           </S.LeaderCard>
         </S.LeaderGrid>
         <div style={{ display: 'flex', justifyContent: 'center', marginTop: 40 }}>
-          <S.SecBtn onClick={() => navigate('/copytrade')}>
+          <S.SecBtn onClick={() => navigate('/spot/copytrade')}>
             View Full Leaderboard <ArrowRight />
           </S.SecBtn>
         </div>
@@ -826,7 +836,7 @@ export const Landing: React.FC = () => {
             <h4>Spot</h4>
             <p>On-chain orderbook with limit and market orders.</p>
           </S.EcoCard>
-          <S.EcoCard className="reveal-on-scroll" $delay="0.14s" $accent="#FFD700" onClick={() => navigate('/agents')}>
+          <S.EcoCard className="reveal-on-scroll" $delay="0.14s" $accent="#FFD700" onClick={() => navigate('/agent')}>
             <S.EcoIcon $accent="#FFD700"><Bot size={26} /></S.EcoIcon>
             <h4>AI Agents</h4>
             <p>Autonomous trading bots powered by OpenClaw.</p>
@@ -836,7 +846,7 @@ export const Landing: React.FC = () => {
             <h4>Strategies</h4>
             <p>Deploy or publish on the strategy marketplace.</p>
           </S.EcoCard>
-          <S.EcoCard className="reveal-on-scroll" $delay="0.2s" $accent="#00B8D9" onClick={() => navigate('/copytrade')}>
+          <S.EcoCard className="reveal-on-scroll" $delay="0.2s" $accent="#00B8D9" onClick={() => navigate('/spot/copytrade')}>
             <S.EcoIcon $accent="#00B8D9"><Copy size={26} /></S.EcoIcon>
             <h4>Copytrade</h4>
             <p>Follow top traders and replicate results.</p>
@@ -909,7 +919,7 @@ export const Landing: React.FC = () => {
             <S.PrimaryBtn onClick={() => navigate('/swap')}>
               Launch App <ArrowRight />
             </S.PrimaryBtn>
-            <S.SecBtn onClick={() => navigate('/agents')}>
+            <S.SecBtn onClick={() => navigate('/agent')}>
               Explore AI Agents <Bot size={16} />
             </S.SecBtn>
           </S.CTABtns>
@@ -928,11 +938,11 @@ export const Landing: React.FC = () => {
             <a href="/swap">Swap</a>
             <a href="/spot">Spot Orderbook</a>
             <a href="/pools">Liquidity Pools</a>
-            <a href="/copytrade">Copy Trading</a>
+            <a href="/spot/copytrade">Copy Trading</a>
           </S.FooterCol>
           <S.FooterCol>
             <h4>Automation</h4>
-            <a href="/agents">AI Agents</a>
+            <a href="/agent">AI Agents</a>
             <a href="/strategies">Strategy Marketplace</a>
             <a href="/rewards">Rewards</a>
             <a href="/staking">Staking</a>
@@ -942,8 +952,7 @@ export const Landing: React.FC = () => {
             <h4>Resources</h4>
             <a href="https://docs.lunes.io" target="_blank" rel="noopener noreferrer">Documentation</a>
             <a href="https://github.com/lunes-platform" target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a href="#">Whitepaper</a>
-            <a href="#">SDK</a>
+            <a href="/docs">SDK</a>
           </S.FooterCol>
           <S.FooterCol>
             <h4>Community</h4>

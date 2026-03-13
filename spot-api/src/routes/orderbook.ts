@@ -3,9 +3,10 @@ import { orderbookManager } from '../utils/orderbook'
 
 const router = Router()
 
-router.get('/:symbol', async (req: Request, res: Response, next: NextFunction) => {
+function handleOrderbook(req: Request, res: Response, next: NextFunction) {
   try {
-    const { symbol } = req.params
+    const symbol = (req.query.symbol as string) ?? req.params.symbol
+    if (!symbol) return res.status(400).json({ error: 'symbol required' })
     const depth = Math.min(parseInt(req.query.depth as string, 10) || 25, 200)
     const book = orderbookManager.get(symbol)
 
@@ -19,6 +20,10 @@ router.get('/:symbol', async (req: Request, res: Response, next: NextFunction) =
       bestAsk: book.getBestAsk(),
     })
   } catch (err) { next(err) }
-})
+}
+
+// Support both ?symbol=LUNES/LUSDT and /:symbol (URL-encoded: LUNES%2FLUSDT)
+router.get('/', handleOrderbook)
+router.get('/:symbol', handleOrderbook)
 
 export default router

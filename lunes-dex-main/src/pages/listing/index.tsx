@@ -1,8 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import styled from 'styled-components'
-import PageLayout from '../../components/layout'
 import { useSDK } from '../../context/SDKContext'
-import * as B from '../../components/bases'
 
 const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
@@ -10,46 +8,46 @@ const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
 const TIERS = [
   {
-    key:          'BASIC',
-    tierNumber:   1,
-    label:        'Basic',
-    listingFee:   1_000,
-    minLunesLiq:  2_000,
-    lockDays:     90,
-    badge:        null as string | null,
-    description:  'Entry-level listing. Token visible in search.',
-    color:        '#6c38fe',
-    burn:         500,
-    treasury:     300,
-    rewards:      200,
+    key: 'BASIC',
+    tierNumber: 1,
+    label: 'Basic',
+    listingFee: 1_000,
+    minLunesLiq: 10_000,
+    lockDays: 90,
+    badge: null as string | null,
+    description: 'Entry-level listing. Token visible in search.',
+    color: '#6c38fe',
+    staking: 200,
+    treasury: 500,
+    rewards: 300,
   },
   {
-    key:          'VERIFIED',
-    tierNumber:   2,
-    label:        'Verified',
-    listingFee:   5_000,
-    minLunesLiq:  10_000,
-    lockDays:     120,
-    badge:        'verified',
-    description:  'Verified badge, trending section, DEX highlight.',
-    color:        '#00bfff',
-    burn:         2_500,
-    treasury:     1_500,
-    rewards:      1_000,
+    key: 'VERIFIED',
+    tierNumber: 2,
+    label: 'Verified',
+    listingFee: 5_000,
+    minLunesLiq: 25_000,
+    lockDays: 120,
+    badge: 'verified',
+    description: 'Verified badge, trending section, DEX highlight.',
+    color: '#00bfff',
+    staking: 1_000,
+    treasury: 2_500,
+    rewards: 1_500,
   },
   {
-    key:          'FEATURED',
-    tierNumber:   3,
-    label:        'Featured',
-    listingFee:   20_000,
-    minLunesLiq:  50_000,
-    lockDays:     180,
-    badge:        'featured',
-    description:  'Home highlight, reward campaigns, maximum exposure.',
-    color:        '#ffd700',
-    burn:         10_000,
-    treasury:     6_000,
-    rewards:      4_000,
+    key: 'FEATURED',
+    tierNumber: 3,
+    label: 'Featured',
+    listingFee: 20_000,
+    minLunesLiq: 50_000,
+    lockDays: 180,
+    badge: 'featured',
+    description: 'Home highlight, reward campaigns, maximum exposure.',
+    color: '#ffd700',
+    staking: 4_000,
+    treasury: 10_000,
+    rewards: 6_000,
   },
 ] as const
 
@@ -58,58 +56,80 @@ type TierKey = 'BASIC' | 'VERIFIED' | 'FEATURED'
 // ── Form type ─────────────────────────────────────────────────────
 
 interface ListingForm {
-  tokenName:      string
-  tokenSymbol:    string
-  tokenAddress:   string
-  tokenDecimals:  string
-  pairAddress:    string
-  lpTokenAddress: string
-  lpAmount:       string
+  tokenName: string
+  tokenSymbol: string
+  tokenAddress: string
+  tokenDecimals: string
   lunesLiquidity: string
   tokenLiquidity: string
-  website:        string
-  twitter:        string
-  telegram:       string
-  description:    string
+  website: string
+  twitter: string
+  telegram: string
+  description: string
 }
 
 const initialForm: ListingForm = {
-  tokenName:      '',
-  tokenSymbol:    '',
-  tokenAddress:   '',
-  tokenDecimals:  '18',
-  pairAddress:    '',
-  lpTokenAddress: '',
-  lpAmount:       '',
+  tokenName: '',
+  tokenSymbol: '',
+  tokenAddress: '',
+  tokenDecimals: '18',
   lunesLiquidity: '',
   tokenLiquidity: '',
-  website:        '',
-  twitter:        '',
-  telegram:       '',
-  description:    '',
+  website: '',
+  twitter: '',
+  telegram: '',
+  description: '',
 }
 
 
 
 // ── Styled components ─────────────────────────────────────────────
 
-const Header = styled.div`
+const Page = styled.div`
+  min-height: 100vh;
+  background: #1A1A1A;
+  padding: 80px 24px 48px;
+`
+
+const PageContainer = styled.div`
+  max-width: 1100px;
+  margin: 0 auto;
+`
+
+const ContentBox = styled.div`
+  max-width: 700px;
+  margin: 0 auto;
+`
+
+const HeroBanner = styled.div`
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 40px;
+  padding: 32px 0;
 `
 
 const Title = styled.h1`
-  color: #fff;
-  font-size: 26px;
-  font-weight: 700;
-  margin: 0 0 8px 0;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 42px;
+  font-weight: 800;
+  color: #FFFFFF;
+  margin: 0 0 12px 0;
+  letter-spacing: -1px;
+
+  span {
+    background: linear-gradient(135deg, #6C38FF, #AD87FF);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
 `
 
 const Subtitle = styled.p`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 14px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 16px;
+  color: #8A8A8E;
   margin: 0;
-  line-height: 1.5;
+  max-width: 560px;
+  margin: 0 auto;
+  line-height: 1.6;
 `
 
 const StepsIndicator = styled.div`
@@ -131,8 +151,8 @@ const Step = styled.div<{ $active: boolean; $completed: boolean }>`
   font-size: 14px;
   background: ${props =>
     props.$completed ? '#00ff88' :
-    props.$active ? 'linear-gradient(135deg, #6c38fe, #9d4edd)' :
-    props.theme.colors.themeColors[400]};
+      props.$active ? 'linear-gradient(135deg, #6c38fe, #9d4edd)' :
+        props.theme.colors.themeColors[400]};
   color: ${props => props.$completed ? '#000' : '#fff'};
   transition: all 0.3s;
 `
@@ -460,13 +480,137 @@ const TotalValue = styled.span`
 const ButtonGroup = styled.div`
   display: flex;
   gap: 12px;
-  margin-top: 4px;
+  margin-top: 16px;
+
+  & > button {
+    flex: 1;
+  }
+`
+
+const PrimaryBtn = styled.button<{ disabled?: boolean }>`
+  height: 48px;
+  padding: 0 32px;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #fff;
+  background: ${props => props.disabled ? '#2a2a2c' : '#6c38fe'};
+  opacity: ${props => props.disabled ? 0.5 : 1};
+  pointer-events: ${props => props.disabled ? 'none' : 'auto'};
+
+  &:hover:not(:disabled) {
+    transform: translateY(-1px);
+    opacity: 0.9;
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(0);
+  }
+`
+
+const SecondaryBtn = styled.button`
+  height: 48px;
+  padding: 0 32px;
+  border: 1px solid #333;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #ccc;
+  background: transparent;
+
+  &:hover {
+    border-color: #6c38fe;
+    color: #fff;
+    background: rgba(108, 56, 254, 0.1);
+  }
 `
 
 const ConnectPrompt = styled.div`
   text-align: center;
   padding: 60px 20px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+`
+
+const LogoUploadSection = styled.div`
+  margin-top: 20px;
+`
+
+const DropZone = styled.div<{ $hasFile?: boolean }>`
+  border: 2px dashed ${p => p.$hasFile ? '#6c38fe' : '#333'};
+  border-radius: 12px;
+  padding: ${p => p.$hasFile ? '12px' : '28px'};
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: ${p => p.$hasFile ? 'rgba(108, 56, 254, 0.05)' : 'transparent'};
+
+  &:hover {
+    border-color: #6c38fe;
+    background: rgba(108, 56, 254, 0.05);
+  }
+`
+
+const DropZoneIcon = styled.div`
+  font-size: 28px;
+  margin-bottom: 8px;
+`
+
+const DropZoneText = styled.div`
+  color: #ccc;
+  font-size: 14px;
+  font-weight: 500;
+`
+
+const DropZoneHint = styled.div`
+  color: #666;
+  font-size: 12px;
+  margin-top: 4px;
+`
+
+const LogoPreviewBox = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 14px;
+`
+
+const LogoPreviewImg = styled.img`
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #2a2a2c;
+  border: 2px solid #6c38fe;
+`
+
+const LogoFileName = styled.div`
+  color: #eee;
+  font-size: 13px;
+  font-weight: 500;
+`
+
+const LogoFileSize = styled.div`
+  color: #888;
+  font-size: 11px;
+`
+
+const RemoveBtn = styled.button`
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  &:hover { color: #ff4444; }
 `
 
 const SuccessBox = styled.div`
@@ -563,6 +707,10 @@ export const Listing: React.FC = () => {
   const [listingId, setListingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [stats, setStats] = useState<{ totalActiveLocks: number; totalLockedLunes: string } | null>(null)
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [logoError, setLogoError] = useState<string | null>(null)
+  const logoInputRef = useRef<HTMLInputElement>(null)
 
   const tier = TIERS.find(t => t.key === selectedTier)!
   const unlockDate = new Date(Date.now() + tier.lockDays * 24 * 60 * 60 * 1000)
@@ -582,33 +730,64 @@ export const Listing: React.FC = () => {
 
   const validateStep = (step: number): boolean => {
     if (step === 1) return true // tier selection always valid
-    if (step === 2) return !!(form.tokenName && form.tokenSymbol && form.tokenAddress && form.lunesLiquidity && form.tokenLiquidity && form.lpTokenAddress && form.lpAmount)
+    if (step === 2) return !!(form.tokenName && form.tokenSymbol && form.tokenAddress && form.lunesLiquidity && form.tokenLiquidity)
     if (step === 3) return !!(form.description)
     return true
   }
 
+  const MAX_LOGO_SIZE = 200 * 1024 // 200 KB
+  const ACCEPTED_TYPES = ['image/svg+xml', 'image/png', 'image/webp']
+
+  const validateAndSetLogo = useCallback((file: File) => {
+    setLogoError(null)
+    if (!ACCEPTED_TYPES.includes(file.type)) {
+      setLogoError('Only SVG, PNG and WebP files accepted.')
+      return
+    }
+    if (file.size > MAX_LOGO_SIZE) {
+      setLogoError(`File too large (${(file.size / 1024).toFixed(0)}KB). Max 200KB.`)
+      return
+    }
+    setLogoFile(file)
+    setLogoPreview(URL.createObjectURL(file))
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    const file = e.dataTransfer.files?.[0]
+    if (file) validateAndSetLogo(file)
+  }, [validateAndSetLogo])
+
+  const handleLogoSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) validateAndSetLogo(file)
+  }, [validateAndSetLogo])
+
   const handleSubmit = async () => {
     setIsSubmitting(true)
     setError(null)
+    if (!logoFile) {
+      setLogoError('Token logo is required')
+      setIsSubmitting(false)
+      return
+    }
     try {
-      const payload = {
-        ownerAddress:   sdk.selectedAccount?.address ?? '',
-        tokenAddress:   form.tokenAddress,
-        tokenName:      form.tokenName,
-        tokenSymbol:    form.tokenSymbol,
-        tokenDecimals:  parseInt(form.tokenDecimals) || 18,
-        tier:           selectedTier,
-        pairAddress:    form.pairAddress || undefined,
-        lpTokenAddress: form.lpTokenAddress,
-        lpAmount:       form.lpAmount,
-        lunesLiquidity: form.lunesLiquidity,
-        tokenLiquidity: form.tokenLiquidity,
-      }
+      const fd = new FormData()
+      fd.append('ownerAddress', sdk.walletAddress ?? '')
+      fd.append('tokenAddress', form.tokenAddress)
+      fd.append('tokenName', form.tokenName)
+      fd.append('tokenSymbol', form.tokenSymbol)
+      fd.append('tokenDecimals', String(parseInt(form.tokenDecimals) || 18))
+      fd.append('tier', selectedTier)
+      fd.append('lunesLiquidity', form.lunesLiquidity)
+      fd.append('tokenLiquidity', form.tokenLiquidity)
+      if (form.description) fd.append('description', form.description)
+      if (form.website) fd.append('website', form.website)
+      if (logoFile) fd.append('logo', logoFile)
 
       const res = await fetch(`${API_BASE}/api/v1/listing`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
+        method: 'POST',
+        body: fd,
       })
 
       const data = await res.json()
@@ -630,6 +809,9 @@ export const Listing: React.FC = () => {
     setSelectedTier('BASIC')
     setListingId(null)
     setError(null)
+    setLogoFile(null)
+    setLogoPreview(null)
+    setLogoError(null)
   }
 
   // ── Step 1: Select Tier ───────────────────────────────────────
@@ -663,27 +845,27 @@ export const Listing: React.FC = () => {
       </TiersGrid>
 
       <FeeBox>
-        <FeeTitle>🔥 Fee Distribution — {tier.label} Tier</FeeTitle>
+        <FeeTitle>Fee Distribution — {tier.label} Tier</FeeTitle>
         <FeeRow>
           <span>Listing Fee</span>
           <FeeValue>{tier.listingFee.toLocaleString()} LUNES</FeeValue>
         </FeeRow>
         <FeeRow>
-          <span>🔥 Burn (50%)</span>
-          <FeeValue $color="#ff6b6b">{tier.burn.toLocaleString()} LUNES</FeeValue>
+          <span>Staking Pool (20%)</span>
+          <FeeValue $color="#00bfff">{tier.staking.toLocaleString()} LUNES</FeeValue>
         </FeeRow>
         <FeeRow>
-          <span>🏦 Treasury (30%)</span>
+          <span>Team Revenue (50%)</span>
           <FeeValue $color="#ffd700">{tier.treasury.toLocaleString()} LUNES</FeeValue>
         </FeeRow>
         <FeeRow>
-          <span>🎁 Rewards Pool (20%)</span>
+          <span>Rewards Pool (30%)</span>
           <FeeValue $color="#00ff88">{tier.rewards.toLocaleString()} LUNES</FeeValue>
         </FeeRow>
       </FeeBox>
 
       <LockBox>
-        <LockTitle>🔒 Liquidity Lock</LockTitle>
+        <LockTitle>Liquidity Lock</LockTitle>
         <LockRow><span>Minimum LUNES to lock</span><span>{tier.minLunesLiq.toLocaleString()} LUNES</span></LockRow>
         <LockRow><span>Lock duration</span><span>{tier.lockDays} days</span></LockRow>
         <LockRow><span>Estimated unlock date</span><span>{unlockDate.toLocaleDateString()}</span></LockRow>
@@ -692,7 +874,7 @@ export const Listing: React.FC = () => {
 
       {stats && (
         <FeeBox>
-          <FeeTitle>📊 Protocol Listing Stats</FeeTitle>
+          <FeeTitle>Protocol Listing Stats</FeeTitle>
           <FeeRow>
             <span>Active Locked Liquidity Pools</span>
             <FeeValue $color="#00ff88">{stats.totalActiveLocks}</FeeValue>
@@ -732,18 +914,11 @@ export const Listing: React.FC = () => {
           <Label>Token Decimals</Label>
           <Input name="tokenDecimals" value={form.tokenDecimals} onChange={handleInputChange} type="number" placeholder="18" />
         </FormGroup>
-        <FormGroup>
-          <Label>Pair Address (after pool creation)</Label>
-          <Input name="pairAddress" value={form.pairAddress} onChange={handleInputChange} placeholder="5F3sa2..." />
-        </FormGroup>
-        <FormGroup $fullWidth>
-          <Label>LP Token Address *</Label>
-          <Input name="lpTokenAddress" value={form.lpTokenAddress} onChange={handleInputChange} placeholder="LP token contract address" />
-        </FormGroup>
       </FormGrid>
 
       <FeeBox>
-        <FeeTitle>💧 Liquidity to Lock</FeeTitle>
+        <FeeTitle>Liquidity to Deposit</FeeTitle>
+        <SectionSubtitle style={{ marginTop: 0, marginBottom: 14 }}>The system will automatically create the TOKEN/LUNES pool and lock liquidity for {tier.lockDays} days.</SectionSubtitle>
         <FormGrid>
           <FormGroup>
             <Label>LUNES Amount * (min {tier.minLunesLiq.toLocaleString()})</Label>
@@ -759,10 +934,6 @@ export const Listing: React.FC = () => {
             <Label>Token Amount *</Label>
             <Input name="tokenLiquidity" value={form.tokenLiquidity} onChange={handleInputChange} type="number" placeholder="e.g. 1000000" />
           </FormGroup>
-          <FormGroup $fullWidth>
-            <Label>LP Tokens Received *</Label>
-            <Input name="lpAmount" value={form.lpAmount} onChange={handleInputChange} type="number" placeholder="LP tokens after adding liquidity" />
-          </FormGroup>
         </FormGrid>
 
         {form.lunesLiquidity && parseFloat(form.lunesLiquidity) < tier.minLunesLiq && (
@@ -772,6 +943,41 @@ export const Listing: React.FC = () => {
           </ErrorMsg>
         )}
       </FeeBox>
+
+      <LogoUploadSection>
+        <Label>Token Logo <span style={{ color: '#ff4b55' }}>*</span></Label>
+        <DropZone
+          onDrop={handleDrop}
+          onDragOver={e => e.preventDefault()}
+          onClick={() => logoInputRef.current?.click()}
+          $hasFile={!!logoFile}
+        >
+          {logoPreview ? (
+            <LogoPreviewBox>
+              <LogoPreviewImg src={logoPreview} alt="Token logo" />
+              <div>
+                <LogoFileName>{logoFile?.name}</LogoFileName>
+                <LogoFileSize>{((logoFile?.size ?? 0) / 1024).toFixed(1)} KB</LogoFileSize>
+              </div>
+              <RemoveBtn onClick={e => { e.stopPropagation(); setLogoFile(null); setLogoPreview(null) }}>✕</RemoveBtn>
+            </LogoPreviewBox>
+          ) : (
+            <>
+              <DropZoneIcon><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></DropZoneIcon>
+              <DropZoneText>Drag & drop or click to upload</DropZoneText>
+              <DropZoneHint>SVG, PNG or WebP — max 200KB — 256×256 recommended</DropZoneHint>
+            </>
+          )}
+          <input
+            ref={logoInputRef}
+            type="file"
+            accept=".svg,.png,.webp,image/svg+xml,image/png,image/webp"
+            style={{ display: 'none' }}
+            onChange={handleLogoSelect}
+          />
+        </DropZone>
+        {logoError && <ErrorMsg>{logoError}</ErrorMsg>}
+      </LogoUploadSection>
     </FormSection>
   )
 
@@ -837,19 +1043,20 @@ export const Listing: React.FC = () => {
       </TotalCost>
 
       <FeeBox>
-        <FeeTitle>🔥 Fee Distribution</FeeTitle>
+        <FeeTitle>Fee Distribution</FeeTitle>
         <FeeRow><span>Listing Fee</span><FeeValue>{tier.listingFee.toLocaleString()} LUNES</FeeValue></FeeRow>
-        <FeeRow><span>🔥 Burn (50%)</span><FeeValue $color="#ff6b6b">{tier.burn.toLocaleString()} LUNES</FeeValue></FeeRow>
-        <FeeRow><span>🏦 Treasury (30%)</span><FeeValue $color="#ffd700">{tier.treasury.toLocaleString()} LUNES</FeeValue></FeeRow>
-        <FeeRow><span>🎁 Rewards (20%)</span><FeeValue $color="#00ff88">{tier.rewards.toLocaleString()} LUNES</FeeValue></FeeRow>
+        <FeeRow><span>Staking Pool (20%)</span><FeeValue $color="#00bfff">{tier.staking.toLocaleString()} LUNES</FeeValue></FeeRow>
+        <FeeRow><span>Team Revenue (50%)</span><FeeValue $color="#ffd700">{tier.treasury.toLocaleString()} LUNES</FeeValue></FeeRow>
+        <FeeRow><span>Rewards (30%)</span><FeeValue $color="#00ff88">{tier.rewards.toLocaleString()} LUNES</FeeValue></FeeRow>
       </FeeBox>
 
       <LockBox>
-        <LockTitle>🔒 What Happens After Submit</LockTitle>
-        <LockRow><span>1. Listing fee transferred</span><span>{tier.listingFee.toLocaleString()} LUNES</span></LockRow>
-        <LockRow><span>2. TOKEN/LUNES pool created</span><span>✓</span></LockRow>
-        <LockRow><span>3. LP tokens locked until</span><span>{unlockDate.toLocaleDateString()}</span></LockRow>
-        <LockRow><span>4. Token becomes visible on DEX</span><span>✓</span></LockRow>
+        <LockTitle>What Happens After Submit</LockTitle>
+        <LockRow><span>1. Listing fee deducted</span><span>{tier.listingFee.toLocaleString()} LUNES</span></LockRow>
+        <LockRow><span>2. Pool created automatically</span><span>{form.tokenSymbol || 'TOKEN'} / LUNES</span></LockRow>
+        <LockRow><span>3. Liquidity deposited</span><span>{parseFloat(form.lunesLiquidity || '0').toLocaleString()} LUNES</span></LockRow>
+        <LockRow><span>4. LP tokens locked until</span><span>{unlockDate.toLocaleDateString()}</span></LockRow>
+        <LockRow><span>5. Token visible on DEX</span><span>✓</span></LockRow>
       </LockBox>
 
       {error && <ErrorMsg>{error}</ErrorMsg>}
@@ -862,9 +1069,15 @@ export const Listing: React.FC = () => {
 
   if (isSuccess) {
     return (
-      <PageLayout maxWidth="600px">
+      <Page>
+        <PageContainer>
+        <HeroBanner>
+          <Title><span>List Your Token</span></Title>
+          <Subtitle>Secure listing with locked liquidity. Prevent rug pulls and build trust with LUNES holders.</Subtitle>
+        </HeroBanner>
+        <ContentBox>
         <SuccessBox>
-          <SuccessIcon>🔒</SuccessIcon>
+          <SuccessIcon><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#00ff88" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 12 15 16 10" stroke="#00ff88"/></svg></SuccessIcon>
           <SuccessTitle>Token Listed!</SuccessTitle>
           <SuccessText>
             <strong>{form.tokenName} ({form.tokenSymbol})</strong> has been submitted for listing on Lunex DEX.<br /><br />
@@ -890,36 +1103,40 @@ export const Listing: React.FC = () => {
             </LockSummaryCard>
           </LockSummaryGrid>
 
-          <ButtonGroup style={{ justifyContent: 'center', marginTop: 24 }}>
-            <B.Button status="secondary" onClick={handleReset}>List Another Token</B.Button>
+          <ButtonGroup style={{ justifyContent: 'center', marginTop: 24, maxWidth: 300, margin: '24px auto 0' }}>
+            <SecondaryBtn onClick={handleReset}>List Another Token</SecondaryBtn>
           </ButtonGroup>
         </SuccessBox>
-      </PageLayout>
+        </ContentBox>
+        </PageContainer>
+      </Page>
     )
   }
 
   return (
-    <PageLayout maxWidth="700px">
-      <Header>
-        <Title>List Your Token</Title>
+    <Page>
+      <PageContainer>
+      <HeroBanner>
+        <Title><span>List Your Token</span></Title>
         <Subtitle>
           Secure listing with locked liquidity. Prevent rug pulls and build trust with LUNES holders.
         </Subtitle>
-      </Header>
+      </HeroBanner>
+      <ContentBox>
 
       {!sdk.isConnected ? (
         <ConnectPrompt>
           <p>Connect your wallet to list a token on Lunex DEX</p>
-          <B.Button onClick={sdk.connectWallet} margin="20px auto 0" width="auto" padding="16px 40px">
+          <PrimaryBtn onClick={() => sdk.connectWallet()}>
             Connect Wallet
-          </B.Button>
+          </PrimaryBtn>
         </ConnectPrompt>
       ) : (
         <>
           <StepsIndicator>
             {STEPS.map((label, i) => {
               const stepNum = i + 1
-              const isActive    = currentStep === stepNum
+              const isActive = currentStep === stepNum
               const isCompleted = currentStep > stepNum
               return (
                 <React.Fragment key={stepNum}>
@@ -942,24 +1159,26 @@ export const Listing: React.FC = () => {
 
           <ButtonGroup>
             {currentStep > 1 && (
-              <B.Button status="secondary" onClick={() => setCurrentStep(s => s - 1)}>Back</B.Button>
+              <SecondaryBtn onClick={() => setCurrentStep(s => s - 1)}>Back</SecondaryBtn>
             )}
             {currentStep < 4 ? (
-              <B.Button
+              <PrimaryBtn
                 onClick={() => setCurrentStep(s => s + 1)}
                 disabled={!validateStep(currentStep)}
               >
                 Continue
-              </B.Button>
+              </PrimaryBtn>
             ) : (
-              <B.Button onClick={handleSubmit} disabled={isSubmitting || !validateStep(2)}>
+              <PrimaryBtn onClick={handleSubmit} disabled={isSubmitting || !validateStep(2)}>
                 {isSubmitting ? 'Submitting...' : `Submit Listing (${tier.listingFee.toLocaleString()} LUNES Fee)`}
-              </B.Button>
+              </PrimaryBtn>
             )}
           </ButtonGroup>
         </>
       )}
-    </PageLayout>
+      </ContentBox>
+      </PageContainer>
+    </Page>
   )
 }
 

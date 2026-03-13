@@ -49,13 +49,14 @@ const TfButton = styled.button<{ active?: boolean }>`
   border: none;
   font-size: 12px;
   font-weight: 600;
+  font-family: 'Space Grotesk', sans-serif;
   cursor: pointer;
   transition: all 0.15s;
-  background: ${({ active }) => (active ? 'rgba(0, 192, 118, 0.2)' : 'transparent')};
+  background: ${({ active }) => (active ? 'rgba(108, 56, 255, 0.25)' : 'transparent')};
   color: ${({ active }) => (active ? '#ffffff' : 'rgba(255,255,255,0.5)')};
 
   &:hover {
-    background: rgba(0, 192, 118, 0.15);
+    background: rgba(108, 56, 255, 0.18);
     color: #ffffff;
   }
 `
@@ -195,23 +196,6 @@ const DEFAULT_ENTRY = 0.02345
 const DEFAULT_TP = 0.02500
 const DEFAULT_SL = 0.02200
 
-// ─── Mock OHLCV data generator ───────────────────────────────
-function generateMockCandles(count = 150): CandleWithVolume[] {
-    const now = Math.floor(Date.now() / 1000)
-    const interval = 3600
-    let close = 0.02345
-
-    return Array.from({ length: count }, (_, i) => {
-        const time = (now - (count - i) * interval) as Time
-        const open = close
-        const change = (Math.random() - 0.48) * 0.001
-        close = Math.max(0.001, open + change)
-        const high = Math.max(open, close) + Math.random() * 0.0005
-        const low = Math.min(open, close) - Math.random() * 0.0005
-        const volume = Math.random() * 50000 + 5000
-        return { time, open, high, low, close, volume }
-    })
-}
 
 const OfflineBanner = styled.div`
   position: absolute;
@@ -242,6 +226,7 @@ const ChartPanel: React.FC = () => {
     const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
     const [showTradeLines, setShowTradeLines] = useState(false)
     const [isOffline, setIsOffline] = useState(false)
+    const [noData, setNoData] = useState(false)
     const [tradeLines, setTradeLines] = useState<TradeLines>({
         entry: { enabled: false, price: DEFAULT_ENTRY },
         takeProfit: { enabled: false, price: DEFAULT_TP },
@@ -253,6 +238,7 @@ const ChartPanel: React.FC = () => {
     const loadCandles = useCallback(async (): Promise<{ data: CandleWithVolume[]; offline: boolean }> => {
         try {
             const res = await spotApi.getCandles(selectedPair, activeTimeframe, 200)
+            // API responded — it's online regardless of candle count
             if (res.candles && res.candles.length > 0) {
                 return {
                     data: res.candles.map((c: SpotCandle) => ({
@@ -266,10 +252,12 @@ const ChartPanel: React.FC = () => {
                     offline: false,
                 }
             }
+            // API online but no trades executed yet
+            return { data: [], offline: false }
         } catch {
-            // API unavailable — show error banner instead of random data
+            // API unreachable — show offline banner
+            return { data: [], offline: true }
         }
-        return { data: [], offline: true }
     }, [selectedPair, activeTimeframe])
 
     // Create / destroy chart
@@ -307,6 +295,7 @@ const ChartPanel: React.FC = () => {
             if (!isMounted || !chart) return
 
             setIsOffline(offline)
+            setNoData(!offline && data.length === 0)
             if (offline || data.length === 0) return // never render random data
 
             if (chartType === 'candlestick') {
@@ -581,8 +570,18 @@ const ChartPanel: React.FC = () => {
             <ChartContainer ref={containerRef}>
                 {isOffline && (
                     <OfflineBanner>
-                        <OfflineIcon>📡</OfflineIcon>
+                        <OfflineIcon><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></OfflineIcon>
                         Chart data unavailable — spot-api offline
+                    </OfflineBanner>
+                )}
+                {noData && !isOffline && (
+                    <OfflineBanner>
+                        <OfflineIcon>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
+                        </OfflineIcon>
+                        No trades yet — place an order to start the chart
                     </OfflineBanner>
                 )}
             </ChartContainer>

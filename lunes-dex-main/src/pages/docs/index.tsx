@@ -162,6 +162,7 @@ type Section =
   | 'developers'
   | 'security'
   | 'faq'
+  | 'token-listing'
 
 interface NavItem {
   id: Section
@@ -170,6 +171,22 @@ interface NavItem {
   audience: string
   icon: React.ReactNode
 }
+
+const ListingIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <rect x="3" y="3" width="18" height="18" rx="3" />
+    <path d="M9 12l2 2 4-4" />
+    <path d="M7 8h10" />
+    <path d="M7 16h6" />
+  </svg>
+)
 
 const NAV_ITEMS: NavItem[] = [
   {
@@ -233,6 +250,14 @@ const NAV_ITEMS: NavItem[] = [
     description: 'Frequently asked questions, troubleshooting and support channels.',
     audience: 'Everyone',
     icon: <HelpIcon />
+  },
+  {
+    id: 'token-listing',
+    label: 'Token Listing',
+    description:
+      'List your PSP-22 token on Lunex DEX — requirements, contracts, liquidity lock and developer guide.',
+    audience: 'Projects',
+    icon: <ListingIcon />
   }
 ]
 
@@ -276,6 +301,11 @@ const SECTION_INTRO: Record<Section, { title: string; description: string }> = {
     title: 'FAQ & Support',
     description:
       'Straightforward answers to common questions and guidance for problem resolution.'
+  },
+  'token-listing': {
+    title: 'Token Listing',
+    description:
+      'Everything a project needs to list a PSP-22 token on Lunex DEX: requirements, smart contracts, liquidity lock, developer API and best practices.'
   }
 }
 
@@ -2385,6 +2415,457 @@ const FAQSection = () => (
   </>
 )
 
+const TokenListingSection = () => (
+  <>
+    <Callout>
+      The Lunex DEX allows projects to list PSP-22 tokens in a transparent and
+      permissionless way. To maintain listing quality and protect traders, projects
+      must provide locked liquidity paired with LUNES and pay a one-time listing fee.
+    </Callout>
+
+    <H2>Listing Requirements</H2>
+    <P>
+      All listings must meet the following minimum criteria before becoming tradable
+      on the DEX. These requirements prevent spam listings and protect traders from
+      rug pulls.
+    </P>
+    <Table>
+      <thead>
+        <tr>
+          <th>Requirement</th>
+          <th>Amount</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Listing Fee</td>
+          <td><InlineCode>1,000 LUNES</InlineCode></td>
+          <td>Prevents spam — paid once, non-refundable</td>
+        </tr>
+        <tr>
+          <td>Minimum Liquidity</td>
+          <td><InlineCode>2,000 LUNES</InlineCode> + TOKEN pair</td>
+          <td>Ensures initial tradability and price discovery</td>
+        </tr>
+        <tr>
+          <td>Liquidity Lock Period</td>
+          <td><InlineCode>90 days</InlineCode> minimum</td>
+          <td>Protects traders — LP tokens locked in contract</td>
+        </tr>
+        <tr>
+          <td>Token Standard</td>
+          <td><InlineCode>PSP-22</InlineCode></td>
+          <td>Native Lunes Network token standard (ink! contract)</td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <Callout variant="warning">
+      Liquidity lock is enforced on-chain by the <InlineCode>LiquidityLock</InlineCode> contract.
+      LP tokens cannot be withdrawn before the unlock timestamp. Listings that fail
+      to maintain minimum liquidity may be deactivated by governance.
+    </Callout>
+
+    <H2>Listing Process Flow</H2>
+    <Steps>
+      <Step>
+        <StepNumber>1</StepNumber>
+        <StepBody>
+          <StepTitle>Deploy your PSP-22 token</StepTitle>
+          <StepText>
+            Build and deploy your token contract using ink! 4.x on the Lunes Network.
+            Ensure the contract implements the full PSP-22 interface including{' '}
+            <InlineCode>transfer</InlineCode>, <InlineCode>approve</InlineCode> and{' '}
+            <InlineCode>allowance</InlineCode>.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>2</StepNumber>
+        <StepBody>
+          <StepTitle>Open the Listing interface</StepTitle>
+          <StepText>
+            Navigate to <InlineCode>/listing</InlineCode> on the Lunex DEX. Connect
+            your wallet and click <strong>Create Listing</strong>. Select your listing
+            tier (Basic, Verified or Featured).
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>3</StepNumber>
+        <StepBody>
+          <StepTitle>Pay the listing fee</StepTitle>
+          <StepText>
+            Approve and transfer <InlineCode>1,000 LUNES</InlineCode> to the
+            ListingManager contract. The fee is burned to reduce LUNES supply.
+            Transaction is confirmed on-chain before proceeding.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>4</StepNumber>
+        <StepBody>
+          <StepTitle>Create TOKEN/LUNES liquidity pool</StepTitle>
+          <StepText>
+            Call the Factory contract to create the pair. The pool is initialized
+            with your TOKEN and at least <InlineCode>2,000 LUNES</InlineCode> as
+            initial liquidity. You receive LP tokens in return.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>5</StepNumber>
+        <StepBody>
+          <StepTitle>Lock LP tokens</StepTitle>
+          <StepText>
+            Transfer your LP tokens to the <InlineCode>LiquidityLock</InlineCode>{' '}
+            contract with an <InlineCode>unlock_time</InlineCode> of at least 90 days.
+            The contract emits a <InlineCode>LiquidityLocked</InlineCode> event
+            recorded on-chain.
+          </StepText>
+        </StepBody>
+      </Step>
+      <Step>
+        <StepNumber>6</StepNumber>
+        <StepBody>
+          <StepTitle>Listing goes live</StepTitle>
+          <StepText>
+            After on-chain confirmation from the relayer, the listing status changes
+            to <InlineCode>ACTIVE</InlineCode>. Your token becomes visible in the
+            Lunex DEX order book, swap interface and analytics.
+          </StepText>
+        </StepBody>
+      </Step>
+    </Steps>
+
+    <H2>Smart Contracts</H2>
+    <P>
+      The listing workflow interacts with 4 on-chain contracts. All are deployed on
+      the Lunes Network and verified.
+    </P>
+    <Table>
+      <thead>
+        <tr>
+          <th>Contract</th>
+          <th>Role</th>
+          <th>Key Function</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><InlineCode>Factory</InlineCode></td>
+          <td>Creates TOKEN/LUNES pair</td>
+          <td><InlineCode>create_pair(token, lunes)</InlineCode></td>
+        </tr>
+        <tr>
+          <td><InlineCode>Router</InlineCode></td>
+          <td>Handles liquidity provision</td>
+          <td><InlineCode>add_liquidity(token, lunes, amounts...)</InlineCode></td>
+        </tr>
+        <tr>
+          <td><InlineCode>LiquidityLock</InlineCode></td>
+          <td>Locks LP tokens for required period</td>
+          <td><InlineCode>lock(pair, amount, unlock_time)</InlineCode></td>
+        </tr>
+        <tr>
+          <td><InlineCode>ListingManager</InlineCode></td>
+          <td>Registers listing, verifies requirements</td>
+          <td><InlineCode>register_listing(token, tier, fee)</InlineCode></td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H2>Listing Tiers</H2>
+    <Table>
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Listing Fee</th>
+          <th>Min Liquidity</th>
+          <th>Lock Period</th>
+          <th>Benefits</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Basic</td>
+          <td>1,000 LUNES</td>
+          <td>2,000 LUNES</td>
+          <td>90 days</td>
+          <td>Listed on DEX, order book access</td>
+        </tr>
+        <tr>
+          <td>Verified</td>
+          <td>5,000 LUNES</td>
+          <td>10,000 LUNES</td>
+          <td>180 days</td>
+          <td>✓ Badge, analytics dashboard, featured in search</td>
+        </tr>
+        <tr>
+          <td>Featured</td>
+          <td>20,000 LUNES</td>
+          <td>50,000 LUNES</td>
+          <td>365 days</td>
+          <td>Homepage feature, boosted visibility, priority support</td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H2>Developer Guide</H2>
+    <H3>1. Deploy PSP-22 token</H3>
+    <Code>{`# Build your PSP-22 contract (ink! 4.x)
+cargo contract build --release
+
+# Deploy to Lunes Network
+cargo contract instantiate \\
+  --contract ./target/ink/my_token.wasm \\
+  --constructor new \\
+  --args 1000000000000 "MyToken" "MTK" 12 \\
+  --url wss://rpc.lunes.io \\
+  --suri "//Alice"`}</Code>
+
+    <H3>2. Create TOKEN/LUNES pair via Factory</H3>
+    <Code>{`import { ApiPromise, WsProvider } from '@polkadot/api'
+import { ContractPromise } from '@polkadot/api-contract'
+
+const api = await ApiPromise.create({ provider: new WsProvider('wss://rpc.lunes.io') })
+const factory = new ContractPromise(api, FACTORY_ABI, FACTORY_ADDRESS)
+
+// Create the pair
+await factory.tx
+  .createPair({ gasLimit }, TOKEN_ADDRESS, LUNES_ADDRESS)
+  .signAndSend(account)
+
+// Get pair address from factory
+const pairAddress = await factory.query.getPair(account.address, {}, TOKEN_ADDRESS, LUNES_ADDRESS)`}</Code>
+
+    <H3>3. Add initial liquidity</H3>
+    <Code>{`const router = new ContractPromise(api, ROUTER_ABI, ROUTER_ADDRESS)
+
+// Approve router to spend tokens
+await tokenContract.tx
+  .approve({ gasLimit }, ROUTER_ADDRESS, amountToken)
+  .signAndSend(account)
+
+// Add liquidity (TOKEN + LUNES)
+await router.tx
+  .addLiquidity(
+    { gasLimit },
+    TOKEN_ADDRESS,    // tokenA
+    LUNES_ADDRESS,    // tokenB  
+    amountToken,      // amountADesired
+    amountLunes,      // amountBDesired
+    amountTokenMin,   // amountAMin (slippage)
+    amountLunesMin,   // amountBMin (slippage)
+    account.address,  // to (receives LP tokens)
+    deadline          // unix timestamp
+  )
+  .signAndSend(account)`}</Code>
+
+    <H3>4. Lock LP tokens</H3>
+    <Code>{`const lock = new ContractPromise(api, LIQUIDITY_LOCK_ABI, LIQUIDITY_LOCK_ADDRESS)
+
+const unlockTime = Math.floor(Date.now() / 1000) + (90 * 24 * 60 * 60) // 90 days
+
+// Approve lock contract to spend LP tokens
+await lpToken.tx
+  .approve({ gasLimit }, LIQUIDITY_LOCK_ADDRESS, lpAmount)
+  .signAndSend(account)
+
+// Lock LP tokens
+await lock.tx
+  .lock({ gasLimit }, PAIR_ADDRESS, lpAmount, unlockTime)
+  .signAndSend(account)
+
+// After unlock time you can withdraw
+await lock.tx
+  .unlock({ gasLimit }, lockId)
+  .signAndSend(account)`}</Code>
+
+    <H3>5. Register listing via API</H3>
+    <Code>{`// Create listing via REST API
+POST /api/v1/listing
+Content-Type: application/json
+
+{
+  "ownerAddress": "5GrwvaEF...",
+  "tokenAddress": "5XYZ...",
+  "tokenName": "My Token",
+  "tokenSymbol": "MTK",
+  "tier": "BASIC",
+  "lpTokenAddress": "5LP...",
+  "lpAmount": "10000000000000",
+  "lunesLiquidity": "2000000000000",
+  "tokenLiquidity": "1000000000000000"
+}
+
+// Response
+{ "id": "lst_abc123", "status": "PENDING", "createdAt": "..." }`}</Code>
+
+    <H2>REST API Reference</H2>
+    <Table>
+      <thead>
+        <tr>
+          <th>Method</th>
+          <th>Endpoint</th>
+          <th>Auth</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><InlineCode>GET</InlineCode></td>
+          <td><InlineCode>/api/v1/listing</InlineCode></td>
+          <td>Public</td>
+          <td>List all active listings (paginated)</td>
+        </tr>
+        <tr>
+          <td><InlineCode>GET</InlineCode></td>
+          <td><InlineCode>/api/v1/listing/:id</InlineCode></td>
+          <td>Public</td>
+          <td>Get listing details by ID</td>
+        </tr>
+        <tr>
+          <td><InlineCode>GET</InlineCode></td>
+          <td><InlineCode>/api/v1/listing/token/:address</InlineCode></td>
+          <td>Public</td>
+          <td>Get listing by token contract address</td>
+        </tr>
+        <tr>
+          <td><InlineCode>GET</InlineCode></td>
+          <td><InlineCode>/api/v1/listing/owner/:address</InlineCode></td>
+          <td>Public</td>
+          <td>All listings by an owner wallet</td>
+        </tr>
+        <tr>
+          <td><InlineCode>POST</InlineCode></td>
+          <td><InlineCode>/api/v1/listing</InlineCode></td>
+          <td>Public</td>
+          <td>Create a new token listing (status: PENDING)</td>
+        </tr>
+        <tr>
+          <td><InlineCode>POST</InlineCode></td>
+          <td><InlineCode>/api/v1/listing/lock/:lockId/withdraw</InlineCode></td>
+          <td>Owner</td>
+          <td>Withdraw locked LP after unlock period</td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <H2>Liquidity Lock Mechanism</H2>
+    <P>
+      The <InlineCode>LiquidityLock</InlineCode> contract is the security backbone
+      of the listing system. When LP tokens are locked:
+    </P>
+    <Checklist>
+      <li>
+        LP tokens are transferred from the owner to the <InlineCode>LiquidityLock</InlineCode> contract
+        and held in escrow until the <InlineCode>unlock_time</InlineCode>.
+      </li>
+      <li>
+        The contract emits a <InlineCode>LiquidityLocked</InlineCode> event with the
+        pair address, amount and timestamp — visible on-chain to any explorer.
+      </li>
+      <li>
+        No one — not even the project owner — can withdraw LP tokens before the
+        unlock date. This guarantees liquidity depth for traders.
+      </li>
+      <li>
+        After the lock period, the owner calls <InlineCode>unlock(lockId)</InlineCode>{' '}
+        to reclaim LP tokens. A <InlineCode>LiquidityUnlocked</InlineCode> event is emitted.
+      </li>
+    </Checklist>
+
+    <H2>On-Chain Events</H2>
+    <P>
+      All listing and liquidity activity is recorded on-chain. Use a block
+      explorer or SubQuery indexer to verify events:
+    </P>
+    <Table>
+      <thead>
+        <tr>
+          <th>Event</th>
+          <th>Contract</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><InlineCode>TokenListed</InlineCode></td>
+          <td>ListingManager</td>
+          <td>Emitted when a token listing is registered</td>
+        </tr>
+        <tr>
+          <td><InlineCode>LiquidityLocked</InlineCode></td>
+          <td>LiquidityLock</td>
+          <td>Emitted when LP tokens are deposited and locked</td>
+        </tr>
+        <tr>
+          <td><InlineCode>LiquidityUnlocked</InlineCode></td>
+          <td>LiquidityLock</td>
+          <td>Emitted when LP tokens are released after lock period</td>
+        </tr>
+        <tr>
+          <td><InlineCode>FeeDistributed</InlineCode></td>
+          <td>ListingManager</td>
+          <td>Emitted when listing fee is burned/distributed</td>
+        </tr>
+        <tr>
+          <td><InlineCode>ListingActivated</InlineCode></td>
+          <td>ListingManager</td>
+          <td>Emitted when listing is approved and goes live</td>
+        </tr>
+      </tbody>
+    </Table>
+
+    <Callout variant="success">
+      All events are indexed by the Lunex SubQuery node and accessible via GraphQL
+      at <InlineCode>SUBQUERY_ENDPOINT/graphql</InlineCode>. Query{' '}
+      <InlineCode>liquidityLocks</InlineCode> to verify any project's lock status.
+    </Callout>
+
+    <H2>Best Practices for Projects</H2>
+    <Checklist>
+      <li>
+        <strong>Provide more than the minimum liquidity.</strong> Deeper liquidity
+        means lower slippage for traders, which attracts more volume and
+        generates more fees for your pool.
+      </li>
+      <li>
+        <strong>Avoid excessive token supply concentration.</strong> Wallets
+        holding 20%+ of supply can manipulate price. Distribute fairly before listing.
+      </li>
+      <li>
+        <strong>Audit your token contract before listing.</strong> Use a
+        reputable ink! auditor. Contracts with mint-on-demand or ownership backdoors
+        will reduce community trust.
+      </li>
+      <li>
+        <strong>Communicate listing plans publicly.</strong> Announce on social
+        media, Discord and Telegram before listing. Community awareness creates
+        organic trading volume.
+      </li>
+      <li>
+        <strong>Use a longer lock period than the minimum.</strong> Projects with
+        365-day locks signal stronger long-term commitment. This is visible on-chain
+        to any trader.
+      </li>
+      <li>
+        <strong>Monitor your liquidity health.</strong> Use{' '}
+        <InlineCode>GET /api/v1/listing/token/:address</InlineCode> to check your
+        listing status programmatically and set up alerts.
+      </li>
+    </Checklist>
+
+    <Callout variant="warning">
+      Listings with insufficient liquidity or fraudulent token contracts may be
+      deactivated by the Lunex governance process. Projects are responsible for
+      maintaining liquidity above the minimum threshold.
+    </Callout>
+  </>
+)
+
 const SECTIONS: Record<Section, React.FC> = {
   overview: OverviewSection,
   'getting-started': GettingStartedSection,
@@ -2393,7 +2874,8 @@ const SECTIONS: Record<Section, React.FC> = {
   liquidity: LiquiditySection,
   developers: DevelopersSection,
   security: SecuritySection,
-  faq: FAQSection
+  faq: FAQSection,
+  'token-listing': TokenListingSection
 }
 
 const Docs: React.FC = () => {

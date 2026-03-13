@@ -6,15 +6,24 @@ const SignedWalletActionSchema = z.object({
   signature: z.string().min(8),
 })
 
+const positiveDecimalString = z
+  .string()
+  .min(1)
+  .refine((v) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n > 0
+  }, { message: 'Must be a positive number' })
+
 export const CreateOrderSchema = z.object({
-  pairSymbol: z.string().min(1),
+  pairSymbol: z.string().min(1).max(32).regex(/^[A-Z0-9]+\/[A-Z0-9]+$/, { message: 'Invalid pair symbol format (e.g. LUNES/LUSDT)' }),
   side: z.enum(['BUY', 'SELL']),
   type: z.enum(['LIMIT', 'MARKET', 'STOP', 'STOP_LIMIT']),
-  price: z.string().optional(), // Required for LIMIT, STOP_LIMIT
-  stopPrice: z.string().optional(), // Required for STOP, STOP_LIMIT
-  amount: z.string().min(1),
+  price: positiveDecimalString.optional(), // Required for LIMIT, STOP_LIMIT
+  stopPrice: positiveDecimalString.optional(), // Required for STOP, STOP_LIMIT
+  amount: positiveDecimalString,
   timeInForce: z.enum(['GTC', 'IOC', 'FOK']).default('GTC'),
   nonce: z.string().min(1),
+  timestamp: z.coerce.number().int().positive(),
   signature: z.string().min(1),
   makerAddress: z.string().min(1),
   expiresAt: z.string().datetime().optional(),

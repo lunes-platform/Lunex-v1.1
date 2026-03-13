@@ -206,41 +206,78 @@ export const agentService = {
     async recordStake(agentId: string, input: {
         amount: number
         token?: string
-        txHash?: string
+        txHash: string   // required — must be a real on-chain tx hash
     }) {
+        if (!input.txHash || input.txHash.trim() === '') {
+            throw new Error('txHash is required to record a stake — on-chain proof must be provided')
+        }
+        if (input.amount <= 0) {
+            throw new Error('Stake amount must be positive')
+        }
+
         const agent = await prisma.agent.findUnique({ where: { id: agentId } })
         if (!agent) throw new Error('Agent not found')
 
+        // Reject duplicate txHash — prevents the same tx from being submitted twice
+        const duplicate = await prisma.agentStake.findFirst({ where: { txHash: input.txHash } })
+        if (duplicate) {
+            throw new Error('Duplicate txHash — this transaction has already been recorded')
+        }
+
+        // Create stake in PENDING_VERIFICATION — tier upgrade only happens after verifyStake()
         const stake = await prisma.agentStake.create({
             data: {
                 agentId,
                 amount: input.amount,
                 token: input.token ?? 'LUNES',
-                txHash: input.txHash ?? null,
-                status: 'STAKED',
+                txHash: input.txHash,
+                status: 'PENDING_VERIFICATION',
             },
         })
 
-        const newTotal = parseFloat(agent.stakedAmount.toString()) + input.amount
-        const { tier, limits } = resolveTier(newTotal)
-
-        await prisma.agent.update({
-            where: { id: agentId },
-            data: {
-                stakedAmount: newTotal,
-                stakingTier: tier,
-                dailyTradeLimit: limits.dailyTradeLimit,
-                maxPositionSize: limits.maxPositionSize,
-                maxOpenOrders: limits.maxOpenOrders,
-            },
-        })
-
+        // Do NOT credit tier yet — tier is upgraded only by verifyStake() after on-chain check
         return {
             stakeId: stake.id,
-            newStakedAmount: newTotal,
-            tier,
-            limits,
+            status: 'PENDING_VERIFICATION',
+            message: 'Stake submitted. Tier upgrade pending on-chain verification.',
         }
+    },
+
+    /**
+     * Confirm a stake after on-chain verification succeeds (called by admin/relayer).
+     * Only THEN does the agent's tier upgrade take effect.
+     */
+    async verifyStake(stakeId: string) {
+        const stake = await prisma.agentStake.findUnique({
+            where: { id: stakeId },
+            include: { agent: true },
+        })
+        if (!stake) throw new Error('Stake not found')
+        if (stake.status !== 'PENDING_VERIFICATION') {
+            throw new Error(`Stake is already in status ${stake.status}`)
+        }
+
+        const newTotal = parseFloat(stake.agent.stakedAmount.toString()) + parseFloat(stake.amount.toString())
+        const { tier, limits } = resolveTier(newTotal)
+
+        await prisma.$transaction([
+            prisma.agentStake.update({
+                where: { id: stakeId },
+                data: { status: 'STAKED' },
+            }),
+            prisma.agent.update({
+                where: { id: stake.agentId },
+                data: {
+                    stakedAmount: newTotal,
+                    stakingTier: tier,
+                    dailyTradeLimit: limits.dailyTradeLimit,
+                    maxPositionSize: limits.maxPositionSize,
+                    maxOpenOrders: limits.maxOpenOrders,
+                },
+            }),
+        ])
+
+        return { stakeId, newStakedAmount: newTotal, tier, limits }
     },
 
     async slashAgent(agentId: string, reason: string) {

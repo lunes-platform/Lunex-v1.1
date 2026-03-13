@@ -173,7 +173,7 @@ interface TokenBalanceItem {
   rawBalance: number
 }
 
-const BalanceDropdown: React.FC = () => {
+const BalanceDropdown: React.FC<{ onConnectRequest?: () => void; onOpenWallet?: () => void }> = ({ onConnectRequest, onOpenWallet }) => {
   const sdk = useSDK()
   const ref = useRef<HTMLDivElement>(null)
 
@@ -181,11 +181,23 @@ const BalanceDropdown: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [balances, setBalances] = useState<TokenBalanceItem[]>([])
 
-  const nativeFormatted = sdk.isConnected
-    ? new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(
-      Number(sdk.balance || 0),
-    )
-    : '0'
+  // LUNES native token has 8 decimals — sdk.balance returns raw planck units
+  const NATIVE_DECIMALS = 8
+
+  // Abbreviate the native balance for the trigger button
+  const nativeFormatted = (() => {
+    const raw = Number(sdk.balance || 0)
+    if (!sdk.isConnected || raw === 0) return '0'
+    // Convert from planck units to human-readable LUNES
+    const humanValue = raw / Math.pow(10, NATIVE_DECIMALS)
+    const abs = Math.abs(humanValue)
+    if (abs >= 1e12) return `${(abs / 1e12).toFixed(1)}T`
+    if (abs >= 1e9)  return `${(abs / 1e9).toFixed(1)}B`
+    if (abs >= 1e6)  return `${(abs / 1e6).toFixed(1)}M`
+    if (abs >= 10e3) return `${(abs / 1e3).toFixed(1)}K`
+    if (abs >= 1e3)  return abs.toLocaleString('en-US', { maximumFractionDigits: 0 })
+    return abs.toFixed(2)
+  })()
 
   const fetchAllBalances = useCallback(async () => {
     if (!sdk.isConnected || !sdk.walletAddress) return
@@ -258,10 +270,13 @@ const BalanceDropdown: React.FC = () => {
     <Wrapper ref={ref}>
       <Trigger
         $open={open}
-        title={sdk.isConnected ? `${sdk.balance} LUNES` : '0 LUNES'}
+        title={sdk.isConnected ? `${(Number(sdk.balance || 0) / Math.pow(10, NATIVE_DECIMALS)).toLocaleString('en-US', { maximumFractionDigits: 4 })} LUNES` : 'Click to connect wallet'}
         onClick={() => {
-          if (!sdk.isConnected) return
-          setOpen(prev => !prev)
+          if (!sdk.isConnected) {
+            onConnectRequest?.()
+            return
+          }
+          onOpenWallet?.()
         }}
       >
         {sdk.isConnected ? `${nativeFormatted} LUNES` : '0 LUNES'}
@@ -272,33 +287,6 @@ const BalanceDropdown: React.FC = () => {
         )}
       </Trigger>
 
-      {open && (
-        <Panel>
-          <PanelHeader>Wallet balances</PanelHeader>
-          <TokenList>
-            {loading ? (
-              <LoadingRow>Loading balances…</LoadingRow>
-            ) : balances.length === 0 ? (
-              <LoadingRow>No tokens found</LoadingRow>
-            ) : (
-              balances.map(t => (
-                <TokenRow key={t.acronym} $zero={t.rawBalance === 0}>
-                  <TokenIcon
-                    src={t.icon}
-                    alt={t.acronym}
-                    onError={e => { (e.target as HTMLImageElement).src = '/img/lunes-green.svg' }}
-                  />
-                  <TokenInfo>
-                    <TokenSymbol>{t.acronym}</TokenSymbol>
-                    <TokenName>{t.name}</TokenName>
-                  </TokenInfo>
-                  <TokenBalance>{t.balance}</TokenBalance>
-                </TokenRow>
-              ))
-            )}
-          </TokenList>
-        </Panel>
-      )}
     </Wrapper>
   )
 }

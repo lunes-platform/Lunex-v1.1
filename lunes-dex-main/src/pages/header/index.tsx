@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAppContext } from 'context/useContext'
 import { useSDK } from '../../context/SDKContext'
@@ -7,6 +7,7 @@ import * as S from './styles'
 //Modals
 import * as M from './modals'
 import BalanceDropdown from './BalanceDropdown'
+import { LunexLogo } from 'components/LunexLogo'
 
 const Header = () => {
   const { state } = useAppContext()
@@ -20,16 +21,17 @@ const Header = () => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`
   }
 
-  // Handler para conectar wallet real
-  const handleConnectWallet = async () => {
-    setModal('connecting')
-    try {
-      await sdk.connectWallet()
+  // Close connectWallet modal and open account when connection succeeds
+  useEffect(() => {
+    if (sdk.isConnected && modal === 'connectWallet') {
       setModal('account')
-    } catch (error) {
-      console.error('Erro ao conectar:', error)
-      setModal('null')
     }
+  }, [sdk.isConnected]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handler para conectar wallet — apenas delega ao SDK
+  // O modal fica aberto mostrando sdk.error em caso de falha
+  const handleConnectWallet = async (walletSource?: string) => {
+    await sdk.connectWallet(walletSource)
   }
 
   // Handler para desconectar
@@ -41,7 +43,7 @@ const Header = () => {
   return (
     <>
       <S.Header>
-        <img src="/img/lunes-logo.svg" onClick={() => navigate('/')} style={{ cursor: 'pointer' }} />
+        <LunexLogo width="135px" navHome />
 
         {/* Governance and Rewards - moved from TabBar to header */}
         <S.NavLinks>
@@ -76,10 +78,16 @@ const Header = () => {
             Social Trade
           </S.NavLink>
           <S.NavLink
-            active={location.pathname === '/governance'}
-            onClick={() => navigate('/governance')}
+            active={location.pathname.startsWith('/strategies')}
+            onClick={() => navigate('/strategies')}
           >
-            Governance
+            Strategies
+          </S.NavLink>
+          <S.NavLink
+            active={location.pathname === '/agent'}
+            onClick={() => navigate('/agent')}
+          >
+            Agent
           </S.NavLink>
           <S.NavLink
             active={location.pathname === '/rewards' || location.pathname === '/community'}
@@ -93,18 +101,39 @@ const Header = () => {
           >
             Affiliates
           </S.NavLink>
-          <S.NavLink
-            active={location.pathname === '/protocol-stats'}
-            onClick={() => navigate('/protocol-stats')}
-          >
-            Revenue
-          </S.NavLink>
-          <S.NavLink
-            active={location.pathname === '/docs'}
-            onClick={() => navigate('/docs')}
-          >
-            Docs
-          </S.NavLink>
+
+          <S.DropdownContainer>
+            <S.NavLink
+              active={['/governance', '/protocol-stats', '/docs'].includes(location.pathname)}
+            >
+              More
+              <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </S.NavLink>
+            <S.DropdownMenu>
+              <S.DropdownContent>
+                <S.DropdownItem
+                  active={location.pathname === '/governance'}
+                  onClick={() => navigate('/governance')}
+                >
+                  Governance
+                </S.DropdownItem>
+                <S.DropdownItem
+                  active={location.pathname === '/protocol-stats'}
+                  onClick={() => navigate('/protocol-stats')}
+                >
+                  Revenue
+                </S.DropdownItem>
+                <S.DropdownItem
+                  active={location.pathname === '/docs'}
+                  onClick={() => navigate('/docs')}
+                >
+                  Docs
+                </S.DropdownItem>
+              </S.DropdownContent>
+            </S.DropdownMenu>
+          </S.DropdownContainer>
         </S.NavLinks>
 
         <S.Nav>
@@ -116,7 +145,10 @@ const Header = () => {
             width="240px"
             height="40px"
           >
-            <BalanceDropdown />
+            <BalanceDropdown
+              onConnectRequest={() => setModal('connectWallet')}
+              onOpenWallet={() => setModal('account')}
+            />
             <S.Status
               style={{ fontSize: '13px' }}
               isPending={!!state.selectedOption1 && !!state.selectedOption2}
@@ -133,13 +165,15 @@ const Header = () => {
           </B.Wrapper>
           <img
             src="/img/wallet.svg"
+            alt="Wallet"
+            style={{ cursor: 'pointer' }}
             onClick={() =>
               sdk.isConnected ? setModal('account') : setModal('connectWallet')
             }
-            style={{ cursor: 'pointer' }}
           />
           <img
             src="/img/settings.svg"
+            alt="Settings"
             style={{ cursor: 'pointer' }}
             onClick={() => setModal(modal === 'settings' ? 'null' : 'settings')}
           />
@@ -152,8 +186,8 @@ const Header = () => {
 
       {modal === 'connectWallet' && (
         <M.ModalConnectWallet
-          connectNetwork={handleConnectWallet}
-          connectWallet={handleConnectWallet}
+          connectNetwork={(walletSource?: string) => handleConnectWallet(walletSource)}
+          connectWallet={(walletSource?: string) => handleConnectWallet(walletSource)}
           close={() => setModal('null')}
         />
       )}
@@ -163,11 +197,9 @@ const Header = () => {
       )}
 
       {modal === 'account' && (
-        <M.Account
-          disconnect={handleDisconnect}
-          change={() => setModal('connectWallet')}
-          close={() => setModal('null')}
-          statusTransaction={() => setModal('statusTransaction')}
+        <M.WalletModal
+          onClose={() => setModal('null')}
+          onDisconnect={handleDisconnect}
         />
       )}
 

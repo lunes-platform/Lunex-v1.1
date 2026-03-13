@@ -63,6 +63,9 @@ jest.mock('../utils/orderbook', () => ({
   orderbookManager: mockOrderbookManager,
 }))
 
+const mockLog = { error: jest.fn(), info: jest.fn(), warn: jest.fn(), debug: jest.fn() }
+jest.mock('../utils/logger', () => ({ log: mockLog }))
+
 import { marginService } from '../services/marginService'
 
 describe('marginService hardening', () => {
@@ -414,7 +417,7 @@ describe('marginService hardening', () => {
   })
 
   it('logs an operational alert when safe mark price becomes unavailable', async () => {
-    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockLog.error.mockClear()
 
     mockTx.pair.findUnique.mockResolvedValue({
       id: 'pair-1',
@@ -440,13 +443,12 @@ describe('marginService hardening', () => {
       }),
     ).rejects.toThrow('Mark price circuit breaker triggered for LUNES/USDT')
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('margin.safe_mark_price_unavailable'))
-
-    consoleErrorSpy.mockRestore()
+    expect(mockLog.error).toHaveBeenCalledWith(expect.objectContaining({ event: 'margin.safe_mark_price_unavailable' }), expect.any(String))
   })
 
   it('logs restoration and resets consecutive failures after price health recovers', async () => {
-    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockLog.error.mockClear()
+    mockLog.info.mockClear()
     const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => undefined)
     const freshBook = createFreshBook(95, 105)
     const createdPosition = {
@@ -514,8 +516,9 @@ describe('marginService hardening', () => {
       signature: 'sig',
     })
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('margin.safe_mark_price_unavailable'))
+    expect(mockLog.error).toHaveBeenCalledWith(expect.objectContaining({ event: 'margin.safe_mark_price_unavailable' }), expect.any(String))
     expect(consoleInfoSpy).toHaveBeenCalledWith(expect.stringContaining('margin.safe_mark_price_restored'))
+    consoleInfoSpy.mockRestore()
     expect(marginService.getPriceHealth('LUNES/USDT')).toEqual(
       expect.objectContaining({
         summary: expect.objectContaining({
@@ -537,8 +540,6 @@ describe('marginService hardening', () => {
       }),
     )
 
-    consoleErrorSpy.mockRestore()
-    consoleInfoSpy.mockRestore()
   })
 
   it('operationally blocks new openings after repeated safe mark price failures', async () => {

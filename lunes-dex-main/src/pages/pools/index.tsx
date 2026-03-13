@@ -3,6 +3,7 @@ import styled from 'styled-components'
 import { useNavigate } from 'react-router-dom'
 import PageLayout from '../../components/layout'
 import { usePools, Pool } from '../../hooks/usePools'
+import TokenIcon from '../../components/TokenIcon'
 
 type PoolFilter = 'all' | 'stable' | 'volatile' | 'my_pools'
 
@@ -176,17 +177,11 @@ const PoolInfo = styled.div`
 const PoolIcons = styled.div`
   display: flex;
   align-items: center;
-`
-
-const PoolIcon = styled.img`
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: ${({ theme }) => theme.colors.themeColors[400]};
   
-  &:last-child {
+  & > *:last-child {
     margin-left: -10px;
     border: 2px solid ${({ theme }) => theme.colors.themeColors[500]};
+    border-radius: 50%;
   }
 `
 
@@ -353,8 +348,8 @@ export const Pools: React.FC = () => {
                   <TableCell>
                     <PoolInfo>
                       <PoolIcons>
-                        <PoolIcon src={pool.token0.icon} alt={pool.token0.symbol} />
-                        <PoolIcon src={pool.token1.icon} alt={pool.token1.symbol} />
+                        <TokenIcon address={pool.token0.address || ''} symbol={pool.token0.symbol} size={28} />
+                        <TokenIcon address={pool.token1.address || ''} symbol={pool.token1.symbol} size={28} />
                       </PoolIcons>
                       <PoolName>
                         <PoolPair>{pool.token0.symbol}-{pool.token1.symbol}</PoolPair>

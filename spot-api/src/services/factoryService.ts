@@ -60,9 +60,9 @@ class FactoryService {
         if (!ready || !this.contract || !this.api) return null
 
         try {
-            const callerPlaceholder = tokenA // any valid address to serve as caller
+            const queryCaller = tokenA // any valid address as read-only query caller
             const { result, output } = await this.contract.query.getPair(
-                callerPlaceholder,
+                queryCaller,
                 { gasLimit: -1, storageDepositLimit: null },
                 tokenA,
                 tokenB,

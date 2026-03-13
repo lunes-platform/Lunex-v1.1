@@ -13,6 +13,17 @@ import { BN } from '@polkadot/util';
 import * as fs from 'fs';
 import * as path from 'path';
 
+type ContractApi = ConstructorParameters<typeof ContractPromise>[0];
+type CodeApi = ConstructorParameters<typeof CodePromise>[0];
+
+function asContractApi(api: ApiPromise): ContractApi {
+  return api as unknown as ContractApi;
+}
+
+function asCodeApi(api: ApiPromise): CodeApi {
+  return api as unknown as CodeApi;
+}
+
 // 🌐 CONFIGURAÇÃO DE REDE
 const NETWORKS = {
   testnet: {
@@ -97,7 +108,7 @@ class LunexDeployer {
     
     // Verificar balance do admin
     const balance = await this.api.query.system.account(this.adminAccount.address);
-    const freeBalance = balance.data.free.toBN();
+    const freeBalance = (balance as any).data.free.toBN();
     const requiredBalance = new BN('100000000000000'); // 1,000,000 LUNES
     
     console.log(`💰 Balance Admin: ${freeBalance.div(new BN('100000000')).toString()} LUNES`);
@@ -135,7 +146,7 @@ class LunexDeployer {
 
     try {
       const contractData = this.loadContractMetadata(contractPath);
-      const code = new CodePromise(this.api, contractData, contractData.source.wasm);
+      const code = new CodePromise(asCodeApi(this.api), contractData, contractData.source.wasm);
 
       const gasLimitToUse = gasLimit || GAS_LIMITS[name as keyof typeof GAS_LIMITS] || new BN('1000000000000');
       const storageDepositToUse = storageDepositLimit || STORAGE_DEPOSITS[name as keyof typeof STORAGE_DEPOSITS] || new BN('1000000000000');
@@ -151,10 +162,11 @@ class LunexDeployer {
       }
 
       // Estimar gas primeiro
-      const { gasRequired } = await code.tx[constructorName]({
+      const dryRunResult = await code.tx[constructorName]({
         gasLimit: gasLimitToUse,
         storageDepositLimit: storageDepositToUse,
       }, ...args).dryRun(this.adminAccount);
+      const gasRequired = (dryRunResult as any).gasRequired || gasLimitToUse;
 
       console.log(`⛽ Gas estimado: ${gasRequired.toString()}`);
 
@@ -184,7 +196,7 @@ class LunexDeployer {
             });
           } else if (status.isFinalized) {
             if (contractAddress) {
-              const contract = new ContractPromise(this.api, contractData, contractAddress);
+              const contract = new ContractPromise(asContractApi(this.api), contractData, contractAddress);
               
               const deployedContract: DeployedContract = {
                 address: contractAddress,

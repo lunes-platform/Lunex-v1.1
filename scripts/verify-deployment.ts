@@ -18,6 +18,12 @@ import { Keyring } from '@polkadot/keyring';
 import fs from 'fs';
 import path from 'path';
 
+type ContractApi = ConstructorParameters<typeof ContractPromise>[0];
+
+function asContractApi(api: ApiPromise): ContractApi {
+  return api as unknown as ContractApi;
+}
+
 // === CONFIGURAÇÃO ===
 
 interface NetworkConfig {
@@ -172,9 +178,9 @@ class DeploymentVerifier {
       
       try {
         // Verificar se o endereço tem código
-        const codeHash = await this.api.query.contracts.contractInfoOf(info.address);
+        const codeHash = await this.api.query.contracts.contractInfoOf(info.address) as any;
         
-        if (codeHash.isSome) {
+        if (codeHash?.isSome) {
           console.log(`   ✅ Contrato encontrado com code hash: ${codeHash.unwrap().codeHash.toHex()}`);
         } else {
           console.log(`   ❌ Nenhum código encontrado no endereço!`);
@@ -200,7 +206,7 @@ class DeploymentVerifier {
     console.log('🏭 FACTORY:');
     try {
       const factoryContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.factory.abi,
         this.config.contracts.factory.address
       );
@@ -225,7 +231,7 @@ class DeploymentVerifier {
     console.log('\n🛣️  ROUTER:');
     try {
       const routerContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.router.abi,
         this.config.contracts.router.address
       );
@@ -259,7 +265,7 @@ class DeploymentVerifier {
     console.log('\n🥩 STAKING:');
     try {
       const stakingContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.staking.abi,
         this.config.contracts.staking.address
       );
@@ -283,7 +289,7 @@ class DeploymentVerifier {
     console.log('\n🎁 TRADING REWARDS:');
     try {
       const rewardsContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.rewards.abi,
         this.config.contracts.rewards.address
       );
@@ -315,7 +321,7 @@ class DeploymentVerifier {
     try {
       // Verificar se Staking conhece o Trading Rewards
       const stakingContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.staking.abi,
         this.config.contracts.staking.address
       );
@@ -325,7 +331,7 @@ class DeploymentVerifier {
       
       // Verificar se Trading Rewards conhece o Router
       const rewardsContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.rewards.abi,
         this.config.contracts.rewards.address
       );
@@ -360,7 +366,7 @@ class DeploymentVerifier {
       console.log('▶️  Status de pausa dos contratos:');
       
       const stakingContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.staking.abi,
         this.config.contracts.staking.address
       );
@@ -392,7 +398,7 @@ class DeploymentVerifier {
       
       // Factory
       const factoryContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.factory.abi,
         this.config.contracts.factory.address
       );
@@ -402,7 +408,7 @@ class DeploymentVerifier {
       
       // Staking
       const stakingContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.staking.abi,
         this.config.contracts.staking.address
       );
@@ -412,7 +418,7 @@ class DeploymentVerifier {
       
       // Trading Rewards
       const rewardsContract = new ContractPromise(
-        this.api,
+        asContractApi(this.api),
         this.config.contracts.rewards.abi,
         this.config.contracts.rewards.address
       );
@@ -430,10 +436,10 @@ class DeploymentVerifier {
   }
 
   private async queryContract(contract: ContractPromise, method: string, args: any[]): Promise<any> {
-    const { gasLimit } = this.api.registry.createType('WeightV2', {
+    const gasLimit = this.api.registry.createType('WeightV2', {
       refTime: 1000000000000,
       proofSize: 1000000,
-    });
+    }) as any;
     
     const { result, output } = await contract.query[method](
       '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY', // Alice account for queries

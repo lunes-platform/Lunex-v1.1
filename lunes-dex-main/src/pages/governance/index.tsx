@@ -810,7 +810,7 @@ export const Governance: React.FC = () => {
         {!sdk.isConnected ? (
           <ConnectPrompt>
             <p>Connect your wallet to participate in governance</p>
-            <B.Button onClick={sdk.connectWallet} margin="20px auto 0" width="auto" padding="16px 40px">Connect Wallet</B.Button>
+            <B.Button onClick={() => sdk.connectWallet()} margin="20px auto 0" width="auto" padding="16px 40px">Connect Wallet</B.Button>
           </ConnectPrompt>
         ) : isLoading ? (
           <ConnectPrompt>Loading proposals...</ConnectPrompt>
@@ -849,7 +849,7 @@ export const Governance: React.FC = () => {
             <ProposalsList>
               {filteredProposals.length === 0 ? (
                 <EmptyState>
-                  <div style={{ fontSize: '32px', marginBottom: '16px', opacity: 0.5 }}>📋</div>
+                  <div style={{ marginBottom: '16px', opacity: 0.5 }}><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></div>
                   No proposals found for the selected filter
                 </EmptyState>
               ) : (
@@ -872,8 +872,8 @@ export const Governance: React.FC = () => {
                       <ProposalDescription>{proposal.description}</ProposalDescription>
 
                       <ProposalMeta>
-                        <MetaItem>📍 {proposal.tokenAddress}</MetaItem>
-                        <MetaItem>👤 {proposal.proposer}</MetaItem>
+                        <MetaItem>{proposal.tokenAddress}</MetaItem>
+                        <MetaItem>{proposal.proposer}</MetaItem>
                       </ProposalMeta>
 
                       <VotingSection>
@@ -907,7 +907,7 @@ export const Governance: React.FC = () => {
                                 $disabled={!userCanVote}
                                 onClick={() => userCanVote && openVoteModal(proposal, 'yes')}
                               >
-                                👍 YES
+                                YES
                                 <span>{VOTE_COST} LUNES</span>
                               </VoteButton>
                               <VoteButton
@@ -915,7 +915,7 @@ export const Governance: React.FC = () => {
                                 $disabled={!userCanVote}
                                 onClick={() => userCanVote && openVoteModal(proposal, 'no')}
                               >
-                                👎 NO
+                                NO
                                 <span>{VOTE_COST} LUNES</span>
                               </VoteButton>
                             </VoteButtons>
@@ -951,7 +951,7 @@ export const Governance: React.FC = () => {
                 <>
                   <ModalHeader>
                     <ModalIcon $type={isVoting ? 'loading' : (selectedVote ?? 'yes')}>
-                      {isVoting ? <LoadingSpinner /> : selectedVote === 'yes' ? '👍' : '👎'}
+                      {isVoting ? <LoadingSpinner /> : selectedVote === 'yes' ? 'YES' : 'NO'}
                     </ModalIcon>
                     <ModalTitle>
                       {isVoting ? 'Signing Transaction...' : `Vote ${selectedVote ? selectedVote.toUpperCase() : ''}`}

@@ -599,29 +599,65 @@ export const copytradeService = {
         executions.push(execution)
       }
 
-      const realizedPnlPct = input.realizedPnlPct ? toNumber(input.realizedPnlPct) : 0
-      const tradeStatus = input.realizedPnlPct ? 'CLOSED' : 'OPEN'
-      const exitPrice = input.realizedPnlPct
-        ? input.side === 'BUY'
-          ? executionPrice * (1 + realizedPnlPct / 100)
-          : executionPrice * (1 - realizedPnlPct / 100)
-        : undefined
+      // ── PnL derivation — NEVER trust caller-declared realizedPnlPct ───────────
+      // Strategy: if this is a closing signal (SELL for a long or BUY for a short),
+      // look up the most recent OPEN LeaderTrade for the same pair and compute PnL
+      // from the stored entryPrice vs the current market executionPrice.
+      // This prevents leaders from inflating their stats by self-reporting gains.
+      const closingSide = input.side === 'SELL' ? 'BUY' : 'SELL'
+      const openTrade = input.realizedPnlPct
+        ? await tx.leaderTrade.findFirst({
+            where: { leaderId, pairSymbol: input.pairSymbol, side: closingSide, status: 'OPEN' },
+            orderBy: { openedAt: 'desc' },
+          })
+        : null
 
-      await tx.leaderTrade.create({
-        data: {
-          leaderId,
-          pairId: pair.id,
-          pairSymbol: input.pairSymbol,
-          side: input.side,
-          entryPrice: toDecimal(executionPrice),
-          exitPrice: exitPrice ? toDecimal(exitPrice) : undefined,
-          pnlPct: toDecimal(realizedPnlPct),
-          status: tradeStatus,
-          closedAt: input.realizedPnlPct ? new Date() : undefined,
-        },
-      })
+      let realizedPnlPct = 0
+      if (openTrade && executionPrice > 0) {
+        const entry = decimalToNumber(openTrade.entryPrice)
+        if (entry > 0) {
+          // Long PnL = (exit - entry) / entry × 100
+          // Short PnL = (entry - exit) / entry × 100
+          realizedPnlPct = closingSide === 'BUY'
+            ? ((executionPrice - entry) / entry) * 100
+            : ((entry - executionPrice) / entry) * 100
+        }
+      }
+      // Hard cap: a single trade cannot exceed ±100% PnL (sanity guard for edge cases)
+      realizedPnlPct = Math.max(-100, Math.min(100, realizedPnlPct))
 
-      if (input.realizedPnlPct) {
+      const tradeStatus   = input.realizedPnlPct ? 'CLOSED' : 'OPEN'
+      const exitPriceVal  = openTrade ? executionPrice : undefined
+
+      // Close the matched open trade if found
+      if (openTrade) {
+        await tx.leaderTrade.update({
+          where: { id: openTrade.id },
+          data: {
+            exitPrice: toDecimal(executionPrice),
+            pnlPct:    toDecimal(realizedPnlPct),
+            status:    'CLOSED',
+            closedAt:  new Date(),
+          },
+        })
+      } else {
+        // No matching open trade — record entry position
+        await tx.leaderTrade.create({
+          data: {
+            leaderId,
+            pairId: pair.id,
+            pairSymbol: input.pairSymbol,
+            side: input.side,
+            entryPrice: toDecimal(executionPrice),
+            exitPrice: exitPriceVal ? toDecimal(exitPriceVal) : undefined,
+            pnlPct: toDecimal(realizedPnlPct),
+            status: tradeStatus,
+            closedAt: input.realizedPnlPct ? new Date() : undefined,
+          },
+        })
+      }
+
+      if (openTrade) {
         const pnlDelta = amountIn * (realizedPnlPct / 100)
         const updatedVault = await tx.copyVault.update({
           where: { id: vault.id },

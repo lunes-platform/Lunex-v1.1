@@ -301,7 +301,7 @@ const Home = () => {
             inputValue1.length < 1 ||
             !quote
           }
-          onClick={sdk.isConnected ? handleConfirmSwap : sdk.connectWallet}
+          onClick={sdk.isConnected ? handleConfirmSwap : () => sdk.connectWallet()}
         >
           {!sdk.isConnected
             ? 'Connect Wallet'
@@ -315,7 +315,7 @@ const Home = () => {
         </B.Button>
       </S.Box>
       <S.Paragraph>
-        <strong>Lunex: </strong>Developed with love on the Lunes blockchain ❤️
+        <strong>Lunex: </strong>Developed with love on the Lunes blockchain
       </S.Paragraph>
 
       {modal === 'chooseToken' && (

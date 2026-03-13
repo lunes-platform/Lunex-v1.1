@@ -1,5 +1,8 @@
 import { NextFunction, Router, Request, Response } from 'express'
 import { ListingTier, ListingStatus } from '@prisma/client'
+import multer from 'multer'
+import path from 'path'
+import fs from 'fs'
 import {
   getAllTierConfigs,
   createListing,
@@ -13,28 +16,45 @@ import {
   getListingStats,
   processExpiredLocks,
   CreateListingInput,
+  ActivateListingInput,
   TIER_CONFIG,
   TierKey,
 } from '../services/listingService'
 import { log } from '../utils/logger'
-import { config } from '../config'
+import { requireAdmin } from '../middleware/adminGuard'
 import { z } from 'zod'
 
 const router = Router()
 
-// ─── Admin guard ─────────────────────────────────────────────────
-// Same pattern as pairs.ts — Bearer token matching ADMIN_SECRET env var.
+// ─── Logo upload config ──────────────────────────────────────────
+const TOKENS_DIR = path.join(__dirname, '..', '..', 'public', 'tokens')
+fs.mkdirSync(TOKENS_DIR, { recursive: true })
 
-function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const secret = config.adminSecret
-  if (!secret) {
-    return res.status(503).json({ error: 'Admin secret not configured on this server' })
-  }
-  const auth = req.headers['authorization'] ?? ''
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-  if (!token || token !== secret) return res.status(401).json({ error: 'Unauthorized' })
-  next()
-}
+const ALLOWED_MIMES = ['image/svg+xml', 'image/png', 'image/webp']
+const MAX_LOGO_SIZE = 200 * 1024 // 200 KB
+
+const logoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, TOKENS_DIR),
+  filename: (req, file, cb) => {
+    const addr = req.body?.tokenAddress ?? 'unknown'
+    const ext = file.mimetype === 'image/svg+xml' ? '.svg'
+              : file.mimetype === 'image/webp'    ? '.webp'
+              : '.png'
+    cb(null, `${addr}${ext}`)
+  },
+})
+
+const logoUpload = multer({
+  storage: logoStorage,
+  limits: { fileSize: MAX_LOGO_SIZE },
+  fileFilter: (_req, file, cb) => {
+    if (!ALLOWED_MIMES.includes(file.mimetype)) {
+      return cb(new Error('Invalid file type. Accepted: SVG, PNG, WebP'))
+    }
+    cb(null, true)
+  },
+})
+
 
 // ─── Validation schemas ────────────────────────────────────────────
 
@@ -43,14 +63,12 @@ const CreateListingSchema = z.object({
   tokenAddress: z.string().min(1),
   tokenName: z.string().min(1),
   tokenSymbol: z.string().min(1),
+  tokenDecimals: z.coerce.number().optional(),
   tier: z.enum(['BASIC', 'VERIFIED', 'FEATURED']),
-  lpTokenAddress: z.string().min(1),
-  lpAmount: z.union([z.string(), z.number()]),
   lunesLiquidity: z.union([z.string(), z.number()]),
   tokenLiquidity: z.union([z.string(), z.number()]),
   description: z.string().optional(),
   website: z.string().optional(),
-  logoUrl: z.string().optional(),
 })
 
 // ── GET /api/v1/listing/tiers ─────────────────────────────────────
@@ -112,8 +130,8 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
 })
 
 // ── POST /api/v1/listing ──────────────────────────────────────────
-// Create a new token listing (requires wallet signature in production)
-router.post('/', async (req: Request, res: Response, next: NextFunction) => {
+// Create a new token listing with optional logo upload
+router.post('/', logoUpload.single('logo'), async (req: Request, res: Response, next: NextFunction) => {
   try {
     const parsed = CreateListingSchema.safeParse(req.body)
     if (!parsed.success) {
@@ -126,7 +144,13 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return res.status(400).json({ error: `Invalid tier. Valid values: BASIC, VERIFIED, FEATURED` })
     }
 
-    const listing = await createListing({ ...rest, tier: tierKey } as CreateListingInput)
+    // Build logoURI from uploaded file
+    let logoURI: string | undefined
+    if (req.file) {
+      logoURI = `/tokens/${req.file.filename}`
+    }
+
+    const listing = await createListing({ ...rest, tier: tierKey, logoURI } as CreateListingInput)
 
     res.status(201).json({
       message: 'Listing created — pending on-chain confirmation',
@@ -137,6 +161,9 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     if (msg.includes('already listed') || msg.includes('Insufficient')) {
       return res.status(400).json({ error: msg })
     }
+    if (msg.includes('Invalid file type') || msg.includes('File too large')) {
+      return res.status(400).json({ error: msg })
+    }
     next(err)
   }
 })
@@ -145,8 +172,9 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 // B2 FIX: requires admin auth — called by trusted relayer after on-chain confirmation
 router.post('/:id/activate', requireAdmin, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { onChainListingId } = req.body
-    const listing = await activateListing(req.params.id, onChainListingId)
+    const { onChainListingId, pairAddress, lpTokenAddress, lpAmount, txHash } = req.body
+    const input: ActivateListingInput = { onChainListingId, pairAddress, lpTokenAddress, lpAmount, txHash }
+    const listing = await activateListing(req.params.id, input)
     res.json({ message: 'Listing activated', listing })
   } catch (err) { next(err) }
 })

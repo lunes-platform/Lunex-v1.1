@@ -112,6 +112,30 @@ enum IndexedEventKind {
   UNKNOWN
 }
 
+// ─── AI Trading Network ─────────────────────────────────────────
+
+enum StrategyType {
+  COPYTRADE     // Mirrors a human/bot leader via CopyVault
+  MARKET_MAKER  // Asymmetric liquidity provision
+  ARBITRAGE     // Cross-pair / cross-venue arbitrage
+  MOMENTUM      // Trend-following
+  HEDGE         // Delta-neutral / risk reduction
+  CUSTOM        // User-defined
+}
+
+enum StrategyRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  AGGRESSIVE
+}
+
+enum StrategyStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
 // ─── Agent Ecosystem ────────────────────────────────────────────
 
 enum AgentType {
@@ -122,6 +146,7 @@ enum AgentType {
 }
 
 enum AgentStakeStatus {
+  PENDING_VERIFICATION  // txHash submitted but not yet verified on-chain
   STAKED
   UNSTAKING
   UNSTAKED
@@ -375,6 +400,7 @@ model Leader {
   signals            CopyTradeSignal[]
   analyticsSnapshots LeaderAnalyticsSnapshot[]
   agent              Agent?
+  strategies         Strategy[]
 
   @@index([isAi, roi30d])
   @@index([followersCount, roi30d])
@@ -760,6 +786,8 @@ model Agent {
   totalTrades          Int         @default(0)
   totalVolume          Decimal     @default(0) @db.Decimal(36, 18)
   lastActiveAt         DateTime?
+  /// Reputation score computed from strategy performance (0-100)
+  reputationScore      Decimal     @default(0) @db.Decimal(10, 4)
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 
@@ -767,6 +795,8 @@ model Agent {
   apiKeys              AgentApiKey[]
   stakes               AgentStake[]
   asymmetricStrategies AsymmetricStrategy[]
+  strategies           Strategy[]
+  executions           ExecutionLog[]
 
   @@index([agentType, isActive])
   @@index([stakingTier, isActive])
@@ -847,6 +877,7 @@ model TokenListing {
   lpAmount         Decimal       @default(0) @db.Decimal(36, 18)
   onChainListingId Int?
   txHash           String?
+  logoURI          String?
   verifiedAt       DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -881,6 +912,28 @@ model LiquidityLock {
 
   @@index([ownerAddress, status])
   @@index([unlockAt, status])
+}
+
+// ─── Token Registry (off-chain metadata) ─────────────────────────
+// Trusted token metadata. Auto-populated when a listing is activated.
+// Also supports manual admin entries for seed tokens (LUNES, USDT, etc.)
+
+model TokenRegistry {
+  id         String   @id @default(uuid())
+  address    String   @unique
+  symbol     String
+  name       String
+  decimals   Int      @default(18)
+  logoURI    String?
+  isVerified Boolean  @default(false)
+  isTrusted  Boolean  @default(false)
+  source     String   @default("LISTING") // LISTING | ADMIN | SEED
+  listingId  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([isVerified])
 }
 
 // ─── Asymmetric Liquidity V2 ─────────────────────────────────────
@@ -959,6 +1012,122 @@ model AsymmetricRebalanceLog {
   @@index([status, createdAt])
 }
 
+// ─── AI Trading Network: Execution Layer ────────────────────────────────────
+
+enum ExecutionStatus {
+  PENDING   // Submitted to orderbook, awaiting fill
+  EXECUTED  // Fully or partially filled
+  REJECTED  // Blocked by risk/validation controls
+  FAILED    // Technical failure (timeout, rpc error)
+}
+
+model ExecutionLog {
+  id               String          @id @default(uuid())
+  agentId          String
+  strategyId       String?         // Optional: linked Strategy
+  orderId          String?         // Filled once the Order record exists
+  pairSymbol       String
+  side             OrderSide
+  orderType        String          // MARKET | LIMIT | STOP | STOP_LIMIT
+  requestedAmount  Decimal         @db.Decimal(36, 18)
+  executedAmount   Decimal?        @db.Decimal(36, 18)
+  price            Decimal?        @db.Decimal(36, 18)
+  slippageBps      Int?
+  status           ExecutionStatus @default(PENDING)
+  rejectionReason  String?         @db.Text
+  /// JSON map: { check_name: { passed, value, limit } }
+  validationChecks Json?
+  source           String          @default("API")  // API | WEB3 | COPYTRADE | STRATEGY
+
+  createdAt DateTime @default(now())
+
+  agent    Agent     @relation(fields: [agentId], references: [id])
+  strategy Strategy? @relation(fields: [strategyId], references: [id])
+
+  @@index([agentId, createdAt])
+  @@index([strategyId, createdAt])
+  @@index([status, createdAt])
+  @@index([pairSymbol, createdAt])
+}
+
+// ─── AI Trading Network: Strategy Layer ────────────────────────────────────
+
+model Strategy {
+  id                  String            @id @default(uuid())
+  agentId             String
+  leaderId            String?           // Optional: mirrors a Leader's performance
+  vaultAddress        String?           // Optional: on-chain CopyVault contract address
+  name                String
+  description         String?           @db.Text
+  strategyType        StrategyType      @default(CUSTOM)
+  riskLevel           StrategyRiskLevel @default(MEDIUM)
+  status              StrategyStatus    @default(ACTIVE)
+  isPublic            Boolean           @default(true)
+
+  // Performance metrics — synced by reputation engine from LeaderAnalyticsSnapshot
+  roi30d              Decimal           @default(0) @db.Decimal(20, 8)
+  roi7d               Decimal           @default(0) @db.Decimal(20, 8)
+  roi1d               Decimal           @default(0) @db.Decimal(20, 8)
+  sharpeRatio         Decimal           @default(0) @db.Decimal(20, 8)
+  maxDrawdown         Decimal           @default(0) @db.Decimal(20, 8)
+  winRate             Decimal           @default(0) @db.Decimal(10, 4)
+  totalTrades         Int               @default(0)
+  followersCount      Int               @default(0)
+  totalVolume         Decimal           @default(0) @db.Decimal(36, 18)
+  vaultEquity         Decimal           @default(0) @db.Decimal(36, 18)
+
+  performanceSyncedAt DateTime?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  agent       Agent               @relation(fields: [agentId], references: [id])
+  leader      Leader?             @relation(fields: [leaderId], references: [id])
+  followers   StrategyFollow[]
+  performance StrategyPerformance[]
+  executions  ExecutionLog[]
+
+  @@index([agentId])
+  @@index([leaderId])
+  @@index([strategyType, status, isPublic])
+  @@index([status, isPublic, roi30d])
+  @@index([followersCount])
+}
+
+model StrategyFollow {
+  id               String   @id @default(uuid())
+  strategyId       String
+  followerAddress  String
+  /// LUNES or vault shares allocated to this strategy
+  allocatedCapital Decimal  @default(0) @db.Decimal(36, 18)
+  isActive         Boolean  @default(true)
+  followedAt       DateTime @default(now())
+  unfollowedAt     DateTime?
+
+  strategy Strategy @relation(fields: [strategyId], references: [id])
+
+  @@unique([strategyId, followerAddress])
+  @@index([followerAddress, isActive])
+  @@index([strategyId, isActive])
+}
+
+model StrategyPerformance {
+  id         String   @id @default(uuid())
+  strategyId String
+  /// Daily snapshot — start of day UTC
+  date       DateTime
+  roi        Decimal  @db.Decimal(20, 8)
+  pnl        Decimal  @db.Decimal(36, 18)
+  volume     Decimal  @db.Decimal(36, 18)
+  trades     Int      @default(0)
+  equity     Decimal  @db.Decimal(36, 18)
+  drawdown   Decimal  @db.Decimal(20, 8)
+
+  strategy Strategy @relation(fields: [strategyId], references: [id])
+
+  @@unique([strategyId, date])
+  @@index([strategyId, date])
+}
+
 // ─── Governance Vote Cooldown ────────────────────────────────────────────────
 // Tracks on-chain vote submissions per wallet per proposal.
 // Used for server-side cooldown enforcement (1h minimum between votes).
@@ -974,4 +1143,63 @@ model GovernanceVote {
   @@unique([walletAddress, proposalId, voteType])
   @@index([walletAddress, proposalId])
   @@index([votedAt])
+}
+
+// ─── User Favorite Pairs ─────────────────────────────────────────────────────
+// Stores per-wallet favorite trading pairs for quick access.
+// Synced from frontend localStorage when wallet is connected.
+
+model Favorite {
+  id            String   @id @default(uuid())
+  walletAddress String
+  pairSymbol    String
+  createdAt     DateTime @default(now())
+
+  @@unique([walletAddress, pairSymbol])
+  @@index([walletAddress])
+}
+
+// ─── Weekly Reward Distribution ──────────────────────────────────────────────
+// Tracks weekly fee collection and reward pool distribution cycles.
+// Fee split: 40% LP (AMM), 40% Treasury, 20% Reward Pool.
+// Reward pool split: 60% Copytrade Leaders, 40% Stakers.
+
+model RewardWeek {
+  id                 String    @id @default(uuid())
+  weekStart          DateTime
+  weekEnd            DateTime
+  totalFeesCollected Decimal   @default(0) @db.Decimal(36, 18)
+  rewardPoolAmount   Decimal   @default(0) @db.Decimal(36, 18)
+  leaderPoolAmount   Decimal   @default(0) @db.Decimal(36, 18)
+  stakerPoolAmount   Decimal   @default(0) @db.Decimal(36, 18)
+  status             String    @default("ACCUMULATING") // ACCUMULATING | DISTRIBUTED
+  distributedAt      DateTime?
+  createdAt          DateTime  @default(now())
+
+  rewards UserReward[]
+
+  @@unique([weekStart])
+  @@index([status])
+}
+
+model UserReward {
+  id            String    @id @default(uuid())
+  rewardWeekId  String
+  walletAddress String
+  amount        Decimal   @db.Decimal(36, 18)
+  rewardType    String    // LEADER | STAKER
+  rank          Int?
+  weight        Decimal?  @db.Decimal(36, 18)
+  claimed       Boolean   @default(false)
+  claimedAt     DateTime?
+  txHash        String?   // On-chain payout tx hash
+  payoutStatus  String    @default("PENDING") // PENDING | SUBMITTED | CONFIRMED | FAILED
+  payoutError   String?
+  createdAt     DateTime  @default(now())
+
+  rewardWeek RewardWeek @relation(fields: [rewardWeekId], references: [id])
+
+  @@index([walletAddress, claimed])
+  @@index([rewardWeekId])
+  @@index([payoutStatus])
 }

@@ -24,19 +24,19 @@ const ErrorContainer = styled.div`
 
 const ErrorTitle = styled.h2`
   font-size: 1.5rem;
-  color: ${({ theme }) => theme.colors.error ?? '#ef4444'};
+  color: #ef4444;
 `
 
 const ErrorMessage = styled.p`
   font-size: 0.875rem;
-  color: ${({ theme }) => theme.colors.textSecondary ?? '#9ca3af'};
+  color: #9ca3af;
   max-width: 30rem;
 `
 
 const RetryButton = styled.button`
   padding: 0.5rem 1.25rem;
   border-radius: 0.5rem;
-  background: ${({ theme }) => theme.colors.primary ?? '#3b82f6'};
+  background: #8e61ff;
   color: white;
   font-size: 0.875rem;
   cursor: pointer;

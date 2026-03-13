@@ -153,6 +153,7 @@ export interface CreateOrderParams {
   amount: string
   timeInForce?: 'GTC' | 'IOC' | 'FOK'
   nonce: string
+  timestamp: number
   signature: string
   makerAddress: string
 }
@@ -370,7 +371,35 @@ export const spotApi = {
         symbol
       )}?timeframe=${timeframe}&limit=${limit}`
     )
-  }
+  },
+
+  // ─── Favorites ───
+  async getFavorites(address: string): Promise<string[]> {
+    const data = await fetchApi<{ favorites: string[] }>(
+      `/api/v1/user/${encodeURIComponent(address)}/favorites`
+    )
+    return data.favorites
+  },
+
+  async addFavorite(address: string, pairSymbol: string): Promise<void> {
+    await fetchApi(`/api/v1/user/${encodeURIComponent(address)}/favorites`, {
+      method: 'POST',
+      body: JSON.stringify({ pairSymbol }),
+    })
+  },
+
+  async removeFavorite(address: string, pairSymbol: string): Promise<void> {
+    await fetchApi(`/api/v1/user/${encodeURIComponent(address)}/favorites/${encodeURIComponent(pairSymbol)}`, {
+      method: 'DELETE',
+    })
+  },
+
+  // ─── Market Info ───
+  async getMarketInfo(pairSymbol: string): Promise<any> {
+    return await fetchApi(
+      `/api/v1/markets/${encodeURIComponent(pairSymbol)}/info`
+    )
+  },
 }
 
 export default spotApi

@@ -608,7 +608,7 @@ const BotRegistry: React.FC = () => {
                                         <BotMeta>
                                             <TypeBadge>{typeLabels[myAgent.agentType] || myAgent.agentType}</TypeBadge>
                                             <TierBadge tier={myAgent.stakingTier}>Tier {myAgent.stakingTier} — {tierNames[myAgent.stakingTier]}</TierBadge>
-                                            {myAgent.framework && <span>⚙️ {myAgent.framework}</span>}
+                                            {myAgent.framework && <span>{myAgent.framework}</span>}
                                         </BotMeta>
                                     </BotInfo>
                                 </BotCardHeader>
@@ -688,7 +688,7 @@ const BotRegistry: React.FC = () => {
                                             <BotMeta>
                                                 <TypeBadge>{typeLabels[agent.agentType] || agent.agentType}</TypeBadge>
                                                 <TierBadge tier={agent.stakingTier}>{tierNames[agent.stakingTier]}</TierBadge>
-                                                {agent.framework && <span>⚙️ {agent.framework}</span>}
+                                                {agent.framework && <span>{agent.framework}</span>}
                                             </BotMeta>
                                         </BotInfo>
                                     </BotCardHeader>

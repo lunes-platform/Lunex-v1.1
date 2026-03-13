@@ -1,7 +1,6 @@
 import React from 'react'
 import styled, { css } from 'styled-components'
 import { useNavigate } from 'react-router-dom'
-import * as B from '../bases'
 
 type SubNavProps = {
   active?: boolean
@@ -65,7 +64,7 @@ const TradeSubNav: React.FC<TradeSubNavProps> = ({ active, onSettingsClick }) =>
       <NavItem active={active === 'staking'} onClick={() => navigate('/staking')}>
         Staking
       </NavItem>
-      <SettingsIcon src="img/tab-bar.svg" alt="settings" onClick={onSettingsClick} />
+      <SettingsIcon src="/img/tab-bar.svg" alt="settings" onClick={onSettingsClick} />
     </NavWrapper>
   )
 }

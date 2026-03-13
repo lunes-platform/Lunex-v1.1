@@ -1,23 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import styled from 'styled-components'
+import styled, { keyframes } from 'styled-components'
 import * as B from '../../components/bases'
 import { useSDK } from '../../context/SDKContext'
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:3002'
+const SPOT_API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
-interface LevelInfo {
-  level: number
-  ratePct: number
-  rateBps: number
-}
-
-interface EarningByLevel {
-  level: number
-  token: string
-  totalEarned: number
-  tradeCount: number
-}
-
+interface LevelInfo { level: number; ratePct: number; rateBps: number }
+interface EarningByLevel { level: number; token: string; totalEarned: number; tradeCount: number }
 interface DashboardData {
   referralCode: string
   directReferrals: number
@@ -28,7 +17,6 @@ interface DashboardData {
   paidCount: number
   levels: LevelInfo[]
 }
-
 interface TreeNode {
   address: string
   joinedAt: string
@@ -37,24 +25,39 @@ interface TreeNode {
   totalFeeGenerated: number
   children: TreeNode[]
 }
+interface PayoutRow {
+  id: string
+  level: number
+  token: string
+  amount: number
+  sourceType: string
+  paidAt: string
+  batchId: string | null
+}
+
+// ─── Animations ───
+
+const fadeIn = keyframes`from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); }`
+const pulse = keyframes`0%,100%{opacity:1}50%{opacity:.6}`
 
 // ─── Styled Components ───
 
 const Page = styled.div`
   min-height: 100vh;
-  background: #1A1A1A;
+  background: #0d0d0d;
   padding: 80px 24px 48px;
 `
 
 const Container = styled.div`
-  max-width: 1100px;
+  max-width: 960px;
   margin: 0 auto;
+  animation: ${fadeIn} 0.3s ease;
 `
 
 const HeroBanner = styled.div`
   text-align: center;
   margin-bottom: 40px;
-  padding: 32px 0;
+  padding: 32px 0 16px;
 `
 
 const PageTitle = styled.h1`
@@ -62,240 +65,398 @@ const PageTitle = styled.h1`
   font-size: 42px;
   font-weight: 800;
   color: #FFFFFF;
-  margin: 0 0 12px 0;
+  margin: 0 0 12px;
   letter-spacing: -1px;
-
   span {
-    background: linear-gradient(135deg, #00ff88, #00d4ff);
+    background: linear-gradient(135deg, #6C38FF, #9B6FFF);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }
 `
 
 const PageSubtitle = styled.p`
+  font-family: 'Inter', sans-serif;
+  font-size: 16px;
+  color: rgba(255,255,255,0.5);
+  margin: 0;
+  max-width: 520px;
+  margin: 0 auto;
+  line-height: 1.6;
+`
+
+// ─── How It Works ───
+
+const HowItWorks = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 32px;
+  @media (max-width: 768px) { grid-template-columns: 1fr; }
+`
+
+const StepCard = styled.div`
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  padding: 24px 20px;
+  text-align: center;
+  transition: all 0.2s;
+  &:hover {
+    border-color: rgba(108,56,255,0.2);
+    background: rgba(108,56,255,0.04);
+  }
+`
+
+const StepNumber = styled.div`
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(108,56,255,0.12);
+  color: #6C38FF;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16px;
-  color: #8A8A8E;
-  margin: 0;
-`
-
-const Header = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-`
-
-const Title = styled.h2`
-  color: #fff;
-  font-size: 22px;
   font-weight: 700;
-  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 14px;
 `
+
+const StepTitle = styled.div`
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 6px;
+`
+
+const StepDesc = styled.div`
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  line-height: 1.5;
+`
+
+// ─── Tabs ───
 
 const TabBar = styled.div`
   display: flex;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 16px;
-  padding: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  gap: 4px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 14px;
+  padding: 4px;
+  border: 1px solid rgba(255,255,255,0.06);
   margin-bottom: 24px;
 `
 
 const Tab = styled.button<{ $active: boolean }>`
   flex: 1;
-  padding: 12px 16px;
+  padding: 11px 16px;
   border: none;
-  border-radius: 12px;
+  border-radius: 10px;
   font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: ${props => props.$active ? '700' : '500'};
+  font-size: 13px;
+  font-weight: ${p => p.$active ? '700' : '500'};
   cursor: pointer;
-  transition: all 0.2s ease;
-  background: ${props => props.$active ? '#00ff88' : 'transparent'};
-  color: ${props => props.$active ? '#1A1A1A' : props.theme.colors.themeColors[100]};
-
+  transition: all 0.2s;
+  background: ${p => p.$active ? 'rgba(108,56,255,0.15)' : 'transparent'};
+  color: ${p => p.$active ? '#9B6FFF' : 'rgba(255,255,255,0.5)'};
   &:hover {
-    background: ${props => props.$active ? '#00ff88' : 'rgba(255,255,255,0.05)'};
-    color: ${props => props.$active ? '#1A1A1A' : '#fff'};
+    background: ${p => p.$active ? 'rgba(108,56,255,0.15)' : 'rgba(255,255,255,0.04)'};
+    color: ${p => p.$active ? '#9B6FFF' : '#fff'};
   }
 `
 
+// ─── Cards ───
+
 const Card = styled.div`
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(10px);
+  background: rgba(255,255,255,0.03);
   border-radius: 16px;
   padding: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255,255,255,0.06);
   margin-bottom: 16px;
 `
 
-const ShareSection = styled(Card)`
+// ─── Share / Referral Link ───
+
+const ShareCard = styled(Card)`
   text-align: center;
+  padding: 28px 24px;
+`
+
+const ReferralCodeLabel = styled.div`
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
 `
 
 const ReferralCode = styled.div`
-  color: #00ff88;
-  font-size: 28px;
-  font-weight: 700;
+  color: #6C38FF;
+  font-size: 32px;
+  font-weight: 800;
   font-family: 'Space Grotesk', monospace;
-  letter-spacing: 4px;
-  margin: 12px 0;
+  letter-spacing: 6px;
+  margin-bottom: 16px;
 `
 
-const ReferralLink = styled.div`
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
-  padding: 16px 20px;
-  color: #aaa;
-  font-size: 14px;
-  word-break: break-all;
-  margin: 16px 0;
+const LinkBox = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
 `
 
-const CopyButton = styled.button`
-  background: #00ff88;
-  color: #000;
-  border: none;
-  border-radius: 30px;
-  padding: 14px 32px;
-  font-size: 14px;
-  font-weight: 700;
+const LinkText = styled.span`
+  flex: 1;
+  font-size: 13px;
+  color: rgba(255,255,255,0.6);
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+`
+
+const CopyBtn = styled.button<{ $copied?: boolean }>`
+  background: ${p => p.$copied ? 'rgba(0,192,118,0.15)' : 'rgba(108,56,255,0.15)'};
+  border: 1px solid ${p => p.$copied ? 'rgba(0,192,118,0.3)' : 'rgba(108,56,255,0.3)'};
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Space Grotesk', sans-serif;
+  color: ${p => p.$copied ? '#00C076' : '#6C38FF'};
   cursor: pointer;
-  width: 100%;
-  margin-top: 8px;
-  transition: all 0.2s ease;
-
-  &:hover { opacity: 0.9; }
-  &:active { transform: scale(0.98); }
+  transition: all 0.15s;
+  white-space: nowrap;
+  &:hover { opacity: 0.85; }
 `
+
+const SocialRow = styled.div`
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+`
+
+const SocialBtn = styled.a`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.7);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'Space Grotesk', sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  &:hover {
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    border-color: rgba(255,255,255,0.15);
+  }
+`
+
+// ─── Stats ───
 
 const StatsGrid = styled.div`
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 12px;
+  margin-bottom: 16px;
+  @media (max-width: 768px) { grid-template-columns: repeat(2, 1fr); }
 `
 
 const StatCard = styled.div`
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(10px);
-  border-radius: 16px;
-  padding: 24px;
-  text-align: center;
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+  padding: 20px;
 `
 
 const StatLabel = styled.div`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 13px;
-  margin-bottom: 12px;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
 `
 
 const StatValue = styled.div<{ $color?: string }>`
-  color: ${props => props.$color || '#fff'};
+  color: ${p => p.$color || '#fff'};
   font-family: 'Space Grotesk', sans-serif;
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 800;
-  letter-spacing: -0.5px;
 `
 
-const LevelsCard = styled(Card)``
+// ─── Commission Levels ───
 
 const LevelRow = styled.div<{ $active: boolean }>`
   display: grid;
-  grid-template-columns: 50px 1fr 80px 80px;
+  grid-template-columns: 40px 1fr 80px 100px;
   align-items: center;
   padding: 14px 16px;
   border-radius: 10px;
-  margin-bottom: 8px;
-  background: ${props => props.$active ? 'rgba(0, 255, 136, 0.08)' : 'transparent'};
-  border: 1px solid ${props => props.$active ? '#00ff8833' : '#ffffff10'};
+  margin-bottom: 6px;
+  background: ${p => p.$active ? 'rgba(108,56,255,0.06)' : 'transparent'};
+  border: 1px solid ${p => p.$active ? 'rgba(108,56,255,0.15)' : 'rgba(255,255,255,0.04)'};
+  transition: all 0.15s;
 `
 
 const LevelBadge = styled.div<{ $level: number }>`
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 13px;
+  font-family: 'Space Grotesk', sans-serif;
   background: ${({ $level }) => {
-    const colors = ['#00ff88', '#00d4ff', '#ff9500', '#ff6b6b', '#c084fc']
-    return `${colors[$level - 1] || colors[0]}20`
+    const colors = ['#6C38FF', '#9B6FFF', '#00C076', '#FF9500', '#FF6B6B']
+    return `${colors[$level - 1] || colors[0]}18`
   }};
   color: ${({ $level }) => {
-    const colors = ['#00ff88', '#00d4ff', '#ff9500', '#ff6b6b', '#c084fc']
+    const colors = ['#6C38FF', '#9B6FFF', '#00C076', '#FF9500', '#FF6B6B']
     return colors[$level - 1] || colors[0]
   }};
 `
 
 const LevelLabel = styled.div`
   color: #fff;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Space Grotesk', sans-serif;
+  padding-left: 12px;
+`
+
+const LevelSub = styled.div`
+  font-size: 11px;
+  color: rgba(255,255,255,0.35);
   padding-left: 12px;
 `
 
 const LevelRate = styled.div`
-  color: #00ff88;
+  color: #6C38FF;
   font-size: 14px;
   font-weight: 700;
   text-align: center;
+  font-family: 'Space Grotesk', sans-serif;
 `
 
 const LevelEarned = styled.div`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
+  color: rgba(255,255,255,0.6);
   font-size: 13px;
   text-align: right;
+  font-family: 'Space Grotesk', sans-serif;
 `
 
-const TreeSection = styled(Card)``
+// ─── Tree ───
 
 const TreeNodeRow = styled.div<{ $depth: number }>`
-  padding-left: ${props => props.$depth * 24}px;
   padding: 12px 16px;
-  padding-left: ${props => 16 + props.$depth * 24}px;
-  border-bottom: 1px solid #ffffff08;
-
+  padding-left: ${p => 16 + p.$depth * 24}px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
   &:last-child { border-bottom: none; }
+  transition: background 0.15s;
+  &:hover { background: rgba(255,255,255,0.02); }
 `
 
-const TreeNodeAddress = styled.div`
+const TreeAddress = styled.div`
   color: #fff;
   font-size: 13px;
   font-family: monospace;
+  font-weight: 500;
 `
 
-const TreeNodeMeta = styled.div`
+const TreeMeta = styled.div`
   display: flex;
   gap: 16px;
   margin-top: 4px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 12px;
+  color: rgba(255,255,255,0.4);
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
 `
+
+// ─── Payouts ───
+
+const PayoutRow = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 100px 80px 80px 120px;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 13px;
+  &:last-child { border-bottom: none; }
+`
+
+const PayoutHeader = styled(PayoutRow)`
+  font-weight: 600;
+  color: rgba(255,255,255,0.4);
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+`
+
+// ─── General ───
 
 const SectionTitle = styled.div`
   color: #fff;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
+  font-family: 'Space Grotesk', sans-serif;
   margin-bottom: 16px;
 `
 
 const EmptyState = styled.div`
   text-align: center;
   padding: 32px 16px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 14px;
+  color: rgba(255,255,255,0.4);
+  font-size: 13px;
+  font-family: 'Inter', sans-serif;
+  line-height: 1.6;
 `
 
 const ConnectPrompt = styled.div`
   text-align: center;
   padding: 40px 20px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
+  color: rgba(255,255,255,0.5);
+  font-family: 'Inter', sans-serif;
+`
+
+const LoadingDot = styled.span`
+  animation: ${pulse} 1.2s infinite;
+  color: rgba(255,255,255,0.4);
+`
+
+const ConnectButton = styled.button`
+  background: linear-gradient(135deg, #6C38FF, #5A2EE0);
+  border: none;
+  border-radius: 12px;
+  padding: 14px 32px;
+  color: #fff;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 16px;
+  transition: opacity 0.15s;
+  &:hover { opacity: 0.9; }
 `
 
 // ─── Component ───
@@ -307,6 +468,8 @@ const Affiliates: React.FC = () => {
   const [tab, setTab] = useState<TabType>('overview')
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [tree, setTree] = useState<TreeNode[]>([])
+  const [payouts, setPayouts] = useState<PayoutRow[]>([])
+  const [referralCode, setReferralCode] = useState<string>('')
   const [isLoading, setIsLoading] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -316,9 +479,12 @@ const Affiliates: React.FC = () => {
     if (!address) return
     setIsLoading(true)
     try {
-      const res = await fetch(`${API_BASE}/api/v1/affiliate/dashboard?address=${address}`)
+      const res = await fetch(`${SPOT_API}/api/v1/affiliate/dashboard?address=${address}`)
       const data = await res.json()
-      setDashboard(data.dashboard)
+      if (data.dashboard) {
+        setDashboard(data.dashboard)
+        if (data.dashboard.referralCode) setReferralCode(data.dashboard.referralCode)
+      }
     } catch (err) {
       console.error('Failed to fetch affiliate dashboard:', err)
     } finally {
@@ -329,7 +495,7 @@ const Affiliates: React.FC = () => {
   const fetchTree = useCallback(async () => {
     if (!address) return
     try {
-      const res = await fetch(`${API_BASE}/api/v1/affiliate/tree?address=${address}&depth=3`)
+      const res = await fetch(`${SPOT_API}/api/v1/affiliate/tree?address=${address}&depth=3`)
       const data = await res.json()
       setTree(data.tree || [])
     } catch (err) {
@@ -337,144 +503,291 @@ const Affiliates: React.FC = () => {
     }
   }, [address])
 
-  useEffect(() => {
-    if (sdk.isConnected) {
-      fetchDashboard()
-      fetchTree()
+  const fetchPayouts = useCallback(async () => {
+    if (!address) return
+    try {
+      const res = await fetch(`${SPOT_API}/api/v1/affiliate/payouts?address=${address}&limit=20`)
+      const data = await res.json()
+      setPayouts(data.payouts || [])
+    } catch (err) {
+      console.error('Failed to fetch payouts:', err)
     }
-  }, [sdk.isConnected, fetchDashboard, fetchTree])
+  }, [address])
 
-  const copyLink = () => {
-    if (!dashboard) return
-    const link = `https://lunex.io/?ref=${dashboard.referralCode}`
-    navigator.clipboard.writeText(link)
+  // Generate referral code client-side (same SHA-256 logic as backend) + try API
+  const generateLocalCode = useCallback(async (addr: string) => {
+    try {
+      const encoder = new TextEncoder()
+      const data = encoder.encode(addr)
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+      const hashArray = Array.from(new Uint8Array(hashBuffer))
+      const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+      return hashHex.substring(0, 8).toUpperCase()
+    } catch {
+      return addr.slice(2, 10).toUpperCase()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!sdk.isConnected || !address) return
+
+    // Generate a local referral code immediately
+    generateLocalCode(address).then(code => {
+      setReferralCode(prev => prev || code)
+    })
+
+    // Try fetching the code from the API (overrides local if available)
+    fetch(`${SPOT_API}/api/v1/affiliate/code?address=${address}`)
+      .then(r => r.json())
+      .then(data => { if (data.code) setReferralCode(data.code) })
+      .catch(() => {})
+
+    fetchDashboard()
+    fetchTree()
+    fetchPayouts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sdk.isConnected, address])
+
+  const referralLink = referralCode
+    ? `${window.location.origin}/?ref=${referralCode}`
+    : ''
+
+  const shareMessage = referralCode
+    ? `Trade on Lunex DEX and earn together! Join via my referral link: ${referralLink}`
+    : ''
+
+  const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareMessage)}`
+  const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=${encodeURIComponent('Join Lunex DEX with my referral!')}`
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(referralLink)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const truncateAddress = (addr: string) => `${addr.slice(0, 8)}...${addr.slice(-6)}`
-  const formatDate = (iso: string) => new Date(iso).toLocaleDateString()
-  const formatAmount = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const truncAddr = (a: string) => `${a.slice(0, 8)}...${a.slice(-6)}`
+  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString()
+  const fmtAmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-  const levelLabels = ['Direct', '2nd Level', '3rd Level', '4th Level', '5th Level']
+  const levelLabels = ['Direct Referral', '2nd Level', '3rd Level', '4th Level', '5th Level']
+  const levelDescs = [
+    'You earn from your direct referrals\' trades',
+    'Earn from your referrals\' referrals',
+    'Third-degree network commissions',
+    'Fourth-degree network commissions',
+    'Maximum depth commissions',
+  ]
 
-  const renderTreeNodes = (nodes: TreeNode[], depth = 0): React.ReactNode => {
-    return nodes.map((node, i) => (
+  const renderTreeNodes = (nodes: TreeNode[], depth = 0): React.ReactNode =>
+    nodes.map((node, i) => (
       <React.Fragment key={`${node.address}-${i}`}>
         <TreeNodeRow $depth={depth}>
-          <TreeNodeAddress>{truncateAddress(node.address)}</TreeNodeAddress>
-          <TreeNodeMeta>
-            <span>Joined {formatDate(node.joinedAt)}</span>
+          <TreeAddress>{truncAddr(node.address)}</TreeAddress>
+          <TreeMeta>
+            <span>Joined {fmtDate(node.joinedAt)}</span>
             <span>{node.subReferrals} sub-referrals</span>
-            <span>${formatAmount(node.totalFeeGenerated)} generated</span>
-          </TreeNodeMeta>
+            <span style={{ color: node.totalFeeGenerated > 0 ? '#6C38FF' : undefined }}>
+              ${fmtAmt(node.totalFeeGenerated)} generated
+            </span>
+          </TreeMeta>
         </TreeNodeRow>
         {node.children.length > 0 && renderTreeNodes(node.children, depth + 1)}
       </React.Fragment>
     ))
-  }
 
   return (
     <Page>
       <Container>
         <HeroBanner>
           <PageTitle>Affiliate <span>Program</span></PageTitle>
-          <PageSubtitle>Refer traders and earn commissions on every trade they make — up to 5 levels deep.</PageSubtitle>
+          <PageSubtitle>
+            Refer traders and earn commissions on every trade they make — up to 5 levels deep
+            with rates from 4% down to 0.5%.
+          </PageSubtitle>
         </HeroBanner>
+
+        {/* How It Works — always visible */}
+        <HowItWorks>
+          <StepCard>
+            <StepNumber>1</StepNumber>
+            <StepTitle>Connect Wallet</StepTitle>
+            <StepDesc>Connect your wallet to generate your unique referral code and tracking link.</StepDesc>
+          </StepCard>
+          <StepCard>
+            <StepNumber>2</StepNumber>
+            <StepTitle>Share Your Link</StepTitle>
+            <StepDesc>Share your referral link on Twitter, Telegram, or anywhere. When someone signs up through your link, they're linked to you.</StepDesc>
+          </StepCard>
+          <StepCard>
+            <StepNumber>3</StepNumber>
+            <StepTitle>Earn Commissions</StepTitle>
+            <StepDesc>Earn 4% on direct referrals, plus up to 4 additional levels. Payouts are processed every 7 days.</StepDesc>
+          </StepCard>
+        </HowItWorks>
+
+        {/* Commission Tiers — always visible */}
+        <Card>
+          <SectionTitle>Commission Tiers</SectionTitle>
+          {(dashboard?.levels || [
+            { level: 1, ratePct: 4, rateBps: 400 },
+            { level: 2, ratePct: 2, rateBps: 200 },
+            { level: 3, ratePct: 1.5, rateBps: 150 },
+            { level: 4, ratePct: 1, rateBps: 100 },
+            { level: 5, ratePct: 0.5, rateBps: 50 },
+          ]).map((level) => {
+            const earned = dashboard
+              ? dashboard.earningsByLevel
+                  .filter(e => e.level === level.level)
+                  .reduce((sum, e) => sum + e.totalEarned, 0)
+              : 0
+            const trades = dashboard
+              ? dashboard.earningsByLevel
+                  .filter(e => e.level === level.level)
+                  .reduce((sum, e) => sum + e.tradeCount, 0)
+              : 0
+
+            return (
+              <LevelRow key={level.level} $active={earned > 0}>
+                <LevelBadge $level={level.level}>{level.level}</LevelBadge>
+                <div>
+                  <LevelLabel>{levelLabels[level.level - 1]}</LevelLabel>
+                  <LevelSub>{levelDescs[level.level - 1]}</LevelSub>
+                </div>
+                <LevelRate>{level.ratePct}%</LevelRate>
+                <LevelEarned>
+                  ${fmtAmt(earned)}
+                  {trades > 0 && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{trades} trades</div>}
+                </LevelEarned>
+              </LevelRow>
+            )
+          })}
+        </Card>
 
         {!sdk.isConnected ? (
           <ConnectPrompt>
-            <p>Connect your wallet to access your affiliate dashboard</p>
-            <B.Button onClick={sdk.connectWallet} margin="16px auto 0" width="auto" padding="14px 32px">Connect Wallet</B.Button>
+            <p>Connect your wallet to access your affiliate dashboard and generate your unique referral link.</p>
+            <ConnectButton onClick={() => sdk.connectWallet()}>Connect Wallet</ConnectButton>
           </ConnectPrompt>
-        ) : isLoading ? (
-          <ConnectPrompt>Loading affiliate data...</ConnectPrompt>
-        ) : dashboard ? (
+        ) : isLoading && !referralCode ? (
+          <ConnectPrompt><LoadingDot>Loading affiliate data...</LoadingDot></ConnectPrompt>
+        ) : (
           <>
-            <TabBar>
-              <Tab $active={tab === 'overview'} onClick={() => setTab('overview')}>Overview</Tab>
-              <Tab $active={tab === 'tree'} onClick={() => setTab('tree')}>Referrals</Tab>
-              <Tab $active={tab === 'payouts'} onClick={() => setTab('payouts')}>Payouts</Tab>
-            </TabBar>
+            {/* Referral Link — always visible when connected */}
+            {referralCode && (
+              <ShareCard>
+                <ReferralCodeLabel>Your Referral Code</ReferralCodeLabel>
+                <ReferralCode>{referralCode}</ReferralCode>
 
-            {tab === 'overview' && (
+                <LinkBox>
+                  <LinkText>{referralLink}</LinkText>
+                  <CopyBtn $copied={copied} onClick={handleCopy}>
+                    {copied ? '✓ Copied' : 'Copy'}
+                  </CopyBtn>
+                </LinkBox>
+
+                <SocialRow>
+                  <SocialBtn href={twitterUrl} target="_blank" rel="noopener noreferrer">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                    Share on Twitter
+                  </SocialBtn>
+                  <SocialBtn href={telegramUrl} target="_blank" rel="noopener noreferrer">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>
+                    Share on Telegram
+                  </SocialBtn>
+                </SocialRow>
+              </ShareCard>
+            )}
+
+            {/* Dashboard data — optional, shown if API responds */}
+            {dashboard && (
               <>
-                {/* Share Link */}
-                <ShareSection>
-                  <SectionTitle>Your Referral Link</SectionTitle>
-                  <ReferralCode>{dashboard.referralCode}</ReferralCode>
-                  <ReferralLink>https://lunex.io/?ref={dashboard.referralCode}</ReferralLink>
-                  <CopyButton onClick={copyLink}>
-                    {copied ? '✓ Copied!' : 'Copy Referral Link'}
-                  </CopyButton>
-                </ShareSection>
+                <TabBar>
+                  <Tab $active={tab === 'overview'} onClick={() => setTab('overview')}>Overview</Tab>
+                  <Tab $active={tab === 'tree'} onClick={() => setTab('tree')}>Referrals</Tab>
+                  <Tab $active={tab === 'payouts'} onClick={() => setTab('payouts')}>Payouts</Tab>
+                </TabBar>
 
-                {/* Stats */}
-                <StatsGrid>
-                  <StatCard>
-                    <StatLabel>Direct Referrals</StatLabel>
-                    <StatValue>{dashboard.directReferrals}</StatValue>
-                  </StatCard>
-                  <StatCard>
-                    <StatLabel>Unpaid Earnings</StatLabel>
-                    <StatValue $color="#00ff88">${formatAmount(dashboard.totalUnpaid)}</StatValue>
-                  </StatCard>
-                  <StatCard>
-                    <StatLabel>Total Paid</StatLabel>
-                    <StatValue>${formatAmount(dashboard.totalPaid)}</StatValue>
-                  </StatCard>
-                  <StatCard>
-                    <StatLabel>Commissions</StatLabel>
-                    <StatValue>{dashboard.unpaidCount + dashboard.paidCount}</StatValue>
-                  </StatCard>
-                </StatsGrid>
+                {tab === 'overview' && (
+                  <>
+                    {/* Stats Grid */}
+                    <StatsGrid>
+                      <StatCard>
+                        <StatLabel>Direct Referrals</StatLabel>
+                        <StatValue>{dashboard.directReferrals}</StatValue>
+                      </StatCard>
+                      <StatCard>
+                        <StatLabel>Unpaid Earnings</StatLabel>
+                        <StatValue $color="#6C38FF">${fmtAmt(dashboard.totalUnpaid)}</StatValue>
+                      </StatCard>
+                      <StatCard>
+                        <StatLabel>Total Paid</StatLabel>
+                        <StatValue>${fmtAmt(dashboard.totalPaid)}</StatValue>
+                      </StatCard>
+                      <StatCard>
+                        <StatLabel>Total Commissions</StatLabel>
+                        <StatValue>{dashboard.unpaidCount + dashboard.paidCount}</StatValue>
+                      </StatCard>
+                    </StatsGrid>
+                  </>
+                )}
 
-                {/* Levels */}
-                <LevelsCard>
-                  <SectionTitle>Commission Levels</SectionTitle>
-                  {dashboard.levels.map((level) => {
-                    const earned = dashboard.earningsByLevel
-                      .filter(e => e.level === level.level)
-                      .reduce((sum, e) => sum + e.totalEarned, 0)
+                {tab === 'tree' && (
+                  <Card>
+                    <SectionTitle>Referral Network</SectionTitle>
+                    {tree.length > 0 ? (
+                      renderTreeNodes(tree)
+                    ) : (
+                      <EmptyState>
+                        No referrals yet. Share your link to start building your network!
+                      </EmptyState>
+                    )}
+                  </Card>
+                )}
 
-                    return (
-                      <LevelRow key={level.level} $active={earned > 0}>
-                        <LevelBadge $level={level.level}>{level.level}</LevelBadge>
-                        <LevelLabel>{levelLabels[level.level - 1]}</LevelLabel>
-                        <LevelRate>{level.ratePct}%</LevelRate>
-                        <LevelEarned>${formatAmount(earned)}</LevelEarned>
-                      </LevelRow>
-                    )
-                  })}
-                </LevelsCard>
+                {tab === 'payouts' && (
+                  <Card>
+                    <SectionTitle>Payout History</SectionTitle>
+                    {payouts.length > 0 ? (
+                      <>
+                        <PayoutHeader>
+                          <span>Token</span>
+                          <span>Amount</span>
+                          <span>Level</span>
+                          <span>Source</span>
+                          <span>Date</span>
+                        </PayoutHeader>
+                        {payouts.map(p => (
+                          <PayoutRow key={p.id}>
+                            <span style={{ color: '#fff', fontWeight: 600, fontFamily: 'Space Grotesk' }}>{p.token}</span>
+                            <span style={{ color: '#6C38FF', fontWeight: 600 }}>${fmtAmt(p.amount)}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.5)' }}>L{p.level}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>{p.sourceType}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>{fmtDate(p.paidAt)}</span>
+                          </PayoutRow>
+                        ))}
+                      </>
+                    ) : (
+                      <EmptyState>
+                        Payouts are processed every 7 days automatically.
+                        {dashboard.totalUnpaid > 0 && (
+                          <>
+                            <br />You have <strong style={{ color: '#6C38FF' }}>${fmtAmt(dashboard.totalUnpaid)}</strong> pending.
+                          </>
+                        )}
+                      </EmptyState>
+                    )}
+                  </Card>
+                )}
               </>
             )}
-
-            {tab === 'tree' && (
-              <TreeSection>
-                <SectionTitle>Referral Tree</SectionTitle>
-                {tree.length > 0 ? (
-                  renderTreeNodes(tree)
-                ) : (
-                  <EmptyState>No referrals yet. Share your link to start earning!</EmptyState>
-                )}
-              </TreeSection>
-            )}
-
-            {tab === 'payouts' && (
-              <Card>
-                <SectionTitle>Payout History</SectionTitle>
-                <EmptyState>
-                  Payouts are processed every 7 days.
-                  {dashboard.totalUnpaid > 0 && (
-                    <><br />You have <strong style={{ color: '#00ff88' }}>${formatAmount(dashboard.totalUnpaid)}</strong> pending.</>
-                  )}
-                </EmptyState>
-              </Card>
-            )}
           </>
-        ) : (
-          <ConnectPrompt>No affiliate data available</ConnectPrompt>
+        )}
+
+        {/* No dashboard but also no referral code — true offline state */}
+        {sdk.isConnected && !referralCode && !isLoading && (
+          <ConnectPrompt>
+            Unable to generate referral code — make sure the spot-api is running.
+          </ConnectPrompt>
         )}
       </Container>
     </Page>

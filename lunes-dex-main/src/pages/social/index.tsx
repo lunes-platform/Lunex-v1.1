@@ -10,12 +10,14 @@ import socialApi, { SocialIdeaFeedItem, SocialStats, PipelineStatus } from '../.
 import { pageEntrance, interactiveButton, staggerChildren, interactiveCard, timing, easing } from '../../styles/motion'
 
 // ── SVG Icons ──
-const TrophyIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9H4.5a2.5 2.5 0 010-5H6" /><path d="M18 9h1.5a2.5 2.5 0 000-5H18" /><path d="M4 22h16" /><path d="M10 22V8a4 4 0 018 0v14" /></svg>
-const UsersIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
-const BotIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" /><path d="M12 7v4" /></svg>
+const AllIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
+const TrophyIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 21h8" /><path d="M12 17v4" /><path d="M7 4H4.5a2.5 2.5 0 000 5H7" /><path d="M17 4h2.5a2.5 2.5 0 010 5H17" /><path d="M7 4h10v8a5 5 0 01-10 0V4z" /></svg>
+const UsersIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
+const BotIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" /><path d="M12 7v4" /><line x1="8" y1="16" x2="8" y2="16" strokeLinecap="round" strokeWidth="3" /><line x1="12" y1="16" x2="12" y2="16" strokeLinecap="round" strokeWidth="3" /><line x1="16" y1="16" x2="16" y2="16" strokeLinecap="round" strokeWidth="3" /></svg>
 const SearchIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-const IdeaIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18h6" /><path d="M10 22h4" /><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0018 8 6 6 0 006 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 019 14" /></svg>
+const IdeaIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
 const WalletIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 010-4h14v4" /><path d="M3 5v14a2 2 0 002 2h16v-5" /><path d="M18 12a2 2 0 100 4 2 2 0 000-4z" /></svg>
+const VaultIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="12" cy="12" r="4" /><path d="M12 8v1M12 15v1M8 12h1M15 12h1" /></svg>
 const HeartIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
 const MessageIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
 
@@ -540,7 +542,7 @@ const SocialTrade: React.FC = () => {
           </StatItem>
           <StatItem>
             <StatValue>${formatAumLabel(stats.totalVaultEquity)}</StatValue>
-            <StatLabel><TrophyIcon /> Vault Equity</StatLabel>
+            <StatLabel><VaultIcon /> Vault Equity</StatLabel>
           </StatItem>
         </StatsBar>
 
@@ -548,8 +550,8 @@ const SocialTrade: React.FC = () => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', justifyContent: 'flex-end' }}>
             <OnChainBadge active={pipeline.indexedEvents > 0}>
               {pipeline.indexedEvents > 0
-                ? `⚡ On-chain: ${pipeline.indexedEvents.toLocaleString()} events indexed · block ${pipeline.latestIndexedEvent?.blockNumber?.toLocaleString() ?? '—'}`
-                : '⏳ Waiting for on-chain events'}
+                ? `On-chain: ${pipeline.indexedEvents.toLocaleString()} events indexed · block ${pipeline.latestIndexedEvent?.blockNumber?.toLocaleString() ?? '—'}`
+                : 'Waiting for on-chain events'}
             </OnChainBadge>
             {pipeline.snapshots > 0 && (
               <OnChainBadge active>
@@ -563,7 +565,7 @@ const SocialTrade: React.FC = () => {
 
         <HeaderActions>
           <TabsContainer>
-            <Tab active={activeTab === 'all'} onClick={() => setActiveTab('all')}><TrophyIcon /> All</Tab>
+            <Tab active={activeTab === 'all'} onClick={() => setActiveTab('all')}><AllIcon /> All</Tab>
             <Tab active={activeTab === 'traders'} onClick={() => setActiveTab('traders')}><UsersIcon /> Traders</Tab>
             <Tab active={activeTab === 'bots'} onClick={() => setActiveTab('bots')}><BotIcon /> AI Bots</Tab>
             <Tab active={activeTab === 'leaderboard'} onClick={() => setActiveTab('leaderboard')}><TrophyIcon /> Leaderboard</Tab>
@@ -580,7 +582,7 @@ const SocialTrade: React.FC = () => {
           <>
             {activeTab === 'leaderboard' && (
               <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(108,56,255,0.08)', border: '1px solid rgba(108,56,255,0.2)', borderRadius: '10px', fontSize: '13px', color: '#AD87FF', fontFamily: "'Space Grotesk', sans-serif" }}>
-                🏆 <strong>Leaderboard</strong> — ranked by risk-adjusted performance (Sharpe ratio), computed from on-chain activity via the Lunes blockchain indexer.
+                <strong>Leaderboard</strong> — ranked by risk-adjusted performance (Sharpe ratio), computed from on-chain activity via the Lunes blockchain indexer.
               </div>
             )}
             <SearchBar>

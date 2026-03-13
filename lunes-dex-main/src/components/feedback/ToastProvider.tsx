@@ -45,10 +45,10 @@ export const useToast = (): ToastContextType => {
 }
 
 const variantConfig: Record<ToastVariant, { bg: string; border: string; icon: string }> = {
-    success: { bg: '#26D07C', border: '#26D07C44', icon: '✅' },
-    error: { bg: '#FF284C', border: '#FF284C44', icon: '❌' },
-    info: { bg: '#6C38FF', border: '#6C38FF44', icon: 'ℹ️' },
-    warning: { bg: '#FE5F00', border: '#FE5F0044', icon: '⚠️' },
+    success: { bg: '#26D07C', border: '#26D07C44', icon: '✓' },
+    error: { bg: '#FF284C', border: '#FF284C44', icon: '✗' },
+    info: { bg: '#6C38FF', border: '#6C38FF44', icon: 'i' },
+    warning: { bg: '#FE5F00', border: '#FE5F0044', icon: '!' },
 }
 
 const Container = styled.div`

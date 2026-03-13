@@ -26,20 +26,22 @@ export const wallet = [
     id: 0,
     icon: 'img/lunes-wallet.svg',
     wallet: 'Lunes Wallet',
+    // polkadot-js extension source name (also used by Lunes Wallet fork)
+    source: 'polkadot-js',
     disabled: false
   },
   {
     id: 1,
-    icon: 'img/metamask.svg',
-    wallet: 'Metamask',
-    shorty: '(coming soon)',
-    disabled: true
+    icon: 'img/subwallet.svg',
+    wallet: 'SubWallet',
+    source: 'subwallet-js',
+    disabled: false
   },
   {
     id: 2,
-    icon: 'img/phantom.svg',
-    wallet: 'Phantom',
-    shorty: '(coming soon)',
-    disabled: true
+    icon: 'img/talisman.svg',
+    wallet: 'Talisman',
+    source: 'talisman',
+    disabled: false
   }
 ]

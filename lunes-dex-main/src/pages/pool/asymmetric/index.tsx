@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react'
 import styled from 'styled-components'
 import { useNavigate } from 'react-router-dom'
+import { Zap, LayoutGrid, Triangle, Bot } from 'lucide-react'
 import PageLayout from '../../../components/layout'
 import TradeSubNav from '../../../components/tradeSubNav'
 import CurveChart, { CurveParams, simulateLiquidity } from '../../../components/asymmetric/CurveChart'
@@ -8,6 +9,7 @@ import StrategyCards, { STRATEGY_TEMPLATES, StrategyTemplate } from '../../../co
 import AgentDelegationPanel from '../../../components/asymmetric/AgentDelegationPanel'
 import { useSDK } from '../../../context/SDKContext'
 import { useAsymmetricDeploy } from '../../../hooks/useAsymmetricDeploy'
+import { Button } from '../../../components/bases'
 
 // ─── Tabs ─────────────────────────────────────────────────────────
 
@@ -29,10 +31,14 @@ const TabButton = styled.button<{ active: boolean }>`
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 13px;
   transition: all 0.18s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   background: ${({ active, theme }) =>
     active ? theme.colors.themeColors[800] : 'transparent'};
   color: ${({ active, theme }) =>
@@ -44,7 +50,11 @@ const TabButton = styled.button<{ active: boolean }>`
 `
 
 const PageHeader = styled.div`
-  padding: 4px 0 12px;
+  padding: 24px 0 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
 `
 
 const PageTitle = styled.h1`
@@ -53,6 +63,9 @@ const PageTitle = styled.h1`
   font-size: 22px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
   margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 `
 
 const PageSubtitle = styled.p`
@@ -60,6 +73,7 @@ const PageSubtitle = styled.p`
   font-size: 13px;
   color: ${({ theme }) => theme.colors.themeColors[200]};
   margin: 0;
+  text-align: left;
 `
 
 const SectionTitle = styled.h3`
@@ -73,7 +87,7 @@ const SectionTitle = styled.h3`
 const SelectedCard = styled.div`
   padding: 14px 18px;
   border-radius: 12px;
-  background: ${({ theme }) => theme.colors.themeColors[700]};
+  background: ${({ theme }) => theme.colors.themeColors[500]};
   border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
   font-family: 'Inter', sans-serif;
   font-size: 13px;
@@ -117,9 +131,9 @@ const Slider = styled.input`
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: ${({ theme }) => theme.colors.themeColors[100]};
+    background: ${({ theme }) => theme.colors.primary[500]};
     cursor: pointer;
-    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 3px rgba(108, 56, 255, 0.25);
   }
 `
 
@@ -139,7 +153,7 @@ const SliderHint = styled.span`
 `
 
 const SubSectionTitle = styled.h4`
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   font-weight: 600;
   color: ${({ theme }) => theme.colors.themeColors[200]};
@@ -148,21 +162,7 @@ const SubSectionTitle = styled.h4`
   margin: 0;
 `
 
-const ActionButton = styled.button<{ disabled?: boolean }>`
-  width: 100%;
-  padding: 15px 24px;
-  background: ${({ theme }) => theme.colors.themeColors[800]};
-  border: none;
-  border-radius: 14px;
-  cursor: ${({ disabled }) => (disabled ? 'not-allowed' : 'pointer')};
-  font-family: 'Inter', sans-serif;
-  font-weight: 700;
-  font-size: 15px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  transition: opacity 0.18s;
-  opacity: ${({ disabled }) => (disabled ? 0.45 : 1)};
-  &:hover:not(:disabled) { opacity: 0.88; }
-`
+
 
 // ─── Deploy Modal Styled ──────────────────────────────────────────
 
@@ -179,7 +179,7 @@ const DeployOverlay = styled.div`
 
 const DeployModal = styled.div`
   background: ${({ theme }) => theme.colors.themeColors[500]};
-  border-radius: 20px;
+  border-radius: 16px;
   padding: 28px;
   width: 100%;
   max-width: 480px;
@@ -187,6 +187,7 @@ const DeployModal = styled.div`
   display: flex;
   flex-direction: column;
   gap: 16px;
+  position: relative;
 `
 
 const DeployModalTitle = styled.h2`
@@ -252,13 +253,7 @@ const RowButtons = styled.div`
   gap: 10px;
 `
 
-const SecondaryButton = styled(ActionButton as any)`
-  background: transparent;
-  border: 1px solid ${({ theme }: any) => theme.colors.themeColors[400]};
-  flex: 0 0 auto;
-  width: auto;
-  padding: 15px 20px;
-`
+
 
 const DelegateCard = styled.div`
   background: ${({ theme }) => theme.colors.themeColors[600]};
@@ -308,7 +303,7 @@ const FeatureItem = styled.li`
 // ─── Simulation Panel for Live Preview ─────────────────────────────
 
 const LivePreview = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[700]};
+  background: ${({ theme }) => theme.colors.themeColors[500]};
   border-radius: 12px;
   padding: 14px 18px;
 `
@@ -401,19 +396,25 @@ const AsymmetricPool: React.FC = () => {
       <TradeSubNav active="pool" />
 
       <PageHeader>
-        <PageTitle>⚡ Asymmetric Liquidity</PageTitle>
+        <PageTitle>
+          <Zap size={24} strokeWidth={2} style={{ color: 'currentColor' }} />
+          Asymmetric Liquidity
+        </PageTitle>
         <PageSubtitle>Parametric curves for advanced liquidity providers — human or AI-managed.</PageSubtitle>
       </PageHeader>
 
       <TabBar>
         <TabButton active={activeTab === 'strategies'} onClick={() => setActiveTab('strategies')}>
-          🎯 Templates
+          <LayoutGrid size={16} strokeWidth={2} style={{ color: 'currentColor' }} />
+          Templates
         </TabButton>
         <TabButton active={activeTab === 'builder'} onClick={() => setActiveTab('builder')}>
-          📐 Builder Pro
+          <Triangle size={16} strokeWidth={2} style={{ color: 'currentColor' }} />
+          Builder Pro
         </TabButton>
         <TabButton active={activeTab === 'delegate'} onClick={() => setActiveTab('delegate')}>
-          🤖 Delegate AI
+          <Bot size={16} strokeWidth={2} style={{ color: 'currentColor' }} />
+          Delegate AI
         </TabButton>
       </TabBar>
 
@@ -425,7 +426,7 @@ const AsymmetricPool: React.FC = () => {
 
           {selectedTemplate && (
             <SelectedCard>
-              <span>{selectedTemplate.emoji}</span>
+              <span>{selectedTemplate.icon}</span>
               <span>
                 <strong>{selectedTemplate.name}</strong> selected — edit it in the Builder Pro tab
               </span>
@@ -440,12 +441,16 @@ const AsymmetricPool: React.FC = () => {
           <CurveChart
             buyParams={buyParams}
             sellParams={sellParams}
-            label={selectedTemplate ? `${selectedTemplate.emoji} ${selectedTemplate.name}` : 'Custom Curve'}
+            label={selectedTemplate ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {selectedTemplate.icon} {selectedTemplate.name}
+              </div>
+            ) : 'Custom Curve'}
             interactive
-            onGammaChange={(side, newGamma) => {
+            onGammaChange={(side: 'buy' | 'sell', newGamma: number) => {
               const gamma = Math.round(Math.max(1, Math.min(5, newGamma)))
-              if (side === 'buy') setBuyParams((p) => ({ ...p, gamma }))
-              else setSellParams((p) => ({ ...p, gamma }))
+              if (side === 'buy') setBuyParams((p: CurveParams) => ({ ...p, gamma }))
+              else setSellParams((p: CurveParams) => ({ ...p, gamma }))
             }}
           />
 
@@ -480,7 +485,7 @@ const AsymmetricPool: React.FC = () => {
               <Slider
                 type="range" min={1} max={5} step={1}
                 value={buyParams.gamma}
-                onChange={(e) => setBuyParams((p) => ({ ...p, gamma: Number(e.target.value) }))}
+                onChange={(e) => setBuyParams((p: CurveParams) => ({ ...p, gamma: Number(e.target.value) }))}
               />
               <SliderValue>{buyParams.gamma}</SliderValue>
             </SliderRow>
@@ -490,7 +495,7 @@ const AsymmetricPool: React.FC = () => {
               <Slider
                 type="range" min={1000} max={50000} step={1000}
                 value={buyParams.x0}
-                onChange={(e) => setBuyParams((p) => ({ ...p, x0: Number(e.target.value) }))}
+                onChange={(e) => setBuyParams((p: CurveParams) => ({ ...p, x0: Number(e.target.value) }))}
               />
               <SliderValue>{(buyParams.x0 / 1000).toFixed(0)}k</SliderValue>
             </SliderRow>
@@ -500,7 +505,7 @@ const AsymmetricPool: React.FC = () => {
               <Slider
                 type="range" min={1} max={100} step={1}
                 value={Math.round(buyParams.feeT * 10000)}
-                onChange={(e) => setBuyParams((p) => ({ ...p, feeT: Number(e.target.value) / 10000 }))}
+                onChange={(e) => setBuyParams((p: CurveParams) => ({ ...p, feeT: Number(e.target.value) / 10000 }))}
               />
               <SliderValue>{Math.round(buyParams.feeT * 10000)}</SliderValue>
             </SliderRow>
@@ -516,7 +521,7 @@ const AsymmetricPool: React.FC = () => {
               <Slider
                 type="range" min={1} max={5} step={1}
                 value={sellParams.gamma}
-                onChange={(e) => setSellParams((p) => ({ ...p, gamma: Number(e.target.value) }))}
+                onChange={(e) => setSellParams((p: CurveParams) => ({ ...p, gamma: Number(e.target.value) }))}
               />
               <SliderValue>{sellParams.gamma}</SliderValue>
             </SliderRow>
@@ -526,7 +531,7 @@ const AsymmetricPool: React.FC = () => {
               <Slider
                 type="range" min={1000} max={50000} step={1000}
                 value={sellParams.x0}
-                onChange={(e) => setSellParams((p) => ({ ...p, x0: Number(e.target.value) }))}
+                onChange={(e) => setSellParams((p: CurveParams) => ({ ...p, x0: Number(e.target.value) }))}
               />
               <SliderValue>{(sellParams.x0 / 1000).toFixed(0)}k</SliderValue>
             </SliderRow>
@@ -536,18 +541,18 @@ const AsymmetricPool: React.FC = () => {
               <Slider
                 type="range" min={1} max={100} step={1}
                 value={Math.round(sellParams.feeT * 10000)}
-                onChange={(e) => setSellParams((p) => ({ ...p, feeT: Number(e.target.value) / 10000 }))}
+                onChange={(e) => setSellParams((p: CurveParams) => ({ ...p, feeT: Number(e.target.value) / 10000 }))}
               />
               <SliderValue>{Math.round(sellParams.feeT * 10000)}</SliderValue>
             </SliderRow>
           </SliderGroup>
 
           {!isConnected ? (
-            <ActionButton onClick={connectWallet}>Connect Wallet to Deploy</ActionButton>
+            <Button onClick={() => connectWallet()}>Connect Wallet to Deploy</Button>
           ) : (
-            <ActionButton onClick={() => { resetDeploy(); setShowDeployModal(true) }}>
-              🚀 Deploy Asymmetric Strategy
-            </ActionButton>
+            <Button onClick={() => { resetDeploy(); setShowDeployModal(true) }}>
+              Deploy Asymmetric Strategy
+            </Button>
           )}
         </>
       )}
@@ -556,7 +561,10 @@ const AsymmetricPool: React.FC = () => {
       {activeTab === 'delegate' && (
         <>
           <DelegateCard>
-            <DelegateTitle>🤖 AI Agent Delegation</DelegateTitle>
+            <DelegateTitle>
+              <Bot size={20} style={{ color: 'currentColor' }} />
+              AI Agent Delegation
+            </DelegateTitle>
             <DelegateDescription>
               Generate a restricted API Key that gives an AI agent (OpenClaw, Phidata, or any MCP-compatible
               orchestrator) permission to dynamically adjust your curve parameters — without ever being
@@ -570,9 +578,9 @@ const AsymmetricPool: React.FC = () => {
               <FeatureItem>All actions logged in AsymmetricRebalanceLog</FeatureItem>
             </FeatureList>
 
-            <ActionButton onClick={() => setShowDelegate(true)}>
-              🔑  Generate Restricted API Key
-            </ActionButton>
+            <Button onClick={() => setShowDelegate(true)}>
+              Generate Restricted API Key
+            </Button>
           </DelegateCard>
         </>
       )}
@@ -585,7 +593,21 @@ const AsymmetricPool: React.FC = () => {
       {showDeployModal && (
         <DeployOverlay onClick={(e) => e.target === e.currentTarget && setShowDeployModal(false)}>
           <DeployModal>
-            <DeployModalTitle>🚀 Deploy Asymmetric Strategy</DeployModalTitle>
+            <button
+                onClick={() => setShowDeployModal(false)}
+                style={{
+                  width: '40px', height: '40px', fontSize: '20px', cursor: 'pointer',
+                  color: 'inherit', border: 'none', background: 'transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  position: 'absolute', top: '8px', right: '8px',
+                  transition: 'transform 0.3s ease-in-out, color 0.2s ease'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'rotate(-180deg)'; e.currentTarget.style.color = '#6C38FE'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'rotate(0deg)'; e.currentTarget.style.color = 'inherit'; }}
+            >
+              ✕
+            </button>
+            <DeployModalTitle>Deploy Asymmetric Strategy</DeployModalTitle>
 
             <DeployModalNote>
               Enter the address of the already-instantiated <strong>AsymmetricPair</strong> contract.
@@ -600,23 +622,23 @@ const AsymmetricPool: React.FC = () => {
             />
 
             {deployState.step === 'deploying' && (
-              <StatusBox variant="loading">⏳ Signing transaction on-chain...</StatusBox>
+              <StatusBox variant="loading">Signing transaction on-chain...</StatusBox>
             )}
             {deployState.step === 'registering' && (
-              <StatusBox variant="loading">📡 Registering strategy on backend...</StatusBox>
+              <StatusBox variant="loading">Registering strategy on backend...</StatusBox>
             )}
             {deployState.step === 'done' && (
               <StatusBox variant="success">
-                ✅ Strategy deployed!
+                Strategy deployed!
                 <TxHashLink>{deployState.txHash}</TxHashLink>
               </StatusBox>
             )}
             {deployState.step === 'error' && (
-              <StatusBox variant="error">❌ {deployState.error}</StatusBox>
+              <StatusBox variant="error">{deployState.error}</StatusBox>
             )}
 
             <RowButtons>
-              <ActionButton
+              <Button
                 style={{ flex: 1 }}
                 onClick={handleDeploy}
                 disabled={!contractAddress.trim() || deployState.step === 'deploying' || deployState.step === 'registering' || deployState.step === 'done'}
@@ -626,8 +648,8 @@ const AsymmetricPool: React.FC = () => {
                   : deployState.step === 'done'
                     ? '✓ Done'
                     : 'Confirm & Deploy'}
-              </ActionButton>
-              <SecondaryButton onClick={() => setShowDeployModal(false)}>Cancel</SecondaryButton>
+              </Button>
+              <Button status="secondary" width="auto" onClick={() => setShowDeployModal(false)}>Cancel</Button>
             </RowButtons>
           </DeployModal>
         </DeployOverlay>

@@ -6,8 +6,9 @@ export function buildSpotOrderSignMessage(input: {
   stopPrice?: string
   amount: string
   nonce: string
+  timestamp: number
 }) {
-  return `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}`
+  return `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}:${input.timestamp}`
 }
 
 export function buildSpotCancelSignMessage(orderId: string) {

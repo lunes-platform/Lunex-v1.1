@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react'
+import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback, useMemo } from 'react'
 import { contractService } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
@@ -73,7 +73,7 @@ interface SDKContextState {
   balance: string
 
   // Funções de Wallet
-  connectWallet: () => Promise<void>
+  connectWallet: (walletSource?: string) => Promise<void>
   disconnectWallet: () => void
   signMessage: (message: string) => Promise<string>
 
@@ -187,33 +187,50 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     return () => clearInterval(interval)
   }, [walletAddress, isConnected])
 
-  // Connect Wallet (Polkadot.js Extension)
-  const connectWallet = async (): Promise<void> => {
+  // Connect Wallet (Polkadot.js / SubWallet / Talisman Extension)
+  const connectWallet = async (walletSource?: string): Promise<void> => {
     setIsLoading(true)
     setError(null)
 
     try {
-      // Check if Polkadot extension is installed
+      // Discover all Substrate wallet extensions
       const { web3Enable, web3Accounts } = await import('@polkadot/extension-dapp')
 
       const extensions = await web3Enable('Lunex DEX')
 
       if (extensions.length === 0) {
-        throw new Error('Please install the Polkadot.js extension')
+        const walletName = walletSource === 'subwallet-js' ? 'SubWallet'
+          : walletSource === 'talisman' ? 'Talisman'
+          : 'a Polkadot-compatible wallet (Lunes Wallet, SubWallet, or Talisman)'
+        throw new Error(`No wallet extension detected. Please install ${walletName}.`)
       }
 
-      const accounts = await web3Accounts()
+      const allAccounts = await web3Accounts()
 
-      if (accounts.length === 0) {
-        throw new Error('No accounts found. Create an account in the Polkadot.js extension')
+      if (allAccounts.length === 0) {
+        throw new Error('No accounts found. Create an account in your wallet extension.')
       }
 
-      // Use first available account
+      // Filter accounts by the selected wallet source, if provided
+      let accounts = allAccounts
+      if (walletSource) {
+        accounts = allAccounts.filter(acc => acc.meta.source === walletSource)
+        if (accounts.length === 0) {
+          // Fallback: show all accounts if selected wallet has none
+          const walletName = walletSource === 'subwallet-js' ? 'SubWallet'
+            : walletSource === 'talisman' ? 'Talisman'
+            : 'Lunes Wallet'
+          throw new Error(`No accounts found in ${walletName}. Please create or import an account.`)
+        }
+      }
+
+      // Use first available account from the selected wallet
       const account = accounts[0]
       setCurrentAccount(account)
       setWalletAddress(account.address)
       setIsConnected(true)
       localStorage.setItem('lunex_last_wallet_address', account.address)
+      localStorage.setItem('lunex_last_wallet_source', account.meta.source || '')
 
       // Fetch real native balance from blockchain
       if (!contractService.getIsConnected()) {
@@ -232,13 +249,13 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   }
 
   // Desconectar Wallet
-  const disconnectWallet = (): void => {
+  const disconnectWallet = useCallback((): void => {
     setWalletAddress(null)
     setCurrentAccount(null)
     setIsConnected(false)
     setBalance('0')
     localStorage.removeItem('lunex_last_wallet_address')
-  }
+  }, [])
 
   const signMessage = useCallback(async (message: string): Promise<string> => {
     if (!walletAddress) {
@@ -273,7 +290,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   }, [currentAccount, walletAddress])
 
   // Obter Quote para Swap
-  const getQuote = async (amountIn: string, path: string[]): Promise<Quote | null> => {
+  const getQuote = useCallback(async (amountIn: string, path: string[]): Promise<Quote | null> => {
     setIsLoading(true)
     setError(null)
 
@@ -339,10 +356,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     } finally {
       setIsLoading(false)
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Executar Swap
-  const executeSwap = async (params: SwapParams): Promise<boolean> => {
+  const executeSwap = useCallback(async (params: SwapParams): Promise<boolean> => {
     if (!walletAddress || !currentAccount) {
       setError('Connect your wallet first')
       return false
@@ -396,10 +414,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     } finally {
       setIsLoading(false)
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, currentAccount])
 
   // Adicionar Liquidez
-  const addLiquidity = async (params: LiquidityParams): Promise<boolean> => {
+  const addLiquidity = useCallback(async (params: LiquidityParams): Promise<boolean> => {
     if (!walletAddress || !currentAccount) {
       setError('Connect your wallet first')
       return false
@@ -446,10 +465,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     } finally {
       setIsLoading(false)
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, currentAccount])
 
   // Remover Liquidez
-  const removeLiquidity = async (params: RemoveLiquidityParams): Promise<boolean> => {
+  const removeLiquidity = useCallback(async (params: RemoveLiquidityParams): Promise<boolean> => {
     if (!walletAddress || !currentAccount) {
       setError('Connect your wallet first')
       return false
@@ -493,7 +513,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     } finally {
       setIsLoading(false)
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, currentAccount])
 
   // ========================================
   // Staking Methods
@@ -754,7 +775,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
-  const value: SDKContextState = {
+  const value: SDKContextState = useMemo(() => ({
     isConnected,
     isLoading,
     error,
@@ -782,8 +803,9 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     formatAmount,
     parseAmount,
     calculateDeadline,
-    calculateMinAmount
-  }
+    calculateMinAmount,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [isConnected, isLoading, error, walletAddress, balance, signMessage])
 
   return (
     <SDKContext.Provider value={value}>

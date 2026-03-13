@@ -6,6 +6,7 @@ import PageLayout from '../../components/layout'
 import { useLiquidity } from '../../hooks'
 import { useSDK } from '../../context/SDKContext'
 import TradeSubNav from '../../components/tradeSubNav'
+import TokenIcon from '../../components/TokenIcon'
 
 const ProBanner = styled.button`
   display: flex;
@@ -88,7 +89,7 @@ const Tab = styled.button<{ active: boolean }>`
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   transition: all 0.2s;
@@ -114,7 +115,7 @@ const InputHeader = styled.div`
 `
 
 const Label = styled.span`
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -161,7 +162,7 @@ const TokenButton = styled.button`
   padding: 8px 12px;
   cursor: pointer;
   
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -214,7 +215,7 @@ const ActionButton = styled.button`
   border-radius: 16px;
   cursor: pointer;
   
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 16px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -236,7 +237,7 @@ const MaxButton = styled.button`
   padding: 8px 16px;
   cursor: pointer;
   
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 12px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -286,7 +287,7 @@ const ModalHeader = styled.div`
   border-bottom: 1px solid ${({ theme }) => theme.colors.themeColors[300]};
   
   h3 {
-    font-family: 'Inter', sans-serif;
+    font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
     font-size: 18px;
     color: ${({ theme }) => theme.colors.themeColors[100]};
@@ -337,7 +338,7 @@ const TokenItem = styled.div`
     gap: 2px;
     
     span {
-      font-family: 'Inter', sans-serif;
+      font-family: 'Space Grotesk', sans-serif;
       font-weight: 600;
       font-size: 16px;
       line-height: 1;
@@ -398,7 +399,7 @@ const Pool: React.FC = () => {
       {/* Pro Mode Banner */}
       <ProBanner onClick={() => navigate('/pool/asymmetric')}>
         <ProBannerLeft>
-          <ProBannerIcon>⚡</ProBannerIcon>
+          <ProBannerIcon><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></ProBannerIcon>
           <ProBannerText>
             <ProBannerTitle>Asymmetric Liquidity — Pro Mode</ProBannerTitle>
             <ProBannerSubtitle>Parametric curves, templates &amp; AI delegation</ProBannerSubtitle>
@@ -438,7 +439,7 @@ const Pool: React.FC = () => {
               <TokenButton onClick={() => setShowTokenSelectA(true)}>
                 {liquidity.tokenA ? (
                   <>
-                    <img src={liquidity.tokenA.icon} alt={liquidity.tokenA.symbol} />
+                    <TokenIcon address={liquidity.tokenA.address} symbol={liquidity.tokenA.symbol} size={24} />
                     {liquidity.tokenA.symbol}
                   </>
                 ) : (
@@ -471,7 +472,7 @@ const Pool: React.FC = () => {
               <TokenButton onClick={() => setShowTokenSelectB(true)}>
                 {liquidity.tokenB ? (
                   <>
-                    <img src={liquidity.tokenB.icon} alt={liquidity.tokenB.symbol} />
+                    <TokenIcon address={liquidity.tokenB.address} symbol={liquidity.tokenB.symbol} size={24} />
                     {liquidity.tokenB.symbol}
                   </>
                 ) : (
@@ -504,7 +505,7 @@ const Pool: React.FC = () => {
 
           {/* Action Button */}
           {!sdk.isConnected ? (
-            <ActionButton onClick={sdk.connectWallet}>
+            <ActionButton onClick={() => sdk.connectWallet()}>
               Connect Wallet
             </ActionButton>
           ) : (
@@ -562,7 +563,7 @@ const Pool: React.FC = () => {
 
           {/* Action Button */}
           {!sdk.isConnected ? (
-            <ActionButton onClick={sdk.connectWallet}>
+            <ActionButton onClick={() => sdk.connectWallet()}>
               Connect Wallet
             </ActionButton>
           ) : (
@@ -589,7 +590,7 @@ const Pool: React.FC = () => {
             <TokenList>
               {availableTokens.map(token => (
                 <TokenItem key={token.address} onClick={() => handleSelectTokenA(token)}>
-                  <img src={token.icon} alt={token.symbol} />
+                  <TokenIcon address={token.address} symbol={token.symbol} size={36} />
                   <div>
                     <span>{token.symbol}</span>
                     <small>{token.name}</small>
@@ -612,7 +613,7 @@ const Pool: React.FC = () => {
             <TokenList>
               {availableTokens.map(token => (
                 <TokenItem key={token.address} onClick={() => handleSelectTokenB(token)}>
-                  <img src={token.icon} alt={token.symbol} />
+                  <TokenIcon address={token.address} symbol={token.symbol} size={36} />
                   <div>
                     <span>{token.symbol}</span>
                     <small>{token.name}</small>

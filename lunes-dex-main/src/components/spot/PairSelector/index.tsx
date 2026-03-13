@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import styled, { keyframes } from 'styled-components'
 import { useSpot } from 'context/SpotContext'
+import { useFavorites } from '../../../hooks/useFavorites'
 
 // ──────────── Animations ────────────
 
@@ -94,12 +95,12 @@ const FilterTab = styled.button<{ active?: boolean }>`
   cursor: pointer;
   transition: all 0.15s;
   background: ${({ active }) =>
-    active ? 'rgba(0,192,118,0.15)' : 'rgba(255,255,255,0.04)'};
-  color: ${({ active }) => (active ? '#00C076' : 'rgba(255,255,255,0.5)')};
+    active ? 'rgba(108, 56, 255, 0.15)' : 'rgba(255,255,255,0.04)'};
+  color: ${({ active }) => (active ? '#6C38FF' : 'rgba(255,255,255,0.5)')};
 
   &:hover {
     background: ${({ active }) =>
-    active ? 'rgba(0,192,118,0.2)' : 'rgba(255,255,255,0.08)'};
+    active ? 'rgba(108, 56, 255, 0.2)' : 'rgba(255,255,255,0.08)'};
   }
 `
 
@@ -128,7 +129,7 @@ const PairRow = styled.div<{ active?: boolean }>`
   cursor: pointer;
   transition: all 0.15s;
   background: ${({ active }) =>
-    active ? 'rgba(0,192,118,0.08)' : 'transparent'};
+    active ? 'rgba(108, 56, 255, 0.08)' : 'transparent'};
 
   &:hover {
     background: rgba(255, 255, 255, 0.06);
@@ -189,24 +190,8 @@ interface PairData {
   quote: string
 }
 
-// Fallback mock — pairs with real deployed contracts (used when spot-api is offline)
 // Lunes ecosystem base tokens — used to match LUNES tab filter
 const LUNES_ECOSYSTEM_BASES = ['LUNES', 'WLUNES', 'LBTC', 'LETH', 'GMC', 'LUP']
-
-// Fallback list matching real deployed pairs on Lunes testnet.
-// WLUNES is the wrapped version used in AMM pools; LUNES is the native coin.
-const MOCK_PAIRS: PairData[] = [
-  // ── LUSDT-quoted (AMM deployed pairs) ──
-  { symbol: 'WLUNES/LUSDT', price: 0, change24h: 0, volume24h: 0, quote: 'LUSDT' },
-  { symbol: 'LBTC/LUSDT', price: 0, change24h: 0, volume24h: 0, quote: 'LUSDT' },
-  { symbol: 'LETH/LUSDT', price: 0, change24h: 0, volume24h: 0, quote: 'LUSDT' },
-  { symbol: 'GMC/LUSDT', price: 0, change24h: 0, volume24h: 0, quote: 'LUSDT' },
-  { symbol: 'LUP/LUSDT', price: 0, change24h: 0, volume24h: 0, quote: 'LUSDT' },
-  // ── Native LUNES pairs ──
-  { symbol: 'LUNES/LUP', price: 0, change24h: 0, volume24h: 0, quote: 'LUP' },
-  { symbol: 'LUNES/GMC', price: 0, change24h: 0, volume24h: 0, quote: 'GMC' },
-  { symbol: 'LUNES/WLUNES', price: 0, change24h: 0, volume24h: 0, quote: 'WLUNES' },
-]
 
 type FilterType = 'all' | 'favorites' | 'LUNES' | 'LUSDT'
 
@@ -231,19 +216,12 @@ interface PairSelectorProps {
 }
 
 const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
-  const { selectedPair, setSelectedPair, pairs: apiPairs, ticker } = useSpot()
+  const { selectedPair, setSelectedPair, pairs: apiPairs, ticker, walletAddress } = useSpot()
+  const { favorites, isFavorite, toggleFavorite } = useFavorites(walletAddress)
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState(value || selectedPair)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterType>('all')
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    try {
-      const stored = localStorage.getItem('spot_favorites')
-      return stored ? JSON.parse(stored) : ['WLUNES/LUSDT']
-    } catch {
-      return ['WLUNES/LUSDT']
-    }
-  })
 
   // Build PairData[] from API pairs (with ticker for live price).
   // Returns empty array if API is unavailable — never shows fake pairs.
@@ -290,23 +268,16 @@ const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
     }
   }, [open])
 
-  // Save favorites to localStorage
-  useEffect(() => {
-    localStorage.setItem('spot_favorites', JSON.stringify(favorites))
-  }, [favorites])
-
-  const toggleFav = useCallback((symbol: string, e: React.MouseEvent) => {
+  const handleToggleFav = useCallback((symbol: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    setFavorites(prev =>
-      prev.includes(symbol) ? prev.filter(s => s !== symbol) : [...prev, symbol]
-    )
-  }, [])
+    toggleFavorite(symbol)
+  }, [toggleFavorite])
 
   const filteredPairs = useMemo(() => {
     let result = allPairs
 
     if (filter === 'favorites') {
-      result = result.filter(p => favorites.includes(p.symbol))
+      result = result.filter(p => isFavorite(p.symbol))
     } else if (filter === 'LUNES') {
       // Native-coin pairs: base is LUNES or WLUNES, or quote is LUNES
       result = result.filter(p => {
@@ -323,7 +294,7 @@ const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
     }
 
     return result
-  }, [allPairs, filter, favorites, search])
+  }, [allPairs, filter, isFavorite, search])
 
   const handleSelect = (pair: string) => {
     setSelected(pair)
@@ -383,8 +354,8 @@ const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
                 onClick={() => handleSelect(p.symbol)}
               >
                 <StarBtn
-                  isFav={favorites.includes(p.symbol)}
-                  onClick={e => toggleFav(p.symbol, e)}
+                  isFav={isFavorite(p.symbol)}
+                  onClick={e => handleToggleFav(p.symbol, e)}
                 >
                   ★
                 </StarBtn>

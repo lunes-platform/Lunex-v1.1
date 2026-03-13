@@ -110,7 +110,7 @@ const CopyModal: React.FC<CopyModalProps> = ({ trader, onClose, onConfirm }) => 
                 <S.LeaderCard>
                     <S.InfoRow>
                         <span>Target Leader</span>
-                        <strong>{trader.isAI ? '🤖 ' : ''}{trader.name}</strong>
+                        <strong>{trader.name}</strong>
                     </S.InfoRow>
                     <S.InfoRow>
                         <span>Performance Fee (HWM)</span>

@@ -55,7 +55,7 @@ export const AccentValue = styled.strong`
 
 export const Label = styled.label`
   display: block;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   font-weight: 600;
   color: ${({ theme }) => theme.colors.themeColors[100]};

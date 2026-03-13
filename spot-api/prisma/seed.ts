@@ -425,8 +425,12 @@ async function main() {
     console.log(`  Seeded leader: ${leader.username}`)
   }
 
-  // ─── Seed Candles for Chart ─────────────────────────────
-  await seedCandles()
+  // NOTE: seedCandles() was removed — candles must be built from real trades only.
+  // Random/fake OHLCV data would mislead traders. The chart will show an empty state
+  // until real orders are placed and matched.
+
+  // ─── Seed AI Trading Network Strategies ─────────────────
+  await seedStrategies()
 
   console.log('Seeding complete!')
 }
@@ -501,6 +505,253 @@ async function seedCandles() {
     }
 
     console.log(`    ${pair.symbol}: candles seeded (6 timeframes)`)
+  }
+}
+
+async function seedStrategies() {
+  console.log('  Seeding AI Trading Network strategies...')
+
+  const strategySeed: Array<{
+    leaderUsername: string
+    walletAddress: string
+    agentType: string
+    strategies: Array<{
+      name: string
+      description: string
+      strategyType: string
+      riskLevel: string
+      roi30d: number
+      roi7d: number
+      roi1d: number
+      sharpeRatio: number
+      maxDrawdown: number
+      winRate: number
+      totalTrades: number
+      followersCount: number
+      vaultEquity: number
+      totalVolume: number
+      reputationScore: number
+      performance: Array<{ daysAgo: number; roi: number; equity: number; trades: number }>
+    }>
+  }> = [
+    {
+      leaderUsername: 'leandrosander',
+      walletAddress: process.env.LEADER_LEANDRO_SANDER_ADDRESS || '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
+      agentType: 'HUMAN_ASSISTED',
+      strategies: [
+        {
+          name: 'LUNES Momentum Alpha',
+          description: 'Trend-following strategy on LUNES/LUSDT using momentum signals and volume confirmation. Designed for medium-term swing trades with controlled drawdown.',
+          strategyType: 'MOMENTUM',
+          riskLevel: 'MEDIUM',
+          roi30d: 0.182,
+          roi7d: 0.047,
+          roi1d: 0.008,
+          sharpeRatio: 1.87,
+          maxDrawdown: 0.094,
+          winRate: 0.68,
+          totalTrades: 142,
+          followersCount: 89,
+          vaultEquity: 485000,
+          totalVolume: 2100000,
+          reputationScore: 78,
+          performance: Array.from({ length: 30 }, (_, i) => ({
+            daysAgo: 29 - i,
+            roi: (Math.random() - 0.35) * 0.015 + 0.003,
+            equity: 420000 + i * 2200 + (Math.random() - 0.4) * 8000,
+            trades: Math.floor(Math.random() * 6) + 2,
+          })),
+        },
+      ],
+    },
+    {
+      leaderUsername: 'aialpha',
+      walletAddress: process.env.LEADER_AIALPHA_BOT_ADDRESS || '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
+      agentType: 'FULL_AUTONOMOUS',
+      strategies: [
+        {
+          name: 'AI Alpha Market Maker',
+          description: 'Fully autonomous AI-driven market-making strategy providing liquidity on LUNES pairs. Earns spread revenue with zero directional bias.',
+          strategyType: 'MARKET_MAKER',
+          riskLevel: 'LOW',
+          roi30d: 0.097,
+          roi7d: 0.022,
+          roi1d: 0.003,
+          sharpeRatio: 3.12,
+          maxDrawdown: 0.021,
+          winRate: 0.81,
+          totalTrades: 4820,
+          followersCount: 312,
+          vaultEquity: 2400000,
+          totalVolume: 18500000,
+          reputationScore: 91,
+          performance: Array.from({ length: 30 }, (_, i) => ({
+            daysAgo: 29 - i,
+            roi: (Math.random() - 0.4) * 0.006 + 0.002,
+            equity: 2300000 + i * 3500 + (Math.random() - 0.45) * 15000,
+            trades: Math.floor(Math.random() * 200) + 120,
+          })),
+        },
+        {
+          name: 'Cross-Pair Arbitrage Bot',
+          description: 'Statistical arbitrage across correlated LUNES-ecosystem pairs. Exploits temporary price divergences with microsecond execution.',
+          strategyType: 'ARBITRAGE',
+          riskLevel: 'LOW',
+          roi30d: 0.063,
+          roi7d: 0.014,
+          roi1d: 0.002,
+          sharpeRatio: 4.45,
+          maxDrawdown: 0.008,
+          winRate: 0.93,
+          totalTrades: 11200,
+          followersCount: 178,
+          vaultEquity: 950000,
+          totalVolume: 42000000,
+          reputationScore: 87,
+          performance: Array.from({ length: 30 }, (_, i) => ({
+            daysAgo: 29 - i,
+            roi: Math.random() * 0.004 + 0.0008,
+            equity: 920000 + i * 1000 + (Math.random() - 0.5) * 5000,
+            trades: Math.floor(Math.random() * 500) + 300,
+          })),
+        },
+      ],
+    },
+    {
+      leaderUsername: 'openclaw',
+      walletAddress: process.env.LEADER_OPENCLAW_AGENT_ADDRESS || '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw',
+      agentType: 'FULL_AUTONOMOUS',
+      strategies: [
+        {
+          name: 'OpenClaw CopyVault Strategy',
+          description: 'AI agent managing the OpenClaw CopyVault. Combines momentum and mean-reversion signals with dynamic position sizing based on volatility regime.',
+          strategyType: 'COPYTRADE',
+          riskLevel: 'HIGH',
+          roi30d: 0.341,
+          roi7d: 0.089,
+          roi1d: 0.012,
+          sharpeRatio: 2.28,
+          maxDrawdown: 0.178,
+          winRate: 0.64,
+          totalTrades: 286,
+          followersCount: 523,
+          vaultEquity: 1200000,
+          totalVolume: 8700000,
+          reputationScore: 84,
+          performance: Array.from({ length: 30 }, (_, i) => ({
+            daysAgo: 29 - i,
+            roi: (Math.random() - 0.38) * 0.022 + 0.008,
+            equity: 900000 + i * 10000 + (Math.random() - 0.45) * 40000,
+            trades: Math.floor(Math.random() * 12) + 6,
+          })),
+        },
+        {
+          name: 'Hedge-Mode Delta Neutral',
+          description: 'Pairs long and short positions to maintain delta-neutral exposure, capturing funding fees and basis spreads with minimal market risk.',
+          strategyType: 'HEDGE',
+          riskLevel: 'MEDIUM',
+          roi30d: 0.054,
+          roi7d: 0.013,
+          roi1d: 0.002,
+          sharpeRatio: 2.76,
+          maxDrawdown: 0.031,
+          winRate: 0.74,
+          totalTrades: 890,
+          followersCount: 201,
+          vaultEquity: 680000,
+          totalVolume: 5100000,
+          reputationScore: 80,
+          performance: Array.from({ length: 30 }, (_, i) => ({
+            daysAgo: 29 - i,
+            roi: (Math.random() - 0.42) * 0.005 + 0.001,
+            equity: 650000 + i * 1000 + (Math.random() - 0.48) * 8000,
+            trades: Math.floor(Math.random() * 35) + 20,
+          })),
+        },
+      ],
+    },
+  ]
+
+  for (const seed of strategySeed) {
+    const leader = await prisma.leader.findUnique({ where: { username: seed.leaderUsername } })
+    if (!leader) { console.log(`    Skipped strategies for ${seed.leaderUsername} (leader not found)`); continue }
+
+    // Upsert Agent for this leader
+    const agent = await prisma.agent.upsert({
+      where: { walletAddress: seed.walletAddress },
+      update: { lastActiveAt: new Date() },
+      create: {
+        walletAddress:   seed.walletAddress,
+        name:            leader.name,
+        agentType:       seed.agentType as any,
+        framework:       seed.agentType === 'FULL_AUTONOMOUS' ? 'OpenClaw AI' : undefined,
+        isActive:        true,
+        stakingTier:     3,
+        dailyTradeLimit: 500,
+        maxPositionSize: 50000,
+        maxOpenOrders:   20,
+        leaderId:        leader.id,
+      },
+    })
+
+    for (const s of seed.strategies) {
+      const existing = await prisma.strategy.findFirst({
+        where: { agentId: agent.id, name: s.name },
+      })
+
+      const strategyData = {
+        agentId:        agent.id,
+        leaderId:       leader.id,
+        name:           s.name,
+        description:    s.description,
+        strategyType:   s.strategyType  as any,
+        riskLevel:      s.riskLevel     as any,
+        status:         'ACTIVE'        as any,
+        isPublic:       true,
+        roi30d:         s.roi30d,
+        roi7d:          s.roi7d,
+        roi1d:          s.roi1d,
+        sharpeRatio:    s.sharpeRatio,
+        maxDrawdown:    s.maxDrawdown,
+        winRate:        s.winRate,
+        totalTrades:    s.totalTrades,
+        followersCount: s.followersCount,
+        vaultEquity:    s.vaultEquity,
+        totalVolume:    s.totalVolume,
+      }
+
+      const strategy = existing
+        ? await prisma.strategy.update({ where: { id: existing.id }, data: strategyData })
+        : await prisma.strategy.create({ data: strategyData })
+
+      // Update Agent reputationScore
+      await prisma.agent.update({
+        where: { id: agent.id },
+        data: { reputationScore: s.reputationScore },
+      })
+
+      // Seed 30d performance history
+      await prisma.strategyPerformance.deleteMany({ where: { strategyId: strategy.id } })
+      const baseDate = new Date()
+      baseDate.setUTCHours(0, 0, 0, 0)
+
+      const perfRecords = s.performance.map((p) => {
+        const date = new Date(baseDate)
+        date.setUTCDate(date.getUTCDate() - p.daysAgo)
+        return {
+          strategyId: strategy.id,
+          date,
+          roi:        p.roi,
+          equity:     p.equity,
+          trades:     p.trades,
+          volume:     p.equity * Math.abs(p.roi) * (Math.random() * 2 + 0.5),
+        }
+      })
+
+      await prisma.strategyPerformance.createMany({ data: perfRecords })
+    }
+
+    console.log(`    Seeded strategies for ${seed.leaderUsername} (${seed.strategies.length} strategies)`)
   }
 }
 

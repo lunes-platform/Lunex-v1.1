@@ -84,21 +84,19 @@ ${({ theme }) => css`
     }
   }
 
-  /* Scrollbar Customization */
+  /* Scrollbar — minimal, themed */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 3px;
+    height: 3px;
   }
 
   ::-webkit-scrollbar-track {
-    background: ${theme.colors.themeColors[600]};
-    border-radius: 4px;
+    background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
     background: ${theme.colors.themeColors[400]};
-    border-radius: 4px;
-    border: 2px solid ${theme.colors.themeColors[600]};
+    border-radius: 999px;
   }
 
   ::-webkit-scrollbar-thumb:hover {

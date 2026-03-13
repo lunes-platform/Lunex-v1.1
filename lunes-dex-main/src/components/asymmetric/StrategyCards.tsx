@@ -2,12 +2,13 @@ import React from 'react'
 import styled from 'styled-components'
 import { CurveParams } from './CurveChart'
 
-// ─── Templates ────────────────────────────────────────────────────
+import { TrendingUp, Coins, Target } from 'lucide-react'
+import { Icon } from '../ui/Icon'
 
 export interface StrategyTemplate {
     id: string
     name: string
-    emoji: string
+    icon: React.ReactNode
     tagline: string
     description: string
     riskLabel: string
@@ -21,7 +22,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     {
         id: 'buy_the_dip',
         name: 'Buy the Dip',
-        emoji: '📈',
+        icon: <Icon icon={TrendingUp} color="#fbbf24" size={28} />,
         tagline: 'Accumulate on decline',
         description:
             'Places a heavy buy curve that accumulates tokens automatically if the price drops. More liquidity at lower prices.',
@@ -34,7 +35,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     {
         id: 'take_profit',
         name: 'Take Profit Gradually',
-        emoji: '💰',
+        icon: <Icon icon={Coins} color="#34d399" size={28} />,
         tagline: 'Sell the rally',
         description:
             'Distributes your sell orders over a wide price range so you exit gradually as the price rises, avoiding slippage.',
@@ -47,7 +48,7 @@ export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
     {
         id: 'stablecoin_range',
         name: 'Stablecoin Range',
-        emoji: '🎯',
+        icon: <Icon icon={Target} color="#60a5fa" size={28} />,
         tagline: 'Fee harvesting ±1%',
         description:
             'Maximizes fee collection on a very narrow band (e.g. LUSDT/USDC 0.99–1.01). High γ concentrates liquidity around the peg.',
@@ -81,6 +82,9 @@ const Card = styled.button<{ selected: boolean }>`
   cursor: pointer;
   text-align: left;
   transition: all 0.18s;
+  overflow: hidden;
+  min-width: 0;
+  word-break: break-word;
 
   &:hover {
     border-color: ${({ theme }) => theme.colors.themeColors[300]};
@@ -111,6 +115,12 @@ const CardDesc = styled.p`
   color: ${({ theme }) => theme.colors.themeColors[200]};
   line-height: 1.5;
   margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 `
 
 const RiskBadge = styled.span<{ color: string }>`
@@ -137,7 +147,7 @@ const StrategyCards: React.FC<Props> = ({ selected, onSelect }) => {
         <Grid>
             {STRATEGY_TEMPLATES.map((t) => (
                 <Card key={t.id} selected={selected === t.id} onClick={() => onSelect(t)}>
-                    <CardEmoji>{t.emoji}</CardEmoji>
+                    <CardEmoji>{t.icon}</CardEmoji>
                     <CardName>{t.name}</CardName>
                     <CardTagline>{t.tagline}</CardTagline>
                     <CardDesc>{t.description}</CardDesc>

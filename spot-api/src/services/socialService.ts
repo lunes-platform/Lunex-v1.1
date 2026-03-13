@@ -211,11 +211,10 @@ function formatLeader(leader: any, options?: { includeRelations?: boolean; isFol
 
 export const socialService = {
   async getStats() {
-    const [leaders, ideasCount, vaults] = await Promise.all([
+    const [leaders, ideasCount, vaults, totalFollowers] = await Promise.all([
       prisma.leader.findMany({
         select: {
           id: true,
-          followersCount: true,
           totalAum: true,
           isAi: true,
         },
@@ -224,6 +223,7 @@ export const socialService = {
       prisma.copyVault.findMany({
         select: { totalEquity: true },
       }),
+      prisma.leaderFollow.count(),
     ])
 
     const analyticsSnapshotMap = await getAnalyticsSnapshotMap(leaders.map((leader) => leader.id))
@@ -233,9 +233,9 @@ export const socialService = {
         const snapshot = analyticsSnapshotMap.get(leader.id)
         return sum + (snapshot ? toFloat(snapshot.currentEquity) : toFloat(leader.totalAum))
       }, 0),
-      activeTraders: leaders.filter((leader) => !leader.isAi).length,
+      activeTraaders: leaders.filter((leader) => !leader.isAi).length,
       aiAgents: leaders.filter((leader) => leader.isAi).length,
-      totalFollowers: leaders.reduce((sum, leader) => sum + leader.followersCount, 0),
+      totalFollowers,
       totalIdeas: ideasCount,
       totalVaultEquity: vaults.reduce((sum, vault) => sum + toFloat(vault.totalEquity), 0),
     }
@@ -257,16 +257,25 @@ export const socialService = {
 
     const leaders = await prisma.leader.findMany({
       where,
-      include: {
-        vault: true,
-      },
+      include: { vault: true },
     })
 
-    const analyticsSnapshotMap = await getAnalyticsSnapshotMap(leaders.map((leader) => leader.id))
+    const leaderIds = leaders.map((l) => l.id)
+    const [analyticsSnapshotMap, realFollowerCounts] = await Promise.all([
+      getAnalyticsSnapshotMap(leaderIds),
+      prisma.leaderFollow.groupBy({
+        by: ['leaderId'],
+        where: { leaderId: { in: leaderIds } },
+        _count: { id: true },
+      }),
+    ])
 
-    const formattedLeaders = leaders.map((leader) => formatLeader(leader, {
-      analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-    }))
+    const followerCountMap = new Map(realFollowerCounts.map((r) => [r.leaderId, r._count.id]))
+
+    const formattedLeaders = leaders.map((leader) => formatLeader(
+      { ...leader, followersCount: followerCountMap.get(leader.id) ?? 0 },
+      { analyticsSnapshot: analyticsSnapshotMap.get(leader.id) },
+    ))
 
     return sortFormattedLeaders(formattedLeaders, query.sortBy).slice(0, query.limit)
   },
@@ -276,11 +285,22 @@ export const socialService = {
       include: { vault: true },
     })
 
-    const analyticsSnapshotMap = await getAnalyticsSnapshotMap(leaders.map((leader) => leader.id))
+    const leaderIds = leaders.map((l) => l.id)
+    const [analyticsSnapshotMap, realFollowerCounts] = await Promise.all([
+      getAnalyticsSnapshotMap(leaderIds),
+      prisma.leaderFollow.groupBy({
+        by: ['leaderId'],
+        where: { leaderId: { in: leaderIds } },
+        _count: { id: true },
+      }),
+    ])
 
-    const formattedLeaders = leaders.map((leader) => formatLeader(leader, {
-      analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-    }))
+    const followerCountMap = new Map(realFollowerCounts.map((r) => [r.leaderId, r._count.id]))
+
+    const formattedLeaders = leaders.map((leader) => formatLeader(
+      { ...leader, followersCount: followerCountMap.get(leader.id) ?? 0 },
+      { analyticsSnapshot: analyticsSnapshotMap.get(leader.id) },
+    ))
 
     return sortFormattedLeaders(formattedLeaders, 'sharpe').slice(0, limit)
   },

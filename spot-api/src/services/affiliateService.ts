@@ -7,6 +7,7 @@ const AFFILIATE_RATES_BPS = [400, 300, 150, 100, 50]
 const MAX_LEVELS = 5
 const BPS_DENOMINATOR = 10000
 const PAYOUT_INTERVAL_DAYS = 7
+const COMMISSION_ACTIVATION_COOLDOWN_DAYS = 7  // referral must be ≥7 days old to earn commissions
 
 function generateCode(address: string): string {
     const hash = crypto.createHash('sha256').update(address).digest('hex')
@@ -64,8 +65,30 @@ export const affiliateService = {
             select: { referrerAddress: true },
         })
 
+        const resolvedReferrer = referrerRef?.referrerAddress ?? `code:${referralCode}`
+
+        // Block self-referral: referee cannot be the same wallet as the referrer
+        if (
+            referrerRef &&
+            refereeAddress.toLowerCase() === resolvedReferrer.toLowerCase()
+        ) {
+            throw new Error('Self-referral is not allowed')
+        }
+
+        // Block circular referral: check if refereeAddress already exists as a referrer
+        // of the resolvedReferrer anywhere in the chain (up to MAX_LEVELS deep)
+        if (referrerRef) {
+            const chain = await this.getReferralChain(resolvedReferrer)
+            const inChain = chain.some(
+                (node) => node.address.toLowerCase() === refereeAddress.toLowerCase(),
+            )
+            if (inChain) {
+                throw new Error('Circular referral chain is not allowed')
+            }
+        }
+
         const referralData = {
-            referrerAddress: referrerRef?.referrerAddress ?? `code:${referralCode}`,
+            referrerAddress: resolvedReferrer,
             refereeAddress,
             referralCode,
             level: 1,
@@ -111,6 +134,17 @@ export const affiliateService = {
 
         const chain = await this.getReferralChain(sourceAddr)
         if (chain.length === 0) return []
+
+        // Anti-farming cooldown: only distribute if the referral is ≥7 days old
+        const referral = await prisma.referral.findUnique({
+            where: { refereeAddress: sourceAddr },
+            select: { createdAt: true },
+        })
+        if (referral) {
+            const ageMs = Date.now() - referral.createdAt.getTime()
+            const cooldownMs = COMMISSION_ACTIVATION_COOLDOWN_DAYS * 24 * 60 * 60 * 1000
+            if (ageMs < cooldownMs) return [] // referral too new — skip commissions
+        }
 
         const commissions = []
 

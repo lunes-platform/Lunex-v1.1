@@ -108,7 +108,7 @@ export const tradeService = {
           fillPrice: match.fillPrice.toString(),
         }
 
-        // 5. Create trade record
+        // 5. Create trade record (settlementPayload set after to use real trade ID)
         const newTrade = await txAny.trade.create({
           data: {
             pairId,
@@ -124,10 +124,7 @@ export const tradeService = {
             takerFee: new Decimal(takerFee.toString()),
             settlementStatus: 'PENDING',
             settlementAttempts: 0,
-            settlementPayload: serializeSettlementInput({
-              ...settlementInput,
-              tradeId: 'trade-id-placeholder',
-            }),
+            settlementPayload: null,
           },
         })
 
