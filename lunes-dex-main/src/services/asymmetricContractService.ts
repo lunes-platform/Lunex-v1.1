@@ -11,13 +11,14 @@
  */
 
 import { ApiPromise } from '@polkadot/api'
-import { ContractPromise } from '@polkadot/api-contract'
+import { CodePromise, ContractPromise } from '@polkadot/api-contract'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { web3FromAddress } from '@polkadot/extension-dapp'
 import AsymmetricPairABI from '../abis/AsymmetricPair.json'
 
 // Gas limit for dry-run calls
 const DRY_GAS = { refTime: BigInt('50000000000'), proofSize: BigInt('1000000') }
+const INSTANTIATE_GAS = { refTime: BigInt('200000000000'), proofSize: BigInt('4000000') }
 
 export interface CurveSide {
     k: string
@@ -61,6 +62,68 @@ class AsymmetricContractService {
     private getContract(contractAddress: string): ContractPromise {
         if (!this.api) throw new Error('API not connected')
         return new ContractPromise(this.api, AsymmetricPairABI as any, contractAddress)
+    }
+
+    // ── Instantiation ─────────────────────────────────────────────
+
+    /**
+     * Instantiate a new AsymmetricPair contract on-chain.
+     * The signing account becomes the owner (no manual address needed).
+     *
+     * @param bundle  — the .contract JSON (wasm + metadata) fetched from the backend
+     * @returns the deployed contract address
+     */
+    async instantiate(
+        bundle: Record<string, unknown>,
+        baseToken: string,
+        quoteToken: string,
+        buyGamma: number,
+        buyMaxCapacity: string,
+        buyFeeBps: number,
+        sellGamma: number,
+        sellMaxCapacity: string,
+        sellFeeBps: number,
+        account: InjectedAccountWithMeta,
+    ): Promise<string> {
+        if (!this.api) throw new Error('API not connected')
+        const injector = await web3FromAddress(account.address)
+        const gasLimit = this.api.registry.createType('WeightV2', INSTANTIATE_GAS) as any
+
+        const code = new CodePromise(this.api, bundle as any, (bundle.source as any)?.wasm)
+
+        return await new Promise<string>((resolve, reject) => {
+            const tx = code.tx['new'](
+                { gasLimit, storageDepositLimit: null },
+                baseToken,
+                quoteToken,
+                buyGamma,
+                BigInt(buyMaxCapacity),
+                buyFeeBps,
+                sellGamma,
+                BigInt(sellMaxCapacity),
+                sellFeeBps,
+            )
+
+            tx.signAndSend(account.address, { signer: injector.signer }, (result: any) => {
+                if (result.dispatchError) {
+                    reject(new Error('Instantiation failed: ' + result.dispatchError.toString()))
+                    return
+                }
+                if (result.status.isInBlock || result.status.isFinalized) {
+                    // Extract contract address from the Instantiated event
+                    const instantiatedEvent = result.events?.find(
+                        ({ event }: any) =>
+                            event.section === 'contracts' && event.method === 'Instantiated',
+                    )
+                    if (instantiatedEvent) {
+                        const [, contractAddress] = instantiatedEvent.event.data
+                        resolve(contractAddress.toString())
+                    } else if (result.status.isFinalized) {
+                        reject(new Error('Contract instantiated but address not found in events'))
+                    }
+                }
+            }).catch(reject)
+        })
     }
 
     // ── Queries ───────────────────────────────────────────────────

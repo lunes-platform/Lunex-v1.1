@@ -1,6 +1,19 @@
 import { Router, Request, Response, NextFunction } from 'express'
+import fs from 'fs'
+import path from 'path'
 import prisma from '../db'
 import { asymmetricService } from '../services/asymmetricService'
+
+// Expected code hash of the official AsymmetricPair contract.
+// Set via env var ASYMMETRIC_PAIR_CODE_HASH after first compilation.
+// If empty, validation is skipped (dev mode).
+const EXPECTED_CODE_HASH = process.env.ASYMMETRIC_PAIR_CODE_HASH ?? ''
+
+// Path to the compiled .contract bundle (wasm + metadata)
+const CONTRACT_BUNDLE_PATH = path.resolve(
+    __dirname,
+    '../../../../Lunex/contracts/asymmetric_pair/target/ink/asymmetric_pair.contract',
+)
 
 const router = Router()
 
@@ -15,6 +28,26 @@ function handleAsync(fn: (req: Request, res: Response, next: NextFunction) => Pr
 }
 
 // ─── Routes ─────────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/asymmetric/contract-bundle
+ * Serves the compiled AsymmetricPair .contract bundle (wasm + ABI metadata).
+ * The frontend uses this with CodePromise to instantiate a new contract on-chain,
+ * with the user's wallet as owner — eliminating manual address entry.
+ */
+router.get(
+    '/contract-bundle',
+    handleAsync(async (_req, res) => {
+        if (!fs.existsSync(CONTRACT_BUNDLE_PATH)) {
+            return send(res, {
+                error: 'Contract bundle not compiled yet. Run: cd Lunex/contracts/asymmetric_pair && cargo contract build --release',
+                path: CONTRACT_BUNDLE_PATH,
+            }, 503)
+        }
+        const bundle = JSON.parse(fs.readFileSync(CONTRACT_BUNDLE_PATH, 'utf-8'))
+        return send(res, bundle)
+    }),
+)
 
 /**
  * GET /api/v1/asymmetric/strategies
@@ -58,6 +91,28 @@ router.post(
 
         if (!userAddress || !pairAddress || !buyK || !buyGamma || !buyMaxCapacity || !sellGamma || !sellMaxCapacity) {
             return send(res, { error: 'Missing required fields' }, 400)
+        }
+
+        // Validate that the contract address was instantiated from the official
+        // AsymmetricPair wasm. Prevents users from registering arbitrary contracts.
+        if (EXPECTED_CODE_HASH) {
+            try {
+                const { ApiPromise, WsProvider } = await import('@polkadot/api')
+                const nodeUrl = process.env.LUNES_WS_URL ?? 'ws://127.0.0.1:9944'
+                const api = await ApiPromise.create({ provider: new WsProvider(nodeUrl), noInitWarn: true })
+                const info = await (api.query as any).contracts?.contractInfoOf(pairAddress)
+                await api.disconnect()
+                const codeHash: string = info?.isSome
+                    ? info.unwrap().codeHash?.toHex?.() ?? ''
+                    : ''
+                if (codeHash && codeHash !== EXPECTED_CODE_HASH) {
+                    return send(res, {
+                        error: 'Contract code hash does not match the official AsymmetricPair. Deploy using the Lunex interface.',
+                    }, 403)
+                }
+            } catch {
+                // Node unavailable — skip validation in dev
+            }
         }
 
         const strategy = await asymmetricService.createStrategy({

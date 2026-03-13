@@ -12,7 +12,7 @@ import { useState, useCallback } from 'react'
 import { contractService } from '../services/contractService'
 import { asymmetricContractService } from '../services/asymmetricContractService'
 import { useSDK } from '../context/SDKContext'
-import { web3Accounts, web3FromAddress } from '@polkadot/extension-dapp'
+import { web3Accounts } from '@polkadot/extension-dapp'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:4000'
@@ -45,7 +45,7 @@ export interface DeployStrategyArgs {
 }
 
 export interface DeployState {
-    step: 'idle' | 'approving' | 'deploying' | 'registering' | 'done' | 'error'
+    step: 'idle' | 'fetching' | 'instantiating' | 'deploying' | 'registering' | 'done' | 'error'
     txHash: string | null
     contractAddress: string | null
     strategyId: string | null
@@ -84,14 +84,14 @@ export function useAsymmetricDeploy() {
     }, [walletAddress])
 
     /**
-     * Full deployment flow:
-     *   1. Ensure API is connected
-     *   2. Deploy the AsymmetricPair contract (instantiate)
+     * Full deployment flow (no manual address needed):
+     *   1. Fetch the verified contract bundle from the backend
+     *   2. Instantiate the AsymmetricPair contract on-chain (user signs → user is owner)
      *   3. Call deploy_liquidity to seed the initial k values
      *   4. Register the strategy on the spot-api backend
      */
     const deploy = useCallback(
-        async (args: DeployStrategyArgs, contractAddress: string) => {
+        async (args: DeployStrategyArgs) => {
             if (!isConnected || !walletAddress) {
                 setState((s) => ({ ...s, step: 'error', error: 'Wallet not connected' }))
                 return
@@ -104,7 +104,7 @@ export function useAsymmetricDeploy() {
             }
 
             try {
-                // ── Step 1: Ensure API is available ──────────────────────
+                // ── Step 1: Connect to blockchain ─────────────────────────
                 let api = contractService.getApi()
                 if (!api) {
                     await contractService.connect('testnet')
@@ -113,24 +113,47 @@ export function useAsymmetricDeploy() {
                 if (!api) throw new Error('Could not connect to Lunes blockchain')
                 asymmetricContractService.setApi(api)
 
-                // ── Step 2: Deploy liquidity on-chain ────────────────────
-                // NOTE: Instantiation (cargo contract instantiate) is done via CLI.
-                // The frontend receives the already-deployed contractAddress and calls
-                // deploy_liquidity to seed the initial k values.
+                // ── Step 2: Fetch verified contract bundle from backend ────
+                setState((s) => ({ ...s, step: 'fetching' }))
 
-                setState((s) => ({ ...s, step: 'deploying' }))
+                const bundleRes = await fetch(`${API_BASE}/api/v1/asymmetric/contract-bundle`)
+                if (!bundleRes.ok) {
+                    const err = await bundleRes.json().catch(() => ({}))
+                    throw new Error(
+                        (err as { error?: string }).error ??
+                        'Contract bundle unavailable. Build the AsymmetricPair contract first.',
+                    )
+                }
+                const bundle = await bundleRes.json()
 
-                const buyKPlancks = toPlancks(args.initialBuyK)
-                const sellKPlancks = toPlancks(args.initialSellK)
+                // ── Step 3: Instantiate contract on-chain ─────────────────
+                // The signing wallet becomes the owner — no manual address needed.
+                setState((s) => ({ ...s, step: 'instantiating' }))
 
-                const txHash = await asymmetricContractService.deployLiquidity(
-                    contractAddress,
-                    buyKPlancks,
-                    sellKPlancks,
+                const contractAddress = await asymmetricContractService.instantiate(
+                    bundle,
+                    args.baseToken,
+                    args.quoteToken,
+                    args.buyGamma,
+                    toPlancks(args.buyMaxCapacity),
+                    args.buyFeeBps,
+                    args.sellGamma,
+                    toPlancks(args.sellMaxCapacity),
+                    args.sellFeeBps,
                     account,
                 )
 
-                // ── Step 3: Register strategy in backend ─────────────────
+                // ── Step 4: Deploy liquidity (seed initial k values) ──────
+                setState((s) => ({ ...s, step: 'deploying', contractAddress }))
+
+                const txHash = await asymmetricContractService.deployLiquidity(
+                    contractAddress,
+                    toPlancks(args.initialBuyK),
+                    toPlancks(args.initialSellK),
+                    account,
+                )
+
+                // ── Step 5: Register strategy in backend ──────────────────
                 setState((s) => ({ ...s, step: 'registering', txHash }))
 
                 const body = {
@@ -153,7 +176,7 @@ export function useAsymmetricDeploy() {
                     },
                 }
 
-                const res = await fetch(`${API_BASE}/api/v1/asymmetric`, {
+                const res = await fetch(`${API_BASE}/api/v1/asymmetric/strategies`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
@@ -174,7 +197,7 @@ export function useAsymmetricDeploy() {
                     error: null,
                 })
 
-                return { txHash, strategyId: data.id }
+                return { txHash, contractAddress, strategyId: data.id }
             } catch (err: any) {
                 console.error('[useAsymmetricDeploy] error:', err)
                 setState((s) => ({ ...s, step: 'error', error: err.message ?? 'Unknown error' }))

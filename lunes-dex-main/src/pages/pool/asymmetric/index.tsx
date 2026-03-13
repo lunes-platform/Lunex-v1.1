@@ -206,20 +206,6 @@ const DeployModalNote = styled.p`
   margin: 0;
 `
 
-const AddressInput = styled.input`
-  width: 100%;
-  background: ${({ theme }) => theme.colors.themeColors[600]};
-  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
-  border-radius: 10px;
-  padding: 12px 14px;
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  outline: none;
-  box-sizing: border-box;
-  &::placeholder { color: ${({ theme }) => theme.colors.themeColors[300]}; }
-  &:focus { border-color: ${({ theme }) => theme.colors.themeColors[200]}; }
-`
 
 const StatusBox = styled.div<{ variant: 'success' | 'error' | 'loading' }>`
   padding: 12px 16px;
@@ -349,7 +335,6 @@ const AsymmetricPool: React.FC = () => {
   const [selectedTemplate, setSelectedTemplate] = useState<StrategyTemplate | null>(null)
   const [showDelegate, setShowDelegate] = useState(false)
   const [showDeployModal, setShowDeployModal] = useState(false)
-  const [contractAddress, setContractAddress] = useState('')
 
   // Builder state
   const [buyParams, setBuyParams] = useState<CurveParams>(defaultBuy)
@@ -370,25 +355,21 @@ const AsymmetricPool: React.FC = () => {
   }
 
   const handleDeploy = async () => {
-    if (!contractAddress.trim()) return
-    await deploy(
-      {
-        baseToken: process.env.REACT_APP_TOKEN_WLUNES || '',
-        quoteToken: process.env.REACT_APP_TOKEN_LUSDT || '',
-        buyGamma: buyParams.gamma,
-        buyMaxCapacity: buyParams.x0.toString(),
-        buyFeeBps: Math.round(buyParams.feeT * 10000),
-        sellGamma: sellParams.gamma,
-        sellMaxCapacity: sellParams.x0.toString(),
-        sellFeeBps: Math.round(sellParams.feeT * 10000),
-        initialBuyK: (buyParams.k).toString(),
-        initialSellK: (sellParams.k * 0.5).toString(),
-        pairSymbol: 'WLUNES-LUSDT',
-        autoRebalance: true,
-        profitTargetBps: selectedTemplate?.profitTargetBps ?? 300,
-      },
-      contractAddress.trim(),
-    )
+    await deploy({
+      baseToken: process.env.REACT_APP_TOKEN_WLUNES || '',
+      quoteToken: process.env.REACT_APP_TOKEN_LUSDT || '',
+      buyGamma: buyParams.gamma,
+      buyMaxCapacity: buyParams.x0.toString(),
+      buyFeeBps: Math.round(buyParams.feeT * 10000),
+      sellGamma: sellParams.gamma,
+      sellMaxCapacity: sellParams.x0.toString(),
+      sellFeeBps: Math.round(sellParams.feeT * 10000),
+      initialBuyK: (buyParams.k).toString(),
+      initialSellK: (sellParams.k * 0.5).toString(),
+      pairSymbol: 'WLUNES-LUSDT',
+      autoRebalance: true,
+      profitTargetBps: selectedTemplate?.profitTargetBps ?? 300,
+    })
   }
 
   return (
@@ -591,9 +572,10 @@ const AsymmetricPool: React.FC = () => {
       )}
 
       {showDeployModal && (
-        <DeployOverlay onClick={(e) => e.target === e.currentTarget && setShowDeployModal(false)}>
+        <DeployOverlay onClick={(e) => e.target === e.currentTarget && deployState.step === 'idle' && setShowDeployModal(false)}>
           <DeployModal>
-            <button
+            {(deployState.step === 'idle' || deployState.step === 'error') && (
+              <button
                 onClick={() => setShowDeployModal(false)}
                 style={{
                   width: '40px', height: '40px', fontSize: '20px', cursor: 'pointer',
@@ -604,53 +586,66 @@ const AsymmetricPool: React.FC = () => {
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'rotate(-180deg)'; e.currentTarget.style.color = '#6C38FE'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'rotate(0deg)'; e.currentTarget.style.color = 'inherit'; }}
-            >
-              ✕
-            </button>
+              >
+                ✕
+              </button>
+            )}
+
             <DeployModalTitle>Deploy Asymmetric Strategy</DeployModalTitle>
 
-            <DeployModalNote>
-              Enter the address of the already-instantiated <strong>AsymmetricPair</strong> contract.
-              The wallet will sign a transaction to seed the initial liquidity (buy k = {buyParams.k}, sell k = {Math.round(sellParams.k * 0.5)}) and register the strategy on the backend.
-            </DeployModalNote>
+            {deployState.step === 'idle' && (
+              <>
+                <DeployModalNote>
+                  Your wallet will sign <strong>2 transactions</strong>:<br />
+                  1. Instantiate the AsymmetricPair contract (you become the owner)<br />
+                  2. Seed initial liquidity — buy k = <strong>{buyParams.k}</strong>, sell k = <strong>{Math.round(sellParams.k * 0.5)}</strong>
+                </DeployModalNote>
+                <RowButtons>
+                  <Button style={{ flex: 1 }} onClick={handleDeploy}>Confirm & Deploy</Button>
+                  <Button status="secondary" width="auto" onClick={() => setShowDeployModal(false)}>Cancel</Button>
+                </RowButtons>
+              </>
+            )}
 
-            <AddressInput
-              placeholder="5D... contract address"
-              value={contractAddress}
-              onChange={(e) => setContractAddress(e.target.value)}
-              disabled={deployState.step === 'deploying' || deployState.step === 'registering'}
-            />
-
+            {deployState.step === 'fetching' && (
+              <StatusBox variant="loading">Fetching verified contract bundle...</StatusBox>
+            )}
+            {deployState.step === 'instantiating' && (
+              <StatusBox variant="loading">
+                Step 1/2 — Instantiating contract on-chain...<br />
+                <span style={{ fontSize: '11px', opacity: 0.7 }}>Sign the transaction in your wallet</span>
+              </StatusBox>
+            )}
             {deployState.step === 'deploying' && (
-              <StatusBox variant="loading">Signing transaction on-chain...</StatusBox>
+              <StatusBox variant="loading">
+                Step 2/2 — Seeding initial liquidity...<br />
+                <span style={{ fontSize: '11px', opacity: 0.7 }}>Sign the second transaction in your wallet</span>
+              </StatusBox>
             )}
             {deployState.step === 'registering' && (
               <StatusBox variant="loading">Registering strategy on backend...</StatusBox>
             )}
+
             {deployState.step === 'done' && (
-              <StatusBox variant="success">
-                Strategy deployed!
-                <TxHashLink>{deployState.txHash}</TxHashLink>
-              </StatusBox>
-            )}
-            {deployState.step === 'error' && (
-              <StatusBox variant="error">{deployState.error}</StatusBox>
+              <>
+                <StatusBox variant="success">
+                  ✓ Strategy deployed successfully!
+                  <TxHashLink>{deployState.contractAddress}</TxHashLink>
+                  <TxHashLink style={{ opacity: 0.5 }}>{deployState.txHash}</TxHashLink>
+                </StatusBox>
+                <Button onClick={() => { setShowDeployModal(false); resetDeploy() }}>Close</Button>
+              </>
             )}
 
-            <RowButtons>
-              <Button
-                style={{ flex: 1 }}
-                onClick={handleDeploy}
-                disabled={!contractAddress.trim() || deployState.step === 'deploying' || deployState.step === 'registering' || deployState.step === 'done'}
-              >
-                {deployState.step === 'deploying' || deployState.step === 'registering'
-                  ? 'Processing...'
-                  : deployState.step === 'done'
-                    ? '✓ Done'
-                    : 'Confirm & Deploy'}
-              </Button>
-              <Button status="secondary" width="auto" onClick={() => setShowDeployModal(false)}>Cancel</Button>
-            </RowButtons>
+            {deployState.step === 'error' && (
+              <>
+                <StatusBox variant="error">{deployState.error}</StatusBox>
+                <RowButtons>
+                  <Button style={{ flex: 1 }} onClick={handleDeploy}>Try Again</Button>
+                  <Button status="secondary" width="auto" onClick={() => { setShowDeployModal(false); resetDeploy() }}>Cancel</Button>
+                </RowButtons>
+              </>
+            )}
           </DeployModal>
         </DeployOverlay>
       )}
