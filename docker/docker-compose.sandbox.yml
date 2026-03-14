@@ -1,0 +1,146 @@
+# =============================================================================
+# Lunex DEX — Sandbox Stack (Testnet)
+# Domain: lunex-sandbox.lunes.io
+#
+# Usage:
+#   docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
+#     --env-file docker/.env.prod --env-file docker/.env.sandbox up -d
+#
+# This file extends the production compose with sandbox-specific services.
+# The sandbox runs an independent API + Frontend + DB + Redis targeting testnet.
+# =============================================================================
+
+services:
+  # ── Sandbox PostgreSQL ──
+  sandbox-postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lunex_sandbox
+      POSTGRES_USER: ${SANDBOX_DB_USER:-lunex_sandbox}
+      POSTGRES_PASSWORD: ${SANDBOX_DB_PASSWORD:?Set SANDBOX_DB_PASSWORD}
+    volumes:
+      - sandbox-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${SANDBOX_DB_USER:-lunex_sandbox}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Sandbox Redis ──
+  sandbox-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Sandbox Spot API (testnet) ──
+  sandbox-api:
+    build:
+      context: ../spot-api
+      dockerfile: ../docker/Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      sandbox-postgres:
+        condition: service_healthy
+      sandbox-redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${SANDBOX_DB_USER:-lunex_sandbox}:${SANDBOX_DB_PASSWORD}@sandbox-postgres:5432/lunex_sandbox?schema=public
+      PORT: 4010
+      WS_PORT: 4011
+      CORS_ALLOWED_ORIGINS: ${SANDBOX_CORS_ORIGINS:-https://lunex-sandbox.lunes.io}
+      TRUST_PROXY: "true"
+      LUNES_WS_URL: ${SANDBOX_LUNES_WS_URL:-wss://ws-test.lunes.io}
+      RELAYER_SEED: ${SANDBOX_RELAYER_SEED:?Set SANDBOX_RELAYER_SEED}
+      REDIS_URL: redis://sandbox-redis:6379
+      SOCIAL_ANALYTICS_ENABLED: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4010/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Sandbox Frontend DEX (testnet build) ──
+  sandbox-frontend:
+    build:
+      context: ../lunes-dex-main
+      dockerfile: ../docker/Dockerfile.frontend
+      args:
+        REACT_APP_NETWORK: testnet
+        REACT_APP_SPOT_API_URL: ""
+        REACT_APP_RPC_MAINNET: ${SANDBOX_RPC_URL:-wss://ws-test.lunes.io}
+        REACT_APP_FACTORY_CONTRACT: ${SANDBOX_FACTORY_CONTRACT:-}
+        REACT_APP_ROUTER_CONTRACT: ${SANDBOX_ROUTER_CONTRACT:-}
+        REACT_APP_STAKING_CONTRACT: ${SANDBOX_STAKING_CONTRACT:-}
+        REACT_APP_REWARDS_CONTRACT: ${SANDBOX_REWARDS_CONTRACT:-}
+        REACT_APP_TOKEN_WLUNES: ${SANDBOX_WLUNES_ADDRESS:-}
+        REACT_APP_TOKEN_LUSDT: ${SANDBOX_LUSDT_ADDRESS:-}
+        REACT_APP_TOKEN_LBTC: ${SANDBOX_LBTC_ADDRESS:-}
+        REACT_APP_TOKEN_LETH: ${SANDBOX_LETH_ADDRESS:-}
+        REACT_APP_TOKEN_GMC: ${SANDBOX_GMC_ADDRESS:-}
+        REACT_APP_TOKEN_LUP: ${SANDBOX_LUP_ADDRESS:-}
+        REACT_APP_ENABLE_STAKING: "true"
+        REACT_APP_ENABLE_REWARDS: "true"
+        REACT_APP_DEV_MODE: "true"
+    restart: unless-stopped
+    depends_on:
+      sandbox-api:
+        condition: service_healthy
+
+  # ── Lunes Testnet Node (blockchain — dev mode with Alice validator) ──
+  lunes-testnet-node:
+    image: lunes-nightly:latest
+    restart: unless-stopped
+    entrypoint: ["/usr/src/app/lunes-node"]
+    command:
+      - "--dev"
+      - "--ws-external"
+      - "--rpc-external"
+      - "--rpc-cors=all"
+      - "--name=lunes-testnet-public"
+      - "--rpc-methods=safe"
+      - "--base-path=/data"
+    volumes:
+      - testnet-chaindata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' -d '{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"system_health\"}' http://localhost:9933/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ── Faucet (distribui tokens de teste para a comunidade) ──
+  faucet:
+    build:
+      context: ../faucet
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      lunes-testnet-node:
+        condition: service_healthy
+    environment:
+      FAUCET_PORT: 3333
+      LUNES_WS_URL: ws://lunes-testnet-node:9944
+      FAUCET_SEED: "//Alice"
+      FAUCET_DRIP_AMOUNT: "10000000000000"
+      FAUCET_COOLDOWN_MINUTES: "300"
+    volumes:
+      - faucet-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3333/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  sandbox-pgdata:
+  testnet-chaindata:
+  faucet-data:

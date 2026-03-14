@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSDK } from '../context/SDKContext'
+import { useSDK, parseBlockchainError } from '../context/SDKContext'
 
 interface Token {
   address: string
@@ -82,7 +82,7 @@ const useSwap = (): UseSwapReturn => {
         setError('Could not get quote')
       }
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error fetching quote')
+      setError(parseBlockchainError(err))
       console.error('Error fetching quote:', err)
     } finally {
       setIsLoading(false)
@@ -146,7 +146,7 @@ const useSwap = (): UseSwapReturn => {
 
       return result
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error executing swap')
+      setError(parseBlockchainError(err))
       console.error('Error executing swap:', err)
       return false
     } finally {

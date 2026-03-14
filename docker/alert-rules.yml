@@ -1,0 +1,240 @@
+groups:
+  # ── API / Backend ──────────────────────────────────────────────────────────
+  - name: lunex_api
+    interval: 30s
+    rules:
+      - alert: APIDown
+        expr: up{job="lunex_api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+        annotations:
+          summary: "Lunex API is down"
+          description: "The spot-api service has been unreachable for >1 minute."
+          runbook: "https://github.com/your-org/lunex/blob/main/docs/runbooks/api-down.md"
+
+      - alert: APIHighErrorRate
+        expr: |
+          rate(http_requests_total{job="lunex_api",status=~"5.."}[5m])
+          / rate(http_requests_total{job="lunex_api"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "High API error rate (>5%)"
+          description: "{{ $value | humanizePercentage }} of requests returning 5xx over the last 5 minutes."
+
+      - alert: APIHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket{job="lunex_api"}[5m])
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "API p95 latency >2s"
+          description: "95th percentile latency is {{ $value | humanizeDuration }}."
+
+      - alert: APIRateLimitHigh
+        expr: |
+          rate(http_requests_total{job="lunex_api",status="429"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "High rate of 429 Too Many Requests"
+          description: "More than 10 rate-limited requests per second — possible DDoS or abuse."
+
+      - alert: WebSocketConnectionsDrop
+        expr: lunex_ws_connections < 0
+        for: 2m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "WebSocket connections dropped to zero"
+          description: "No active WebSocket connections — orderbook stream may be down."
+
+  # ── Order Engine ──────────────────────────────────────────────────────────
+  - name: lunex_trading
+    interval: 30s
+    rules:
+      - alert: OrderSettlementBacklog
+        expr: lunex_pending_settlements > 100
+        for: 10m
+        labels:
+          severity: warning
+          category: blockchain
+        annotations:
+          summary: "Order settlement backlog growing"
+          description: "{{ $value }} settlements pending — possible blockchain connectivity issue."
+
+      - alert: BlockchainNodeUnreachable
+        expr: lunex_blockchain_connected == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: blockchain
+        annotations:
+          summary: "Lunes blockchain node unreachable"
+          description: "API cannot connect to the Lunes WS node. Settlements are halted."
+          runbook: "https://github.com/your-org/lunex/blob/main/docs/runbooks/blockchain-down.md"
+
+  # ── Infrastructure ────────────────────────────────────────────────────────
+  - name: lunex_infra
+    interval: 60s
+    rules:
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by(instance)(irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "High CPU usage ({{ $value | humanize }}%)"
+          description: "CPU usage has been above 85% for 10 minutes on {{ $labels.instance }}."
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "High memory usage ({{ $value | humanize }}%)"
+          description: "Memory usage above 90% on {{ $labels.instance }}."
+
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "Low disk space ({{ $value | humanize }}% free)"
+          description: "Less than 15% disk available on {{ $labels.instance }}."
+
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 5
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+        annotations:
+          summary: "CRITICAL: Disk almost full ({{ $value | humanize }}% free)"
+          description: "Less than 5% disk — services may crash soon!"
+
+  # ── Database ──────────────────────────────────────────────────────────────
+  - name: lunex_database
+    interval: 60s
+    rules:
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "Database unreachable for >1 minute. All API operations will fail."
+
+      - alert: DatabaseBackupFailed
+        expr: lunex_last_backup_age_seconds > 86400 * 1.5
+        for: 0m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "Database backup overdue (>36h)"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago."
+
+      - alert: DatabaseConnectionPoolExhausted
+        expr: lunex_db_connections_waiting > 20
+        for: 2m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "DB connection pool near exhaustion"
+          description: "{{ $value }} queries waiting for a DB connection."
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  - name: lunex_redis
+    interval: 30s
+    rules:
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+        annotations:
+          summary: "Redis is down"
+          description: "Redis unavailable — nonce management and rate limiting are disabled."
+
+      - alert: RedisHighMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: "Redis memory usage above 85%"
+          description: "Redis at {{ $value | humanizePercentage }} capacity — evictions may occur."
+
+  # ── Security ──────────────────────────────────────────────────────────────
+  - name: lunex_security
+    interval: 60s
+    rules:
+      - alert: SuspiciousOrderVolume
+        expr: |
+          rate(lunex_orders_total[1m]) > 100
+        for: 2m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "Unusual order submission rate ({{ $value | humanize }}/s)"
+          description: "Order volume spike — possible bot activity or attack vector."
+
+      - alert: MultipleFailedAuthAttempts
+        expr: |
+          rate(lunex_auth_failures_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "Multiple auth failures ({{ $value | humanize }}/s)"
+          description: "Possible brute-force or credential stuffing attack."
+
+      - alert: SSLCertificateExpiringSoon
+        expr: |
+          (probe_ssl_earliest_cert_expiry - time()) / 86400 < 14
+        for: 0m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "SSL certificate expires in {{ $value | humanize }} days"
+          description: "Certificate for {{ $labels.instance }} will expire soon."
+
+      - alert: SSLCertificateCritical
+        expr: |
+          (probe_ssl_earliest_cert_expiry - time()) / 86400 < 3
+        for: 0m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "SSL certificate expires in {{ $value | humanize }} days — URGENT"
+          description: "Certbot renewal may have failed. Immediate action required."

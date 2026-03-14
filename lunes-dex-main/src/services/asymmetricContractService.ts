@@ -14,6 +14,8 @@ import { ApiPromise } from '@polkadot/api'
 import { CodePromise, ContractPromise } from '@polkadot/api-contract'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { web3FromAddress } from '@polkadot/extension-dapp'
+import { decodeAddress } from '@polkadot/util-crypto'
+import { u8aEq } from '@polkadot/util'
 import AsymmetricPairABI from '../abis/AsymmetricPair.json'
 
 // Gas limit for dry-run calls
@@ -104,22 +106,29 @@ class AsymmetricContractService {
                 sellFeeBps,
             )
 
+            // Decode deployer pubkey once for comparison (prefix-agnostic)
+            const deployerBytes = decodeAddress(account.address)
+
             tx.signAndSend(account.address, { signer: injector.signer }, (result: any) => {
                 if (result.dispatchError) {
                     reject(new Error('Instantiation failed: ' + result.dispatchError.toString()))
                     return
                 }
                 if (result.status.isInBlock || result.status.isFinalized) {
-                    // Extract contract address from the Instantiated event
+                    // Match only the Instantiated event where deployer == our account
+                    // (guards against picking up events from other contracts in the same block)
                     const instantiatedEvent = result.events?.find(
                         ({ event }: any) =>
-                            event.section === 'contracts' && event.method === 'Instantiated',
+                            event.section === 'contracts' &&
+                            event.method === 'Instantiated' &&
+                            u8aEq(decodeAddress(event.data[0].toString()), deployerBytes),
                     )
                     if (instantiatedEvent) {
-                        const [, contractAddress] = instantiatedEvent.event.data
-                        resolve(contractAddress.toString())
+                        const contractAddress = instantiatedEvent.event.data[1].toString()
+                        console.log('[instantiate] deployed contract:', contractAddress, 'owner:', account.address)
+                        resolve(contractAddress)
                     } else if (result.status.isFinalized) {
-                        reject(new Error('Contract instantiated but address not found in events'))
+                        reject(new Error('Contract instantiated but Instantiated event not found for this account'))
                     }
                 }
             }).catch(reject)
@@ -177,6 +186,20 @@ class AsymmetricContractService {
     // ── Transactions ──────────────────────────────────────────────
 
     /**
+     * Query the stored owner of a deployed contract.
+     */
+    async getOwner(contractAddress: string, caller: string): Promise<string | null> {
+        try {
+            const c = this.getContract(contractAddress)
+            const { output } = await c.query.getOwner(caller, { gasLimit: this.makeDryGas() })
+            if (output) return output.toString()
+        } catch (e) {
+            console.error('getOwner query error:', e)
+        }
+        return null
+    }
+
+    /**
      * Deploy initial liquidity to a contract (owner only).
      * This is called after contract instantiation to set the initial k values.
      */
@@ -189,16 +212,50 @@ class AsymmetricContractService {
         const c = this.getContract(contractAddress)
         const injector = await web3FromAddress(account.address)
 
-        const { gasRequired } = await c.query.deployLiquidity(
+        const { gasRequired, output } = await c.query.deployLiquidity(
             account.address,
             { gasLimit: this.makeDryGas() },
             buyK,
             sellK,
         )
 
+        // Check for ink!-level errors in the dry-run.
+        // pallet_contracts always returns Ok for ContractReverted in RPC dry-run,
+        // but the output contains the contract's Err variant.
+        if (output) {
+            const json = output.toJSON() as any
+            const errVariant = json?.err ?? json?.Err
+            if (errVariant !== undefined && errVariant !== null) {
+                // Query the actual owner to provide a clear diagnosis
+                const storedOwner = await this.getOwner(contractAddress, account.address)
+                console.error(
+                    `[deployLiquidity] dry-run revert:`,
+                    JSON.stringify(errVariant),
+                    `\n  contract: ${contractAddress}`,
+                    `\n  stored owner: ${storedOwner}`,
+                    `\n  caller (account): ${account.address}`,
+                )
+                const ownerMismatch =
+                    storedOwner && storedOwner !== account.address
+                        ? ` (owner is ${storedOwner.slice(0, 10)}…, caller is ${account.address.slice(0, 10)}…)`
+                        : ''
+                throw new Error(
+                    `deployLiquidity reverted: ${JSON.stringify(errVariant)}${ownerMismatch}`,
+                )
+            }
+        }
+
+        // Use gasRequired from the dry-run (ABI is correct, dry-run simulates success path).
+        // Double it as a safety buffer against execution-time overhead differences.
+        const gasWeight = (gasRequired as any).toJSON?.() ?? gasRequired
+        const execGas = this.api!.registry.createType('WeightV2', {
+            refTime: BigInt(gasWeight?.refTime ?? '50000000000') * 2n,
+            proofSize: BigInt(gasWeight?.proofSize ?? '1000000') * 2n,
+        }) as any
+
         return await new Promise<string>((resolve, reject) => {
             c.tx
-                .deployLiquidity({ gasLimit: gasRequired as any, storageDepositLimit: null }, buyK, sellK)
+                .deployLiquidity({ gasLimit: execGas, storageDepositLimit: null }, buyK, sellK)
                 .signAndSend(account.address, { signer: injector.signer }, (result: any) => {
                     if (result.dispatchError) {
                         reject(new Error(result.dispatchError.toString()))

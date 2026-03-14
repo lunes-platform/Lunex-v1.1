@@ -43,7 +43,7 @@ export const TOKEN_LIST: TokenMeta[] = [
     { address: TOKENS.WLUNES, symbol: 'WLUNES', name: 'Wrapped Lunes', decimals: 8, icon: '/img/lunes.svg' },
     { address: TOKENS.LUSDT, symbol: 'LUSDT', name: 'Lunes USD', decimals: 6, icon: '/img/lusdt.svg' },
     { address: TOKENS.LBTC, symbol: 'LBTC', name: 'Lunes BTC', decimals: 8, icon: '/img/lbtc.svg' },
-    { address: TOKENS.LETH, symbol: 'LETH', name: 'Lunes ETH', decimals: 18, icon: '/img/leth.svg' },
+    { address: TOKENS.LETH, symbol: 'LETH', name: 'Lunes ETH', decimals: 8, icon: '/img/leth.svg' },
     { address: TOKENS.GMC, symbol: 'GMC', name: 'GameCoin', decimals: 8, icon: '/img/gmc.svg' },
     { address: TOKENS.LUP, symbol: 'LUP', name: 'Lunex Protocol', decimals: 8, icon: '/img/lup.svg' },
 ]

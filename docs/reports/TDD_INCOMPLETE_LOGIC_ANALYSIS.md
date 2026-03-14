@@ -18,7 +18,7 @@
 ### ⚠️ **Oportunidades de Melhoria**
 
 **Placeholders Identificados:**
-- `uniswap-v2/contracts/pair/lib.rs` - Linhas 366-367, 430-431, 534-535
+- `Lunex/contracts/pair/lib.rs` - Linhas 366-367, 430-431, 534-535
 
 ---
 

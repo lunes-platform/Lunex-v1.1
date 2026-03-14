@@ -1,0 +1,29 @@
+# ── Stage 1: Build ──
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npx prisma generate
+RUN npm run build
+
+# ── Stage 2: Production ──
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN addgroup -g 1001 -S lunex && adduser -S lunex -u 1001
+
+COPY --from=builder --chown=lunex:lunex /app/.next/standalone ./
+COPY --from=builder --chown=lunex:lunex /app/.next/static ./.next/static
+COPY --from=builder --chown=lunex:lunex /app/public ./public
+COPY --from=builder --chown=lunex:lunex /app/node_modules ./node_modules
+COPY --from=builder --chown=lunex:lunex /app/prisma ./prisma
+
+USER lunex
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001 || exit 1
+
+CMD ["node", "server.js"]

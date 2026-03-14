@@ -1,0 +1,59 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, ci]
+
+  # Root workspace
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies]
+    ignore:
+      - dependency-name: "@polkadot/*"
+
+  # spot-api
+  - package-ecosystem: npm
+    directory: /spot-api
+    schedule:
+      interval: weekly
+    labels: [dependencies, spot-api]
+
+  # frontend
+  - package-ecosystem: npm
+    directory: /lunes-dex-main
+    schedule:
+      interval: weekly
+    labels: [dependencies, frontend]
+
+  # sdk
+  - package-ecosystem: npm
+    directory: /sdk
+    schedule:
+      interval: weekly
+    labels: [dependencies, sdk]
+
+  # mcp
+  - package-ecosystem: npm
+    directory: /mcp/lunex-agent-mcp
+    schedule:
+      interval: weekly
+    labels: [dependencies, mcp]
+
+  # subquery
+  - package-ecosystem: npm
+    directory: /subquery-node
+    schedule:
+      interval: weekly
+    labels: [dependencies, subquery]
+
+  # Rust workspace
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, contracts]

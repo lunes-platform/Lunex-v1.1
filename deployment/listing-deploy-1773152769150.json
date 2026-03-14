@@ -1,0 +1,24 @@
+{
+  "network": "local",
+  "wsUrl": "ws://127.0.0.1:9944",
+  "deployer": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+  "liquidity_lock": {
+    "address": "5DRY_RUN_LIQUIDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "txHash": "dry-run",
+    "block": "0"
+  },
+  "listing_manager": {
+    "address": "5DRY_RUN_LISTINXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "txHash": "dry-run",
+    "block": "0"
+  },
+  "env_updates": {
+    "LISTING_MANAGER_CONTRACT_ADDRESS": "5DRY_RUN_LISTINXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "LIQUIDITY_LOCK_CONTRACT_ADDRESS": "5DRY_RUN_LIQUIDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  },
+  "next_steps": [
+    "Restart the spot-api to pick up the new env vars",
+    "Run: POST /api/v1/listing/:id/activate after each on-chain listing confirmation",
+    "Or start the listing-relayer: npx ts-node scripts/listing-relayer.ts"
+  ]
+}

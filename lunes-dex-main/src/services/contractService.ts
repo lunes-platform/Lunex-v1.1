@@ -120,21 +120,25 @@ class ContractService {
   setContracts(addresses: ContractAddresses): void {
     this.contracts = addresses
     if (this.api) {
-      this.routerContract = new ContractPromise(
-        this.api,
-        RouterABI as any,
-        addresses.router
-      )
-      this.factoryContract = new ContractPromise(
-        this.api,
-        FactoryABI as any,
-        addresses.factory
-      )
-      if (addresses.staking) {
+      if (this.isValidAddress(addresses.router)) {
+        this.routerContract = new ContractPromise(
+          this.api,
+          RouterABI as any,
+          addresses.router
+        )
+      }
+      if (this.isValidAddress(addresses.factory)) {
+        this.factoryContract = new ContractPromise(
+          this.api,
+          FactoryABI as any,
+          addresses.factory
+        )
+      }
+      if (this.isValidAddress(addresses.staking)) {
         this.stakingContract = new ContractPromise(
           this.api,
           StakingABI as any,
-          addresses.staking
+          addresses.staking!
         )
       }
     }
@@ -148,10 +152,60 @@ class ContractService {
     return this.isConnected
   }
 
+  private isValidAddress(addr: string | undefined | null): addr is string {
+    return typeof addr === 'string' && addr.length >= 10
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private makeDryGas(): any {
     if (!this.api) throw new Error('Not connected')
     return this.api.registry.createType('WeightV2', DRY_GAS)
+  }
+
+  /**
+   * Decode a pallet dispatchError into a human-readable string.
+   * pallet_contracts (module 24) error codes are mapped to names.
+   */
+  private decodeDispatchError(dispatchError: any): string {
+    try {
+      if (dispatchError.isModule) {
+        const mod = dispatchError.asModule
+        const errorIdx = mod.error[0] // first byte = error index
+        const palletContracts: Record<number, string> = {
+          0: 'OutOfGas',
+          1: 'OutputBufferTooSmall',
+          2: 'TransferFailed',
+          3: 'MaxCallDepthReached',
+          4: 'ContractNotFound',
+          5: 'CodeTooLarge',
+          6: 'InvalidInstantiateInput',
+          13: 'DuplicateContract',
+          14: 'TerminatedInConstructor',
+          16: 'StorageDepositNotEnoughFunds',
+          17: 'StorageDepositLimitExhausted',
+          19: 'ContractReverted',
+          20: 'CodeNotFound',
+          23: 'ContractTrapped',
+          25: 'ContractReverted',
+        }
+        if (mod.index?.toNumber?.() === 24 || mod.index === 24) {
+          const name = palletContracts[errorIdx] ?? `Error(${errorIdx})`
+          if (name === 'ContractReverted') {
+            return 'O contrato reverteu. Verifique saldo de tokens e allowances.'
+          }
+          if (name === 'StorageDepositNotEnoughFunds' || name === 'StorageDepositLimitExhausted') {
+            return 'Saldo LUNES insuficiente para storage deposit.'
+          }
+          if (name === 'OutOfGas') {
+            return 'Gas insuficiente para executar a operação.'
+          }
+          return `Contrato: ${name}`
+        }
+      }
+    } catch {
+      // fall through
+    }
+    return dispatchError.toString()
   }
 
   /**
@@ -175,13 +229,13 @@ class ContractService {
   // ========================================
 
   private getTokenContract(tokenAddress: string): ContractPromise | null {
-    if (!this.api) return null
+    if (!this.api || !this.isValidAddress(tokenAddress)) return null
     // Use PairABI — it contains all PSP22 methods with correct selectors
     return new ContractPromise(this.api, PairABI as any, tokenAddress)
   }
 
   private getWNativeContract(address: string): ContractPromise | null {
-    if (!this.api) return null
+    if (!this.api || !this.isValidAddress(address)) return null
     return new ContractPromise(this.api, WNativeABI as any, address)
   }
 
@@ -439,6 +493,7 @@ class ContractService {
     pairAddress: string
   ): Promise<{ reserve0: string; reserve1: string; timestamp: number } | null> {
     if (!this.api) throw new Error('Not connected to blockchain')
+    if (!this.isValidAddress(pairAddress)) return null
 
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
 
@@ -482,7 +537,7 @@ class ContractService {
    * ABI label: token_0 → JS: token0
    */
   async getPairToken0(pairAddress: string): Promise<string | null> {
-    if (!this.api) return null
+    if (!this.api || !this.isValidAddress(pairAddress)) return null
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.token0(
@@ -504,7 +559,7 @@ class ContractService {
    * ABI label: token_1 → JS: token1
    */
   async getPairToken1(pairAddress: string): Promise<string | null> {
-    if (!this.api) return null
+    if (!this.api || !this.isValidAddress(pairAddress)) return null
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.token1(
@@ -526,7 +581,7 @@ class ContractService {
    * ABI label: total_supply → JS: totalSupply
    */
   async getPairTotalSupply(pairAddress: string): Promise<string> {
-    if (!this.api) return '0'
+    if (!this.api || !this.isValidAddress(pairAddress)) return '0'
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.totalSupply(
@@ -553,7 +608,7 @@ class ContractService {
     const reserves = await this.getReserves(pairAddress)
     if (!reserves) return null
 
-    if (!this.api) return null
+    if (!this.api || !this.isValidAddress(pairAddress)) return null
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
     const { output } = await contract.query.totalSupply(pairAddress, {
       gasLimit: this.makeDryGas()
@@ -641,8 +696,9 @@ class ContractService {
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
-      // Approve input token
-      const approved = await this.approveToken(
+      // Approve input token only if allowance is insufficient
+      const currentAllowance = await this.getAllowance(path[0], account.address, contracts.router)
+      const approved = BigInt(currentAllowance) >= BigInt(amountIn) || await this.approveToken(
         path[0],
         contracts.router,
         amountIn,
@@ -721,12 +777,21 @@ class ContractService {
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
-      await this.approveToken(tokenA, contracts.router, amountADesired, account)
-      await this.approveToken(tokenB, contracts.router, amountBDesired, account)
+      // Only approve if current allowance is insufficient (avoids redundant signatures)
+      const [allowanceA, allowanceB] = await Promise.all([
+        this.getAllowance(tokenA, account.address, contracts.router),
+        this.getAllowance(tokenB, account.address, contracts.router),
+      ])
+      if (BigInt(allowanceA) < BigInt(amountADesired)) {
+        await this.approveToken(tokenA, contracts.router, amountADesired, account)
+      }
+      if (BigInt(allowanceB) < BigInt(amountBDesired)) {
+        await this.approveToken(tokenB, contracts.router, amountBDesired, account)
+      }
 
       const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
 
-      const { gasRequired } = await this.routerContract.query.addLiquidity(
+      const { gasRequired, output: dryOutput } = await this.routerContract.query.addLiquidity(
         account.address,
         { gasLimit: this.makeDryGas() },
         tokenA,
@@ -738,6 +803,20 @@ class ContractService {
         to,
         deadlineMs
       )
+
+      // Detect contract-level errors before signing (ink! Err variant in dry-run output)
+      if (dryOutput) {
+        const dryJson = (dryOutput as any).toJSON?.() as any
+        const dryErr = dryJson?.err ?? dryJson?.Err
+        if (dryErr !== undefined && dryErr !== null) {
+          const errName = typeof dryErr === 'string' ? dryErr : JSON.stringify(dryErr)
+          // Check for common causes and give actionable messages
+          if (errName.toLowerCase().includes('insufficientbalance') || errName.toLowerCase().includes('balance')) {
+            throw new Error(`Saldo insuficiente de tokens para adicionar liquidez (${errName})`)
+          }
+          throw new Error(`addLiquidity reverteria na chain: ${errName}`)
+        }
+      }
 
       return await new Promise((resolve, reject) => {
         if (!this.routerContract) {
@@ -761,7 +840,7 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
+                reject(new Error(this.decodeDispatchError(result.dispatchError)))
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }

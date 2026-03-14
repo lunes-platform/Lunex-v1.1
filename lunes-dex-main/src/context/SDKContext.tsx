@@ -124,6 +124,48 @@ const CONTRACT_ADDRESSES = {
 // Network from centralized config
 const NETWORK = NET_CONFIG.name
 
+// Utilitários de Tratamento de Erro Substrate
+const parseBlockchainError = (err: unknown): string => {
+  if (!err) return 'Unknown error occurred'
+  const message = err instanceof Error ? err.message : String(err)
+
+  // Polkadot.js extension cancellations
+  if (message.includes('Cancelled') || message.includes('Rejected')) {
+    return 'Transaction was cancelled by the user'
+  }
+
+  // RPC Drops
+  if (message.includes('disconnected') || message.includes('WebSocket')) {
+    return 'RPC Connection disconnected. Please try again'
+  }
+
+  // Raw JSON from Substrate (ex: {"module":{"index":24,"error":"0x19000000"}})
+  try {
+    // Tenta achar JSON no meio da string do erro
+    const jsonMatch = message.match(/({.*})/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[1])
+      if (parsed.module) {
+        return `Blockchain execution reverted (Module ${parsed.module.index}, Error Info: ${parsed.module.error})`
+      }
+      if (parsed.arithmetic) {
+        return 'Arithmetic or Underflow Error (Check slippage or balances)'
+      }
+    }
+  } catch {
+    // ignore parse errors
+  }
+
+  // Slippage / Balance heuristics
+  if (message.includes('balances.InsufficientBalance')) return 'Insufficient LUNES balance for transaction fees'
+  if (message.includes('contracts.OutOfGas')) return 'Out of Gas error. Transaction reverted.'
+
+  // Return formatted or slice the huge string
+  return message.length > 100 ? `${message.slice(0, 100)}...` : message
+}
+
+export { parseBlockchainError }
+
 // Provider Component
 interface SDKProviderProps {
   children: ReactNode
@@ -234,7 +276,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       setBalance(nativeBalance)
 
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error connecting wallet')
+      setError(parseBlockchainError(err))
       console.error('Error connecting wallet:', err)
     } finally {
       setIsLoading(false)
@@ -531,7 +573,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       if (process.env.NODE_ENV !== 'production') console.log('Staked! Tx Hash:', txHash)
       return true
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error staking LP tokens')
+      setError(parseBlockchainError(err))
       console.error('Error staking:', err)
       return false
     } finally {
@@ -557,7 +599,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       if (process.env.NODE_ENV !== 'production') console.log('Unstaked! Tx Hash:', txHash)
       return true
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error unstaking LP tokens')
+      setError(parseBlockchainError(err))
       console.error('Error unstaking:', err)
       return false
     } finally {
@@ -583,7 +625,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       if (process.env.NODE_ENV !== 'production') console.log('Rewards Claimed! Tx Hash:', txHash)
       return true
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error claiming rewards')
+      setError(parseBlockchainError(err))
       console.error('Error claiming rewards:', err)
       return false
     } finally {

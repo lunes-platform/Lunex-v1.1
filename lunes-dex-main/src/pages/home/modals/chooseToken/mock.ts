@@ -21,7 +21,7 @@ export interface Token {
 const tokens: Token[] = [
   {
     id: 0,
-    icon: 'img/lunes-green.svg',
+    icon: '/img/lunes-green.svg',
     acronym: 'LUNES',
     token: 'Lunes',
     tokenPrice: '$ 0.00',
@@ -31,7 +31,7 @@ const tokens: Token[] = [
   },
   {
     id: 1,
-    icon: 'img/wlunes.svg',
+    icon: '/img/wlunes.svg',
     acronym: 'WLUNES',
     token: 'Wrapped Lunes',
     tokenPrice: '$ 0.00',
@@ -40,7 +40,7 @@ const tokens: Token[] = [
   },
   {
     id: 2,
-    icon: 'img/lusdt.svg',
+    icon: '/img/lusdt.svg',
     acronym: 'LUSDT',
     token: 'Lunes USD Tether',
     tokenPrice: '$ 1.00',
@@ -49,7 +49,7 @@ const tokens: Token[] = [
   },
   {
     id: 3,
-    icon: 'img/lbtc.svg',
+    icon: '/img/lbtc.svg',
     acronym: 'LBTC',
     token: 'Lunes Bitcoin',
     tokenPrice: '$ 0.00',
@@ -58,7 +58,7 @@ const tokens: Token[] = [
   },
   {
     id: 4,
-    icon: 'img/leth.svg',
+    icon: '/img/leth.svg',
     acronym: 'LETH',
     token: 'Lunes Ethereum',
     tokenPrice: '$ 0.00',
@@ -67,7 +67,7 @@ const tokens: Token[] = [
   },
   {
     id: 5,
-    icon: 'img/gmc.svg',
+    icon: '/img/gmc.svg',
     acronym: 'GMC',
     token: 'Game Coin',
     tokenPrice: '$ 0.00',
@@ -76,7 +76,7 @@ const tokens: Token[] = [
   },
   {
     id: 6,
-    icon: 'img/up.svg',
+    icon: '/img/up.svg',
     acronym: 'LUP',
     token: 'Lunes UP',
     tokenPrice: '$ 0.00',

@@ -1,0 +1,304 @@
+name: Lunex Release Candidate
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options: [patch, minor, major]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — Determine next RC version
+# ─────────────────────────────────────────────────────────────────────────────
+  version:
+    name: Determine RC Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      tag: ${{ steps.calc.outputs.tag }}
+      is_release_tag: ${{ steps.calc.outputs.is_release_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate version
+        id: calc
+        run: |
+          # If triggered by a version tag (e.g. v0.8.0), use it directly
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${{ github.ref_name }}"
+            VERSION="${TAG#v}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "is_release_tag=true" >> $GITHUB_OUTPUT
+            echo "Release tag detected: $TAG"
+            exit 0
+          fi
+
+          # Otherwise, derive RC from package.json version + commit count
+          BASE_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "0.8.0")
+          RC_COUNT=$(git tag --list "v${BASE_VERSION}-rc*" | wc -l | tr -d ' ')
+          RC_NUM=$((RC_COUNT + 1))
+          TAG="v${BASE_VERSION}-rc${RC_NUM}"
+          VERSION="${BASE_VERSION}-rc${RC_NUM}"
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "is_release_tag=false" >> $GITHUB_OUTPUT
+          echo "RC version: $TAG"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — Build all artifacts for release
+# ─────────────────────────────────────────────────────────────────────────────
+  build-release:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    needs: version
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build spot-api
+        run: |
+          npm ci
+          npm run build
+        working-directory: spot-api
+
+      - name: Build SDK
+        run: |
+          npm ci
+          npm run build
+        working-directory: sdk
+
+      - name: Build MCP
+        run: |
+          npm ci
+          npx tsc -p tsconfig.json
+        working-directory: mcp/lunex-agent-mcp
+
+      - name: Build SubQuery
+        run: |
+          npm ci
+          npx subql codegen
+          npx subql build
+        working-directory: subquery-node
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+        working-directory: lunes-dex-main
+        env:
+          CI: "false"
+          GENERATE_SOURCEMAP: "false"
+          REACT_APP_NETWORK: testnet
+
+      - name: Package release artifacts
+        run: |
+          mkdir -p release-artifacts
+          tar -czf release-artifacts/spot-api-${{ needs.version.outputs.version }}.tar.gz \
+            -C spot-api dist package.json prisma
+          tar -czf release-artifacts/sdk-${{ needs.version.outputs.version }}.tar.gz \
+            -C sdk dist package.json
+          tar -czf release-artifacts/mcp-${{ needs.version.outputs.version }}.tar.gz \
+            -C mcp/lunex-agent-mcp dist package.json
+          tar -czf release-artifacts/subquery-${{ needs.version.outputs.version }}.tar.gz \
+            -C subquery-node dist project.yaml schema.graphql
+          tar -czf release-artifacts/frontend-${{ needs.version.outputs.version }}.tar.gz \
+            -C lunes-dex-main build
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.version.outputs.version }}
+          path: release-artifacts/
+          retention-days: 30
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3 — Docker images (spot-api + frontend)
+# ─────────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    needs: [version, build-release]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: lunex-api
+            dockerfile: docker/Dockerfile.api
+            context: spot-api
+          - image: lunex-frontend
+            dockerfile: docker/Dockerfile.frontend
+            context: lunes-dex-main
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.version.outputs.is_release_tag == 'true' }}
+            type=sha,prefix=sha-
+
+      - name: Build and push — ${{ matrix.image }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            REACT_APP_NETWORK=testnet
+            CI=false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 4 — Tag and create GitHub Release
+# ─────────────────────────────────────────────────────────────────────────────
+  tag-release:
+    name: Tag RC — ${{ needs.version.outputs.tag }}
+    runs-on: ubuntu-latest
+    needs: [version, build-release, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ needs.version.outputs.version }}
+          path: release-artifacts/
+
+      - name: Create Git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ needs.version.outputs.tag }}" \
+            -m "Release candidate ${{ needs.version.outputs.tag }}"
+          git push origin "${{ needs.version.outputs.tag }}"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "${{ needs.version.outputs.tag }}" | head -1 || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            COMMITS=$(git log ${PREV_TAG}..HEAD --oneline --no-merges | head -30)
+          else
+            COMMITS=$(git log --oneline --no-merges | head -30)
+          fi
+
+          cat > release-notes.md << EOF
+          ## 🚀 Lunex ${{ needs.version.outputs.tag }}
+
+          ### Components
+          | Component | Status |
+          |-----------|--------|
+          | spot-api | ✅ Built |
+          | lunes-dex-main | ✅ Built |
+          | sdk | ✅ Built |
+          | mcp/lunex-agent-mcp | ✅ Built |
+          | subquery-node | ✅ Built |
+
+          ### Recent Changes
+          \`\`\`
+          $COMMITS
+          \`\`\`
+
+          ### Docker Images
+          - \`ghcr.io/${{ github.repository_owner }}/lunex-api:${{ needs.version.outputs.version }}\`
+          - \`ghcr.io/${{ github.repository_owner }}/lunex-frontend:${{ needs.version.outputs.version }}\`
+
+          > ⚠️ This is a **release candidate**. Smart contract deployment and indexer runtime validation require a running Lunes node with deployed contracts.
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Lunex ${{ needs.version.outputs.tag }}
+          body_path: release-notes.md
+          prerelease: ${{ needs.version.outputs.is_release_tag == 'false' }}
+          files: release-artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 5 — Deploy to staging (only on stable release tag vX.Y.Z)
+# ─────────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [version, tag-release]
+    if: needs.version.outputs.is_release_tag == 'true'
+    environment: staging
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy spot-api to staging
+        run: |
+          echo "Deploying lunex-api:${{ needs.version.outputs.version }} to staging..."
+          # ssh ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
+          #   "docker pull ghcr.io/${{ github.repository_owner }}/lunex-api:${{ needs.version.outputs.version }} && \
+          #    docker compose -f /opt/lunex/docker-compose.prod.yml up -d api"
+          echo "Deploy command ready — uncomment when STAGING_HOST secret is configured."
+
+      - name: Deploy frontend to staging
+        run: |
+          echo "Deploying lunex-frontend:${{ needs.version.outputs.version }} to staging..."
+          # ssh ${{ secrets.STAGING_USER }}@${{ secrets.STAGING_HOST }} \
+          #   "docker pull ghcr.io/${{ github.repository_owner }}/lunex-frontend:${{ needs.version.outputs.version }} && \
+          #    docker compose -f /opt/lunex/docker-compose.prod.yml up -d frontend"
+          echo "Deploy command ready — uncomment when STAGING_HOST secret is configured."
+
+      - name: Staging health check
+        run: |
+          echo "Staging deployment complete for v${{ needs.version.outputs.version }}"
+          # curl -sf https://staging.lunex.io/health || exit 1

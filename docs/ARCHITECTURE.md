@@ -37,11 +37,13 @@
 │   PostgreSQL        │             │         Lunes Network Node          │
 │   (Primary DB)      │             │   (Substrate / Polkadot v0.9.40)   │
 │                     │             │                                     │
-│  Prisma Migrations  │             │  ┌─────────┐  ┌────────────────┐  │
-│  Row-level security │             │  │Contract │  │  pallet-orders │  │
-└─────────────────────┘             │  │ Factory │  │  pallet-copy   │  │
-                                    │  └─────────┘  └────────────────┘  │
-┌─────────────────────┐             └────────────────────────────────────┘
+│  ┌─────────────────────────┐  │             │  ┌────────────────┐  │
+│  │  Lunex Smart Contracts  │  │             │  │  pallet-orders │  │
+│  │ Factory, Pair, Router   │  │             │  │  pallet-copy   │  │
+│  │ Staking, Rewards, PSP22 │  │             │  └────────────────┘  │
+│  │ Listing, AssetWrapper   │  │             │                      │
+│  └─────────────────────────┘  │             │                      │
+└───────────────────────────────┘             └──────────────────────┘
 │   Redis             │                        │
 │   (Nonce store)     │             ┌──────────▼─────────────────────────┐
 │   (Rate limit)      │             │         SubQuery Indexer            │
@@ -129,6 +131,29 @@ copytrade.ts route (leader auth)
        │   ├─ Calculate proportional position size (by share balance)
        │   └─ Create mirrored order via orderService
        └─ Record signal + execution result
+```
+
+---
+
+## Data Flow: Listing & Fee Distribution (Real PSP22)
+
+```
+Project Owner
+  │  POST /api/v1/listing/create
+  │  Submits LUNES tokens to ListingManager contract
+  │
+  ▼
+ListingManager Contract (ink! v4)
+  ├─ PSP22::transfer_from(caller, self, listing_fee)
+  ├─ Distributes fees via cross-contract PSP22::transfer:
+  │   ├─ Treasury (50%)
+  │   ├─ Rewards Pool (30%)
+  │   └─ Staking Pool (20% - replaces burn)
+  └─ Registers listing and emits event
+  
+Backend Relayer / Webhook
+  ├─ Waits for on-chain block confirmation
+  └─ Activates token listing in PostgreSQL DB for trading
 ```
 
 ---

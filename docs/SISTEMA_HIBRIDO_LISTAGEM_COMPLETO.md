@@ -217,7 +217,7 @@ self.env().emit_event(AdminTokenListed {
 
 ### **1. Compilar Contratos:**
 ```bash
-cd uniswap-v2/contracts/staking
+cd Lunex/contracts/staking
 cargo check  # ✅ Sem erros de compilação
 ```
 

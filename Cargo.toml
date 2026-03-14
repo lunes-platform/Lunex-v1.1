@@ -1,13 +1,30 @@
 [workspace]
 resolver = "2"
 members = [
-    "uniswap-v2/contracts/**",
+    ".",
+    "Lunex/contracts/asset_wrapper",
+    "Lunex/contracts/asymmetric_pair",
+    "Lunex/contracts/copy_vault",
+    "Lunex/contracts/factory",
+    "Lunex/contracts/liquidity_lock",
+    "Lunex/contracts/listing_manager",
+    "Lunex/contracts/pair",
+    "Lunex/contracts/psp22",
+    "Lunex/contracts/rewards",
+    "Lunex/contracts/router",
+    "Lunex/contracts/spot_settlement",
+    "Lunex/contracts/staking",
+    "Lunex/contracts/wnative",
 ]
+
+[package]
+name = "lunex-sim-tests"
+version = "0.1.0"
+edition = "2021"
 
 
 
 [profile.dev]
-panic = "abort"
 lto = false
 
 [profile.release]

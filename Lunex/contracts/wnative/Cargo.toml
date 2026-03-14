@@ -1,0 +1,29 @@
+[package]
+name = "wnative_contract"
+version = "0.1.0"
+authors = ["Stake Technologies <devops@stake.co.jp>"]
+edition = "2021"
+
+[dependencies]
+ink = { version = "4.2.1", default-features = false }
+
+scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2.3", default-features = false, features = ["derive"], optional = true }
+
+# PSP22 error types definidos localmente para compatibilidade com ink! 4.2.1
+# (psp22 v2.0 requer ink! 5.x)
+
+[lib]
+name = "wnative_contract"
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "ink/std",
+    "scale/std",
+    "scale-info",
+    "scale-info/std",
+]
+ink-as-dependency = []
+

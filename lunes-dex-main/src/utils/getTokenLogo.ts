@@ -12,9 +12,13 @@ const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 // In-memory cache: address → logo URL or data URI
 const logoCache = new Map<string, string>()
 
-// Known tokens with hardcoded logos (e.g. LUNES, USDT)
 const KNOWN_LOGOS: Record<string, string> = {
   LUNES: '/img/lunes-logo.svg',
+  WLUNES: '/img/lunes-logo.svg',
+  LUSDT: '/img/lusdt.svg',
+  GMC: '/img/gmc.svg',
+  LETH: '/img/leth.svg',
+  LBTC: '/img/lbtc.svg',
 }
 
 /**

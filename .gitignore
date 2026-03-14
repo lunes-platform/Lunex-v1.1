@@ -1,28 +1,69 @@
-# Ignore build artifacts from the local tests sub-crate.
-**/target/
-/artifacts/
+# ═══════════════════════════════════════════════════════════════
+# Lunex DEX — .gitignore
+# ═══════════════════════════════════════════════════════════════
 
-# Ignore backup files creates by cargo fmt.
-**/*.rs.bk
-
-# Dependency directory
-node_modules
-
+# ── Dependencies ──
+node_modules/
 package-lock.json
-
 yarn.lock
 
-.vscode
-.idea
-
-node_modules/
-
+# ── Build artifacts ──
+**/target/
+/artifacts/
+dist/
+build/
 .next/
-
-target/
 /types/
+*.rs.bk
 
-.DS_Store
-
+# ── Environment & Secrets ──
 .env
-.log
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.test
+.env.docker
+**/.env
+!**/.env.example
+!**/.env.*.example
+
+# ── IDE & Editors ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── AI Agent / IDE Config (DO NOT COMMIT) ──
+.agent/
+.gemini/
+.cursor/
+.copilot/
+.aider*
+.continue/
+GEMINI.md
+
+# ── OS generated ──
+.DS_Store
+Thumbs.db
+*.log
+
+# ── Docker data volumes ──
+docker/data/
+docker/certbot/
+docker/ssl/
+
+# ── Test / Coverage ──
+coverage/
+.nyc_output/
+*.lcov
+
+# ── Miscellaneous ──
+*.tgz
+*.tar.gz
+tmp/
+
+# ── Subprojects (separate repos) ──
+lunex-admin/
+subquery-node/

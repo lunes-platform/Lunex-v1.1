@@ -70,7 +70,7 @@ Archive:   wss://ws-archive.lunes.io
 cargo clean
 
 # Factory Contract
-cd uniswap-v2/contracts/factory
+cd Lunex/contracts/factory
 cargo contract build --release
 
 # Pair Contract  
@@ -102,12 +102,12 @@ find . -name "*.contract" -type f
 
 **Saída esperada:**
 ```
-./uniswap-v2/contracts/factory/target/ink/factory_contract.contract
-./uniswap-v2/contracts/pair/target/ink/pair_contract.contract
-./uniswap-v2/contracts/router/target/ink/router_contract.contract
-./uniswap-v2/contracts/rewards/target/ink/trading_rewards_contract.contract
-./uniswap-v2/contracts/staking/target/ink/staking_contract.contract
-./uniswap-v2/contracts/wnative/target/ink/wnative_contract.contract
+./Lunex/contracts/factory/target/ink/factory_contract.contract
+./Lunex/contracts/pair/target/ink/pair_contract.contract
+./Lunex/contracts/router/target/ink/router_contract.contract
+./Lunex/contracts/rewards/target/ink/trading_rewards_contract.contract
+./Lunex/contracts/staking/target/ink/staking_contract.contract
+./Lunex/contracts/wnative/target/ink/wnative_contract.contract
 ```
 
 ---

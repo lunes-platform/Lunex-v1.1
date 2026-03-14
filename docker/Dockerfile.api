@@ -1,0 +1,34 @@
+# ── Stage 1: Build ──
+FROM node:18-alpine AS builder
+WORKDIR /app
+RUN apk add --no-cache openssl
+COPY package.json ./
+RUN npm install --production=false
+COPY . .
+RUN npx prisma generate
+RUN npm run build
+
+# ── Stage 2: Production ──
+FROM node:18-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# OpenSSL required by Prisma query engine
+RUN apk add --no-cache openssl
+
+# Non-root user
+RUN addgroup -g 1001 -S lunex && adduser -S lunex -u 1001
+COPY --from=builder --chown=lunex:lunex /app/dist ./dist
+COPY --from=builder --chown=lunex:lunex /app/node_modules ./node_modules
+COPY --from=builder --chown=lunex:lunex /app/package.json ./
+COPY --from=builder --chown=lunex:lunex /app/prisma ./prisma
+# Pre-create writable directories used at runtime
+RUN mkdir -p /app/public/tokens /app/uploads && chown -R lunex:lunex /app/public /app/uploads
+
+USER lunex
+EXPOSE 4000 4001
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:4000/health || exit 1
+
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]

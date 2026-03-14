@@ -1,0 +1,3 @@
+setup:
+  project: lunex-dex
+  config: production

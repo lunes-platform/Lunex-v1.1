@@ -1,0 +1,381 @@
+services:
+  # ── PostgreSQL (performance-tuned) ──
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "effective_cache_size=2GB"
+      - "-c"
+      - "maintenance_work_mem=256MB"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "synchronous_commit=off"
+    environment:
+      POSTGRES_DB: lunex_spot
+      POSTGRES_USER: ${DB_USER:-lunex}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-lunex}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Spot API ──
+  api:
+    build:
+      context: ../spot-api
+      dockerfile: ../docker/Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-lunex}:${DB_PASSWORD}@postgres:5432/lunex_spot?schema=public
+      PORT: 4000
+      WS_PORT: 4001
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://lunex.lunes.io,https://lunex-sandbox.lunes.io}
+      TRUST_PROXY: "true"
+      LUNES_WS_URL: ${LUNES_WS_URL:-wss://ws.lunes.io}
+      RELAYER_SEED: ${RELAYER_SEED:?Set RELAYER_SEED}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SOCIAL_ANALYTICS_ENABLED: "true"
+      SUBQUERY_ENDPOINT: "http://subquery-query:3000"
+      SUBQUERY_ENABLED: "true"
+    networks:
+      - internal_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Frontend DEX ──
+  frontend:
+    build:
+      context: ../lunes-dex-main
+      dockerfile: ../docker/Dockerfile.frontend
+      args:
+        REACT_APP_NETWORK: mainnet
+        REACT_APP_SPOT_API_URL: ""
+        REACT_APP_RPC_MAINNET: ${REACT_APP_RPC_MAINNET:-wss://ws.lunes.io}
+        REACT_APP_FACTORY_CONTRACT: ${REACT_APP_FACTORY_CONTRACT:-}
+        REACT_APP_ROUTER_CONTRACT: ${REACT_APP_ROUTER_CONTRACT:-}
+        REACT_APP_STAKING_CONTRACT: ${REACT_APP_STAKING_CONTRACT:-}
+        REACT_APP_REWARDS_CONTRACT: ${REACT_APP_REWARDS_CONTRACT:-}
+        REACT_APP_TOKEN_WLUNES: ${WLUNES_ADDRESS:-}
+        REACT_APP_TOKEN_LUSDT: ${LUSDT_ADDRESS:-}
+        REACT_APP_TOKEN_LBTC: ${LBTC_ADDRESS:-}
+        REACT_APP_TOKEN_LETH: ${LETH_ADDRESS:-}
+        REACT_APP_TOKEN_GMC: ${GMC_ADDRESS:-}
+        REACT_APP_TOKEN_LUP: ${LUP_ADDRESS:-}
+        REACT_APP_ENABLE_STAKING: "true"
+        REACT_APP_ENABLE_REWARDS: "true"
+        REACT_APP_DEV_MODE: "false"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal_network
+
+  # ── Admin (Next.js) ──
+  admin:
+    build:
+      context: ../lunex-admin
+      dockerfile: ../docker/Dockerfile.admin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-lunex}:${DB_PASSWORD}@postgres:5432/lunex_spot?schema=public
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-https://lunex.lunes.io/admin}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET}
+      NEXT_PUBLIC_API_URL: http://api:4000
+      PORT: "3001"
+    networks:
+      - internal_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── SubQuery Node (blockchain indexer) ──
+  subquery-node:
+    image: subquerynetwork/subql-node-substrate:v6.4.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_USER: ${DB_USER:-lunex}
+      DB_PASS: ${DB_PASSWORD}
+      DB_DATABASE: lunex_spot
+      DB_HOST: postgres
+      DB_PORT: "5432"
+    volumes:
+      - ../subquery-node:/app
+    command:
+      - -f=/app
+      - --db-schema=subquery
+      - --workers=2
+      - --batch-size=50
+      - --unfinalized-blocks=true
+    networks:
+      - internal_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # ── SubQuery Query (GraphQL API over indexed data) ──
+  subquery-query:
+    image: subquerynetwork/subql-query:v2.13.1
+    restart: unless-stopped
+    depends_on:
+      subquery-node:
+        condition: service_healthy
+    environment:
+      DB_USER: ${DB_USER:-lunex}
+      DB_PASS: ${DB_PASSWORD}
+      DB_DATABASE: lunex_spot
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      PORT: "3000"
+    command:
+      - --name=lunex-subquery
+      - --playground
+      - --indexer=http://subquery-node:3000
+    networks:
+      - internal_network
+
+  # ── Nginx Reverse Proxy ──
+  nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - frontend
+      - admin
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/conf.d/default.conf
+      - certbot-etc:/etc/letsencrypt
+      - certbot-var:/var/lib/letsencrypt
+    networks:
+      - public_network
+      - internal_network
+    command: '/bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g ''daemon off;''"'
+
+  # ── Redis (nonce store + cache) ──
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+    networks:
+      - internal_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redisdata:/data
+
+  # ── Prometheus ──
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheusdata:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    networks:
+      - internal_network
+
+  # ── Grafana ──
+  grafana:
+    image: grafana/grafana:10.4.0
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - internal_network
+
+  # ── DB Backup ──
+  db-backup:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-lunex}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: lunex_spot
+      S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+    volumes:
+      - ./backup.sh:/backup.sh:ro
+      - backupdata:/backups
+    networks:
+      - internal_network
+    entrypoint: "/bin/sh -c 'chmod +x /backup.sh; while :; do /backup.sh; sleep 86400 & wait; done'"
+
+  # ── Certbot (SSL) ──
+  certbot:
+    image: certbot/certbot
+    depends_on:
+      - nginx
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-var:/var/lib/letsencrypt
+    networks:
+      - public_network
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+  # ── Alertmanager ──
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.external-url=http://localhost:9093"
+    networks:
+      - internal_network
+    environment:
+      SLACK_WEBHOOK_OPS: ${SLACK_WEBHOOK_OPS:-}
+      SLACK_WEBHOOK_CRITICAL: ${SLACK_WEBHOOK_CRITICAL:-}
+      SLACK_WEBHOOK_SECURITY: ${SLACK_WEBHOOK_SECURITY:-}
+      ALERT_EMAIL_OPS: ${ALERT_EMAIL_OPS:-}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      PAGERDUTY_ROUTING_KEY: ${PAGERDUTY_ROUTING_KEY:-}
+
+  # ── Loki (log aggregation) ──
+  loki:
+    image: grafana/loki:3.0.0
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki-config.yml:/etc/loki/loki-config.yml:ro
+      - lokidata:/loki
+    networks:
+      - internal_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Promtail (log shipper: Docker → Loki) ──
+  promtail:
+    image: grafana/promtail:3.0.0
+    restart: unless-stopped
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    configs:
+      - source: promtail_config
+        target: /etc/promtail/config.yml
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - internal_network
+
+configs:
+  promtail_config:
+    content: |
+      server:
+        http_listen_port: 9080
+        grpc_listen_port: 0
+      positions:
+        filename: /tmp/positions.yaml
+      clients:
+        - url: http://loki:3100/loki/api/v1/push
+      scrape_configs:
+        - job_name: docker-containers
+          docker_sd_configs:
+            - host: unix:///var/run/docker.sock
+              refresh_interval: 5s
+          relabel_configs:
+            - source_labels: ['__meta_docker_container_name']
+              regex: '/(.*)'
+              target_label: 'container'
+            - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+              target_label: 'service'
+          pipeline_stages:
+            - json:
+                expressions:
+                  level: level
+                  msg: msg
+            - labels:
+                level:
+
+networks:
+  public_network:
+    driver: bridge
+  internal_network:
+    driver: bridge
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
+  prometheusdata:
+  grafanadata:
+  backupdata:
+  certbot-etc:
+  certbot-var:
+  lokidata:

@@ -1,0 +1,26 @@
+[package]
+name = "asymmetric_pair"
+version = "1.0.0"
+authors = ["Lunex Protocol"]
+edition = "2021"
+
+[lib]
+path = "lib.rs"
+
+[features]
+default = ["std"]
+std = [
+    "ink/std",
+    "scale/std",
+    "scale-info/std",
+]
+ink-as-dependency = []
+
+[dependencies]
+ink = { version = "4.3", default-features = false }
+scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2.9", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+ink_e2e = { version = "4.3" }
+

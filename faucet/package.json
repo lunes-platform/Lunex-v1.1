@@ -1,0 +1,16 @@
+{
+  "name": "lunes-testnet-faucet",
+  "version": "1.0.0",
+  "description": "Lunes Testnet Faucet — distribui tokens de teste para desenvolvedores",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@polkadot/api": "^10.11.1",
+    "@polkadot/keyring": "^12.6.2",
+    "@polkadot/util-crypto": "^12.6.2",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5"
+  }
+}

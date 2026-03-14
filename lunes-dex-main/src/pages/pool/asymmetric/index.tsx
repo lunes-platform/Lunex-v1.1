@@ -602,7 +602,7 @@ const AsymmetricPool: React.FC = () => {
                 </DeployModalNote>
                 <RowButtons>
                   <Button style={{ flex: 1 }} onClick={handleDeploy}>Confirm & Deploy</Button>
-                  <Button status="secondary" width="auto" onClick={() => setShowDeployModal(false)}>Cancel</Button>
+                  <Button status="secondary" width="auto" style={{ padding: '0 24px', minWidth: '120px' }} onClick={() => setShowDeployModal(false)}>Cancel</Button>
                 </RowButtons>
               </>
             )}
@@ -642,7 +642,7 @@ const AsymmetricPool: React.FC = () => {
                 <StatusBox variant="error">{deployState.error}</StatusBox>
                 <RowButtons>
                   <Button style={{ flex: 1 }} onClick={handleDeploy}>Try Again</Button>
-                  <Button status="secondary" width="auto" onClick={() => { setShowDeployModal(false); resetDeploy() }}>Cancel</Button>
+                  <Button status="secondary" width="auto" style={{ padding: '0 24px', minWidth: '120px' }} onClick={() => { setShowDeployModal(false); resetDeploy() }}>Cancel</Button>
                 </RowButtons>
               </>
             )}

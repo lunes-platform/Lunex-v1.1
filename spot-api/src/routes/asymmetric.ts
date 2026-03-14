@@ -9,10 +9,12 @@ import { asymmetricService } from '../services/asymmetricService'
 // If empty, validation is skipped (dev mode).
 const EXPECTED_CODE_HASH = process.env.ASYMMETRIC_PAIR_CODE_HASH ?? ''
 
-// Path to the compiled .contract bundle (wasm + metadata)
-const CONTRACT_BUNDLE_PATH = path.resolve(
+// Path to the compiled .contract bundle (wasm + metadata).
+// Supports env var override for production deployments.
+// Default: workspace target (cargo contract build output)
+const CONTRACT_BUNDLE_PATH = process.env.ASYMMETRIC_CONTRACT_BUNDLE_PATH ?? path.resolve(
     __dirname,
-    '../../../../Lunex/contracts/asymmetric_pair/target/ink/asymmetric_pair.contract',
+    '../../../target/ink/asymmetric_pair/asymmetric_pair.contract',
 )
 
 const router = Router()

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import styled, { css } from 'styled-components'
 import { useNavigate } from 'react-router-dom'
 import * as B from '../../components/bases'
@@ -34,6 +34,7 @@ const ProBannerLeft = styled.div`
 
 const ProBannerIcon = styled.span`
   font-size: 20px;
+  color: ${({ theme }) => theme.colors.themeColors[100]};
 `
 
 const ProBannerText = styled.div`
@@ -66,7 +67,7 @@ const availableTokens = [
   { address: process.env.REACT_APP_TOKEN_WLUNES || '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo', symbol: 'WLUNES', name: 'Wrapped Lunes', decimals: 8, icon: '/img/lunes.svg' },
   { address: process.env.REACT_APP_TOKEN_LUSDT || '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf', symbol: 'LUSDT', name: 'Lunes USD', decimals: 6, icon: '/img/lusdt.svg' },
   { address: process.env.REACT_APP_TOKEN_LBTC || '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg', symbol: 'LBTC', name: 'Lunes BTC', decimals: 8, icon: '/img/lbtc.svg' },
-  { address: process.env.REACT_APP_TOKEN_LETH || '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS', symbol: 'LETH', name: 'Lunes ETH', decimals: 18, icon: '/img/leth.svg' },
+  { address: process.env.REACT_APP_TOKEN_LETH || '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS', symbol: 'LETH', name: 'Lunes ETH', decimals: 8, icon: '/img/leth.svg' },
   { address: process.env.REACT_APP_TOKEN_GMC || '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ', symbol: 'GMC', name: 'GameCoin', decimals: 8, icon: '/img/gmc.svg' },
   { address: process.env.REACT_APP_TOKEN_LUP || '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3', symbol: 'LUP', name: 'Lunex Protocol', decimals: 8, icon: '/img/lup.svg' },
 ]
@@ -106,6 +107,15 @@ const InputContainer = styled.div`
   background: ${({ theme }) => theme.colors.themeColors[600]};
   border-radius: 16px;
   padding: 16px;
+  border: 1px solid transparent;
+  outline: none;
+  transition: all 0.2s;
+
+  &:focus-within {
+    background-color: ${({ theme }) => theme.colors.themeColors[500]};
+    border: 1px solid ${({ theme }) => theme.colors.themeColors[800]};
+    box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.6), 0px 0px 0px 4px rgba(108, 56, 255, 0.3);
+  }
 `
 
 const InputHeader = styled.div`
@@ -142,6 +152,13 @@ const Input = styled.input`
   font-weight: 500;
   color: ${({ theme }) => theme.colors.themeColors[100]};
   outline: none;
+  border-radius: 0;
+  
+  &:focus {
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
   
   &::placeholder {
     color: ${({ theme }) => theme.colors.themeColors[200]};
@@ -363,6 +380,22 @@ const Pool: React.FC = () => {
   const [showTokenSelectA, setShowTokenSelectA] = useState(false)
   const [showTokenSelectB, setShowTokenSelectB] = useState(false)
   const [lpAmountToRemove, setLpAmountToRemove] = useState('')
+  const [balanceA, setBalanceA] = useState<string | null>(null)
+  const [balanceB, setBalanceB] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!sdk.walletAddress || !liquidity.tokenA) { setBalanceA(null); return }
+    sdk.getTokenBalance(liquidity.tokenA.address, sdk.walletAddress)
+      .then(raw => setBalanceA(sdk.formatAmount(raw, liquidity.tokenA!.decimals)))
+      .catch(() => setBalanceA(null))
+  }, [liquidity.tokenA, sdk.walletAddress])
+
+  useEffect(() => {
+    if (!sdk.walletAddress || !liquidity.tokenB) { setBalanceB(null); return }
+    sdk.getTokenBalance(liquidity.tokenB.address, sdk.walletAddress)
+      .then(raw => setBalanceB(sdk.formatAmount(raw, liquidity.tokenB!.decimals)))
+      .catch(() => setBalanceB(null))
+  }, [liquidity.tokenB, sdk.walletAddress])
 
   // Handlers
   const handleSelectTokenA = (token: typeof availableTokens[0]) => {
@@ -425,7 +458,7 @@ const Pool: React.FC = () => {
             <InputHeader>
               <Label>Token A</Label>
               {sdk.walletAddress && liquidity.tokenA && (
-                <Balance>Balance: 0</Balance>
+                <Balance>Balance: {balanceA ?? '...'}</Balance>
               )}
             </InputHeader>
             <InputRow>
@@ -458,7 +491,7 @@ const Pool: React.FC = () => {
             <InputHeader>
               <Label>Token B</Label>
               {sdk.walletAddress && liquidity.tokenB && (
-                <Balance>Balance: 0</Balance>
+                <Balance>Balance: {balanceB ?? '...'}</Balance>
               )}
             </InputHeader>
             <InputRow>

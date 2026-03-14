@@ -364,7 +364,7 @@ pub struct SignedOrder {
 ### Fase 1 — Smart Contract SpotSettlement (ink! 4.2.1)
 **Prioridade:** ALTA | **Estimativa:** 3-5 dias
 
-- [ ] Criar `/uniswap-v2/contracts/spot_settlement/`
+- [ ] Criar `/Lunex/contracts/spot_settlement/`
 - [ ] Implementar storage: balances, filled_orders, cancelled_orders, nonces
 - [ ] Implementar `deposit_native()` (payable) e `deposit_psp22()` (cross-contract call PSP22)
 - [ ] Implementar `withdraw_native()` e `withdraw_psp22()`
@@ -433,7 +433,7 @@ pub struct SignedOrder {
 
 ```
 Lunex/
-├── uniswap-v2/contracts/
+├── Lunex/contracts/
 │   ├── factory/           # Existente
 │   ├── pair/              # Existente
 │   ├── router/            # Existente

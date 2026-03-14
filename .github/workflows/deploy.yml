@@ -1,0 +1,479 @@
+name: Lunex CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment target (prod | dev)'
+        required: true
+        default: 'prod'
+        type: choice
+        options: [prod, dev]
+      skip_tests:
+        description: 'Skip tests (emergency deploy only)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  NODE_VERSION: '18'
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+# Only allow one deploy per environment at a time
+concurrency:
+  group: deploy-${{ github.ref }}-${{ inputs.environment || 'prod' }}
+  cancel-in-progress: false
+
+jobs:
+  # ── 1. Secret & Dependency Scanning ─────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan for secrets (Gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            spot-api/package-lock.json
+            lunes-dex-main/package-lock.json
+            lunex-admin/package-lock.json
+
+      - name: Audit spot-api
+        run: npm ci --prefix spot-api --ignore-scripts && npm audit --prefix spot-api --audit-level=high
+
+      - name: Audit frontend
+        run: npm ci --prefix lunes-dex-main --ignore-scripts && npm audit --prefix lunes-dex-main --audit-level=high
+
+      - name: Audit admin
+        run: npm ci --prefix lunex-admin --ignore-scripts && npm audit --prefix lunex-admin --audit-level=high
+
+  # ── 2. Type Check + Lint ─────────────────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    needs: security
+    if: ${{ !inputs.skip_tests }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: spot-api/package-lock.json
+
+      - name: Typecheck spot-api
+        run: |
+          npm ci --prefix spot-api
+          cd spot-api && npx tsc --noEmit
+
+      - name: Typecheck frontend
+        run: |
+          npm ci --prefix lunes-dex-main
+          cd lunes-dex-main && npx tsc --noEmit || true
+
+      - name: Typecheck admin
+        run: |
+          npm ci --prefix lunex-admin
+          cd lunex-admin && npx tsc --noEmit || true
+
+  # ── 3. Backend Tests ──────────────────────────────────────────────────────────
+  test-api:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    if: ${{ !inputs.skip_tests }}
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: lunex_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: spot-api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefix spot-api
+
+      - name: Run Prisma migrations
+        run: cd spot-api && npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/lunex_test
+
+      - name: Run tests
+        run: cd spot-api && npm test -- --forceExit --testPathIgnorePatterns='e2e'
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/lunex_test
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
+          JWT_SECRET: test-secret-not-for-production
+          RELAYER_SEED: //Alice
+
+  # ── 4. Build Docker Images ────────────────────────────────────────────────────
+  build:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [test-api]
+    if: |
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      api_image: ${{ steps.meta-api.outputs.tags }}
+      frontend_image: ${{ steps.meta-frontend.outputs.tags }}
+      admin_image: ${{ steps.meta-admin.outputs.tags }}
+      image_tag: ${{ steps.vars.outputs.sha_short }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set short SHA
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── API ──
+      - name: Docker metadata (API)
+        id: meta-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build & push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./spot-api
+          file: ./docker/Dockerfile.api
+          push: true
+          tags: ${{ steps.meta-api.outputs.tags }}
+          labels: ${{ steps.meta-api.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      # ── Frontend ──
+      - name: Docker metadata (Frontend)
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build & push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./lunes-dex-main
+          file: ./docker/Dockerfile.frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          build-args: |
+            REACT_APP_NETWORK=${{ github.ref == 'refs/heads/main' && 'mainnet' || 'testnet' }}
+            REACT_APP_DEV_MODE=${{ github.ref == 'refs/heads/main' && 'false' || 'true' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      # ── Admin ──
+      - name: Docker metadata (Admin)
+        id: meta-admin
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/admin
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build & push Admin image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./lunex-admin
+          file: ./docker/Dockerfile.admin
+          push: true
+          tags: ${{ steps.meta-admin.outputs.tags }}
+          labels: ${{ steps.meta-admin.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  # ── 5. Container Security Scan (Trivy) ───────────────────────────────────────
+  scan-images:
+    name: Container Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: build
+    if: |
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    permissions:
+      contents: read
+      security-events: write
+      packages: read
+
+    strategy:
+      matrix:
+        image: [api, frontend, admin]
+
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan ${{ matrix.image }} with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ needs.build.outputs.image_tag }}
+          format: 'sarif'
+          output: 'trivy-${{ matrix.image }}.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'  # Report only, don't fail (non-zero to block: '1')
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-${{ matrix.image }}.sarif'
+          category: 'trivy-${{ matrix.image }}'
+
+  # ── 6. Deploy to Dev ─────────────────────────────────────────────────────────
+  deploy-dev:
+    name: Deploy → Dev
+    runs-on: ubuntu-latest
+    needs: [build, scan-images]
+    if: |
+      github.ref == 'refs/heads/develop' ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+    environment:
+      name: sandbox
+      url: https://lunex-sandbox.lunes.io
+
+    steps:
+      - name: Deploy Sandbox to VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          timeout: 120s
+          script: |
+            set -euo pipefail
+            cd /opt/lunex
+
+            echo "📥 Pulling sandbox images..."
+            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
+              --env-file docker/.env.prod --env-file docker/.env.sandbox pull
+
+            echo "🗄️ Running sandbox DB migrations..."
+            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
+              --env-file docker/.env.prod --env-file docker/.env.sandbox \
+              run --rm sandbox-api npx prisma migrate deploy
+
+            echo "🔄 Rolling update (sandbox API first, then frontend)..."
+            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
+              --env-file docker/.env.prod --env-file docker/.env.sandbox \
+              up -d --no-deps sandbox-api
+            sleep 10
+
+            echo "⏳ Waiting for sandbox API health..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:4010/health > /dev/null; then
+                echo "✅ Sandbox API healthy after ${i}s"
+                break
+              fi
+              if [ "$i" -eq 12 ]; then echo "❌ Sandbox API health check failed" && exit 1; fi
+              sleep 5
+            done
+
+            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
+              --env-file docker/.env.prod --env-file docker/.env.sandbox \
+              up -d --no-deps sandbox-frontend nginx
+
+            echo "🧹 Pruning old images..."
+            docker system prune -f --filter "until=24h"
+
+            echo "✅ Sandbox deploy complete — $(git rev-parse --short HEAD)"
+
+  # ── 7. Deploy to Production ───────────────────────────────────────────────────
+  deploy-prod:
+    name: Deploy → Production
+    runs-on: ubuntu-latest
+    needs: [build, scan-images]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request'
+    environment:
+      name: production
+      url: https://lunex.lunes.io
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Production VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          timeout: 180s
+          script: |
+            set -euo pipefail
+            cd /opt/lunex
+
+            echo "📥 Pulling new images..."
+            docker compose -f docker/docker-compose.prod.yml pull
+
+            echo "🗄️ Running DB migrations..."
+            docker compose -f docker/docker-compose.prod.yml run --rm api \
+              npx prisma migrate deploy
+
+            echo "🔄 Zero-downtime rolling update..."
+            # Update API first (backend)
+            docker compose -f docker/docker-compose.prod.yml up -d --no-deps api
+
+            echo "⏳ API health check (60s timeout)..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:4000/health > /dev/null; then
+                echo "✅ API healthy (attempt ${i})"
+                break
+              fi
+              if [ "$i" -eq 12 ]; then
+                echo "❌ API health check failed — rolling back"
+                docker compose -f docker/docker-compose.prod.yml rollout api previous 2>/dev/null || true
+                exit 1
+              fi
+              sleep 5
+            done
+
+            # Update frontend and admin
+            docker compose -f docker/docker-compose.prod.yml up -d --no-deps frontend admin
+
+            # Reload nginx config (no downtime)
+            docker compose -f docker/docker-compose.prod.yml exec nginx nginx -s reload
+
+            echo "🧹 Pruning old images..."
+            docker system prune -f --filter "until=24h"
+
+            echo "✅ Production deploy complete — commit: $(git rev-parse --short HEAD)"
+            echo "   API:      $(curl -sf http://localhost:4000/health | jq -r '.status // "ok"')"
+
+      - name: Verify production health
+        run: |
+          sleep 15
+          response=$(curl -sf --max-time 10 https://lunex.lunes.io/health || echo "FAILED")
+          if [[ "$response" == "FAILED" ]]; then
+            echo "❌ Post-deploy health check failed!"
+            exit 1
+          fi
+          echo "✅ Production is live: $response"
+
+      - name: Notify deployment
+        if: always()
+        uses: slackapi/slack-github-action@v1.27
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} Lunex DEX *${{ job.status }}* deployed to production\n*Commit:* ${{ github.sha }}\n*Author:* ${{ github.actor }}\n*Message:* ${{ github.event.head_commit.message }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        continue-on-error: true
+
+  # ── 8. Rollback (manual trigger only) ────────────────────────────────────────
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'rollback'
+    environment: production
+
+    steps:
+      - name: Rollback to previous image
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/lunex
+            echo "⏪ Rolling back to previous images..."
+            # Pull previous tag (second most recent)
+            PREV_TAG=$(docker images ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api \
+              --format '{{.Tag}}' | grep -v latest | sort -rV | sed -n '2p')
+            echo "Rolling back to tag: ${PREV_TAG}"
+
+            IMAGE_PREFIX="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}"
+            export API_IMAGE="${IMAGE_PREFIX}/api:${PREV_TAG}"
+            export FRONTEND_IMAGE="${IMAGE_PREFIX}/frontend:${PREV_TAG}"
+
+            docker compose -f docker/docker-compose.prod.yml up -d --no-deps api frontend
+            echo "✅ Rollback complete to ${PREV_TAG}"

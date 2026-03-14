@@ -1,0 +1,46 @@
+name: Manual Fuzz Security
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Branch, tag, or commit to validate
+        required: true
+        type: string
+      fuzz_target:
+        description: Fuzz target to run
+        required: true
+        default: pair_invariant
+        type: choice
+        options:
+          - pair_invariant
+          - copy_vault_accounting
+          - spot_settlement_replay
+      fuzz_seconds:
+        description: Max fuzzing time in seconds
+        required: true
+        default: '60'
+        type: string
+
+jobs:
+  manual-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref }}
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Run deterministic security invariants
+        run: cargo test --test property_security_invariants
+
+      - name: Run existing security test suite
+        run: cargo test --test security_tests
+
+      - name: Run selected fuzz target
+        working-directory: fuzz
+        run: cargo fuzz run ${{ inputs.fuzz_target }} -- -max_total_time=${{ inputs.fuzz_seconds }}

@@ -1,0 +1,170 @@
+name: Pre-Launch Security Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Branch, tag, or commit being reviewed
+        required: true
+        type: string
+      review_path:
+        description: Path to the completed pre-launch security review document
+        required: true
+        default: docs/PRELAUNCH_SECURITY_REVIEW_TEMPLATE.md
+        type: string
+      run_mcp_build:
+        description: Run MCP package build validation
+        required: true
+        default: true
+        type: boolean
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  validate-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref }}
+
+      - name: Validate review document exists
+        run: test -f "${{ inputs.review_path }}"
+
+      - name: Validate release review is approved
+        run: |
+          grep -Eq '^- Final status: `APPROVED`$' "${{ inputs.review_path }}"
+
+  security-baseline:
+    runs-on: ubuntu-latest
+    needs: validate-review
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            spot-api/package-lock.json
+            sdk/package-lock.json
+            lunes-dex-main/package-lock.json
+            lunex-admin/package-lock.json
+            mcp/lunex-agent-mcp/package-lock.json
+
+      - name: Scan repository for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install spot-api dependencies for audit
+        run: npm ci --prefix spot-api --ignore-scripts
+
+      - name: Audit spot-api dependencies
+        run: npm audit --prefix spot-api --audit-level=high
+
+      - name: Install sdk dependencies for audit
+        run: npm ci --prefix sdk --ignore-scripts
+
+      - name: Audit sdk dependencies
+        run: npm audit --prefix sdk --audit-level=high
+
+      - name: Install frontend dependencies for audit
+        run: npm ci --prefix lunes-dex-main --ignore-scripts
+
+      - name: Audit frontend dependencies
+        run: npm audit --prefix lunes-dex-main --audit-level=high
+
+      - name: Install admin dependencies for audit
+        run: npm ci --prefix lunex-admin --ignore-scripts
+
+      - name: Audit admin dependencies
+        run: npm audit --prefix lunex-admin --audit-level=high
+
+      - name: Install MCP dependencies for audit
+        run: npm ci --prefix mcp/lunex-agent-mcp --ignore-scripts
+
+      - name: Audit MCP dependencies
+        run: npm audit --prefix mcp/lunex-agent-mcp --audit-level=high
+
+  targeted-validation:
+    runs-on: ubuntu-latest
+    needs: security-baseline
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: lunex_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Root scripts TypeScript check
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Run Rust property security invariants
+        run: cargo test --test property_security_invariants
+
+      - name: Install spot-api dependencies
+        run: npm ci --prefix spot-api
+
+      - name: Setup spot-api test DB
+        run: npx prisma migrate deploy
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/lunex_test
+
+      - name: Run spot-api targeted security-sensitive tests
+        run: npm test -- --runInBand src/__tests__/e2e/copytrade.e2e.test.ts src/__tests__/e2e/social.e2e.test.ts src/__tests__/tradeSettlementService.test.ts src/__tests__/tradeService.test.ts
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/lunex_test
+          NODE_ENV: test
+
+      - name: Install SDK dependencies
+        run: npm ci --prefix sdk
+
+      - name: Build SDK
+        run: npm run build --prefix sdk
+
+      - name: Install MCP dependencies
+        if: ${{ inputs.run_mcp_build }}
+        run: npm ci --prefix mcp/lunex-agent-mcp
+
+      - name: Build MCP package
+        if: ${{ inputs.run_mcp_build }}
+        run: npm run build --prefix mcp/lunex-agent-mcp
+
+  prelaunch-summary:
+    runs-on: ubuntu-latest
+    needs:
+      - validate-review
+      - security-baseline
+      - targeted-validation
+    if: ${{ success() }}
+    steps:
+      - name: Emit approval summary
+        run: |
+          echo "Pre-launch security workflow passed for ${{ inputs.release_ref }}"
+          echo "Review document: ${{ inputs.review_path }}"

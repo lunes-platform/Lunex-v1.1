@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSDK } from '../context/SDKContext'
+import { useSDK, parseBlockchainError } from '../context/SDKContext'
 
 interface Token {
   address: string
@@ -110,7 +110,7 @@ const useLiquidity = (): UseLiquidityReturn => {
         setPoolInfo(null)
       }
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error fetching pool info')
+      setError(parseBlockchainError(err))
       console.error('Error fetching pool info:', err)
     } finally {
       setIsLoading(false)
@@ -179,7 +179,7 @@ const useLiquidity = (): UseLiquidityReturn => {
 
       return result
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error adding liquidity')
+      setError(parseBlockchainError(err))
       console.error('Error adding liquidity:', err)
       return false
     } finally {
@@ -233,7 +233,7 @@ const useLiquidity = (): UseLiquidityReturn => {
 
       return result
     } catch (err: unknown) {
-      setError((err as Error).message || 'Error removing liquidity')
+      setError(parseBlockchainError(err))
       console.error('Error removing liquidity:', err)
       return false
     } finally {

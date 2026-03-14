@@ -1,1009 +1,1698 @@
 {
-    "source": {
-        "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
-        "language": "ink! 4.3",
-        "compiler": "rustc 1.85"
-    },
-    "contract": {
-        "name": "asymmetric_pair",
-        "version": "1.0.0",
-        "authors": [
-            "Lunex Protocol"
-        ]
-    },
-    "spec": {
-        "constructors": [
-            {
-                "args": [
-                    {
-                        "label": "base_token",
-                        "type": {
-                            "displayName": [
-                                "AccountId"
-                            ],
-                            "type": 0
-                        }
-                    },
-                    {
-                        "label": "quote_token",
-                        "type": {
-                            "displayName": [
-                                "AccountId"
-                            ],
-                            "type": 0
-                        }
-                    },
-                    {
-                        "label": "buy_gamma",
-                        "type": {
-                            "displayName": [
-                                "u8"
-                            ],
-                            "type": 1
-                        }
-                    },
-                    {
-                        "label": "buy_max_capacity",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    },
-                    {
-                        "label": "buy_fee_bps",
-                        "type": {
-                            "displayName": [
-                                "u16"
-                            ],
-                            "type": 3
-                        }
-                    },
-                    {
-                        "label": "sell_gamma",
-                        "type": {
-                            "displayName": [
-                                "u8"
-                            ],
-                            "type": 1
-                        }
-                    },
-                    {
-                        "label": "sell_max_capacity",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    },
-                    {
-                        "label": "sell_fee_bps",
-                        "type": {
-                            "displayName": [
-                                "u16"
-                            ],
-                            "type": 3
-                        }
-                    }
-                ],
-                "docs": [
-                    "Deploy a new AsymmetricPair"
-                ],
-                "label": "new",
-                "payable": false,
-                "returnType": null,
-                "selector": "0x9bae9d5e"
+  "source": {
+    "hash": "0x4dca51f6a804373efe6aa7a37488d9ee8c315bd35bbe65e2e9d3c749866a2154",
+    "language": "ink! 4.3.0",
+    "compiler": "rustc 1.85.0",
+    "build_info": {
+      "build_mode": "Release",
+      "cargo_contract_version": "3.2.0",
+      "rust_toolchain": "stable-x86_64-apple-darwin",
+      "wasm_opt_settings": {
+        "keep_debug_symbols": false,
+        "optimization_passes": "Z"
+      }
+    }
+  },
+  "contract": {
+    "name": "asymmetric_pair",
+    "version": "1.0.0",
+    "authors": [
+      "Lunex Protocol"
+    ]
+  },
+  "spec": {
+    "constructors": [
+      {
+        "args": [
+          {
+            "label": "base_token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
             }
+          },
+          {
+            "label": "quote_token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "buy_gamma",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "label": "buy_max_capacity",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "buy_fee_bps",
+            "type": {
+              "displayName": [
+                "u16"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "label": "sell_gamma",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "label": "sell_max_capacity",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "sell_fee_bps",
+            "type": {
+              "displayName": [
+                "u16"
+              ],
+              "type": 5
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          "Deploy a new AsymmetricPair contract."
+        ],
+        "label": "new",
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink_primitives",
+            "ConstructorResult"
+          ],
+          "type": 6
+        },
+        "selector": "0x9bae9d5e"
+      }
+    ],
+    "docs": [],
+    "environment": {
+      "accountId": {
+        "displayName": [
+          "AccountId"
+        ],
+        "type": 0
+      },
+      "balance": {
+        "displayName": [
+          "Balance"
+        ],
+        "type": 4
+      },
+      "blockNumber": {
+        "displayName": [
+          "BlockNumber"
+        ],
+        "type": 27
+      },
+      "chainExtension": {
+        "displayName": [
+          "ChainExtension"
+        ],
+        "type": 28
+      },
+      "hash": {
+        "displayName": [
+          "Hash"
+        ],
+        "type": 25
+      },
+      "maxEventTopics": 4,
+      "timestamp": {
+        "displayName": [
+          "Timestamp"
+        ],
+        "type": 26
+      }
+    },
+    "events": [
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "caller",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "is_buy",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount_in",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "liquidity_out",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          }
         ],
         "docs": [],
-        "events": [
-            {
-                "args": [
-                    {
-                        "docs": [],
-                        "indexed": true,
-                        "label": "caller",
-                        "type": {
-                            "displayName": [
-                                "AccountId"
-                            ],
-                            "type": 0
-                        }
-                    },
-                    {
-                        "docs": [],
-                        "indexed": false,
-                        "label": "is_buy",
-                        "type": {
-                            "displayName": [
-                                "bool"
-                            ],
-                            "type": 4
-                        }
-                    },
-                    {
-                        "docs": [],
-                        "indexed": false,
-                        "label": "amount_in",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    },
-                    {
-                        "docs": [],
-                        "indexed": false,
-                        "label": "liquidity_out",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    }
-                ],
-                "docs": [],
-                "label": "AsymmetricSwapExecuted"
-            },
-            {
-                "args": [
-                    {
-                        "docs": [],
-                        "indexed": true,
-                        "label": "updated_by",
-                        "type": {
-                            "displayName": [
-                                "AccountId"
-                            ],
-                            "type": 0
-                        }
-                    },
-                    {
-                        "docs": [],
-                        "indexed": false,
-                        "label": "is_buy",
-                        "type": {
-                            "displayName": [
-                                "bool"
-                            ],
-                            "type": 4
-                        }
-                    },
-                    {
-                        "docs": [],
-                        "indexed": false,
-                        "label": "new_gamma",
-                        "type": {
-                            "displayName": [
-                                "u8"
-                            ],
-                            "type": 1
-                        }
-                    },
-                    {
-                        "docs": [],
-                        "indexed": false,
-                        "label": "new_capacity",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    },
-                    {
-                        "docs": [],
-                        "indexed": false,
-                        "label": "new_fee_bps",
-                        "type": {
-                            "displayName": [
-                                "u16"
-                            ],
-                            "type": 3
-                        }
-                    }
-                ],
-                "docs": [],
-                "label": "CurveParametersUpdated"
-            },
-            {
-                "args": [
-                    {
-                        "docs": [],
-                        "indexed": true,
-                        "label": "new_manager",
-                        "type": {
-                            "displayName": [
-                                "Option"
-                            ],
-                            "type": 5
-                        }
-                    }
-                ],
-                "docs": [],
-                "label": "ManagerSet"
+        "label": "AsymmetricSwapExecuted"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "updated_by",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
             }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "is_buy",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_gamma",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_capacity",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "new_fee_bps",
+            "type": {
+              "displayName": [
+                "u16"
+              ],
+              "type": 5
+            }
+          }
         ],
-        "messages": [
-            {
-                "args": [
-                    {
-                        "label": "buy_k",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    },
-                    {
-                        "label": "sell_k",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    }
-                ],
-                "docs": [
-                    "Deploy initial liquidity. Only callable by owner."
-                ],
-                "label": "deploy_liquidity",
-                "mutates": true,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "Result"
-                    ],
-                    "type": 6
-                },
-                "selector": "0x5b56d80c"
-            },
-            {
-                "args": [
-                    {
-                        "label": "amount",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    }
-                ],
-                "docs": [
-                    "Withdraw liquidity. Only callable by owner."
-                ],
-                "label": "withdraw",
-                "mutates": true,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "Result"
-                    ],
-                    "type": 6
-                },
-                "selector": "0x410fcc9d"
-            },
-            {
-                "args": [
-                    {
-                        "label": "new_manager",
-                        "type": {
-                            "displayName": [
-                                "Option"
-                            ],
-                            "type": 5
-                        }
-                    },
-                    {
-                        "label": "guardrails",
-                        "type": {
-                            "displayName": [
-                                "Guardrails"
-                            ],
-                            "type": 7
-                        }
-                    }
-                ],
-                "docs": [
-                    "Assign or remove the manager role."
-                ],
-                "label": "set_manager",
-                "mutates": true,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "Result"
-                    ],
-                    "type": 6
-                },
-                "selector": "0xb1234567"
-            },
-            {
-                "args": [
-                    {
-                        "label": "is_buy",
-                        "type": {
-                            "displayName": [
-                                "bool"
-                            ],
-                            "type": 4
-                        }
-                    },
-                    {
-                        "label": "new_gamma",
-                        "type": {
-                            "displayName": [
-                                "Option"
-                            ],
-                            "type": 8
-                        }
-                    },
-                    {
-                        "label": "new_capacity",
-                        "type": {
-                            "displayName": [
-                                "Option"
-                            ],
-                            "type": 9
-                        }
-                    },
-                    {
-                        "label": "new_fee_bps",
-                        "type": {
-                            "displayName": [
-                                "Option"
-                            ],
-                            "type": 10
-                        }
-                    }
-                ],
-                "docs": [
-                    "Update curve parameters. Owner or manager."
-                ],
-                "label": "update_curve_parameters",
-                "mutates": true,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "Result"
-                    ],
-                    "type": 6
-                },
-                "selector": "0xc2345678"
-            },
-            {
-                "args": [
-                    {
-                        "label": "amount_in",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    },
-                    {
-                        "label": "is_buy",
-                        "type": {
-                            "displayName": [
-                                "bool"
-                            ],
-                            "type": 4
-                        }
-                    }
-                ],
-                "docs": [
-                    "Execute an asymmetric swap."
-                ],
-                "label": "asymmetric_swap",
-                "mutates": true,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "Result"
-                    ],
-                    "type": 11
-                },
-                "selector": "0xd3456789"
-            },
-            {
-                "args": [
-                    {
-                        "label": "amount_in",
-                        "type": {
-                            "displayName": [
-                                "u128"
-                            ],
-                            "type": 2
-                        }
-                    },
-                    {
-                        "label": "is_buy",
-                        "type": {
-                            "displayName": [
-                                "bool"
-                            ],
-                            "type": 4
-                        }
-                    }
-                ],
-                "docs": [
-                    "Query available liquidity for a given input."
-                ],
-                "label": "get_quote",
-                "mutates": false,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "u128"
-                    ],
-                    "type": 2
-                },
-                "selector": "0xe4567890"
-            },
-            {
-                "args": [],
-                "docs": [
-                    "Get buy curve state."
-                ],
-                "label": "get_buy_curve",
-                "mutates": false,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "CurveSide"
-                    ],
-                    "type": 12
-                },
-                "selector": "0xf5678901"
-            },
-            {
-                "args": [],
-                "docs": [
-                    "Get sell curve state."
-                ],
-                "label": "get_sell_curve",
-                "mutates": false,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "CurveSide"
-                    ],
-                    "type": 12
-                },
-                "selector": "0x06789012"
-            },
-            {
-                "args": [],
-                "docs": [
-                    "Get the owner address."
-                ],
-                "label": "get_owner",
-                "mutates": false,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "AccountId"
-                    ],
-                    "type": 0
-                },
-                "selector": "0x17890123"
-            },
-            {
-                "args": [],
-                "docs": [
-                    "Get manager (if set)."
-                ],
-                "label": "get_manager",
-                "mutates": false,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "Option"
-                    ],
-                    "type": 5
-                },
-                "selector": "0x28901234"
-            },
-            {
-                "args": [],
-                "docs": [
-                    "Get current guardrails."
-                ],
-                "label": "get_guardrails",
-                "mutates": false,
-                "payable": false,
-                "returnType": {
-                    "displayName": [
-                        "Guardrails"
-                    ],
-                    "type": 7
-                },
-                "selector": "0x39012345"
-            }
-        ]
-    },
-    "storage": {
-        "struct": {
-            "fields": [
-                {
-                    "layout": {
-                        "leaf": {
-                            "key": "0x00000001",
-                            "ty": 0
-                        }
-                    },
-                    "name": "owner"
-                },
-                {
-                    "layout": {
-                        "leaf": {
-                            "key": "0x00000002",
-                            "ty": 5
-                        }
-                    },
-                    "name": "manager"
-                },
-                {
-                    "layout": {
-                        "leaf": {
-                            "key": "0x00000003",
-                            "ty": 7
-                        }
-                    },
-                    "name": "guardrails"
-                },
-                {
-                    "layout": {
-                        "leaf": {
-                            "key": "0x00000004",
-                            "ty": 12
-                        }
-                    },
-                    "name": "buy_curve"
-                },
-                {
-                    "layout": {
-                        "leaf": {
-                            "key": "0x00000005",
-                            "ty": 12
-                        }
-                    },
-                    "name": "sell_curve"
-                },
-                {
-                    "layout": {
-                        "leaf": {
-                            "key": "0x00000006",
-                            "ty": 0
-                        }
-                    },
-                    "name": "base_token"
-                },
-                {
-                    "layout": {
-                        "leaf": {
-                            "key": "0x00000007",
-                            "ty": 0
-                        }
-                    },
-                    "name": "quote_token"
-                }
-            ]
-        }
-    },
-    "types": [
-        {
-            "id": 0,
+        "docs": [],
+        "label": "CurveParametersUpdated"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "new_manager",
             "type": {
-                "def": {
-                    "composite": {
-                        "fields": [
-                            {
-                                "type": 13,
-                                "typeName": "[u8; 32]"
-                            }
-                        ]
-                    }
-                },
-                "path": [
-                    "ink_primitives",
-                    "types",
-                    "AccountId"
-                ]
+              "displayName": [
+                "Option"
+              ],
+              "type": 12
             }
-        },
-        {
-            "id": 1,
+          }
+        ],
+        "docs": [],
+        "label": "ManagerSet"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "owner",
             "type": {
-                "def": {
-                    "primitive": "u8"
-                }
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
             }
-        },
-        {
-            "id": 2,
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "buy_k",
             "type": {
-                "def": {
-                    "primitive": "u128"
-                }
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
             }
-        },
-        {
-            "id": 3,
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "sell_k",
             "type": {
-                "def": {
-                    "primitive": "u16"
-                }
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
             }
-        },
-        {
-            "id": 4,
-            "type": {
-                "def": {
-                    "primitive": "bool"
-                }
-            }
-        },
-        {
-            "id": 5,
-            "type": {
-                "def": {
-                    "variant": {
-                        "variants": [
-                            {
-                                "fields": [],
-                                "index": 0,
-                                "name": "None"
-                            },
-                            {
-                                "fields": [
-                                    {
-                                        "type": 0
-                                    }
-                                ],
-                                "index": 1,
-                                "name": "Some"
-                            }
-                        ]
-                    }
-                },
-                "params": [
-                    {
-                        "name": "T",
-                        "type": 0
-                    }
-                ],
-                "path": [
-                    "Option"
-                ]
-            }
-        },
-        {
-            "id": 6,
-            "type": {
-                "def": {
-                    "variant": {
-                        "variants": [
-                            {
-                                "fields": [],
-                                "index": 0,
-                                "name": "Ok"
-                            },
-                            {
-                                "fields": [
-                                    {
-                                        "type": 14
-                                    }
-                                ],
-                                "index": 1,
-                                "name": "Err"
-                            }
-                        ]
-                    }
-                },
-                "params": [
-                    {
-                        "name": "T",
-                        "type": 15
-                    },
-                    {
-                        "name": "E",
-                        "type": 14
-                    }
-                ],
-                "path": [
-                    "Result"
-                ]
-            }
-        },
-        {
-            "id": 7,
-            "type": {
-                "def": {
-                    "composite": {
-                        "fields": [
-                            {
-                                "name": "gamma_min",
-                                "type": 1
-                            },
-                            {
-                                "name": "gamma_max",
-                                "type": 1
-                            },
-                            {
-                                "name": "can_change_capacity",
-                                "type": 4
-                            }
-                        ]
-                    }
-                },
-                "path": [
-                    "asymmetric_pair",
-                    "asymmetric_pair",
-                    "Guardrails"
-                ]
-            }
-        },
-        {
-            "id": 8,
-            "type": {
-                "def": {
-                    "variant": {
-                        "variants": [
-                            {
-                                "index": 0,
-                                "name": "None"
-                            },
-                            {
-                                "fields": [
-                                    {
-                                        "type": 1
-                                    }
-                                ],
-                                "index": 1,
-                                "name": "Some"
-                            }
-                        ]
-                    }
-                },
-                "params": [
-                    {
-                        "name": "T",
-                        "type": 1
-                    }
-                ],
-                "path": [
-                    "Option"
-                ]
-            }
-        },
-        {
-            "id": 9,
-            "type": {
-                "def": {
-                    "variant": {
-                        "variants": [
-                            {
-                                "index": 0,
-                                "name": "None"
-                            },
-                            {
-                                "fields": [
-                                    {
-                                        "type": 2
-                                    }
-                                ],
-                                "index": 1,
-                                "name": "Some"
-                            }
-                        ]
-                    }
-                },
-                "params": [
-                    {
-                        "name": "T",
-                        "type": 2
-                    }
-                ],
-                "path": [
-                    "Option"
-                ]
-            }
-        },
-        {
-            "id": 10,
-            "type": {
-                "def": {
-                    "variant": {
-                        "variants": [
-                            {
-                                "index": 0,
-                                "name": "None"
-                            },
-                            {
-                                "fields": [
-                                    {
-                                        "type": 3
-                                    }
-                                ],
-                                "index": 1,
-                                "name": "Some"
-                            }
-                        ]
-                    }
-                },
-                "params": [
-                    {
-                        "name": "T",
-                        "type": 3
-                    }
-                ],
-                "path": [
-                    "Option"
-                ]
-            }
-        },
-        {
-            "id": 11,
-            "type": {
-                "def": {
-                    "variant": {
-                        "variants": [
-                            {
-                                "fields": [
-                                    {
-                                        "type": 2
-                                    }
-                                ],
-                                "index": 0,
-                                "name": "Ok"
-                            },
-                            {
-                                "fields": [
-                                    {
-                                        "type": 14
-                                    }
-                                ],
-                                "index": 1,
-                                "name": "Err"
-                            }
-                        ]
-                    }
-                },
-                "params": [
-                    {
-                        "name": "T",
-                        "type": 2
-                    },
-                    {
-                        "name": "E",
-                        "type": 14
-                    }
-                ],
-                "path": [
-                    "Result"
-                ]
-            }
-        },
-        {
-            "id": 12,
-            "type": {
-                "def": {
-                    "composite": {
-                        "fields": [
-                            {
-                                "name": "k",
-                                "type": 2
-                            },
-                            {
-                                "name": "gamma",
-                                "type": 1
-                            },
-                            {
-                                "name": "max_capacity_x0",
-                                "type": 2
-                            },
-                            {
-                                "name": "fee_bps",
-                                "type": 3
-                            },
-                            {
-                                "name": "current_volume",
-                                "type": 2
-                            }
-                        ]
-                    }
-                },
-                "path": [
-                    "asymmetric_pair",
-                    "asymmetric_pair",
-                    "CurveSide"
-                ]
-            }
-        },
-        {
-            "id": 13,
-            "type": {
-                "def": {
-                    "array": {
-                        "len": 32,
-                        "type": 1
-                    }
-                }
-            }
-        },
-        {
-            "id": 14,
-            "type": {
-                "def": {
-                    "variant": {
-                        "variants": [
-                            {
-                                "index": 0,
-                                "name": "Unauthorized"
-                            },
-                            {
-                                "index": 1,
-                                "name": "InsufficientLiquidity"
-                            },
-                            {
-                                "index": 2,
-                                "name": "ExceedsCapacity"
-                            },
-                            {
-                                "index": 3,
-                                "name": "InvalidGamma"
-                            },
-                            {
-                                "index": 4,
-                                "name": "InvalidFee"
-                            },
-                            {
-                                "index": 5,
-                                "name": "InvalidCapacity"
-                            },
-                            {
-                                "index": 6,
-                                "name": "ArithmeticOverflow"
-                            },
-                            {
-                                "index": 7,
-                                "name": "ZeroAmount"
-                            },
-                            {
-                                "index": 8,
-                                "name": "ManagerNotSet"
-                            },
-                            {
-                                "index": 9,
-                                "name": "GuardrailViolation"
-                            }
-                        ]
-                    }
-                },
-                "path": [
-                    "asymmetric_pair",
-                    "asymmetric_pair",
-                    "Error"
-                ]
-            }
-        },
-        {
-            "id": 15,
-            "type": {
-                "def": {
-                    "tuple": []
-                }
-            }
-        }
+          }
+        ],
+        "docs": [],
+        "label": "LiquidityDeployed"
+      }
     ],
-    "version": "4"
+    "lang_error": {
+      "displayName": [
+        "ink",
+        "LangError"
+      ],
+      "type": 8
+    },
+    "messages": [
+      {
+        "args": [
+          {
+            "label": "buy_k",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "sell_k",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Deploy initial liquidity. Only callable by owner."
+        ],
+        "label": "deploy_liquidity",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 9
+        },
+        "selector": "0x08ed1da5"
+      },
+      {
+        "args": [
+          {
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Withdraw liquidity. Only callable by owner."
+        ],
+        "label": "withdraw",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 9
+        },
+        "selector": "0x410fcc9d"
+      },
+      {
+        "args": [
+          {
+            "label": "new_manager",
+            "type": {
+              "displayName": [
+                "Option"
+              ],
+              "type": 12
+            }
+          },
+          {
+            "label": "guardrails",
+            "type": {
+              "displayName": [
+                "Guardrails"
+              ],
+              "type": 13
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Assign (or remove) the manager role. Owner only."
+        ],
+        "label": "set_manager",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 9
+        },
+        "selector": "0x2c7dd747"
+      },
+      {
+        "args": [
+          {
+            "label": "is_buy",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          },
+          {
+            "label": "new_gamma",
+            "type": {
+              "displayName": [
+                "Option"
+              ],
+              "type": 14
+            }
+          },
+          {
+            "label": "new_max_capacity",
+            "type": {
+              "displayName": [
+                "Option"
+              ],
+              "type": 15
+            }
+          },
+          {
+            "label": "new_fee_bps",
+            "type": {
+              "displayName": [
+                "Option"
+              ],
+              "type": 16
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Update curve parameters. Callable by owner or manager (within guardrails)."
+        ],
+        "label": "update_curve_parameters",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 9
+        },
+        "selector": "0xcf5b43ec"
+      },
+      {
+        "args": [
+          {
+            "label": "amount_in",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "is_buy",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Execute an asymmetric swap against the curve.",
+          "",
+          " `is_buy = true`  → caller sends quote token, receives base token",
+          " `is_buy = false` → caller sends base token, receives quote token",
+          "",
+          " Returns the amount of liquidity available (output) for `amount_in`."
+        ],
+        "label": "asymmetric_swap",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0xd3689f1a"
+      },
+      {
+        "args": [
+          {
+            "label": "amount_in",
+            "type": {
+              "displayName": [
+                "u128"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "is_buy",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Query the available liquidity for a given input amount without executing."
+        ],
+        "label": "get_quote",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 19
+        },
+        "selector": "0x7d7bb155"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get the current buy curve state."
+        ],
+        "label": "get_buy_curve",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0xc3cc45c5"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get the current sell curve state."
+        ],
+        "label": "get_sell_curve",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0x6ed06024"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get the owner address."
+        ],
+        "label": "get_owner",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 22
+        },
+        "selector": "0x07fcd0b1"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get the manager address (if set)."
+        ],
+        "label": "get_manager",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 23
+        },
+        "selector": "0x8ca03dc4"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get current guardrails."
+        ],
+        "label": "get_guardrails",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 24
+        },
+        "selector": "0x3626f2db"
+      }
+    ]
+  },
+  "storage": {
+    "root": {
+      "layout": {
+        "struct": {
+          "fields": [
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "owner"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x00000000",
+                              "ty": 0
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "manager"
+            },
+            {
+              "layout": {
+                "struct": {
+                  "fields": [
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 2
+                        }
+                      },
+                      "name": "gamma_min"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 2
+                        }
+                      },
+                      "name": "gamma_max"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 3
+                        }
+                      },
+                      "name": "can_change_capacity"
+                    }
+                  ],
+                  "name": "Guardrails"
+                }
+              },
+              "name": "guardrails"
+            },
+            {
+              "layout": {
+                "struct": {
+                  "fields": [
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 4
+                        }
+                      },
+                      "name": "k"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 2
+                        }
+                      },
+                      "name": "gamma"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 4
+                        }
+                      },
+                      "name": "max_capacity_x0"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 5
+                        }
+                      },
+                      "name": "fee_bps"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 4
+                        }
+                      },
+                      "name": "current_volume"
+                    }
+                  ],
+                  "name": "CurveSide"
+                }
+              },
+              "name": "buy_curve"
+            },
+            {
+              "layout": {
+                "struct": {
+                  "fields": [
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 4
+                        }
+                      },
+                      "name": "k"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 2
+                        }
+                      },
+                      "name": "gamma"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 4
+                        }
+                      },
+                      "name": "max_capacity_x0"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 5
+                        }
+                      },
+                      "name": "fee_bps"
+                    },
+                    {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x00000000",
+                          "ty": 4
+                        }
+                      },
+                      "name": "current_volume"
+                    }
+                  ],
+                  "name": "CurveSide"
+                }
+              },
+              "name": "sell_curve"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "base_token"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "quote_token"
+            }
+          ],
+          "name": "AsymmetricPair"
+        }
+      },
+      "root_key": "0x00000000"
+    }
+  },
+  "types": [
+    {
+      "id": 0,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "AccountId"
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "type": {
+        "def": {
+          "array": {
+            "len": 32,
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": {
+        "def": {
+          "primitive": "u8"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": {
+        "def": {
+          "primitive": "bool"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": {
+        "def": {
+          "primitive": "u128"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": {
+        "def": {
+          "primitive": "u16"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 7
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 7
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "type": {
+        "def": {
+          "tuple": []
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 1,
+                "name": "CouldNotReadInput"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "LangError"
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 10
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 7
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 7
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "Unauthorized"
+              },
+              {
+                "index": 1,
+                "name": "InsufficientLiquidity"
+              },
+              {
+                "index": 2,
+                "name": "ExceedsCapacity"
+              },
+              {
+                "index": 3,
+                "name": "InvalidGamma"
+              },
+              {
+                "index": 4,
+                "name": "InvalidFee"
+              },
+              {
+                "index": 5,
+                "name": "InvalidCapacity"
+              },
+              {
+                "index": 6,
+                "name": "ArithmeticOverflow"
+              },
+              {
+                "index": 7,
+                "name": "ZeroAmount"
+              },
+              {
+                "index": 8,
+                "name": "ManagerNotSet"
+              },
+              {
+                "index": 9,
+                "name": "GuardrailViolation"
+              }
+            ]
+          }
+        },
+        "path": [
+          "asymmetric_pair",
+          "asymmetric_pair",
+          "Error"
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "name": "gamma_min",
+                "type": 2,
+                "typeName": "u8"
+              },
+              {
+                "name": "gamma_max",
+                "type": 2,
+                "typeName": "u8"
+              },
+              {
+                "name": "can_change_capacity",
+                "type": 3,
+                "typeName": "bool"
+              }
+            ]
+          }
+        },
+        "path": [
+          "asymmetric_pair",
+          "asymmetric_pair",
+          "Guardrails"
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 2
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 2
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 15,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 16,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 5
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 5
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 18
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 18
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 20,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 21
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 21
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "name": "k",
+                "type": 4,
+                "typeName": "u128"
+              },
+              {
+                "name": "gamma",
+                "type": 2,
+                "typeName": "u8"
+              },
+              {
+                "name": "max_capacity_x0",
+                "type": 4,
+                "typeName": "u128"
+              },
+              {
+                "name": "fee_bps",
+                "type": 5,
+                "typeName": "u16"
+              },
+              {
+                "name": "current_volume",
+                "type": 4,
+                "typeName": "u128"
+              }
+            ]
+          }
+        },
+        "path": [
+          "asymmetric_pair",
+          "asymmetric_pair",
+          "CurveSide"
+        ]
+      }
+    },
+    {
+      "id": 22,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 12
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 12
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 13
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "Hash"
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "type": {
+        "def": {
+          "primitive": "u64"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": {
+        "def": {
+          "primitive": "u32"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": {
+        "def": {
+          "variant": {}
+        },
+        "path": [
+          "ink_env",
+          "types",
+          "NoChainExtension"
+        ]
+      }
+    }
+  ],
+  "version": "4"
 }

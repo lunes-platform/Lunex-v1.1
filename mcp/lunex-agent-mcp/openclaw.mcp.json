@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "lunex-spot-social-copytrade": {
+      "command": "node",
+      "args": [
+        "/Users/lucas/Documents/Projetos_DEV/Lunex/mcp/lunex-agent-mcp/dist/index.js"
+      ],
+      "env": {
+        "LUNEX_SPOT_API_URL": "http://127.0.0.1:4010",
+        "LUNEX_LEADER_API_KEY": ""
+      }
+    }
+  }
+}

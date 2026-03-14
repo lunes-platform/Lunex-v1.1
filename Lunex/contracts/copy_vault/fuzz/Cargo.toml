@@ -1,0 +1,25 @@
+[package]
+name = "copy-vault-fuzz"
+version = "0.1.0"
+authors = ["Lunex DEX Protocol"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+copy_vault = { path = "..", features = ["std"] }
+ink = { version = "4.3", default-features = false, features = ["std"] }
+scale = { package = "parity-scale-codec", version = "3", features = ["derive"] }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_vault"
+path = "fuzz_targets/fuzz_vault.rs"
+test = false
+doc = false

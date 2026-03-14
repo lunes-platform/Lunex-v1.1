@@ -587,7 +587,7 @@ cp .env.example .env.local
 # Edite: DATABASE_URL (mesmo do spot-api), NEXTAUTH_SECRET, NEXTAUTH_URL
 
 # Criar primeiro usuário admin
-npx tsx scripts/create-admin.ts --email admin@lunex.io --name "Admin" --password "SenhaForte123!"
+ADMIN_EMAIL=admin@lunex.io ADMIN_NAME="Admin" ADMIN_PASSWORD="SenhaForte123!" npx tsx scripts/create-admin.ts
 
 # Iniciar
 npm run dev

@@ -1,0 +1,26 @@
+[package]
+name = "asymmetric-pair-fuzz"
+version = "0.1.0"
+authors = ["Lunex DEX Protocol"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+asymmetric_pair = { path = "..", features = ["std"] }
+ink = { version = "4.3", default-features = false, features = ["std"] }
+scale = { package = "parity-scale-codec", version = "3", features = ["derive"] }
+substrate-fixed = { version = "0.5", features = ["std"] }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "invariant_math"
+path = "fuzz_targets/invariant_math.rs"
+test = false
+doc = false

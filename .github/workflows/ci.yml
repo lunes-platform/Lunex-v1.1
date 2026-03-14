@@ -1,0 +1,431 @@
+name: Lunex CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  RUST_TOOLCHAIN: stable
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1 — Validate TypeScript projects (lint + typecheck)
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  validate:
+    name: Validate (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: spot-api
+            dir: spot-api
+          - project: frontend
+            dir: lunes-dex-main
+          - project: sdk
+            dir: sdk
+          - project: mcp
+            dir: mcp/lunex-agent-mcp
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ matrix.dir }}
+
+      - name: Type-check
+        run: npx tsc --noEmit
+        working-directory: ${{ matrix.dir }}
+
+      - name: Lint
+        run: npm run lint --if-present
+        working-directory: ${{ matrix.dir }}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 2 — Build all TypeScript projects
+# ─────────────────────────────────────────────────────────────────────────────
+  build-ts:
+    name: Build (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: spot-api
+            dir: spot-api
+            build_cmd: npm run build
+          - project: frontend
+            dir: lunes-dex-main
+            build_cmd: npm run build
+            env_ci: "true"
+          - project: sdk
+            dir: sdk
+            build_cmd: npm run build
+          - project: mcp
+            dir: mcp/lunex-agent-mcp
+            build_cmd: npx tsc -p tsconfig.json
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: ${{ matrix.dir }}
+
+      - name: Build
+        run: ${{ matrix.build_cmd }}
+        working-directory: ${{ matrix.dir }}
+        env:
+          CI: ${{ matrix.env_ci || 'false' }}
+          GENERATE_SOURCEMAP: "false"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.project }}
+          path: |
+            ${{ matrix.dir }}/dist
+            ${{ matrix.dir }}/build
+          retention-days: 7
+          if-no-files-found: ignore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3 — Run unit tests (spot-api)
+# ─────────────────────────────────────────────────────────────────────────────
+  test-api:
+    name: Unit Tests (spot-api)
+    runs-on: ubuntu-latest
+    needs: validate
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: lunex_test
+          POSTGRES_USER: lunex
+          POSTGRES_PASSWORD: lunex_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lunex -d lunex_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: spot-api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: spot-api
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: spot-api
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://lunex:lunex_test@localhost:5432/lunex_test?schema=public
+
+      - name: Run unit tests
+        run: npx jest --testPathIgnorePatterns="e2e" --forceExit --no-coverage --ci
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://lunex:lunex_test@localhost:5432/lunex_test?schema=public
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
+          JWT_SECRET: ci-test-secret
+          RELAYER_SEED: "//Alice"
+          LUNES_WS_URL: ws://localhost:9944
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-api
+          path: spot-api/coverage
+          retention-days: 7
+          if-no-files-found: ignore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 4 — SubQuery validation (codegen + build)
+# ─────────────────────────────────────────────────────────────────────────────
+  validate-subquery:
+    name: SubQuery Validation
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: subquery-node/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: subquery-node
+
+      - name: SubQuery codegen
+        run: npx subql codegen
+        working-directory: subquery-node
+
+      - name: SubQuery build
+        run: npx subql build
+        working-directory: subquery-node
+
+      - name: Upload SubQuery dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-subquery
+          path: subquery-node/dist
+          retention-days: 7
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 5 — ink! smart contract compilation
+# ─────────────────────────────────────────────────────────────────────────────
+  build-contracts:
+    name: Contracts (${{ matrix.contract }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Lunex core contracts (Lunex/contracts/)
+          - contract: router
+            dir: Lunex/contracts/router
+          - contract: pair
+            dir: Lunex/contracts/pair
+          - contract: factory
+            dir: Lunex/contracts/factory
+          - contract: copy_vault
+            dir: Lunex/contracts/copy_vault
+          - contract: staking
+            dir: Lunex/contracts/staking
+          - contract: spot_settlement
+            dir: Lunex/contracts/spot_settlement
+          - contract: asymmetric_pair
+            dir: Lunex/contracts/asymmetric_pair
+          # Listing contracts (contracts/)
+          - contract: listing_manager
+            dir: contracts/listing_manager
+          - contract: liquidity_lock
+            dir: contracts/liquidity_lock
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.dir }}
+
+      - name: Install cargo-contract
+        run: cargo install cargo-contract --version "^4" --locked --force
+
+      - name: Compile contract — ${{ matrix.contract }}
+        run: cargo contract build --release
+        working-directory: ${{ matrix.dir }}
+
+      - name: Upload contract artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-${{ matrix.contract }}
+          path: ${{ matrix.dir }}/target/ink/
+          retention-days: 30
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 6 — Rust unit tests
+# ─────────────────────────────────────────────────────────────────────────────
+  test-contracts:
+    name: Contract Tests
+    runs-on: ubuntu-latest
+    needs: []
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Rust tests (workspace)
+        run: cargo test --workspace --exclude fuzz 2>&1
+        working-directory: /home/runner/work/Lunex/Lunex
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 7 — Integration smoke test (API health check)
+# ─────────────────────────────────────────────────────────────────────────────
+  smoke-test:
+    name: API Smoke Test
+    runs-on: ubuntu-latest
+    needs: [build-ts, test-api]
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: lunex_smoke
+          POSTGRES_USER: lunex
+          POSTGRES_PASSWORD: lunex_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lunex -d lunex_smoke"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: spot-api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: spot-api
+
+      - name: Generate Prisma client & migrate
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://lunex:lunex_smoke@localhost:5432/lunex_smoke?schema=public
+
+      - name: Start API in background
+        run: node dist/index.js &
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://lunex:lunex_smoke@localhost:5432/lunex_smoke?schema=public
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: production
+          PORT: "4000"
+          JWT_SECRET: ci-smoke-secret
+          RELAYER_SEED: "//Alice"
+          LUNES_WS_URL: ws://localhost:9944
+
+      - name: Wait for API to be ready
+        run: |
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:4000/health > /dev/null 2>&1; then
+              echo "API is up"
+              exit 0
+            fi
+            echo "Waiting... ($i/20)"
+            sleep 3
+          done
+          echo "API failed to start" && exit 1
+
+      - name: Smoke — GET /health
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" http://localhost:4000/health)
+          [ "$STATUS" = "200" ] || (echo "health check failed: $STATUS" && exit 1)
+
+      - name: Smoke — GET /api/v1/strategies/marketplace
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:4000/api/v1/strategies/marketplace")
+          [ "$STATUS" = "200" ] || (echo "marketplace check failed: $STATUS" && exit 1)
+
+      - name: Smoke — GET /api/v1/strategies
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:4000/api/v1/strategies")
+          [ "$STATUS" = "200" ] || (echo "strategies check failed: $STATUS" && exit 1)
+
+      - name: Smoke — GET /api/v1/pairs
+        run: |
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:4000/api/v1/pairs")
+          [ "$STATUS" = "200" ] || (echo "pairs check failed: $STATUS" && exit 1)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 8 — CI Status summary (gate for RC)
+# ─────────────────────────────────────────────────────────────────────────────
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [build-ts, test-api, validate-subquery, smoke-test]
+    if: always()
+
+    steps:
+      - name: Check all required jobs passed
+        run: |
+          echo "build-ts:          ${{ needs.build-ts.result }}"
+          echo "test-api:          ${{ needs.test-api.result }}"
+          echo "validate-subquery: ${{ needs.validate-subquery.result }}"
+          echo "smoke-test:        ${{ needs.smoke-test.result }}"
+
+          if [[ "${{ needs.build-ts.result }}"          != "success" ]] ||
+             [[ "${{ needs.test-api.result }}"          != "success" ]] ||
+             [[ "${{ needs.validate-subquery.result }}" != "success" ]] ||
+             [[ "${{ needs.smoke-test.result }}"        != "success" ]]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
+          echo "All required jobs passed — platform is stable."
