@@ -47,8 +47,8 @@ const ConnectWallet = ({
           return (
             <S.Network
               key={item.id}
-              title={item.shorty}
-              onClick={connectNetwork}
+              title={item.network}
+              onClick={() => connectNetwork()}
               disabled={item.disabled}
               status={item.id == 0 ? 'tertiary' : 'default'}
             >
@@ -70,7 +70,7 @@ const ConnectWallet = ({
           return (
             <S.Network
               key={item.id}
-              title={item.shorty}
+              title={item.wallet}
               onClick={() => {
                 if (isInstalled || item.source === 'polkadot-js') {
                   connectWallet(item.source)
@@ -85,7 +85,7 @@ const ConnectWallet = ({
               {item.wallet}
               <strong>
                 {item.disabled
-                  ? item.shorty
+                  ? '(coming soon)'
                   : isInstalled || item.source === 'polkadot-js'
                     ? ''
                     : '(install)'}
