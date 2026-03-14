@@ -2,12 +2,12 @@
 # yarn lockfile v1
 
 
-"@727-ventures/typechain-compiler@0.5.10":
-  version "0.5.10"
-  resolved "https://registry.yarnpkg.com/@727-ventures/typechain-compiler/-/typechain-compiler-0.5.10.tgz#fdf35421bf1546368bae37d6cfaea48f3a941ddd"
-  integrity sha512-AxcsDh43TS+OpviBEgG/opkFHQwTBQQV/+lPGHL7jcXO+/m6qUNMjj/MUDb/N+vD9zEcboj6UwV903TmfeETlA==
+"@727-ventures/typechain-compiler@1.1.4":
+  version "1.1.4"
+  resolved "https://registry.yarnpkg.com/@727-ventures/typechain-compiler/-/typechain-compiler-1.1.4.tgz#84daedc52ca59c8b29438e4c38ea9c85c4ad587d"
+  integrity sha512-ZcuWvM27Qj4O4skdaGCSNGmUBbaCUOjd90gRxCBwW8no+kDYTy3PknfMoqjHZMfIbKHgShfdOcyIOe6D5H+gGg==
   dependencies:
-    "@727-ventures/typechain-polkadot" "0.6.7"
+    "@727-ventures/typechain-polkadot" "^1.1.1"
     "@types/consola" "^2.2.5"
     "@types/yargs" "^17.0.10"
     chalk "^4.1.0"
@@ -18,33 +18,33 @@
     ts-node "^10.9.1"
     yargs "^17.5.1"
 
-"@727-ventures/typechain-polkadot-parser@0.3.5":
-  version "0.3.5"
-  resolved "https://registry.yarnpkg.com/@727-ventures/typechain-polkadot-parser/-/typechain-polkadot-parser-0.3.5.tgz#e0e2d70465fb1ed9a2fa1b5af6b93abb59b0b3a2"
-  integrity sha512-nDZ+D3hxiwdxrnUEymg7QvRrrLutMMAA7Uyubiie98yZrbOQvf64WkoE9P3Osq2yN04MQY18CfCfsQPc88K+tA==
+"@727-ventures/typechain-polkadot-parser@1.0.2":
+  version "1.0.2"
+  resolved "https://registry.yarnpkg.com/@727-ventures/typechain-polkadot-parser/-/typechain-polkadot-parser-1.0.2.tgz#cb1b72e6eacc23a902dd92f773226aa6fb78e596"
+  integrity sha512-JNMOaGT+YO+IRwIJSXy73KnsdWtVuO8riTRSUAa581PxcX908WeQJcRtRBr8wKB+Ykmuat7RYXNIrG1isR5sYQ==
   dependencies:
-    "@polkadot/api" "^9.10.3"
-    "@polkadot/api-contract" "^9.10.3"
+    "@polkadot/api" "^10.8.1"
+    "@polkadot/api-contract" "^10.8.1"
     "@types/bn.js" "^5.1.0"
     "@types/node" "^18.0.3"
     camelcase "^6.3.0"
     typescript "^4.7.4"
 
-"@727-ventures/typechain-polkadot@0.6.7":
-  version "0.6.7"
-  resolved "https://registry.yarnpkg.com/@727-ventures/typechain-polkadot/-/typechain-polkadot-0.6.7.tgz#85cfe7c3b3e5c412226682d5b6ba3fd3b0cafc95"
-  integrity sha512-W2OhtaQvXxHwLvwaBTweiR0s8E5xVJQdiQHth2yiUIriko0P47SqEZf2ymv4IzW+pvt7ISGrOFh1Azt27kZoBA==
+"@727-ventures/typechain-polkadot@^1.1.1":
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/@727-ventures/typechain-polkadot/-/typechain-polkadot-1.1.1.tgz#89690ce0f2f2babd1a4379e16b5565c32ff69848"
+  integrity sha512-WJZzighowLV3kW/eLalOX8W/Xey/wsHpowtOSCJA3e9Mu+42V5QHmE5X0l3a21cxt58Zv/eJvjF9z1ebj3i8aA==
   dependencies:
-    "@727-ventures/typechain-polkadot-parser" "0.3.5"
-    "@polkadot/api" "^9.10.3"
-    "@polkadot/api-contract" "^9.10.3"
-    "@polkadot/keyring" "^10.2.1"
+    "@727-ventures/typechain-polkadot-parser" "1.0.2"
+    "@polkadot/api" "^10.8.1"
+    "@polkadot/api-contract" "^10.8.1"
+    "@polkadot/keyring" "^12.2.2"
     "@types/fs-extra" "^9.0.13"
-    "@types/node" "^17.0.34"
+    "@types/node" "^18.11.18"
     "@types/yargs" "^17.0.10"
     camelcase "^6.3.0"
     eslint "^8.18.0"
-    fs-extra "^10.1.0"
+    fs-extra "^9.1.0"
     handlebars "^4.7.7"
     prettier "^2.7.1"
     ts-node "^10.7.0"
@@ -828,6 +828,20 @@
     "@polkadot/util" "^10.4.2"
     rxjs "^7.8.0"
 
+"@polkadot/api-contract@^10.8.1", "@polkadot/api-contract@^9.10.3":
+  version "9.14.2"
+  resolved "https://registry.yarnpkg.com/@polkadot/api-contract/-/api-contract-9.14.2.tgz#42ca46eecd6cef64b6c453b452bdb5d22a29b6a3"
+  integrity sha512-gAAHEh+tOIKuAJWxbAuB8Imo+Z8s0FHdICN6/q4JOxBhONJNA9beHB4wmqWSKvYqYmWrJvtv3HensLaITzAcrQ==
+  dependencies:
+    "@babel/runtime" "^7.20.13"
+    "@polkadot/api" "9.14.2"
+    "@polkadot/types" "9.14.2"
+    "@polkadot/types-codec" "9.14.2"
+    "@polkadot/types-create" "9.14.2"
+    "@polkadot/util" "^10.4.2"
+    "@polkadot/util-crypto" "^10.4.2"
+    rxjs "^7.8.0"
+
 "@polkadot/api-contract@^10.9.1":
   version "10.13.1"
   resolved "https://registry.yarnpkg.com/@polkadot/api-contract/-/api-contract-10.13.1.tgz#78a418e014098caeda740a5b92655c6c1560d499"
@@ -842,20 +856,6 @@
     "@polkadot/util-crypto" "^12.6.2"
     rxjs "^7.8.1"
     tslib "^2.6.2"
-
-"@polkadot/api-contract@^9.10.3":
-  version "9.14.2"
-  resolved "https://registry.yarnpkg.com/@polkadot/api-contract/-/api-contract-9.14.2.tgz#42ca46eecd6cef64b6c453b452bdb5d22a29b6a3"
-  integrity sha512-gAAHEh+tOIKuAJWxbAuB8Imo+Z8s0FHdICN6/q4JOxBhONJNA9beHB4wmqWSKvYqYmWrJvtv3HensLaITzAcrQ==
-  dependencies:
-    "@babel/runtime" "^7.20.13"
-    "@polkadot/api" "9.14.2"
-    "@polkadot/types" "9.14.2"
-    "@polkadot/types-codec" "9.14.2"
-    "@polkadot/types-create" "9.14.2"
-    "@polkadot/util" "^10.4.2"
-    "@polkadot/util-crypto" "^10.4.2"
-    rxjs "^7.8.0"
 
 "@polkadot/api-derive@10.13.1":
   version "10.13.1"
@@ -889,7 +889,7 @@
     "@polkadot/util-crypto" "^10.4.2"
     rxjs "^7.8.0"
 
-"@polkadot/api@10.13.1", "@polkadot/api@9.14.2", "@polkadot/api@^9.10.3":
+"@polkadot/api@10.13.1", "@polkadot/api@9.14.2", "@polkadot/api@^10.8.1", "@polkadot/api@^9.10.3":
   version "9.14.2"
   resolved "https://registry.yarnpkg.com/@polkadot/api/-/api-9.14.2.tgz#d5cee02236654c6063d7c4b70c78c290db5aba8d"
   integrity sha512-R3eYFj2JgY1zRb+OCYQxNlJXCs2FA+AU4uIEiVcXnVLmR3M55tkRNEwYAZmiFxx0pQmegGgPMc33q7TWGdw24A==
@@ -935,7 +935,7 @@
     rxjs "^7.8.1"
     tslib "^2.6.2"
 
-"@polkadot/keyring@^10.2.1", "@polkadot/keyring@^10.4.2":
+"@polkadot/keyring@^10.4.2":
   version "10.4.2"
   resolved "https://registry.yarnpkg.com/@polkadot/keyring/-/keyring-10.4.2.tgz#793377fdb9076df0af771df11388faa6be03c70d"
   integrity sha512-7iHhJuXaHrRTG6cJDbZE9G+c1ts1dujp0qbO4RfAPmT7YUvphHvAtCKueN9UKPz5+TYDL+rP/jDEaSKU8jl/qQ==
@@ -944,7 +944,7 @@
     "@polkadot/util" "10.4.2"
     "@polkadot/util-crypto" "10.4.2"
 
-"@polkadot/keyring@^12.6.2":
+"@polkadot/keyring@^12.2.2", "@polkadot/keyring@^12.6.2":
   version "12.6.2"
   resolved "https://registry.yarnpkg.com/@polkadot/keyring/-/keyring-12.6.2.tgz#6067e6294fee23728b008ac116e7e9db05cecb9b"
   integrity sha512-O3Q7GVmRYm8q7HuB3S0+Yf/q/EB2egKRRU3fv9b3B7V+A52tKzA+vIwEmNVaD1g5FKW9oB97rmpggs0zaKFqHw==
@@ -1687,15 +1687,17 @@
   dependencies:
     undici-types "~7.10.0"
 
-"@types/node@^17.0.34":
-  version "17.0.45"
-  resolved "https://registry.yarnpkg.com/@types/node/-/node-17.0.45.tgz#2c0fafd78705e7a18b7906b5201a522719dc5190"
-  integrity sha512-w+tIMs3rq2afQdsPJlODhoUEKzFP1ayaoyl1CcnwtIlsVe7K7bA1NGm4s3PraqTLlXnbIN84zuBlxBWo1u9BLw==
-
 "@types/node@^18.0.3":
   version "18.19.121"
   resolved "https://registry.yarnpkg.com/@types/node/-/node-18.19.121.tgz#c50d353ea2d1fb1261a8bbd0bf2850306f5af2b3"
   integrity sha512-bHOrbyztmyYIi4f1R0s17QsPs1uyyYnGcXeZoGEd227oZjry0q6XQBQxd82X1I57zEfwO8h9Xo+Kl5gX1d9MwQ==
+  dependencies:
+    undici-types "~5.26.4"
+
+"@types/node@^18.11.18":
+  version "18.19.130"
+  resolved "https://registry.yarnpkg.com/@types/node/-/node-18.19.130.tgz#da4c6324793a79defb7a62cba3947ec5add00d59"
+  integrity sha512-GRaXQx6jGfL8sKfaIDD6OupbIHBr9jv7Jnaml9tB7l4v068PAOXqfcujMMo5PhbIs6ggR1XODELqahT2R8v0fg==
   dependencies:
     undici-types "~5.26.4"
 
@@ -3184,16 +3186,7 @@ formdata-polyfill@^4.0.10:
   dependencies:
     fetch-blob "^3.1.2"
 
-fs-extra@^10.1.0:
-  version "10.1.0"
-  resolved "https://registry.yarnpkg.com/fs-extra/-/fs-extra-10.1.0.tgz#02873cfbc4084dde127eaa5f9905eef2325d1abf"
-  integrity sha512-oRXApq54ETRj4eMiFzGnHWGy+zo5raudjuxN0b8H7s/RU2oW0Wvsx9O0ACRN/kRq9E8Vu/ReskGB5o3ji+FzHQ==
-  dependencies:
-    graceful-fs "^4.2.0"
-    jsonfile "^6.0.1"
-    universalify "^2.0.0"
-
-fs-extra@^9.0.0:
+fs-extra@^9.0.0, fs-extra@^9.1.0:
   version "9.1.0"
   resolved "https://registry.yarnpkg.com/fs-extra/-/fs-extra-9.1.0.tgz#5954460c764a8da2094ba3554bf839e6b9a7c86d"
   integrity sha512-hcg3ZmepS30/7BSFqRvoo3DOMQu7IjqxO5nCDt+zM9XWjb33Wg7ziNT+Qvqbuc3+gWpzO02JubVyk2G4Zvo1OQ==
