@@ -102,7 +102,7 @@ jobs:
           GENERATE_SOURCEMAP: "false"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-${{ matrix.project }}
           path: |
@@ -180,7 +180,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-api
           path: spot-api/coverage
@@ -217,7 +217,7 @@ jobs:
         working-directory: subquery-node
 
       - name: Upload SubQuery dist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-subquery
           path: subquery-node/dist
@@ -276,7 +276,7 @@ jobs:
         working-directory: ${{ matrix.dir }}
 
       - name: Upload contract artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contract-${{ matrix.contract }}
           path: ${{ matrix.dir }}/target/ink/

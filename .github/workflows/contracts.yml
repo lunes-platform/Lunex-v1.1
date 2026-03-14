@@ -112,7 +112,7 @@ jobs:
         working-directory: ${{ matrix.dir }}
 
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: contract-${{ matrix.contract }}
           path: ${{ matrix.dir }}/target/ink/
