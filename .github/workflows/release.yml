@@ -81,32 +81,32 @@ jobs:
 
       - name: Build spot-api
         run: |
-          npm ci
+          npm install
           npm run build
         working-directory: spot-api
 
       - name: Build SDK
         run: |
-          npm ci
+          npm install
           npm run build
         working-directory: sdk
 
       - name: Build MCP
         run: |
-          npm ci
+          npm install
           npx tsc -p tsconfig.json
         working-directory: mcp/lunex-agent-mcp
 
       - name: Build SubQuery
         run: |
-          npm ci
+          npm install
           npx subql codegen
           npx subql build
         working-directory: subquery-node
 
       - name: Build frontend
         run: |
-          npm ci
+          npm install
           npm run build
         working-directory: lunes-dex-main
         env:

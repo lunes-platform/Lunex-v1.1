@@ -51,20 +51,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: |
-            spot-api/package-lock.json
-            lunes-dex-main/package-lock.json
-            lunex-admin/package-lock.json
 
       - name: Audit spot-api
-        run: npm ci --prefix spot-api --ignore-scripts && npm audit --prefix spot-api --audit-level=high
+        run: npm install --prefix spot-api --ignore-scripts && npm audit --prefix spot-api --audit-level=high
 
       - name: Audit frontend
-        run: npm ci --prefix lunes-dex-main --ignore-scripts && npm audit --prefix lunes-dex-main --audit-level=high
+        run: npm install --prefix lunes-dex-main --ignore-scripts && npm audit --prefix lunes-dex-main --audit-level=high
 
       - name: Audit admin
-        run: npm ci --prefix lunex-admin --ignore-scripts && npm audit --prefix lunex-admin --audit-level=high
+        run: npm install --prefix lunex-admin --ignore-scripts && npm audit --prefix lunex-admin --audit-level=high
 
   # ── 2. Type Check + Lint ─────────────────────────────────────────────────────
   lint:
@@ -79,22 +74,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: spot-api/package-lock.json
 
       - name: Typecheck spot-api
         run: |
-          npm ci --prefix spot-api
+          npm install --prefix spot-api
           cd spot-api && npx tsc --noEmit
 
       - name: Typecheck frontend
         run: |
-          npm ci --prefix lunes-dex-main
+          npm install --prefix lunes-dex-main
           cd lunes-dex-main && npx tsc --noEmit || true
 
       - name: Typecheck admin
         run: |
-          npm ci --prefix lunex-admin
+          npm install --prefix lunex-admin
           cd lunex-admin && npx tsc --noEmit || true
 
   # ── 3. Backend Tests ──────────────────────────────────────────────────────────
@@ -135,11 +128,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: spot-api/package-lock.json
 
       - name: Install dependencies
-        run: npm ci --prefix spot-api
+        run: npm install --prefix spot-api
 
       - name: Run Prisma migrations
         run: cd spot-api && npx prisma migrate deploy

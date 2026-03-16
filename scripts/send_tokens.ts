@@ -8,7 +8,7 @@ import BN from 'bn.js'
 import * as fs from 'fs'
 import * as path from 'path'
 
-const WS_URL = 'ws://127.0.0.1:9944'
+const WS_URL = process.env.LUNES_WS_URL || 'wss://sandbox.lunes.io/ws'
 const RECIPIENT = '5HYVGHPrMmG6TKeczuTjhaGcRTkW8sMhWfppaFrTCAvKFfBb'
 
 // Load real PSP22 ABI
@@ -16,15 +16,27 @@ const PSP22_ABI = JSON.parse(
     fs.readFileSync(path.resolve(__dirname, '..', 'target/ink/psp22_token/psp22_token.json'), 'utf8')
 )
 
-// PSP22 tokens deployed on local testnet — generous amounts for deep testing
-const TOKENS: Record<string, { address: string; amount: string; decimals: number }> = {
+// PSP22 tokens — sandbox testnet addresses (from deployment/remaining-deploy-*.json)
+// Switch via LUNES_NETWORK=local to use local node addresses instead
+const TOKENS_SANDBOX: Record<string, { address: string; amount: string; decimals: number }> = {
     LUSDT:  { address: '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf', amount: '1000000',  decimals: 6 },  // 1M LUSDT
-    WLUNES: { address: '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo', amount: '5000000',  decimals: 8 },  // 5M WLUNES
+    WLUNES: { address: '5DqvK3iPYW3R7LK1DrS3bz5RFjxkk3ziBXmoyKTyigtFAnBL', amount: '5000000',  decimals: 8 },  // 5M WLUNES
     LBTC:   { address: '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg', amount: '50',        decimals: 8 },  // 50 LBTC
     LETH:   { address: '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS', amount: '500',       decimals: 8 },  // 500 LETH
     GMC:    { address: '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ', amount: '50000000', decimals: 8 },  // 50M GMC
     LUP:    { address: '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3', amount: '100000000',decimals: 8 },  // 100M LUP
 }
+
+const TOKENS_LOCAL: Record<string, { address: string; amount: string; decimals: number }> = {
+    LUSDT:  { address: '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf', amount: '1000000',  decimals: 6 },
+    WLUNES: { address: '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo', amount: '5000000',  decimals: 8 },
+    LBTC:   { address: '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg', amount: '50',        decimals: 8 },
+    LETH:   { address: '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS', amount: '500',       decimals: 8 },
+    GMC:    { address: '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ', amount: '50000000', decimals: 8 },
+    LUP:    { address: '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3', amount: '100000000',decimals: 8 },
+}
+
+const TOKENS = process.env.LUNES_NETWORK === 'local' ? TOKENS_LOCAL : TOKENS_SANDBOX
 
 async function main() {
     console.log('Connecting to local node...')

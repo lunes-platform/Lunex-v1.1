@@ -41,11 +41,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         working-directory: ${{ matrix.dir }}
 
       - name: Type-check
@@ -87,11 +85,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: ${{ matrix.dir }}/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         working-directory: ${{ matrix.dir }}
 
       - name: Build
@@ -150,11 +146,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: spot-api/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         working-directory: spot-api
 
       - name: Generate Prisma client
@@ -201,11 +195,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: subquery-node/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         working-directory: subquery-node
 
       - name: SubQuery codegen
@@ -345,11 +337,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: spot-api/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         working-directory: spot-api
 
       - name: Generate Prisma client & migrate

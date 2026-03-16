@@ -50,18 +50,19 @@ services:
       sandbox-redis:
         condition: service_healthy
     environment:
-      NODE_ENV: production
+      NODE_ENV: staging
       DATABASE_URL: postgresql://${SANDBOX_DB_USER:-lunex_sandbox}:${SANDBOX_DB_PASSWORD}@sandbox-postgres:5432/lunex_sandbox?schema=public
       PORT: 4010
       WS_PORT: 4011
       CORS_ALLOWED_ORIGINS: ${SANDBOX_CORS_ORIGINS:-https://lunex-sandbox.lunes.io}
       TRUST_PROXY: "true"
-      LUNES_WS_URL: ${SANDBOX_LUNES_WS_URL:-wss://ws-test.lunes.io}
+      LUNES_WS_URL: ${SANDBOX_LUNES_WS_URL:-wss://sandbox.lunes.io/ws}
       RELAYER_SEED: ${SANDBOX_RELAYER_SEED:?Set SANDBOX_RELAYER_SEED}
       REDIS_URL: redis://sandbox-redis:6379
       SOCIAL_ANALYTICS_ENABLED: "true"
+      ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET}
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4010/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4010/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -75,7 +76,7 @@ services:
       args:
         REACT_APP_NETWORK: testnet
         REACT_APP_SPOT_API_URL: ""
-        REACT_APP_RPC_MAINNET: ${SANDBOX_RPC_URL:-wss://ws-test.lunes.io}
+        REACT_APP_RPC_MAINNET: ${SANDBOX_RPC_URL:-wss://sandbox.lunes.io/ws}
         REACT_APP_FACTORY_CONTRACT: ${SANDBOX_FACTORY_CONTRACT:-}
         REACT_APP_ROUTER_CONTRACT: ${SANDBOX_ROUTER_CONTRACT:-}
         REACT_APP_STAKING_CONTRACT: ${SANDBOX_STAKING_CONTRACT:-}
@@ -129,12 +130,12 @@ services:
       FAUCET_PORT: 3333
       LUNES_WS_URL: ws://lunes-testnet-node:9944
       FAUCET_SEED: "//Alice"
-      FAUCET_DRIP_AMOUNT: "10000000000000"
+      FAUCET_DRIP_AMOUNT: "1000000000000"
       FAUCET_COOLDOWN_MINUTES: "300"
     volumes:
       - faucet-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3333/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3333/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5

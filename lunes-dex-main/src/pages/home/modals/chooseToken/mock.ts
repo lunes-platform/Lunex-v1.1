@@ -1,5 +1,4 @@
 const TOKEN_ADDRESSES = {
-  WLUNES: process.env.REACT_APP_TOKEN_WLUNES || '',
   LUSDT: process.env.REACT_APP_TOKEN_LUSDT || '',
   LBTC: process.env.REACT_APP_TOKEN_LBTC || '',
   LETH: process.env.REACT_APP_TOKEN_LETH || '',
@@ -31,15 +30,6 @@ const tokens: Token[] = [
   },
   {
     id: 1,
-    icon: '/img/wlunes.svg',
-    acronym: 'WLUNES',
-    token: 'Wrapped Lunes',
-    tokenPrice: '$ 0.00',
-    address: TOKEN_ADDRESSES.WLUNES,
-    decimals: 8
-  },
-  {
-    id: 2,
     icon: '/img/lusdt.svg',
     acronym: 'LUSDT',
     token: 'Lunes USD Tether',
@@ -48,7 +38,7 @@ const tokens: Token[] = [
     decimals: 6
   },
   {
-    id: 3,
+    id: 2,
     icon: '/img/lbtc.svg',
     acronym: 'LBTC',
     token: 'Lunes Bitcoin',
@@ -57,7 +47,7 @@ const tokens: Token[] = [
     decimals: 8
   },
   {
-    id: 4,
+    id: 3,
     icon: '/img/leth.svg',
     acronym: 'LETH',
     token: 'Lunes Ethereum',
@@ -66,7 +56,7 @@ const tokens: Token[] = [
     decimals: 8
   },
   {
-    id: 5,
+    id: 4,
     icon: '/img/gmc.svg',
     acronym: 'GMC',
     token: 'Game Coin',
@@ -75,7 +65,7 @@ const tokens: Token[] = [
     decimals: 8
   },
   {
-    id: 6,
+    id: 5,
     icon: '/img/up.svg',
     acronym: 'LUP',
     token: 'Lunes UP',

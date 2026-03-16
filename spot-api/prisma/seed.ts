@@ -70,7 +70,6 @@ async function main() {
   const LETH = process.env.LETH_ADDRESS || '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS'
   const GMC = process.env.GMC_ADDRESS || '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ'
   const LUP = process.env.LUP_ADDRESS || '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3'
-  const WLUNES = process.env.WLUNES_ADDRESS || '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo'
   const LEANDRO_SANDER_ADDRESS = process.env.LEADER_LEANDRO_SANDER_ADDRESS || '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'
   const AIALPHA_BOT_ADDRESS = process.env.LEADER_AIALPHA_BOT_ADDRESS || '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty'
   const OPENCLAW_AGENT_ADDRESS = process.env.LEADER_OPENCLAW_AGENT_ADDRESS || '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw'
@@ -161,19 +160,6 @@ async function main() {
       quoteToken: GMC,
       baseName: 'LUNES',
       quoteName: 'GMC',
-      baseDecimals: 8,
-      quoteDecimals: 8,
-      isNativeBase: true,
-      isNativeQuote: false,
-      makerFeeBps: 10,
-      takerFeeBps: 25,
-    },
-    {
-      symbol: 'LUNES/WLUNES',
-      baseToken: 'native',
-      quoteToken: WLUNES,
-      baseName: 'LUNES',
-      quoteName: 'WLUNES',
       baseDecimals: 8,
       quoteDecimals: 8,
       isNativeBase: true,
@@ -444,7 +430,6 @@ const PAIR_PRICE_CONFIG: Record<string, { basePrice: number; volatility: number;
   'LETH/LUSDT': { basePrice: 3580, volatility: 60, drift: 2 },
   'LUNES/LUP': { basePrice: 2.76, volatility: 0.15, drift: 0.001 },
   'LUNES/GMC': { basePrice: 0.151, volatility: 0.008, drift: 0.00005 },
-  'LUNES/WLUNES': { basePrice: 1.0, volatility: 0.005, drift: 0.0 },
 }
 
 async function seedCandles() {

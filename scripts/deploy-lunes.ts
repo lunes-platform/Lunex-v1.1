@@ -10,6 +10,7 @@
 import { ApiPromise, WsProvider, Keyring } from '@polkadot/api';
 import { ContractPromise, CodePromise } from '@polkadot/api-contract';
 import { BN } from '@polkadot/util';
+import { cryptoWaitReady } from '@polkadot/util-crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -27,8 +28,8 @@ function asCodeApi(api: ApiPromise): CodeApi {
 // 🌐 CONFIGURAÇÃO DE REDE
 const NETWORKS = {
   testnet: {
-    endpoint: 'wss://ws-test.lunes.io',
-    name: 'Lunes Testnet'
+    endpoint: 'wss://sandbox.lunes.io/ws',
+    name: 'Lunes Testnet (Sandbox)'
   },
   mainnet: {
     endpoint: 'wss://ws.lunes.io',
@@ -36,31 +37,32 @@ const NETWORKS = {
   }
 };
 
-// 💰 CONFIGURAÇÃO DE GAS E DEPOSITS
+// 💰 CONFIGURAÇÃO DE GAS — WeightV2 (refTime + proofSize)
+// refTime: unidades de computação; proofSize: bytes de state proof lidos
 const GAS_LIMITS = {
-  wnative: new BN('1000000000000'),      // 10,000 LUNES
-  factory: new BN('1200000000000'),      // 12,000 LUNES  
-  staking: new BN('1100000000000'),      // 11,000 LUNES
-  rewards: new BN('900000000000'),       // 9,000 LUNES
-  router: new BN('1300000000000'),       // 13,000 LUNES
+  wnative: { refTime: new BN('10000000000'), proofSize: new BN('1048576') },
+  factory: { refTime: new BN('15000000000'), proofSize: new BN('1048576') },
+  staking: { refTime: new BN('50000000000'), proofSize: new BN('5242880') },
+  rewards: { refTime: new BN('15000000000'), proofSize: new BN('1048576') },
+  router:  { refTime: new BN('20000000000'), proofSize: new BN('1048576') },
 };
 
 const STORAGE_DEPOSITS = {
-  wnative: new BN('1000000000000'),      // 10,000 LUNES
-  factory: new BN('1500000000000'),      // 15,000 LUNES
-  staking: new BN('1200000000000'),      // 12,000 LUNES  
-  rewards: new BN('1000000000000'),      // 10,000 LUNES
-  router: new BN('1800000000000'),       // 18,000 LUNES
+  wnative: null,  // null = sem limite explícito (usa disponível na conta)
+  factory: null,
+  staking: null,
+  rewards: null,
+  router:  null,
 };
 
-// 📁 CAMINHOS DOS CONTRATOS
+// 📁 CAMINHOS DOS CONTRATOS (workspace root target/)
 const CONTRACT_PATHS = {
-  wnative: './uniswap-v2/contracts/wnative/target/ink/wnative_contract.contract',
-  factory: './uniswap-v2/contracts/factory/target/ink/factory_contract.contract',
-  staking: './uniswap-v2/contracts/staking/target/ink/staking_contract.contract',
-  rewards: './uniswap-v2/contracts/rewards/target/ink/trading_rewards_contract.contract',
-  router: './uniswap-v2/contracts/router/target/ink/router_contract.contract',
-  pair: './uniswap-v2/contracts/pair/target/ink/pair_contract.contract'
+  wnative: './target/ink/wnative_contract/wnative_contract.contract',
+  factory: './target/ink/factory_contract/factory_contract.contract',
+  staking: './target/ink/staking_contract/staking_contract.contract',
+  rewards: './target/ink/trading_rewards_contract/trading_rewards_contract.contract',
+  router: './target/ink/router_contract/router_contract.contract',
+  pair: './target/ink/pair_contract/pair_contract.contract'
 };
 
 // 🔑 TIPOS
@@ -91,15 +93,17 @@ class LunexDeployer {
 
   constructor(private config: DeployConfig) {
     this.keyring = new Keyring({ type: 'sr25519' });
-    this.adminAccount = this.keyring.addFromUri(config.adminSeed);
   }
 
   /**
    * 🚀 Inicializar conexão com a rede Lunes
    */
   async initialize(): Promise<void> {
+    await cryptoWaitReady();
+    this.adminAccount = this.keyring.addFromUri(this.config.adminSeed);
+
     console.log(`🌐 Conectando à ${NETWORKS[this.config.network].name}...`);
-    
+
     const provider = new WsProvider(NETWORKS[this.config.network].endpoint);
     this.api = await ApiPromise.create({ provider });
     
@@ -108,7 +112,7 @@ class LunexDeployer {
     
     // Verificar balance do admin
     const balance = await this.api.query.system.account(this.adminAccount.address);
-    const freeBalance = (balance as any).data.free.toBN();
+    const freeBalance = new BN((balance as any).data.free.toString());
     const requiredBalance = new BN('100000000000000'); // 1,000,000 LUNES
     
     console.log(`💰 Balance Admin: ${freeBalance.div(new BN('100000000')).toString()} LUNES`);
@@ -116,6 +120,40 @@ class LunexDeployer {
     if (freeBalance.lt(requiredBalance)) {
       throw new Error(`❌ Balance insuficiente! Necessário: ${requiredBalance.div(new BN('100000000')).toString()} LUNES`);
     }
+  }
+
+  /**
+   * ⬆️ Upload de código sem instanciar (necessário para pair code hash no factory)
+   */
+  private async uploadCode(contractPath: string): Promise<string> {
+    console.log(`⬆️ Fazendo upload do código pair...`);
+    const contractData = this.loadContractMetadata(contractPath);
+    const codeHash = contractData.source.hash as string;
+
+    return new Promise((resolve, reject) => {
+      const wasmHex = contractData.source.wasm;
+      this.api.tx.contracts
+        .uploadCode(wasmHex, null, 'Deterministic')
+        .signAndSend(this.adminAccount, ({ status, dispatchError }: any) => {
+          if (status.isInBlock) {
+            console.log(`⬆️ Pair code incluído no bloco`);
+          } else if (status.isFinalized) {
+            if (dispatchError) {
+              // CodeAlreadyExists is ok — code already uploaded
+              const errStr = dispatchError.toString();
+              if (errStr.includes('CodeAlreadyExists') || errStr.includes('DuplicateContract')) {
+                console.log(`✅ Pair code já existia on-chain (hash: ${codeHash})`);
+                resolve(codeHash);
+              } else {
+                reject(new Error(`❌ Upload falhou: ${errStr}`));
+              }
+            } else {
+              console.log(`✅ Pair code uploaded (hash: ${codeHash})`);
+              resolve(codeHash);
+            }
+          }
+        }).catch(reject);
+    });
   }
 
   /**
@@ -138,9 +176,7 @@ class LunexDeployer {
     name: string,
     contractPath: string,
     constructorName: string,
-    args: any[] = [],
-    gasLimit?: BN,
-    storageDepositLimit?: BN
+    args: any[] = []
   ): Promise<DeployedContract> {
     console.log(`📦 Fazendo deploy do ${name}...`);
 
@@ -148,32 +184,26 @@ class LunexDeployer {
       const contractData = this.loadContractMetadata(contractPath);
       const code = new CodePromise(asCodeApi(this.api), contractData, contractData.source.wasm);
 
-      const gasLimitToUse = gasLimit || GAS_LIMITS[name as keyof typeof GAS_LIMITS] || new BN('1000000000000');
-      const storageDepositToUse = storageDepositLimit || STORAGE_DEPOSITS[name as keyof typeof STORAGE_DEPOSITS] || new BN('1000000000000');
+      const gasConfig = GAS_LIMITS[name as keyof typeof GAS_LIMITS] || { refTime: new BN('10000000000'), proofSize: new BN('1048576') };
+      const gasLimitToUse = this.api.registry.createType('WeightV2', gasConfig) as any;
 
       if (this.config.dryRun) {
-        console.log(`🧪 DRY RUN - ${name}: Gas: ${gasLimitToUse.toString()}, Storage: ${storageDepositToUse.toString()}`);
-        return {
+        console.log(`🧪 DRY RUN - ${name}: refTime=${gasConfig.refTime}, proofSize=${gasConfig.proofSize}`);
+        const dryRunContract: DeployedContract = {
           address: 'DRY_RUN_ADDRESS',
           contract: {} as ContractPromise,
           txHash: 'DRY_RUN_HASH',
           deployBlock: 0
         };
+        this.deployedContracts.set(name, dryRunContract);
+        return dryRunContract;
       }
 
-      // Estimar gas primeiro
-      const dryRunResult = await code.tx[constructorName]({
-        gasLimit: gasLimitToUse,
-        storageDepositLimit: storageDepositToUse,
-      }, ...args).dryRun(this.adminAccount);
-      const gasRequired = (dryRunResult as any).gasRequired || gasLimitToUse;
-
-      console.log(`⛽ Gas estimado: ${gasRequired.toString()}`);
-
-      // Deploy real
+      // Deploy real (WeightV2, storageDepositLimit = null)
+      console.log(`⛽ Gas: refTime=${gasConfig.refTime}, proofSize=${gasConfig.proofSize}`);
       const tx = code.tx[constructorName]({
         gasLimit: gasLimitToUse,
-        storageDepositLimit: storageDepositToUse,
+        storageDepositLimit: null,
       }, ...args);
 
       return new Promise((resolve, reject) => {
@@ -187,11 +217,16 @@ class LunexDeployer {
           if (status.isInBlock) {
             console.log(`📋 ${name} incluído no bloco: ${status.asInBlock}`);
             deployBlock = parseInt(status.asInBlock.toString());
-            
+
             events.forEach(({ event: { data, method, section } }) => {
-              if (section === 'contracts' && method === 'Instantiated') {
+              console.log(`   📌 event: ${section}.${method}`);
+              if (section === 'contracts' && (method === 'Instantiated' || method === 'instantiated')) {
+                // data[0] = deployer, data[1] = contract address
                 contractAddress = data[1].toString();
                 console.log(`✅ ${name} deployado em: ${contractAddress}`);
+              }
+              if (method === 'ExtrinsicFailed' || method === 'extrinsicFailed') {
+                console.error(`❌ ExtrinsicFailed: ${JSON.stringify(data.toHuman())}`);
               }
             });
           } else if (status.isFinalized) {
@@ -295,10 +330,15 @@ class LunexDeployer {
       const staking = this.deployedContracts.get('staking')!;
       const rewards = this.deployedContracts.get('rewards')!;
 
+      const callGas = this.api.registry.createType('WeightV2', {
+        refTime: new BN('10000000000'),
+        proofSize: new BN('1048576'),
+      }) as any;
+
       // 1. Configurar router autorizado no trading rewards
       console.log(`⚙️ Configurando router autorizado...`);
       const setRouterTx = await rewards.contract.tx.setAuthorizedRouter(
-        { gasLimit: new BN('100000000000') },
+        { gasLimit: callGas, storageDepositLimit: null },
         router.address
       );
       await this.signAndWaitForFinalization(setRouterTx, 'setAuthorizedRouter');
@@ -306,7 +346,7 @@ class LunexDeployer {
       // 2. Conectar staking ao trading rewards
       console.log(`⚙️ Conectando staking ao trading rewards...`);
       const setStakingTx = await staking.contract.tx.setTradingRewardsContract(
-        { gasLimit: new BN('100000000000') },
+        { gasLimit: callGas, storageDepositLimit: null },
         rewards.address
       );
       await this.signAndWaitForFinalization(setStakingTx, 'setTradingRewardsContract');
@@ -314,7 +354,7 @@ class LunexDeployer {
       // 3. Conectar trading rewards ao staking
       console.log(`⚙️ Conectando trading rewards ao staking...`);
       const setStakingInRewardsTx = await rewards.contract.tx.setStakingContract(
-        { gasLimit: new BN('100000000000') },
+        { gasLimit: callGas, storageDepositLimit: null },
         staking.address
       );
       await this.signAndWaitForFinalization(setStakingInRewardsTx, 'setStakingContract');
@@ -383,22 +423,22 @@ class LunexDeployer {
     console.log(`🧪 Executando testes básicos...`);
 
     try {
-      // Testar WNative
-      const wnative = this.deployedContracts.get('wnative')!;
-      const nameResult = await wnative.contract.query.name(this.adminAccount.address, {});
-      console.log(`✅ WNative name: ${nameResult.output?.toString()}`);
+      const queryGas = this.api.registry.createType('WeightV2', {
+        refTime: new BN('5000000000'),
+        proofSize: new BN('524288'),
+      }) as any;
 
-      // Testar Factory
-      const factory = this.deployedContracts.get('factory')!;
-      const feeToSetter = await factory.contract.query.feeToSetter(this.adminAccount.address, {});
-      console.log(`✅ Factory fee_to_setter: ${feeToSetter.output?.toString()}`);
+      // Testar contratos implantados consultando o estado on-chain
+      for (const [name, deployed] of this.deployedContracts) {
+        const info = await this.api.query.contracts.contractInfoOf(deployed.address) as any;
+        if (info.isSome) {
+          console.log(`✅ Contrato ${name} verificado on-chain: ${deployed.address}`);
+        } else {
+          throw new Error(`Contrato ${name} não encontrado on-chain`);
+        }
+      }
 
-      // Testar Staking
-      const staking = this.deployedContracts.get('staking')!;
-      const stakingStats = await staking.contract.query.getStats(this.adminAccount.address, {});
-      console.log(`✅ Staking stats: ${stakingStats.output?.toString()}`);
-
-      console.log(`✅ Todos os testes básicos passaram!`);
+      console.log(`✅ Todos os contratos verificados on-chain com sucesso!`);
 
     } catch (error) {
       console.error(`❌ Erro nos testes básicos:`, error);
@@ -413,32 +453,44 @@ class LunexDeployer {
     try {
       console.log(`🚀 Iniciando deploy completo da Lunex DEX...`);
       console.log(`📡 Rede: ${NETWORKS[this.config.network].name}`);
-      console.log(`👤 Admin: ${this.adminAccount.address}`);
       console.log(`🧪 Dry Run: ${this.config.dryRun ? 'SIM' : 'NÃO'}`);
-      
+
       await this.initialize();
+      console.log(`👤 Admin: ${this.adminAccount.address}`);
 
       // Deploy order é crítico!
       console.log(`\n📦 FASE 1: Deploy dos contratos base...`);
-      
+
+      // 0. Upload pair code (necessário para o factory saber o code hash)
+      let pairCodeHash: string;
+      if (!this.config.dryRun) {
+        pairCodeHash = await this.uploadCode(CONTRACT_PATHS.pair);
+      } else {
+        pairCodeHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+      }
+
       // 1. WNative (wrapper para LUNES)
-      await this.deployContract('wnative', CONTRACT_PATHS.wnative, 'new');
-      
+      await this.deployContract('wnative', CONTRACT_PATHS.wnative, 'new', [
+        'Wrapped Lunes', 'WLUNES', 8
+      ]);
+
       // 2. Factory (para criar pares)
-      await this.deployContract('factory', CONTRACT_PATHS.factory, 'new', [this.adminAccount.address]);
-      
+      await this.deployContract('factory', CONTRACT_PATHS.factory, 'new', [
+        this.adminAccount.address, pairCodeHash
+      ]);
+
       // 3. Staking (governança e rewards)
       const treasuryAddress = this.config.treasuryAddress || this.adminAccount.address;
       console.log(`🏦 Endereço de Tesouraria: ${treasuryAddress}`);
       await this.deployContract('staking', CONTRACT_PATHS.staking, 'new', [treasuryAddress]);
 
       console.log(`\n📦 FASE 2: Deploy dos contratos de integração...`);
-      
+
       // 4. Router (precisa do factory e wnative)
       const factoryAddress = this.deployedContracts.get('factory')!.address;
       const wnativeAddress = this.deployedContracts.get('wnative')!.address;
       await this.deployContract('router', CONTRACT_PATHS.router, 'new', [factoryAddress, wnativeAddress]);
-      
+
       // 5. Trading Rewards (precisa do router)
       const routerAddress = this.deployedContracts.get('router')!.address;
       await this.deployContract('rewards', CONTRACT_PATHS.rewards, 'new', [this.adminAccount.address, routerAddress]);

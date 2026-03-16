@@ -24,9 +24,17 @@ build/
 .env.staging
 .env.test
 .env.docker
+.env.prod
+.env.sandbox
 **/.env
 !**/.env.example
 !**/.env.*.example
+
+# ── Secrets gerados (gen-secrets.sh) ──
+secrets.env
+secrets*.env
+*.secrets
+.secrets
 
 # ── IDE & Editors ──
 .vscode/

@@ -18,7 +18,7 @@ const path = require('path');
 
 const PORT = process.env.FAUCET_PORT || 3333;
 const WS_URL = process.env.LUNES_WS_URL || 'ws://lunes-testnet-node:9944';
-const DRIP_AMOUNT = process.env.FAUCET_DRIP_AMOUNT || '10000000000000000'; // 10,000 LUNES (12 decimals)
+const DRIP_AMOUNT = process.env.FAUCET_DRIP_AMOUNT || '1000000000000'; // 10,000 LUNES (8 decimals)
 const COOLDOWN_MINUTES = parseInt(process.env.FAUCET_COOLDOWN_MINUTES || '300', 10); // 5 hours
 const SEED_FILE = process.env.FAUCET_SEED_FILE || '/data/faucet-seed.json';
 const INITIAL_FUND = '500000000000000000'; // 500,000,000 LUNES from Alice
@@ -203,7 +203,7 @@ app.get('/health', (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 app.get('/faucet', (req, res) => {
   const cooldownHours = Math.floor(COOLDOWN_MINUTES / 60);
-  const dripHuman = (BigInt(DRIP_AMOUNT) / 1000000000000n).toString();
+  const dripHuman = (BigInt(DRIP_AMOUNT) / 100000000n).toString();
   res.setHeader('Content-Type', 'text/html');
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -608,7 +608,7 @@ app.get('/faucet/status', async (req, res) => {
       network: 'Lunes Testnet',
       faucetAddress: faucetAccount.address,
       balance: balance.free.toHuman(),
-      dripAmount: (BigInt(DRIP_AMOUNT) / 1000000000000n).toString() + ' LUNES',
+      dripAmount: (BigInt(DRIP_AMOUNT) / 100000000n).toString() + ' LUNES',
       cooldownHours: Math.floor(COOLDOWN_MINUTES / 60),
       dailyDripsRemaining: Math.max(0, DAILY_LIMIT - dailyDripCount),
       totalTrackedAddresses: addressHistory.size,
@@ -663,7 +663,7 @@ app.post('/faucet', faucetLimiter, async (req, res) => {
     });
 
     recordDrip(address, ip);
-    const dripHuman = (BigInt(DRIP_AMOUNT) / 1000000000000n).toString();
+    const dripHuman = (BigInt(DRIP_AMOUNT) / 100000000n).toString();
     console.log(`[faucet] ✅ Sent ${dripHuman} LUNES to ${address} — block: ${hash}`);
 
     res.json({

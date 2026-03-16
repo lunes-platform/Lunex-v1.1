@@ -1,0 +1,32 @@
+{
+  "network": "testnet",
+  "timestamp": "2026-03-15T01:11:02.183Z",
+  "deployedBy": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+  "contracts": {
+    "wnative": {
+      "address": "5DqvK3iPYW3R7LK1DrS3bz5RFjxkk3ziBXmoyKTyigtFAnBL",
+      "txHash": "0x12f29a1aeb825c35dbbf4fa7c55c34f5ef4509f6bb74a21f3b4e58880417434c",
+      "deployBlock": 1.062881213147311e+77
+    },
+    "factory": {
+      "address": "5EV2Umenvf1ZfGrStLWfEX7yxWSKuyyj8KkeogHi2URK5zhi",
+      "txHash": "0x0cd56d94ab17dc549a6dc10ba6dfadb0b0f148083c5f68f9b976672e226cd990",
+      "deployBlock": 4.372595042117904e+76
+    },
+    "staking": {
+      "address": "5DK4WZydhzCzeanMh5DMv7qgdhqj4S6oVkBBiWiz2gJ6E7HE",
+      "txHash": "0xd4872644b0698889622dccc30d04a62dd97620b9c3083b2bcfcbd7471c406e3d",
+      "deployBlock": 5.415892818021567e+76
+    },
+    "router": {
+      "address": "5DMJMqjo5nc4TdEKDhNiAkZY1KDpHAvnE52r3y2nMWto6aDy",
+      "txHash": "0xb9cf826b3bdb8cd0748b04c5bbb9ba57c47eedeb290f98b28ac259fe71815b1c",
+      "deployBlock": 7.277884628989419e+76
+    },
+    "rewards": {
+      "address": "5EyrNopnN9DLNM5dHiUAANPqZqSPSJDAQqJQRvhU6ZXuqXXq",
+      "txHash": "0x3cf58825428ec2b23100d49cf0bc7f257f58051985eabc97a1114db07be700cf",
+      "deployBlock": 8.797109971698672e+76
+    }
+  }
+}

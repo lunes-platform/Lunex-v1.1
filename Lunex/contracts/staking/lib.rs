@@ -1280,8 +1280,8 @@ pub mod staking_contract {
                 return Err(StakingError::TokenNotListed);
             }
 
-            // Remover da lista
-            self.approved_projects.remove(&token_address);
+            // Remover da lista (usa insert false para compatibilidade com seal0::clear_storage)
+            self.approved_projects.insert(token_address, &false);
 
             // Emit event
             self.env().emit_event(AdminTokenDelisted {
@@ -1768,8 +1768,8 @@ pub mod staking_contract {
                 return Err(StakingError::NoRewardsToClaim);
             }
 
-            // Reset bonus
-            self.governance_bonuses.remove(&caller);
+            // Reset bonus (insert 0 para compatibilidade com seal0::clear_storage)
+            self.governance_bonuses.insert(caller, &0u128);
 
             // Transfer LUNES
             if self.env().transfer(caller, bonus).is_err() {

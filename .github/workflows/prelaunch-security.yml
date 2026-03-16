@@ -49,13 +49,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: |
-            spot-api/package-lock.json
-            sdk/package-lock.json
-            lunes-dex-main/package-lock.json
-            lunex-admin/package-lock.json
-            mcp/lunex-agent-mcp/package-lock.json
 
       - name: Scan repository for secrets
         uses: gitleaks/gitleaks-action@v2
@@ -63,31 +56,31 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install spot-api dependencies for audit
-        run: npm ci --prefix spot-api --ignore-scripts
+        run: npm install --prefix spot-api --ignore-scripts
 
       - name: Audit spot-api dependencies
         run: npm audit --prefix spot-api --audit-level=high
 
       - name: Install sdk dependencies for audit
-        run: npm ci --prefix sdk --ignore-scripts
+        run: npm install --prefix sdk --ignore-scripts
 
       - name: Audit sdk dependencies
         run: npm audit --prefix sdk --audit-level=high
 
       - name: Install frontend dependencies for audit
-        run: npm ci --prefix lunes-dex-main --ignore-scripts
+        run: npm install --prefix lunes-dex-main --ignore-scripts
 
       - name: Audit frontend dependencies
         run: npm audit --prefix lunes-dex-main --audit-level=high
 
       - name: Install admin dependencies for audit
-        run: npm ci --prefix lunex-admin --ignore-scripts
+        run: npm install --prefix lunex-admin --ignore-scripts
 
       - name: Audit admin dependencies
         run: npm audit --prefix lunex-admin --audit-level=high
 
       - name: Install MCP dependencies for audit
-        run: npm ci --prefix mcp/lunex-agent-mcp --ignore-scripts
+        run: npm install --prefix mcp/lunex-agent-mcp --ignore-scripts
 
       - name: Audit MCP dependencies
         run: npm audit --prefix mcp/lunex-agent-mcp --audit-level=high
@@ -127,7 +120,7 @@ jobs:
         run: cargo test --test property_security_invariants
 
       - name: Install spot-api dependencies
-        run: npm ci --prefix spot-api
+        run: npm install --prefix spot-api
 
       - name: Setup spot-api test DB
         run: npx prisma migrate deploy
@@ -143,14 +136,14 @@ jobs:
           NODE_ENV: test
 
       - name: Install SDK dependencies
-        run: npm ci --prefix sdk
+        run: npm install --prefix sdk
 
       - name: Build SDK
         run: npm run build --prefix sdk
 
       - name: Install MCP dependencies
         if: ${{ inputs.run_mcp_build }}
-        run: npm ci --prefix mcp/lunex-agent-mcp
+        run: npm install --prefix mcp/lunex-agent-mcp
 
       - name: Build MCP package
         if: ${{ inputs.run_mcp_build }}

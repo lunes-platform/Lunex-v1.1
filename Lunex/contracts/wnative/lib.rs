@@ -621,7 +621,7 @@ pub mod wnative_contract {
             assert!(wnative.deposit().is_ok());
 
             // GREEN: Transfer deve funcionar
-            let result = wnative.transfer(accounts.bob, 50);
+            let result = wnative.transfer(accounts.bob, 50, vec![]);
             assert!(result.is_ok());
 
             // GREEN: Verificar balances
@@ -645,7 +645,7 @@ pub mod wnative_contract {
             assert!(wnative.deposit().is_ok());
 
             // RED: Transfer mais do que tem deve falhar
-            let result = wnative.transfer(accounts.bob, 150);
+            let result = wnative.transfer(accounts.bob, 150, vec![]);
             assert!(result.is_err());
             assert_eq!(result.unwrap_err(), WnativeError::InsufficientBalance);
         }
@@ -672,7 +672,7 @@ pub mod wnative_contract {
 
             // GREEN: Bob transfere 30 de Alice para Charlie
             set_sender(accounts.bob);
-            let result = wnative.transfer_from(accounts.alice, accounts.charlie, 30);
+            let result = wnative.transfer_from(accounts.alice, accounts.charlie, 30, vec![]);
             assert!(result.is_ok());
 
             // GREEN: Verificar balances e allowance
@@ -701,7 +701,7 @@ pub mod wnative_contract {
 
             // RED: Bob tenta transferir mais do que tem allowance
             set_sender(accounts.bob);
-            let result = wnative.transfer_from(accounts.alice, accounts.charlie, 50);
+            let result = wnative.transfer_from(accounts.alice, accounts.charlie, 50, vec![]);
             assert!(result.is_err());
             assert_eq!(result.unwrap_err(), WnativeError::InsufficientAllowance);
         }
@@ -726,7 +726,7 @@ pub mod wnative_contract {
             assert!(wnative.deposit().is_ok());
 
             // GREEN: Alice transfere 200 para Bob
-            assert!(wnative.transfer(accounts.bob, 200).is_ok());
+            assert!(wnative.transfer(accounts.bob, 200, vec![]).is_ok());
             assert_eq!(wnative.balance_of(accounts.alice), 300);
             assert_eq!(wnative.balance_of(accounts.bob), 200);
 

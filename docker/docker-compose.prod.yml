@@ -57,6 +57,7 @@ services:
       SOCIAL_ANALYTICS_ENABLED: "true"
       SUBQUERY_ENDPOINT: "http://subquery-query:3000"
       SUBQUERY_ENABLED: "true"
+      ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET}
     networks:
       - internal_network
     healthcheck:
