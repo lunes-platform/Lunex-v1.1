@@ -242,9 +242,9 @@ jobs:
             dir: Lunex/contracts/asymmetric_pair
           # Listing contracts (contracts/)
           - contract: listing_manager
-            dir: contracts/listing_manager
+            dir: Lunex/contracts/listing_manager
           - contract: liquidity_lock
-            dir: contracts/liquidity_lock
+            dir: Lunex/contracts/liquidity_lock
 
     steps:
       - uses: actions/checkout@v4
@@ -296,7 +296,7 @@ jobs:
 
       - name: Run Rust tests (workspace)
         run: cargo test --workspace --exclude fuzz 2>&1
-        working-directory: /home/runner/work/Lunex/Lunex
+        working-directory: .
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 7 — Integration smoke test (API health check)

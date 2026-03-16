@@ -82,9 +82,9 @@ jobs:
           - contract: wnative
             dir: Lunex/contracts/wnative
           - contract: listing_manager
-            dir: contracts/listing_manager
+            dir: Lunex/contracts/listing_manager
           - contract: liquidity_lock
-            dir: contracts/liquidity_lock
+            dir: Lunex/contracts/liquidity_lock
 
     steps:
       - uses: actions/checkout@v4
