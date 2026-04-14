@@ -45,11 +45,6 @@ export const pulse = keyframes`
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }
 `
-export const flowPulse = keyframes`
-  0%   { opacity: 0.3; transform: scaleX(0.8); }
-  50%  { opacity: 1;   transform: scaleX(1); }
-  100% { opacity: 0.3; transform: scaleX(0.8); }
-`
 export const terminalType = keyframes`
   from { opacity: 0; transform: translateX(-6px); }
   to   { opacity: 1; transform: translateX(0); }
@@ -200,24 +195,6 @@ export const HeroSection = styled.section`
     pointer-events: none;
     z-index: -1;
   }
-`
-export const HeroBadge = styled.div<Anim>`
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  border: 1px solid ${BORDER_HOVER};
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 700;
-  color: ${MUTED};
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  margin-bottom: 32px;
-  opacity: 0;
-  animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  animation-delay: ${p => p.$delay || '0s'};
-  background: rgba(255, 255, 255, 0.03);
 `
 export const HeroTitle = styled.h1<Anim>`
   font-size: clamp(64px, 10vw, 128px);
@@ -1217,34 +1194,6 @@ export const ChartLabel = styled.div<{ $color: string }>`
     box-shadow: 0 0 8px ${p => p.$color};
   }
 `
-export const ChartMetrics = styled.div`
-  position: absolute;
-  bottom: 20px;
-  left: 20px;
-  display: grid;
-  grid-template-columns: repeat(3, auto);
-  gap: 24px;
-  z-index: 10;
-`
-export const ChartMetric = styled.div<{ $color: string }>`
-  .val {
-    font-family: 'Space Grotesk', sans-serif;
-    font-size: 22px;
-    font-weight: 800;
-    color: ${p => p.$color};
-    line-height: 1;
-    text-shadow: 0 0 20px ${p => p.$color}60;
-  }
-  .lbl {
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: rgba(255, 255, 255, 0.4);
-    margin-top: 2px;
-  }
-`
-
 export const AsymSVG = styled.svg`
   width: 100%;
   height: 100%;

@@ -1,4 +1,4 @@
-import React, { HtmlHTMLAttributes } from 'react'
+import { type HtmlHTMLAttributes } from 'react'
 import * as S from './styles'
 
 export type LoadingProps = {

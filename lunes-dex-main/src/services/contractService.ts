@@ -61,7 +61,6 @@ const DRY_GAS = { refTime: BigInt('50000000000'), proofSize: BigInt('1000000') }
 class ContractService {
   private api: ApiPromise | null = null
   private isConnected = false
-  private network: keyof typeof NETWORKS = 'testnet'
   private contracts: ContractAddresses | null = null
 
   // Contract Instances
@@ -78,7 +77,6 @@ class ContractService {
     }
 
     try {
-      this.network = network
       const wsProvider = new WsProvider(NETWORKS[network])
       this.api = await ApiPromise.create({ provider: wsProvider })
 

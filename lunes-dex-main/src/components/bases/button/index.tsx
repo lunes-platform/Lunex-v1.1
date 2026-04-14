@@ -1,4 +1,4 @@
-import React, { ButtonHTMLAttributes, ReactNode } from 'react'
+import { type ButtonHTMLAttributes, type ReactNode } from 'react'
 import Loading from '../loading'
 import * as S from './styles'
 

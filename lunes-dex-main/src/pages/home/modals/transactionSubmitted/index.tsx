@@ -1,4 +1,3 @@
-import React from 'react'
 //Modals
 import Modal from 'components/modal'
 import * as S from './styles'

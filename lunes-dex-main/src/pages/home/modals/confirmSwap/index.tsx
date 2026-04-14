@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useAppContext } from 'context/useContext'
 //Modals
 import Modal from 'components/modal'

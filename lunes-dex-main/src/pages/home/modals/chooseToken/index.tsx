@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 //Styles
 import * as S from './styles'
 import * as B from 'components/bases'

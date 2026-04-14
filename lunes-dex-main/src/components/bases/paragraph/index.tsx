@@ -1,4 +1,4 @@
-import React, { HtmlHTMLAttributes, ReactNode } from 'react'
+import { type HtmlHTMLAttributes, type ReactNode } from 'react'
 import * as S from './styles'
 import theme from 'theme'
 
