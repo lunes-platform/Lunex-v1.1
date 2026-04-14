@@ -32,7 +32,7 @@ export const Header = styled.header`
 `
 
 export const Nav = styled.nav`
-  ${({ theme }) => css`
+  ${css`
     gap: 8px;
     display: flex;
     align-items: center;
@@ -85,7 +85,7 @@ export const Span = styled.span<StyledProps>`
   `}
 `
 
-export const Status = styled(Span) <StyledProps>`
+export const Status = styled(Span)<StyledProps>`
   ${({ ...props }) => css`
     cursor: pointer;
     max-width: none;
@@ -135,10 +135,14 @@ export const NavLink = styled.button<NavLinkProps>`
     gap: 4px;
 
     background: ${active ? theme.colors.themeColors[800] : 'transparent'};
-    color: ${active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
+    color: ${active
+      ? theme.colors.themeColors[100]
+      : theme.colors.themeColors[200]};
 
     &:hover {
-      background: ${active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
+      background: ${active
+        ? theme.colors.themeColors[800]
+        : theme.colors.themeColors[400]};
       color: ${theme.colors.themeColors[100]};
     }
   `}
@@ -198,7 +202,9 @@ export const DropdownItem = styled.button<DropdownItemProps>`
     transition: all 0.15s;
 
     background: ${active ? theme.colors.themeColors[800] : 'transparent'};
-    color: ${active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
+    color: ${active
+      ? theme.colors.themeColors[100]
+      : theme.colors.themeColors[200]};
 
     &:hover {
       background: ${theme.colors.themeColors[400] || 'rgba(255,255,255,0.06)'};

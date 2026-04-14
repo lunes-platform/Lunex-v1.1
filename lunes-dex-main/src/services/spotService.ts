@@ -15,17 +15,17 @@ const SPOT_WS_URL = process.env.REACT_APP_SPOT_WS_URL || 'ws://localhost:4001'
 
 export const SPOT_FEE_SPLIT = {
   maker: {
-    team: 0.50,
-    stakers: 0.30,
-    affiliates: 0.20,
-    treasury: 0.00,
+    team: 0.5,
+    stakers: 0.3,
+    affiliates: 0.2,
+    treasury: 0.0
   },
   taker: {
-    team: 0.40,
-    stakers: 0.30,
-    affiliates: 0.20,
-    treasury: 0.10,
-  },
+    team: 0.4,
+    stakers: 0.3,
+    affiliates: 0.2,
+    treasury: 0.1
+  }
 } as const
 
 export interface FeeBreakdown {
@@ -43,7 +43,7 @@ export function calcFeeBreakdown(fee: number, isMaker: boolean): FeeBreakdown {
     team: fee * split.team,
     stakers: fee * split.stakers,
     affiliates: fee * split.affiliates,
-    treasury: fee * split.treasury,
+    treasury: fee * split.treasury
   }
 }
 
@@ -133,6 +133,12 @@ export interface SpotTrade {
   pair?: { symbol: string }
 }
 
+export interface SignedActionAuth {
+  nonce: string
+  timestamp: number
+  signature: string
+}
+
 export interface SpotCandle {
   openTime: string
   open: string
@@ -183,7 +189,8 @@ class SpotWebSocket {
       this.ws = new WebSocket(SPOT_WS_URL)
 
       this.ws.onopen = () => {
-        console.log('[SpotWS] Connected')
+        if (process.env.NODE_ENV !== 'production')
+          console.log('[SpotWS] Connected')
         this.reconnectAttempts = 0
         // Re-subscribe to all channels
         Array.from(this.subscriptions).forEach(channel => {
@@ -208,7 +215,8 @@ class SpotWebSocket {
       }
 
       this.ws.onclose = () => {
-        console.log('[SpotWS] Disconnected')
+        if (process.env.NODE_ENV !== 'production')
+          console.log('[SpotWS] Disconnected')
         this.scheduleReconnect()
       }
 
@@ -327,13 +335,14 @@ export const spotApi = {
 
   async getUserOrders(
     makerAddress: string,
+    auth: SignedActionAuth,
     status?: string,
     limit = 50,
     offset = 0
   ): Promise<{ orders: SpotOrder[] }> {
     let url = `/api/v1/orders?makerAddress=${encodeURIComponent(
       makerAddress
-    )}&limit=${limit}&offset=${offset}`
+    )}&limit=${limit}&offset=${offset}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
     if (status) url += `&status=${status}`
     return await fetchApi<{ orders: SpotOrder[] }>(url)
   },
@@ -350,13 +359,14 @@ export const spotApi = {
 
   async getUserTrades(
     address: string,
+    auth: SignedActionAuth,
     limit = 50,
     offset = 0
   ): Promise<{ trades: SpotTrade[] }> {
     return await fetchApi<{ trades: SpotTrade[] }>(
       `/api/v1/trades?address=${encodeURIComponent(
         address
-      )}&limit=${limit}&offset=${offset}`
+      )}&limit=${limit}&offset=${offset}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
     )
   },
 
@@ -374,24 +384,39 @@ export const spotApi = {
   },
 
   // ─── Favorites ───
-  async getFavorites(address: string): Promise<string[]> {
+  async getFavorites(
+    address: string,
+    auth: SignedActionAuth
+  ): Promise<string[]> {
     const data = await fetchApi<{ favorites: string[] }>(
-      `/api/v1/user/${encodeURIComponent(address)}/favorites`
+      `/api/v1/user/${encodeURIComponent(address)}/favorites?nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
     )
     return data.favorites
   },
 
-  async addFavorite(address: string, pairSymbol: string): Promise<void> {
+  async addFavorite(
+    address: string,
+    pairSymbol: string,
+    auth: SignedActionAuth
+  ): Promise<void> {
     await fetchApi(`/api/v1/user/${encodeURIComponent(address)}/favorites`, {
       method: 'POST',
-      body: JSON.stringify({ pairSymbol }),
+      body: JSON.stringify({ pairSymbol, ...auth })
     })
   },
 
-  async removeFavorite(address: string, pairSymbol: string): Promise<void> {
-    await fetchApi(`/api/v1/user/${encodeURIComponent(address)}/favorites/${encodeURIComponent(pairSymbol)}`, {
-      method: 'DELETE',
-    })
+  async removeFavorite(
+    address: string,
+    pairSymbol: string,
+    auth: SignedActionAuth
+  ): Promise<void> {
+    await fetchApi(
+      `/api/v1/user/${encodeURIComponent(address)}/favorites/${encodeURIComponent(pairSymbol)}`,
+      {
+        method: 'DELETE',
+        body: JSON.stringify(auth)
+      }
+    )
   },
 
   // ─── Market Info ───
@@ -399,7 +424,5 @@ export const spotApi = {
     return await fetchApi(
       `/api/v1/markets/${encodeURIComponent(pairSymbol)}/info`
     )
-  },
+  }
 }
-
-export default spotApi

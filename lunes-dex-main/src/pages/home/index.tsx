@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
 import * as B from 'components/bases'
 import * as S from './styles'
 import { Tooltip } from 'components/bases/tooltip'
@@ -17,7 +16,6 @@ import { useSDK } from '../../context/SDKContext'
 const Home = () => {
   // SDK Integration
   const sdk = useSDK()
-  const navigate = useNavigate()
 
   const {
     selectedOption1,
@@ -32,7 +30,6 @@ const Home = () => {
   const [selectingForFirst, setSelectingForFirst] = useState<boolean | null>(
     null
   )
-  const [menu, setMenu] = useState(0)
   const [modal, setModal] = useState('null')
 
   // Estado para integração com SDK
@@ -46,7 +43,9 @@ const Home = () => {
   const [outputAmount, setOutputAmount] = useState('')
   const [priceImpact, setPriceImpact] = useState('0')
   const [minimumReceived, setMinimumReceived] = useState('0')
-  const [tokenBalances, setTokenBalances] = useState<{ [key: string]: string }>({})
+  const [tokenBalances, setTokenBalances] = useState<{ [key: string]: string }>(
+    {}
+  )
   const [slippage, setSlippage] = useState(0.5) // 0.5% default
   const [deadline, setDeadline] = useState(20) // 20 minutes default
 
@@ -66,7 +65,12 @@ const Home = () => {
 
   // Buscar quote quando mudar o input
   const fetchQuote = useCallback(async () => {
-    if (!selectedOption1?.address || !selectedOption2?.address || !inputValue1 || inputValue1 === '0') {
+    if (
+      !selectedOption1?.address ||
+      !selectedOption2?.address ||
+      !inputValue1 ||
+      inputValue1 === '0'
+    ) {
       setQuote(null)
       setOutputAmount('')
       return
@@ -86,7 +90,9 @@ const Home = () => {
         const outputDecimals = selectedOption2.decimals || 8
         setOutputAmount(sdk.formatAmount(quoteResult.amountOut, outputDecimals))
         setPriceImpact(quoteResult.priceImpact || '0')
-        setMinimumReceived(sdk.formatAmount(quoteResult.minimumReceived, outputDecimals))
+        setMinimumReceived(
+          sdk.formatAmount(quoteResult.minimumReceived, outputDecimals)
+        )
         setInputValue2(sdk.formatAmount(quoteResult.amountOut, outputDecimals))
       }
     } catch (error) {
@@ -110,8 +116,14 @@ const Home = () => {
       const balances: { [key: string]: string } = {}
       for (const token of tokens) {
         if (token.address) {
-          const balance = await sdk.getTokenBalance(token.address, sdk.walletAddress)
-          balances[token.address] = sdk.formatAmount(balance, token.decimals || 8)
+          const balance = await sdk.getTokenBalance(
+            token.address,
+            sdk.walletAddress
+          )
+          balances[token.address] = sdk.formatAmount(
+            balance,
+            token.decimals || 8
+          )
         }
       }
       setTokenBalances(balances)
@@ -127,7 +139,12 @@ const Home = () => {
       return
     }
 
-    if (!selectedOption1?.address || !selectedOption2?.address || !inputValue1 || !quote) {
+    if (
+      !selectedOption1?.address ||
+      !selectedOption2?.address ||
+      !inputValue1 ||
+      !quote
+    ) {
       return
     }
 
@@ -183,13 +200,17 @@ const Home = () => {
         radius
         shadow
       >
-        <TradeSubNav active="swap" onSettingsClick={() => setModal('transactionSetting')} />
+        <TradeSubNav
+          active="swap"
+          onSettingsClick={() => setModal('transactionSetting')}
+        />
 
         <S.Content>
           <B.Wrapper radius position="relative">
             <S.Details inset="16px auto auto 16px">From</S.Details>
             <S.Details inset="16px 16px auto auto" active>
-              Balance: {selectedOption1?.address
+              Balance:{' '}
+              {selectedOption1?.address
                 ? tokenBalances[selectedOption1.address] || '0'
                 : '0'}
             </S.Details>
@@ -198,7 +219,9 @@ const Home = () => {
               height="112px"
               sizeInput="24px"
               disabled={!selectedOption1}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInputValue1(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setInputValue1(e.target.value)
+              }
               value={inputValue1}
             />
             <S.Token
@@ -216,7 +239,8 @@ const Home = () => {
           <B.Wrapper radius position="relative">
             <S.Details inset="16px auto auto 16px">To (Estimated)</S.Details>
             <S.Details inset="16px 16px auto auto" active>
-              Balance: {selectedOption2?.address
+              Balance:{' '}
+              {selectedOption2?.address
                 ? tokenBalances[selectedOption2.address] || '0'
                 : '0'}
             </S.Details>
@@ -225,16 +249,25 @@ const Home = () => {
               height="112px"
               sizeInput="24px"
               disabled={!selectedOption2}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInputValue2(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setInputValue2(e.target.value)
+              }
               value={outputAmount || inputValue2}
             />
             {selectedOption1 && selectedOption2 && quote && (
               <S.Details inset="auto auto 16px 16px" active size="14px">
-                {sdk.isLoading ? 'Loading...' : (
+                {sdk.isLoading ? (
+                  'Loading...'
+                ) : (
                   <>
                     $ {quote.executionPrice || '0.00'}
-                    <strong style={{ color: Number(priceImpact) > 1 ? '#ff6b6b' : '#26d07c' }}>
-                      {' '}({Number(priceImpact) > 0 ? '-' : '+'} {priceImpact}%)
+                    <strong
+                      style={{
+                        color: Number(priceImpact) > 1 ? '#ff6b6b' : '#26d07c'
+                      }}
+                    >
+                      {' '}
+                      ({Number(priceImpact) > 0 ? '-' : '+'} {priceImpact}%)
                     </strong>
                   </>
                 )}
@@ -252,29 +285,45 @@ const Home = () => {
         </S.Content>
 
         <S.Descriptions
-          display={selectedOption1 && selectedOption2 && quote ? 'flex' : 'none'}
+          display={
+            selectedOption1 && selectedOption2 && quote ? 'flex' : 'none'
+          }
         >
           <B.Wrapper width="auto" bg="trasnparent" alignItems="flex-start">
             <p>Price</p>
             <span style={{ display: 'flex', alignItems: 'center' }}>
               Minimum received
-              <Tooltip content={`A quantia mínima garantida que você receberá. Se o preço mudar desfavoravelmente acima do Slippage (${slippage}%), a transação reverterá.`} position="right" />
+              <Tooltip
+                content={`A quantia mínima garantida que você receberá. Se o preço mudar desfavoravelmente acima do Slippage (${slippage}%), a transação reverterá.`}
+                position="right"
+              />
             </span>
             <span style={{ display: 'flex', alignItems: 'center' }}>
               Price impact
-              <Tooltip content="A estimativa de perda gerada pelo tamanho da sua ordem em relação à liquidez disponível da Pool." position="right" />
+              <Tooltip
+                content="A estimativa de perda gerada pelo tamanho da sua ordem em relação à liquidez disponível da Pool."
+                position="right"
+              />
             </span>
             <span style={{ display: 'flex', alignItems: 'center' }}>
               Protocol Fee
-              <Tooltip content="0.5% total: 0.4% para provedores de liquidez, 0.05% para o protocolo (time) e 0.05% para stakers de LUNES." position="right" />
+              <Tooltip
+                content="0.5% total: 0.4% para provedores de liquidez, 0.05% para o protocolo (time) e 0.05% para stakers de LUNES."
+                position="right"
+              />
             </span>
           </B.Wrapper>
           <B.Wrapper width="auto" bg="trasnparent" alignItems="flex-end">
             <p>
-              1 {selectedOption1?.acronym} = {quote?.executionPrice || '0'} {selectedOption2?.acronym}
+              1 {selectedOption1?.acronym} = {quote?.executionPrice || '0'}{' '}
+              {selectedOption2?.acronym}
             </p>
-            <span>{minimumReceived} {selectedOption2?.acronym}</span>
-            <span style={{ color: Number(priceImpact) > 1 ? '#ff6b6b' : '#26d07c' }}>
+            <span>
+              {minimumReceived} {selectedOption2?.acronym}
+            </span>
+            <span
+              style={{ color: Number(priceImpact) > 1 ? '#ff6b6b' : '#26d07c' }}
+            >
               {priceImpact}%
             </span>
             <span>0.4% LP + 0.05% Protocolo + 0.05% Stakers</span>
@@ -297,14 +346,15 @@ const Home = () => {
 
         <B.Button
           disabled={
-            sdk.isConnected && (
-              sdk.isLoading ||
+            sdk.isConnected &&
+            (sdk.isLoading ||
               (!selectedOption1?.id && !selectedOption2?.id) ||
               inputValue1.length < 1 ||
-              !quote
-            )
+              !quote)
           }
-          onClick={sdk.isConnected ? handleConfirmSwap : () => sdk.connectWallet()}
+          onClick={
+            sdk.isConnected ? handleConfirmSwap : () => sdk.connectWallet()
+          }
         >
           {!sdk.isConnected
             ? 'Connect Wallet'

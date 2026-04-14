@@ -42,10 +42,10 @@ export const Wrapper = styled.div<Partial<StyledProps>>`
     background-color: ${props.bg === 500
       ? props.theme.colors.themeColors[500]
       : props.bg === 600
-      ? props.theme.colors.themeColors[600]
-      : props.bg === 400
-      ? props.theme.colors.themeColors[400]
-      : props.bg || props.theme.colors.themeColors[600]};
+        ? props.theme.colors.themeColors[600]
+        : props.bg === 400
+          ? props.theme.colors.themeColors[400]
+          : props.bg || props.theme.colors.themeColors[600]};
     box-shadow: ${props.shadow ? '0px 0px 500px -70px #6c38fe' : 'none'};
     position: ${props.position || 'initial'};
     overflow: ${props.overflow};

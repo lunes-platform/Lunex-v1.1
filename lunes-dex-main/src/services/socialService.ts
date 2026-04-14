@@ -1,4 +1,9 @@
-import type { Idea, IdeaComment, LeaderFollower, Trader } from '../pages/social/types'
+import type {
+  Idea,
+  IdeaComment,
+  LeaderFollower,
+  Trader
+} from '../pages/social/types'
 
 const SOCIAL_API_URL =
   process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
@@ -77,7 +82,6 @@ interface IdeaApiResponse {
 
 interface IdeaCommentApiResponse {
   id: string
-  address: string
   author: string
   initials: string
   avatar?: string
@@ -87,7 +91,6 @@ interface IdeaCommentApiResponse {
 
 interface LeaderFollowerApiResponse {
   id: string
-  address: string
   name: string
   username?: string
   initials: string
@@ -205,6 +208,28 @@ export interface CopytradePosition {
   }
 }
 
+export interface CopytradeDepositResult {
+  depositId: string
+  sharesMinted: number
+  amount: number
+  positionId: string
+  txHash: string | null
+  executionMode: 'db-journal' | 'on-chain-confirmed'
+}
+
+export interface CopytradeWithdrawResult {
+  withdrawalId: string
+  grossAmount: number
+  feeAmount: number
+  netAmount: number
+  profitAmount: number
+  remainingShares: number
+  collateralToken?: string
+  followerAddress?: string
+  txHash: string | null
+  executionMode: 'db-journal' | 'on-chain-confirmed'
+}
+
 export interface CopytradeActivityItem {
   type: 'DEPOSIT' | 'WITHDRAWAL' | 'SIGNAL'
   createdAt: string
@@ -258,7 +283,9 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
     ...options
   })
 
-  const isJson = response.headers.get('content-type')?.includes('application/json')
+  const isJson = response.headers
+    .get('content-type')
+    ?.includes('application/json')
 
   if (!response.ok) {
     if (isJson) {
@@ -266,7 +293,9 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
       throw new Error(data.error || 'API error')
     } else {
       const text = await response.text()
-      throw new Error(`API error: ${response.status} ${response.statusText} - ${text.slice(0, 100)}`)
+      throw new Error(
+        `API error: ${response.status} ${response.statusText} - ${text.slice(0, 100)}`
+      )
     }
   }
 
@@ -279,7 +308,9 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   return {} as T
 }
 
-function normalizeSignedValue(value: string | number | boolean | Array<string | number> | undefined | null) {
+function normalizeSignedValue(
+  value: string | number | boolean | Array<string | number> | undefined | null
+) {
   if (Array.isArray(value)) {
     return value.join(',')
   }
@@ -295,7 +326,7 @@ export function createSignedActionMetadata() {
   signedActionNonceCounter = (signedActionNonceCounter + 1) % 1000
   return {
     nonce: `${Date.now()}${signedActionNonceCounter.toString().padStart(3, '0')}`,
-    timestamp: Date.now(),
+    timestamp: Date.now()
   }
 }
 
@@ -304,12 +335,12 @@ export function buildWalletActionMessage(input: {
   address: string
   nonce: string
   timestamp: number | string
-  fields?: Record<string, string | number | boolean | Array<string | number> | undefined | null>
+  fields?: Record<
+    string,
+    string | number | boolean | Array<string | number> | undefined | null
+  >
 }) {
-  const lines = [
-    `lunex-auth:${input.action}`,
-    `address:${input.address}`,
-  ]
+  const lines = [`lunex-auth:${input.action}`, `address:${input.address}`]
 
   const orderedFields = Object.entries(input.fields ?? {})
     .filter(([, value]) => value !== undefined && value !== null)
@@ -336,8 +367,8 @@ export function buildFollowLeaderMessage(input: {
     nonce: input.nonce,
     timestamp: input.timestamp,
     fields: {
-      leaderId: input.leaderId,
-    },
+      leaderId: input.leaderId
+    }
   })
 }
 
@@ -353,8 +384,8 @@ export function buildUnfollowLeaderMessage(input: {
     nonce: input.nonce,
     timestamp: input.timestamp,
     fields: {
-      leaderId: input.leaderId,
-    },
+      leaderId: input.leaderId
+    }
   })
 }
 
@@ -370,8 +401,8 @@ export function buildLikeIdeaMessage(input: {
     nonce: input.nonce,
     timestamp: input.timestamp,
     fields: {
-      ideaId: input.ideaId,
-    },
+      ideaId: input.ideaId
+    }
   })
 }
 
@@ -387,8 +418,8 @@ export function buildUnlikeIdeaMessage(input: {
     nonce: input.nonce,
     timestamp: input.timestamp,
     fields: {
-      ideaId: input.ideaId,
-    },
+      ideaId: input.ideaId
+    }
   })
 }
 
@@ -406,12 +437,14 @@ export function buildCommentIdeaMessage(input: {
     timestamp: input.timestamp,
     fields: {
       ideaId: input.ideaId,
-      content: input.content,
-    },
+      content: input.content
+    }
   })
 }
 
-export function buildUpsertLeaderProfileMessage(input: UpsertLeaderProfileInput) {
+export function buildUpsertLeaderProfileMessage(
+  input: UpsertLeaderProfileInput
+) {
   return buildWalletActionMessage({
     action: 'social.upsert-profile',
     address: input.address,
@@ -425,8 +458,8 @@ export function buildUpsertLeaderProfileMessage(input: UpsertLeaderProfileInput)
       fee: input.fee,
       twitterUrl: input.twitterUrl || '',
       telegramUrl: input.telegramUrl || '',
-      discordUrl: input.discordUrl || '',
-    },
+      discordUrl: input.discordUrl || ''
+    }
   })
 }
 
@@ -446,8 +479,8 @@ export function buildCopytradeDepositMessage(input: {
     fields: {
       leaderId: input.leaderId,
       token: input.token,
-      amount: input.amount,
-    },
+      amount: input.amount
+    }
   })
 }
 
@@ -465,8 +498,8 @@ export function buildCopytradeWithdrawMessage(input: {
     timestamp: input.timestamp,
     fields: {
       leaderId: input.leaderId,
-      shares: input.shares,
-    },
+      shares: input.shares
+    }
   })
 }
 
@@ -488,24 +521,24 @@ function mapIdea(idea: IdeaApiResponse): SocialIdeaFeedItem {
 function mapIdeaComment(comment: IdeaCommentApiResponse): IdeaComment {
   return {
     id: comment.id,
-    address: comment.address,
     author: comment.author,
     initials: comment.initials,
     avatar: comment.avatar,
     content: comment.content,
-    createdAt: comment.createdAt,
+    createdAt: comment.createdAt
   }
 }
 
-function mapLeaderFollower(follower: LeaderFollowerApiResponse): LeaderFollower {
+function mapLeaderFollower(
+  follower: LeaderFollowerApiResponse
+): LeaderFollower {
   return {
     id: follower.id,
-    address: follower.address,
     name: follower.name,
     username: follower.username,
     initials: follower.initials,
     avatar: follower.avatar,
-    followedAt: follower.followedAt,
+    followedAt: follower.followedAt
   }
 }
 
@@ -537,17 +570,17 @@ function mapTrader(leader: LeaderApiResponse): Trader {
     isFollowing: leader.isFollowing ?? false,
     vault: leader.vault
       ? {
-        id: leader.vault.id,
-        collateralToken: leader.vault.collateralToken,
-        status: leader.vault.status,
-        minDeposit: leader.vault.minDeposit,
-        totalEquity: leader.vault.totalEquity,
-        totalShares: leader.vault.totalShares,
-        totalDeposits: leader.vault.totalDeposits,
-        totalWithdrawals: leader.vault.totalWithdrawals,
-        twapThreshold: leader.vault.twapThreshold,
-        maxSlippageBps: leader.vault.maxSlippageBps
-      }
+          id: leader.vault.id,
+          collateralToken: leader.vault.collateralToken,
+          status: leader.vault.status,
+          minDeposit: leader.vault.minDeposit,
+          totalEquity: leader.vault.totalEquity,
+          totalShares: leader.vault.totalShares,
+          totalDeposits: leader.vault.totalDeposits,
+          totalWithdrawals: leader.vault.totalWithdrawals,
+          twapThreshold: leader.vault.twapThreshold,
+          maxSlippageBps: leader.vault.maxSlippageBps
+        }
       : undefined
   }
 }
@@ -601,9 +634,28 @@ export const socialApi = {
 
   async getLeaderProfile(
     leaderId: string,
-    viewerAddress?: string
+    viewerAddress?: string,
+    signMessage?: (message: string) => Promise<string>
   ): Promise<Trader> {
-    const query = toQueryString({ viewerAddress })
+    let query = toQueryString({ viewerAddress })
+    if (viewerAddress && signMessage) {
+      const metadata = createSignedActionMetadata()
+      const signature = await signMessage(
+        buildWalletActionMessage({
+          action: 'social.leader-profile',
+          address: viewerAddress,
+          nonce: metadata.nonce,
+          timestamp: metadata.timestamp,
+          fields: { leaderId }
+        })
+      )
+      query = toQueryString({
+        viewerAddress,
+        nonce: metadata.nonce,
+        timestamp: metadata.timestamp,
+        signature
+      })
+    }
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
       `/api/v1/social/leaders/${leaderId}${query}`
     )
@@ -612,9 +664,29 @@ export const socialApi = {
 
   async getLeaderProfileByAddress(
     address: string,
-    viewerAddress?: string
+    viewerAddress?: string,
+    signMessage?: (message: string) => Promise<string>
   ): Promise<Trader> {
-    const query = toQueryString({ address, viewerAddress })
+    let query = toQueryString({ address, viewerAddress })
+    if (viewerAddress && signMessage) {
+      const metadata = createSignedActionMetadata()
+      const signature = await signMessage(
+        buildWalletActionMessage({
+          action: 'social.leader-profile-by-address',
+          address: viewerAddress,
+          nonce: metadata.nonce,
+          timestamp: metadata.timestamp,
+          fields: { address }
+        })
+      )
+      query = toQueryString({
+        address,
+        viewerAddress,
+        nonce: metadata.nonce,
+        timestamp: metadata.timestamp,
+        signature
+      })
+    }
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
       `/api/v1/social/leaders/by-address${query}`
     )
@@ -648,7 +720,10 @@ export const socialApi = {
     return data.comments.map(mapIdeaComment)
   },
 
-  async commentOnIdea(ideaId: string, input: SignedCommentActionInput): Promise<IdeaComment> {
+  async commentOnIdea(
+    ideaId: string,
+    input: SignedCommentActionInput
+  ): Promise<IdeaComment> {
     const data = await fetchApi<{ comment: IdeaCommentApiResponse }>(
       `/api/v1/social/ideas/${ideaId}/comments`,
       {
@@ -659,21 +734,30 @@ export const socialApi = {
     return mapIdeaComment(data.comment)
   },
 
-  async likeIdea(ideaId: string, input: SignedAddressActionInput): Promise<{ liked: boolean; alreadyLiked: boolean; likes?: number }> {
+  async likeIdea(
+    ideaId: string,
+    input: SignedAddressActionInput
+  ): Promise<{ liked: boolean; alreadyLiked: boolean; likes?: number }> {
     return await fetchApi(`/api/v1/social/ideas/${ideaId}/like`, {
       method: 'POST',
       body: JSON.stringify(input)
     })
   },
 
-  async unlikeIdea(ideaId: string, input: SignedAddressActionInput): Promise<{ liked: boolean; alreadyLiked: boolean; likes?: number }> {
+  async unlikeIdea(
+    ideaId: string,
+    input: SignedAddressActionInput
+  ): Promise<{ liked: boolean; alreadyLiked: boolean; likes?: number }> {
     return await fetchApi(`/api/v1/social/ideas/${ideaId}/like`, {
       method: 'DELETE',
       body: JSON.stringify(input)
     })
   },
 
-  async getLeaderFollowers(leaderId: string, limit = 20): Promise<LeaderFollower[]> {
+  async getLeaderFollowers(
+    leaderId: string,
+    limit = 20
+  ): Promise<LeaderFollower[]> {
     const query = toQueryString({ limit })
     const data = await fetchApi<{ followers: LeaderFollowerApiResponse[] }>(
       `/api/v1/social/leaders/${leaderId}/followers${query}`
@@ -681,14 +765,20 @@ export const socialApi = {
     return data.followers.map(mapLeaderFollower)
   },
 
-  async followLeader(leaderId: string, input: SignedAddressActionInput): Promise<void> {
+  async followLeader(
+    leaderId: string,
+    input: SignedAddressActionInput
+  ): Promise<void> {
     await fetchApi(`/api/v1/social/leaders/${leaderId}/follow`, {
       method: 'POST',
       body: JSON.stringify(input)
     })
   },
 
-  async unfollowLeader(leaderId: string, input: SignedAddressActionInput): Promise<void> {
+  async unfollowLeader(
+    leaderId: string,
+    input: SignedAddressActionInput
+  ): Promise<void> {
     await fetchApi(`/api/v1/social/leaders/${leaderId}/follow`, {
       method: 'DELETE',
       body: JSON.stringify(input)
@@ -698,8 +788,8 @@ export const socialApi = {
   async depositToVault(
     leaderId: string,
     input: DepositToVaultInput
-  ): Promise<void> {
-    await fetchApi(`/api/v1/copytrade/vaults/${leaderId}/deposit`, {
+  ): Promise<CopytradeDepositResult> {
+    return await fetchApi(`/api/v1/copytrade/vaults/${leaderId}/deposit`, {
       method: 'POST',
       body: JSON.stringify(input)
     })
@@ -708,30 +798,41 @@ export const socialApi = {
   async withdrawFromVault(
     leaderId: string,
     input: WithdrawFromVaultInput
-  ): Promise<{
-    withdrawalId: string
-    grossAmount: number
-    feeAmount: number
-    netAmount: number
-    profitAmount: number
-    remainingShares: number
-  }> {
+  ): Promise<CopytradeWithdrawResult> {
     return await fetchApi(`/api/v1/copytrade/vaults/${leaderId}/withdraw`, {
       method: 'POST',
       body: JSON.stringify(input)
     })
   },
 
-  async getPositions(address: string): Promise<CopytradePosition[]> {
-    const query = toQueryString({ address })
+  async getPositions(
+    address: string,
+    auth: SignedAddressActionInput
+  ): Promise<CopytradePosition[]> {
+    const query = toQueryString({
+      address,
+      nonce: auth.nonce,
+      timestamp: auth.timestamp,
+      signature: auth.signature
+    })
     const data = await fetchApi<{ positions: CopytradePosition[] }>(
       `/api/v1/copytrade/positions${query}`
     )
     return data.positions
   },
 
-  async getActivity(address?: string, limit = 20): Promise<CopytradeActivityItem[]> {
-    const query = toQueryString({ address, limit })
+  async getActivity(
+    address: string,
+    auth: SignedAddressActionInput,
+    limit = 20
+  ): Promise<CopytradeActivityItem[]> {
+    const query = toQueryString({
+      address,
+      limit,
+      nonce: auth.nonce,
+      timestamp: auth.timestamp,
+      signature: auth.signature
+    })
     const data = await fetchApi<{ activity: CopytradeActivityItem[] }>(
       `/api/v1/copytrade/activity${query}`
     )
@@ -754,7 +855,9 @@ export const socialApi = {
     input: ApiKeyChallengeInput
   ): Promise<ApiKeyChallenge> {
     const query = toQueryString({ leaderAddress: input.leaderAddress })
-    return await fetchApi(`/api/v1/copytrade/leaders/${leaderId}/api-key/challenge${query}`)
+    return await fetchApi(
+      `/api/v1/copytrade/leaders/${leaderId}/api-key/challenge${query}`
+    )
   },
 
   async rotateLeaderApiKey(
@@ -765,8 +868,7 @@ export const socialApi = {
       method: 'POST',
       body: JSON.stringify(input)
     })
-  },
-
+  }
 }
 
 export default socialApi

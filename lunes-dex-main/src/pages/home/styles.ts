@@ -11,7 +11,7 @@ type StyledProps = {
 
 export const PillNav = styled(Wrapper)`
   width: fit-content;
-  background: #1A1A1A;
+  background: #1a1a1a;
   border-radius: 12px;
   padding: 4px;
   margin-bottom: 24px;
@@ -31,14 +31,14 @@ export const PillOption = styled.button<{ active?: boolean }>`
     transition: all 0.2s;
 
     &:hover {
-      color: #FFFFFF;
+      color: #ffffff;
       background: ${active ? theme.colors.themeColors[800] : '#2A2A2C'};
     }
   `}
 `
 
 export const Box = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     position: relative;
     z-index: 2;
 

@@ -118,7 +118,9 @@ export class AssetBridgeService {
     const provider = new WsProvider(this.config.wsEndpoint);
     this.api = await ApiPromise.create({ provider });
     await this.api.isReady;
-    console.log(`[AssetBridge] Connected. Bridge account: ${this.bridgeAddress}`);
+    console.log(
+      `[AssetBridge] Connected. Bridge account: ${this.bridgeAddress}`,
+    );
 
     // Load contract metadata
     const metadataPath = path.resolve(this.config.contractMetadataPath);
@@ -163,7 +165,6 @@ export class AssetBridgeService {
 
         try {
           const blockHash = await this.api.rpc.chain.getBlockHash(blockNumber);
-          const block = await this.api.rpc.chain.getBlock(blockHash);
           const events = (await this.api.query.system.events.at(
             blockHash,
           )) as any;
@@ -184,7 +185,9 @@ export class AssetBridgeService {
     )) as unknown as () => void;
 
     console.log(
-      `[AssetBridge] Listening for FINALIZED deposit/withdraw events (from block ${this.state.lastProcessedBlock + 1})...`,
+      `[AssetBridge] Listening for FINALIZED deposit/withdraw events (from block ${
+        this.state.lastProcessedBlock + 1
+      })...`,
     );
   }
 
@@ -234,9 +237,7 @@ export class AssetBridgeService {
 
       // Check local deduplication
       if (this.state.processedDeposits[depositKey]) {
-        console.log(
-          `[AssetBridge] Skipping duplicate deposit ${depositKey}`,
-        );
+        console.log(`[AssetBridge] Skipping duplicate deposit ${depositKey}`);
         continue;
       }
 
@@ -282,10 +283,7 @@ export class AssetBridgeService {
     for (let i = 0; i < events.length; i++) {
       const { event, phase } = events[i];
 
-      if (
-        event.section !== 'contracts' ||
-        event.method !== 'ContractEmitted'
-      )
+      if (event.section !== 'contracts' || event.method !== 'ContractEmitted')
         continue;
 
       const [contractAddress] = event.data;
@@ -307,17 +305,16 @@ export class AssetBridgeService {
       const withdrawKey = `w:${blockNumber}:${extrinsicIndex}`;
 
       if (this.state.processedWithdrawals[withdrawKey]) {
-        console.log(`[AssetBridge] Skipping duplicate withdrawal ${withdrawKey}`);
+        console.log(
+          `[AssetBridge] Skipping duplicate withdrawal ${withdrawKey}`,
+        );
         continue;
       }
 
       try {
         // SEC B-04: Parse event data using proper decoding
         const eventData = event.data[1].toHex();
-        const dataBytes = Buffer.from(
-          eventData.replace('0x', ''),
-          'hex',
-        );
+        const dataBytes = Buffer.from(eventData.replace('0x', ''), 'hex');
 
         if (dataBytes.length < 52) {
           console.warn(
@@ -411,28 +408,21 @@ export class AssetBridgeService {
         amount,
         depositRef,
       )
-        .signAndSend(
-          this.adminAccount,
-          { nonce },
-          (result: any) => {
-            if (result.status.isFinalized) {
-              const failed = result.events.find(
-                ({ event: e }: any) =>
-                  e.section === 'system' &&
-                  e.method === 'ExtrinsicFailed',
+        .signAndSend(this.adminAccount, { nonce }, (result: any) => {
+          if (result.status.isFinalized) {
+            const failed = result.events.find(
+              ({ event: e }: any) =>
+                e.section === 'system' && e.method === 'ExtrinsicFailed',
+            );
+            if (failed) {
+              reject(
+                new Error(`Mint failed (ref ${depositRef}): ExtrinsicFailed`),
               );
-              if (failed) {
-                reject(
-                  new Error(
-                    `Mint failed (ref ${depositRef}): ExtrinsicFailed`,
-                  ),
-                );
-              } else {
-                resolve();
-              }
+            } else {
+              resolve();
             }
-          },
-        )
+          }
+        })
         .catch(reject);
     });
   }
@@ -451,28 +441,19 @@ export class AssetBridgeService {
     await new Promise<void>((resolve, reject) => {
       this.api.tx.assets
         .transfer(assetId, to, amount)
-        .signAndSend(
-          this.adminAccount,
-          { nonce },
-          (result: any) => {
-            if (result.status.isFinalized) {
-              const failed = result.events.find(
-                ({ event: e }: any) =>
-                  e.section === 'system' &&
-                  e.method === 'ExtrinsicFailed',
-              );
-              if (failed) {
-                reject(
-                  new Error(
-                    `Asset transfer failed for asset #${assetId}`,
-                  ),
-                );
-              } else {
-                resolve();
-              }
+        .signAndSend(this.adminAccount, { nonce }, (result: any) => {
+          if (result.status.isFinalized) {
+            const failed = result.events.find(
+              ({ event: e }: any) =>
+                e.section === 'system' && e.method === 'ExtrinsicFailed',
+            );
+            if (failed) {
+              reject(new Error(`Asset transfer failed for asset #${assetId}`));
+            } else {
+              resolve();
             }
-          },
-        )
+          }
+        })
         .catch(reject);
     });
   }
@@ -481,15 +462,13 @@ export class AssetBridgeService {
 // --- Standalone Runner ---
 
 export function createBridgeFromEnv(): AssetBridgeService {
-  const wsEndpoint =
-    process.env.LUNES_WS_ENDPOINT || 'ws://127.0.0.1:9944';
+  const wsEndpoint = process.env.LUNES_WS_ENDPOINT || 'ws://127.0.0.1:9944';
   const adminSeed = process.env.BRIDGE_ADMIN_SEED || '//Alice';
   const assetsJson = process.env.BRIDGE_ASSETS || '[]';
   const metadataPath =
     process.env.BRIDGE_CONTRACT_METADATA ||
     './artifacts/asset_wrapper_contract.json';
-  const stateFilePath =
-    process.env.BRIDGE_STATE_FILE || './bridge-state.json';
+  const stateFilePath = process.env.BRIDGE_STATE_FILE || './bridge-state.json';
 
   let assets: BridgeAssetConfig[];
   try {

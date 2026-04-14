@@ -7,7 +7,9 @@
       ],
       "env": {
         "LUNEX_SPOT_API_URL": "http://127.0.0.1:4010",
-        "LUNEX_LEADER_API_KEY": ""
+        "LUNEX_LEADER_API_KEY": "",
+        "LUNEX_AGENT_API_KEY": "",
+        "LUNEX_MCP_ORIGIN": ""
       }
     }
   }

@@ -16,7 +16,8 @@ declare global {
   }
 }
 
-const WEBMCP_CDN = 'https://unpkg.com/@anthropic-ai/webmcp@latest/dist/webmcp.min.js'
+const WEBMCP_CDN =
+  'https://unpkg.com/@anthropic-ai/webmcp@latest/dist/webmcp.min.js'
 
 // Available routes in the app
 const APP_ROUTES: Record<string, string> = {
@@ -30,7 +31,7 @@ const APP_ROUTES: Record<string, string> = {
   strategies: '/strategies',
   governance: '/governance',
   docs: '/docs',
-  affiliates: '/affiliates',
+  affiliates: '/affiliates'
 }
 
 export function useWebMCP() {
@@ -45,7 +46,7 @@ export function useWebMCP() {
         color: '#00E5A0',
         position: 'bottom-right',
         size: '36px',
-        padding: '12px',
+        padding: '12px'
       })
 
       // ─── TOOLS ───────────────────────────────────────────────
@@ -57,27 +58,32 @@ export function useWebMCP() {
         {
           page: {
             type: 'string',
-            description: 'Page name: swap, spot, pools, staking, rewards, copytrade, agents, strategies, governance, docs, affiliates',
-          },
+            description:
+              'Page name: swap, spot, pools, staking, rewards, copytrade, agents, strategies, governance, docs, affiliates'
+          }
         },
         (args: { page: string }) => {
           const path = APP_ROUTES[args.page?.toLowerCase()]
           if (!path) {
             return {
-              content: [{
-                type: 'text',
-                text: `Unknown page "${args.page}". Available: ${Object.keys(APP_ROUTES).join(', ')}`,
-              }],
+              content: [
+                {
+                  type: 'text',
+                  text: `Unknown page "${args.page}". Available: ${Object.keys(APP_ROUTES).join(', ')}`
+                }
+              ]
             }
           }
           navigate(path)
           return {
-            content: [{
-              type: 'text',
-              text: `Navigated to ${args.page} (${path})`,
-            }],
+            content: [
+              {
+                type: 'text',
+                text: `Navigated to ${args.page} (${path})`
+              }
+            ]
           }
-        },
+        }
       )
 
       // 2. Get protocol info
@@ -86,33 +92,35 @@ export function useWebMCP() {
         'Get information about the Lunex DEX protocol, its features, and trading modes.',
         {},
         () => ({
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              name: 'Lunex DEX',
-              description: 'Unified trading protocol on Lunes blockchain',
-              blockchain: 'Lunes (Substrate-based)',
-              features: [
-                'AMM Swap — instant token conversion',
-                'Spot Orderbook — limit and market orders',
-                'AI Agents — autonomous trading bots via OpenClaw',
-                'Copy Trading — follow top traders',
-                'Asymmetric Liquidity — concentrated LP positions',
-                'Strategy Marketplace — deploy or publish strategies',
-                'Staking — LUNES lockups for yield',
-                'Rewards — tiered reward distribution',
-                'Governance — on-chain voting',
-              ],
-              nativeToken: 'LUNES',
-              stablecoin: 'lUSDT (PSP22)',
-              tradingFee: '0.25 bps (maker) / 0.50 bps (taker)',
-              executionSpeed: '<3 seconds',
-              custody: 'Non-custodial (self-custody)',
-              docs: 'https://docs.lunes.io',
-              github: 'https://github.com/lunes-platform',
-            }),
-          }],
-        }),
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                name: 'Lunex DEX',
+                description: 'Unified trading protocol on Lunes blockchain',
+                blockchain: 'Lunes (Substrate-based)',
+                features: [
+                  'AMM Swap — instant token conversion',
+                  'Spot Orderbook — limit and market orders',
+                  'AI Agents — autonomous trading bots via OpenClaw',
+                  'Copy Trading — follow top traders',
+                  'Asymmetric Liquidity — concentrated LP positions',
+                  'Strategy Marketplace — deploy or publish strategies',
+                  'Staking — LUNES lockups for yield',
+                  'Rewards — tiered reward distribution',
+                  'Governance — on-chain voting'
+                ],
+                nativeToken: 'LUNES',
+                stablecoin: 'lUSDT (PSP22)',
+                tradingFee: '0.25 bps (maker) / 0.50 bps (taker)',
+                executionSpeed: '<3 seconds',
+                custody: 'Non-custodial (self-custody)',
+                docs: 'https://docs.lunes.io',
+                github: 'https://github.com/lunes-platform'
+              })
+            }
+          ]
+        })
       )
 
       // 3. Get wallet connection status
@@ -125,15 +133,17 @@ export function useWebMCP() {
           const parsed = raw ? JSON.parse(raw) : null
           const address = parsed?.address
           return {
-            content: [{
-              type: 'text',
-              text: JSON.stringify({
-                connected: !!address,
-                address: address || null,
-              }),
-            }],
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  connected: !!address,
+                  address: address || null
+                })
+              }
+            ]
           }
-        },
+        }
       )
 
       // 4. Get available trading pairs
@@ -142,18 +152,20 @@ export function useWebMCP() {
         'Get the list of available trading pairs on the Lunex DEX spot orderbook.',
         {},
         () => ({
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              pairs: [
-                { symbol: 'LUNES/lUSDT', base: 'LUNES', quote: 'lUSDT' },
-                { symbol: 'BTC/lUSDT', base: 'BTC', quote: 'lUSDT' },
-                { symbol: 'ETH/lUSDT', base: 'ETH', quote: 'lUSDT' },
-              ],
-              note: 'Navigate to /spot for live orderbook data',
-            }),
-          }],
-        }),
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                pairs: [
+                  { symbol: 'LUNES/lUSDT', base: 'LUNES', quote: 'lUSDT' },
+                  { symbol: 'BTC/lUSDT', base: 'BTC', quote: 'lUSDT' },
+                  { symbol: 'ETH/lUSDT', base: 'ETH', quote: 'lUSDT' }
+                ],
+                note: 'Navigate to /spot for live orderbook data'
+              })
+            }
+          ]
+        })
       )
 
       // ─── RESOURCES ───────────────────────────────────────────
@@ -164,12 +176,14 @@ export function useWebMCP() {
         'Current page content of the Lunex DEX',
         { uri: 'lunex://page/current', mimeType: 'text/html' },
         () => ({
-          contents: [{
-            uri: 'lunex://page/current',
-            mimeType: 'text/html',
-            text: document.body.innerText.substring(0, 4000),
-          }],
-        }),
+          contents: [
+            {
+              uri: 'lunex://page/current',
+              mimeType: 'text/html',
+              text: document.body.innerText.substring(0, 4000)
+            }
+          ]
+        })
       )
 
       // Expose site structure
@@ -178,18 +192,23 @@ export function useWebMCP() {
         'Complete site structure of the Lunex DEX with all available routes',
         { uri: 'lunex://sitemap', mimeType: 'application/json' },
         () => ({
-          contents: [{
-            uri: 'lunex://sitemap',
-            mimeType: 'application/json',
-            text: JSON.stringify({
-              routes: Object.entries(APP_ROUTES).map(([name, path]) => ({ name, path })),
-              externalLinks: [
-                { name: 'Documentation', url: 'https://docs.lunes.io' },
-                { name: 'GitHub', url: 'https://github.com/lunes-platform' },
-              ],
-            }),
-          }],
-        }),
+          contents: [
+            {
+              uri: 'lunex://sitemap',
+              mimeType: 'application/json',
+              text: JSON.stringify({
+                routes: Object.entries(APP_ROUTES).map(([name, path]) => ({
+                  name,
+                  path
+                })),
+                externalLinks: [
+                  { name: 'Documentation', url: 'https://docs.lunes.io' },
+                  { name: 'GitHub', url: 'https://github.com/lunes-platform' }
+                ]
+              })
+            }
+          ]
+        })
       )
 
       // ─── PROMPTS ─────────────────────────────────────────────
@@ -199,14 +218,16 @@ export function useWebMCP() {
         'Help the user get started with trading on Lunex',
         [],
         () => ({
-          messages: [{
-            role: 'user',
-            content: {
-              type: 'text',
-              text: 'I want to start trading on the Lunex DEX. What trading modes are available and how do I get started? Please guide me step by step.',
-            },
-          }],
-        }),
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: 'I want to start trading on the Lunex DEX. What trading modes are available and how do I get started? Please guide me step by step.'
+              }
+            }
+          ]
+        })
       )
 
       mcp.registerPrompt(
@@ -214,14 +235,16 @@ export function useWebMCP() {
         'Compare trading strategies available on the Lunex marketplace',
         [],
         () => ({
-          messages: [{
-            role: 'user',
-            content: {
-              type: 'text',
-              text: 'Compare the trading strategies available on the Lunex Strategy Marketplace. Which ones are best for a conservative investor vs an aggressive trader?',
-            },
-          }],
-        }),
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: 'Compare the trading strategies available on the Lunex Strategy Marketplace. Which ones are best for a conservative investor vs an aggressive trader?'
+              }
+            }
+          ]
+        })
       )
     }
 

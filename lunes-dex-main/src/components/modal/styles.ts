@@ -7,7 +7,7 @@ type StyledProps = {
 }
 
 export const Container = styled.div`
-  ${({ theme }) => css`
+  ${css`
     width: 100%;
     height: 100%;
     top: 0;
@@ -45,11 +45,15 @@ export const Close = styled.button`
     position: absolute;
     top: 8px;
     right: 8px;
-    transition: transform 0.3s ease-in-out, color 0.2s ease;
+    transition:
+      transform 0.3s ease-in-out,
+      color 0.2s ease;
     transform: rotate(0deg);
     :hover {
       color: ${theme.colors.themeColors[800]};
-      transition: transform 0.3s ease-in-out, color 0.2s ease;
+      transition:
+        transform 0.3s ease-in-out,
+        color 0.2s ease;
       transform: rotate(-180deg);
     }
   `}

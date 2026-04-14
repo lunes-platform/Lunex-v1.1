@@ -163,6 +163,31 @@ router.post('/admin/action', requireAdmin, async (req, res, next) => {
 
 ---
 
+## SDD Workflow
+
+Feature work in Lunex now follows a lightweight SDD flow:
+
+1. Create `docs/features/<feature-slug>/PRD.md`
+2. Create `docs/features/<feature-slug>/SPEC.md`
+3. Create `docs/features/<feature-slug>/TASKS.md`
+4. Implement only after scope and technical impact are explicit
+5. Update `docs/prd/PROJECT_PRD.md` or `docs/specs/PROJECT_SPEC.md` if the change affects product vision or cross-cutting architecture
+
+Use these references:
+
+- `docs/README.md`
+- `docs/sdd/README.md`
+- `docs/sdd/templates/PRD_TEMPLATE.md`
+- `docs/sdd/templates/SPEC_TEMPLATE.md`
+- `docs/sdd/templates/TASKS_TEMPLATE.md`
+
+Exceptions:
+
+- Small bugfixes can skip a full PRD, but should still have a minimal spec and test plan in the PR or feature folder
+- Editorial doc updates do not require a feature folder
+
+---
+
 ## Git Workflow
 
 ```bash

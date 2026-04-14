@@ -18,7 +18,12 @@ const IconImg = styled.img<{ $size: number }>`
   background: #2a2a2c;
 `
 
-const TokenIcon: React.FC<TokenIconProps> = ({ address, symbol, size = 24, className }) => {
+const TokenIcon: React.FC<TokenIconProps> = ({
+  address,
+  symbol,
+  size = 24,
+  className
+}) => {
   const [src, setSrc] = useState(() => getTokenLogo(address, symbol))
 
   const handleError = () => {

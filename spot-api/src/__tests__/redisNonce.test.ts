@@ -6,28 +6,28 @@
  */
 
 jest.mock('../utils/redis', () => {
-  const store = new Map<string, string>()
+  const store = new Map<string, string>();
 
   const mockRedis = {
     get: jest.fn(async (key: string) => store.get(key) ?? null),
     set: jest.fn(async (key: string, value: string) => {
-      store.set(key, value)
-      return 'OK'
+      store.set(key, value);
+      return 'OK';
     }),
     ping: jest.fn(async () => 'PONG'),
     quit: jest.fn(async () => 'OK'),
     // Expose store for test assertions
     _store: store,
     _clear: () => store.clear(),
-  }
+  };
 
   return {
     getRedis: jest.fn(() => mockRedis),
     redisHealthy: jest.fn(async () => true),
     disconnectRedis: jest.fn(async () => undefined),
     _mockRedis: mockRedis,
-  }
-})
+  };
+});
 
 jest.mock('../config', () => ({
   config: {
@@ -36,20 +36,23 @@ jest.mock('../config', () => ({
       nonceTtlSeconds: 300,
     },
   },
-}))
+}));
 
-import { buildWalletActionMessage, verifyWalletActionSignature } from '../middleware/auth'
-import * as redisModule from '../utils/redis'
+import {
+  buildWalletActionMessage,
+  verifyWalletActionSignature,
+} from '../middleware/auth';
+import * as redisModule from '../utils/redis';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockRedis = (redisModule as any)._mockRedis as {
-  get: jest.Mock
-  set: jest.Mock
-  ping: jest.Mock
-  quit: jest.Mock
-  _store: Map<string, string>
-  _clear: () => void
-}
+  get: jest.Mock;
+  set: jest.Mock;
+  ping: jest.Mock;
+  quit: jest.Mock;
+  _store: Map<string, string>;
+  _clear: () => void;
+};
 
 describe('buildWalletActionMessage', () => {
   it('builds a deterministic canonical message', () => {
@@ -59,17 +62,17 @@ describe('buildWalletActionMessage', () => {
       nonce: 'abc123',
       timestamp: 1700000000000,
       fields: { amount: '100', token: 'WLUNES' },
-    })
+    });
 
     expect(msg).toBe(
       'lunex-auth:deposit\n' +
-      'address:5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\n' +
-      'amount:100\n' +
-      'token:WLUNES\n' +
-      'nonce:abc123\n' +
-      'timestamp:1700000000000',
-    )
-  })
+        'address:5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY\n' +
+        'amount:100\n' +
+        'token:WLUNES\n' +
+        'nonce:abc123\n' +
+        'timestamp:1700000000000',
+    );
+  });
 
   it('sorts fields lexicographically', () => {
     const msg = buildWalletActionMessage({
@@ -78,12 +81,12 @@ describe('buildWalletActionMessage', () => {
       nonce: 'n1',
       timestamp: 0,
       fields: { z: 'last', a: 'first', m: 'middle' },
-    })
+    });
 
-    const lines = msg.split('\n')
-    const fieldLines = lines.slice(2, lines.length - 2)
-    expect(fieldLines).toEqual(['a:first', 'm:middle', 'z:last'])
-  })
+    const lines = msg.split('\n');
+    const fieldLines = lines.slice(2, lines.length - 2);
+    expect(fieldLines).toEqual(['a:first', 'm:middle', 'z:last']);
+  });
 
   it('omits null/undefined fields', () => {
     const msg = buildWalletActionMessage({
@@ -92,24 +95,26 @@ describe('buildWalletActionMessage', () => {
       nonce: 'n1',
       timestamp: 0,
       fields: { a: 'present', b: undefined, c: null },
-    })
+    });
 
-    expect(msg).not.toContain('b:')
-    expect(msg).not.toContain('c:')
-  })
-})
+    expect(msg).not.toContain('b:');
+    expect(msg).not.toContain('c:');
+  });
+});
 
 describe('verifyWalletActionSignature — replay protection', () => {
   beforeEach(() => {
-    mockRedis._clear()
-    jest.clearAllMocks()
+    mockRedis._clear();
+    jest.clearAllMocks();
     // Restore get/set to default implementations after each test
-    mockRedis.get.mockImplementation(async (key: string) => mockRedis._store.get(key) ?? null)
+    mockRedis.get.mockImplementation(
+      async (key: string) => mockRedis._store.get(key) ?? null,
+    );
     mockRedis.set.mockImplementation(async (key: string, value: string) => {
-      mockRedis._store.set(key, value)
-      return 'OK'
-    })
-  })
+      mockRedis._store.set(key, value);
+      return 'OK';
+    });
+  });
 
   it('rejects an expired timestamp', async () => {
     const result = await verifyWalletActionSignature({
@@ -118,11 +123,11 @@ describe('verifyWalletActionSignature — replay protection', () => {
       nonce: 'n1',
       timestamp: Date.now() - 10 * 60 * 1000, // 10 minutes ago
       signature: '0x00',
-    })
+    });
 
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/expired/i)
-  })
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/expired/i);
+  });
 
   it('rejects a future timestamp beyond the TTL window', async () => {
     const result = await verifyWalletActionSignature({
@@ -131,15 +136,15 @@ describe('verifyWalletActionSignature — replay protection', () => {
       nonce: 'n2',
       timestamp: Date.now() + 10 * 60 * 1000, // 10 minutes in future
       signature: '0x00',
-    })
+    });
 
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/expired/i)
-  })
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/expired/i);
+  });
 
   it('rejects if nonce is already used (Redis)', async () => {
-    const replayKey = 'nonce:deposit:addr:nonce-already-used'
-    mockRedis._store.set(replayKey, '1')
+    const replayKey = 'nonce:deposit:addr:nonce-already-used';
+    mockRedis._store.set(replayKey, '1');
 
     const result = await verifyWalletActionSignature({
       action: 'deposit',
@@ -147,14 +152,14 @@ describe('verifyWalletActionSignature — replay protection', () => {
       nonce: 'nonce-already-used',
       timestamp: Date.now(),
       signature: '0x00',
-    })
+    });
 
-    expect(result.ok).toBe(false)
-    expect(result.error).toMatch(/nonce already used/i)
-  })
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/nonce already used/i);
+  });
 
   it('falls back to in-memory when Redis throws on get', async () => {
-    mockRedis.get.mockRejectedValueOnce(new Error('Redis down'))
+    mockRedis.get.mockRejectedValueOnce(new Error('Redis down'));
 
     // Should not throw — should fall back gracefully and proceed to signature validation
     const result = await verifyWalletActionSignature({
@@ -163,18 +168,18 @@ describe('verifyWalletActionSignature — replay protection', () => {
       nonce: 'nonce-fallback',
       timestamp: Date.now(),
       signature: '0x00',
-    })
+    });
 
     // Signature validation will fail (invalid sig), but error is not about Redis
-    expect(result.ok).toBe(false)
-    expect(result.error).not.toMatch(/redis/i)
-  })
+    expect(result.ok).toBe(false);
+    expect(result.error).not.toMatch(/redis/i);
+  });
 
   it('marks nonce in Redis after successful use (mock set called)', async () => {
     // Simulate a valid signature scenario by short-circuiting signature check
     // We inject a valid call where nonce hasn't been used
     // The call will fail on signature but we can assert Redis.set was NOT called before that
-    mockRedis.get.mockResolvedValueOnce(null)
+    mockRedis.get.mockResolvedValueOnce(null);
 
     await verifyWalletActionSignature({
       action: 'trade',
@@ -182,7 +187,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
       nonce: 'fresh-nonce',
       timestamp: Date.now(),
       signature: '0x00',
-    })
+    });
 
     // Redis.set should NOT have been called because signature validation fails
     expect(mockRedis.set).not.toHaveBeenCalledWith(
@@ -190,6 +195,6 @@ describe('verifyWalletActionSignature — replay protection', () => {
       expect.anything(),
       expect.anything(),
       expect.anything(),
-    )
-  })
-})
+    );
+  });
+});

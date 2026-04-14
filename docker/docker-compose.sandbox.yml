@@ -40,6 +40,7 @@ services:
 
   # ── Sandbox Spot API (testnet) ──
   sandbox-api:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-lunes-project/lunex}/api:${IMAGE_TAG:-latest}
     build:
       context: ../spot-api
       dockerfile: ../docker/Dockerfile.api
@@ -59,6 +60,11 @@ services:
       LUNES_WS_URL: ${SANDBOX_LUNES_WS_URL:-wss://sandbox.lunes.io/ws}
       RELAYER_SEED: ${SANDBOX_RELAYER_SEED:?Set SANDBOX_RELAYER_SEED}
       REDIS_URL: redis://sandbox-redis:6379
+      SPOT_CONTRACT_ADDRESS: ${SANDBOX_SPOT_SETTLEMENT_CONTRACT:-}
+      SPOT_CONTRACT_METADATA_PATH: ${SANDBOX_SPOT_CONTRACT_METADATA_PATH:-./abis/Spot.json}
+      FACTORY_CONTRACT_ADDRESS: ${SANDBOX_FACTORY_CONTRACT:-}
+      FACTORY_CONTRACT_METADATA_PATH: ${FACTORY_CONTRACT_METADATA_PATH:-./abis/Factory.json}
+      NATIVE_TOKEN_ADDRESS: ${SANDBOX_NATIVE_TOKEN_ADDRESS:-}
       SOCIAL_ANALYTICS_ENABLED: "true"
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET}
     healthcheck:
@@ -70,6 +76,7 @@ services:
 
   # ── Sandbox Frontend DEX (testnet build) ──
   sandbox-frontend:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-lunes-project/lunex}/frontend:${IMAGE_TAG:-latest}
     build:
       context: ../lunes-dex-main
       dockerfile: ../docker/Dockerfile.frontend

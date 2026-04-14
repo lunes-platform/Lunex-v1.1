@@ -67,7 +67,7 @@ ${({ theme }) => css`
 
   /* Smooth focus ring */
   :focus-visible {
-    outline: 2px solid #6C38FF;
+    outline: 2px solid #6c38ff;
     outline-offset: 2px;
   }
 
@@ -77,7 +77,9 @@ ${({ theme }) => css`
 
   /* Reduced motion support */
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
+    *,
+    *::before,
+    *::after {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
@@ -104,13 +106,13 @@ ${({ theme }) => css`
   }
 
   /* Hide native number input spinners */
-  input[type="number"]::-webkit-inner-spin-button,
-  input[type="number"]::-webkit-outer-spin-button {
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
     -webkit-appearance: none;
     margin: 0;
   }
 
-  input[type="number"] {
+  input[type='number'] {
     -moz-appearance: textfield;
     appearance: textfield;
   }

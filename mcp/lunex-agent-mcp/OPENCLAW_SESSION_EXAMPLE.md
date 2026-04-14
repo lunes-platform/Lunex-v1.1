@@ -2,7 +2,7 @@
 
 ## Goal
 
-User goal: inspect Lunex spot market health, confirm MCP scope, retrieve guided prompt context, and prepare for a secure authenticated spot trade without leaving MCP scope.
+User goal: inspect Lunex spot market health, confirm MCP scope, obtain a Smart Router quote, and prepare for a secure authenticated spot trade without leaving MCP scope.
 
 ## Preconditions
 
@@ -29,8 +29,8 @@ Prompt arguments:
 Expected agent behavior:
 
 - Call `get_server_scope`
-- Refuse swap/staking/liquidity/router/farming requests
-- Continue only with spot market data, authenticated spot trading, social trading, or copytrade
+- Refuse direct AMM contract actions, staking, and farming requests
+- Continue only with supported flows such as spot market data, Smart Router, externally-signed wallet flows, agent-authenticated trading, social/copytrade, strategies, execution telemetry, and asymmetric management
 
 Tool call:
 
@@ -48,19 +48,21 @@ Representative result:
   "name": "lunex-spot-social-copytrade-mcp",
   "supports": [
     "spot-market-data",
+    "smart-router",
     "authenticated-spot-trading",
+    "agent-authenticated-trading",
     "social-trading",
-    "copytrade"
+    "copytrade",
+    "strategy-layer",
+    "execution-layer",
+    "asymmetric-liquidity"
   ],
   "doesNotSupport": [
-    "swap",
-    "router",
-    "liquidity",
     "amm",
     "staking",
     "farming"
   ],
-  "guidance": "Use this MCP for spot orderbook market context, authenticated spot order flows with external signing, social leader discovery, follower analytics, and copytrade automation only."
+  "guidance": "Use this MCP for spot market context, Smart Router quote/execution, externally-signed wallet flows, agent-authenticated trading, social/copytrade workflows, strategy tooling, execution telemetry, and asymmetric agent management. Do not use it for direct AMM contract actions, staking, or farming."
 }
 ```
 
@@ -96,6 +98,7 @@ Prompt arguments:
 Expected agent behavior from this prompt:
 
 - Gather market context if relevant
+- Optionally call `get_router_quote` for route discovery
 - Call `prepare_spot_order_signature`
 - Wait for a real external signature
 - Call `create_spot_order` only after receiving the real signature
@@ -120,7 +123,35 @@ Observed live result during validation:
 }
 ```
 
-### 5. Agent prepares an authenticated spot order signature payload
+### 5. Agent asks Smart Router for the best route
+
+Tool call:
+
+```json
+{
+  "name": "get_router_quote",
+  "arguments": {
+    "pairSymbol": "BTC/USDT",
+    "side": "BUY",
+    "amountIn": 1000
+  }
+}
+```
+
+Representative result shape:
+
+```json
+{
+  "pairSymbol": "BTC/USDT",
+  "side": "BUY",
+  "amountIn": 1000,
+  "bestRoute": "ORDERBOOK",
+  "bestAmountOut": 0.0161,
+  "routes": []
+}
+```
+
+### 6. Agent prepares an authenticated spot order signature payload
 
 Tool call:
 
@@ -143,7 +174,8 @@ Representative result shape:
 ```json
 {
   "nonce": "1709689254000-ab12cd34",
-  "message": "lunex-order:BTC/USDT:BUY:LIMIT:62000:0.0100:1709689254000-ab12cd34",
+  "timestamp": 1709689254000,
+  "message": "lunex-order:BTC/USDT:BUY:LIMIT:62000:0:0.0100:1709689254000-ab12cd34:1709689254000",
   "order": {
     "pairSymbol": "BTC/USDT",
     "side": "BUY",
@@ -152,22 +184,23 @@ Representative result shape:
     "makerAddress": "5FExampleTraderAddress",
     "price": "62000",
     "timeInForce": "GTC",
-    "nonce": "1709689254000-ab12cd34"
+    "nonce": "1709689254000-ab12cd34",
+    "timestamp": 1709689254000
   }
 }
 ```
 
-### 6. External wallet signs the message
+### 7. External wallet signs the message
 
 This must happen outside MCP.
 
 Example signed message target:
 
 ```text
-lunex-order:BTC/USDT:BUY:LIMIT:62000:0.0100:1709689254000-ab12cd34
+lunex-order:BTC/USDT:BUY:LIMIT:62000:0:0.0100:1709689254000-ab12cd34:1709689254000
 ```
 
-### 7. Agent submits the signed order
+### 8. Agent submits the signed order
 
 Tool call:
 
@@ -182,17 +215,39 @@ Tool call:
     "makerAddress": "5FExampleTraderAddress",
     "price": "62000",
     "nonce": "1709689254000-ab12cd34",
+    "timestamp": 1709689254000,
     "signature": "0xREAL_EXTERNAL_SIGNATURE"
   }
 }
 ```
 
-### 8. Agent monitors order/trade history
+### 9. Agent monitors order/trade history
 
 Follow-up tools:
 
 - `get_user_orders`
 - `get_user_trade_history`
+
+If those tools return `requiresExternalSignature: true`, the agent must obtain the external wallet signature and replay the same tool with `nonce`, `timestamp`, and `signature`.
+
+### 10. Agent-authenticated Smart Router execution
+
+If the user already has an agent API key, the agent can execute the Smart Router directly:
+
+```json
+{
+  "name": "agent_router_swap",
+  "arguments": {
+    "pairSymbol": "BTC/USDT",
+    "side": "BUY",
+    "amountIn": 1000,
+    "maxSlippageBps": 100,
+    "apiKey": "lnx_..."
+  }
+}
+```
+
+If the best route resolves to `ASYMMETRIC`, the tool may return `requiresWalletSignature: true` together with `contractCallIntent`. In that case the agent must stop claiming completion and hand off the intent to the user wallet.
 
 ## Out-of-scope refusal example
 
@@ -201,7 +256,7 @@ If the agent attempts a tool like `swap_tokens`, the MCP should explicitly refus
 Representative refusal:
 
 ```text
-Tool `swap_tokens` is outside the scope of lunex-spot-social-copytrade-mcp. This MCP explicitly refuses requests for swap, router, liquidity, amm, staking, or farming operations. Supported domains are: spot market data, authenticated spot trading, social trading, and copytrade. Call `get_server_scope` or read `lunex://scope` for the authoritative scope.
+Tool `swap_tokens` is outside the scope of lunex-spot-social-copytrade-mcp. This MCP explicitly refuses requests for direct AMM contract actions, staking, or farming operations that are outside its contract. Supported domains are: spot market data, Smart Router, externally-signed wallet flows, agent-authenticated trading, social/copytrade workflows, strategy tooling, execution telemetry, and asymmetric agent management. Call `get_server_scope` or read `lunex://scope` for the authoritative scope.
 ```
 
 ## Live validation notes

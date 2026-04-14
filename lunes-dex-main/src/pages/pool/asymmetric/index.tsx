@@ -1,14 +1,27 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import styled from 'styled-components'
-import { useNavigate } from 'react-router-dom'
 import { Zap, LayoutGrid, Triangle, Bot } from 'lucide-react'
 import PageLayout from '../../../components/layout'
 import TradeSubNav from '../../../components/tradeSubNav'
-import CurveChart, { CurveParams, simulateLiquidity } from '../../../components/asymmetric/CurveChart'
-import StrategyCards, { STRATEGY_TEMPLATES, StrategyTemplate } from '../../../components/asymmetric/StrategyCards'
+import CurveChart, {
+  CurveParams,
+  simulateLiquidity
+} from '../../../components/asymmetric/CurveChart'
+import StrategyCards, {
+  StrategyTemplate
+} from '../../../components/asymmetric/StrategyCards'
 import AgentDelegationPanel from '../../../components/asymmetric/AgentDelegationPanel'
 import { useSDK } from '../../../context/SDKContext'
 import { useAsymmetricDeploy } from '../../../hooks/useAsymmetricDeploy'
+import {
+  AsymmetricClient,
+  RebalanceLog,
+  StrategyStatus
+} from '../../../sdk/AsymmetricClient'
+import {
+  buildWalletActionMessage,
+  createSignedActionMetadata
+} from '../../../utils/signing'
 import { Button } from '../../../components/bases'
 
 // ─── Tabs ─────────────────────────────────────────────────────────
@@ -45,7 +58,7 @@ const TabButton = styled.button<{ active: boolean }>`
     active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
   &:hover {
     background: ${({ active, theme }) =>
-    active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
+      active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
   }
 `
 
@@ -162,14 +175,12 @@ const SubSectionTitle = styled.h4`
   margin: 0;
 `
 
-
-
 // ─── Deploy Modal Styled ──────────────────────────────────────────
 
 const DeployOverlay = styled.div`
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.75);
+  background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -206,23 +217,29 @@ const DeployModalNote = styled.p`
   margin: 0;
 `
 
-
 const StatusBox = styled.div<{ variant: 'success' | 'error' | 'loading' }>`
   padding: 12px 16px;
   border-radius: 10px;
   font-family: 'Inter', sans-serif;
   font-size: 13px;
   background: ${({ variant }) =>
-    variant === 'success' ? 'rgba(52,211,153,0.1)'
-      : variant === 'error' ? 'rgba(248,113,113,0.1)'
+    variant === 'success'
+      ? 'rgba(52,211,153,0.1)'
+      : variant === 'error'
+        ? 'rgba(248,113,113,0.1)'
         : 'rgba(255,255,255,0.05)'};
-  border: 1px solid ${({ variant }) =>
-    variant === 'success' ? 'rgba(52,211,153,0.3)'
-      : variant === 'error' ? 'rgba(248,113,113,0.3)'
-        : 'rgba(255,255,255,0.1)'};
+  border: 1px solid
+    ${({ variant }) =>
+      variant === 'success'
+        ? 'rgba(52,211,153,0.3)'
+        : variant === 'error'
+          ? 'rgba(248,113,113,0.3)'
+          : 'rgba(255,255,255,0.1)'};
   color: ${({ variant }) =>
-    variant === 'success' ? '#34d399'
-      : variant === 'error' ? '#f87171'
+    variant === 'success'
+      ? '#34d399'
+      : variant === 'error'
+        ? '#f87171'
         : '#9ca3af'};
 `
 
@@ -238,8 +255,6 @@ const RowButtons = styled.div`
   display: flex;
   gap: 10px;
 `
-
-
 
 const DelegateCard = styled.div`
   background: ${({ theme }) => theme.colors.themeColors[600]};
@@ -283,7 +298,11 @@ const FeatureItem = styled.li`
   display: flex;
   align-items: center;
   gap: 8px;
-  &::before { content: '✓'; color: #34d399; font-weight: 700; }
+  &::before {
+    content: '✓';
+    color: #34d399;
+    font-weight: 700;
+  }
 `
 
 // ─── Simulation Panel for Live Preview ─────────────────────────────
@@ -319,26 +338,180 @@ const PreviewVal = styled.span<{ color?: string }>`
   color: ${({ color, theme }) => color || theme.colors.themeColors[100]};
 `
 
+const StatusPanel = styled.div`
+  margin-top: 20px;
+  background: ${({ theme }) => theme.colors.themeColors[600]};
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`
+
+const StatusRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+`
+
+const StatusBadge = styled.span<{ variant: 'ok' | 'warn' | 'neutral' }>`
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: ${({ variant }) =>
+    variant === 'ok' ? '#34d399' : variant === 'warn' ? '#f59e0b' : '#cbd5e1'};
+  background: ${({ variant }) =>
+    variant === 'ok'
+      ? 'rgba(52, 211, 153, 0.15)'
+      : variant === 'warn'
+        ? 'rgba(245, 158, 11, 0.15)'
+        : 'rgba(203, 213, 225, 0.12)'};
+  border: 1px solid
+    ${({ variant }) =>
+      variant === 'ok'
+        ? 'rgba(52, 211, 153, 0.3)'
+        : variant === 'warn'
+          ? 'rgba(245, 158, 11, 0.3)'
+          : 'rgba(203, 213, 225, 0.25)'};
+`
+
+const StatusGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+`
+
+const StatusCell = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+`
+
+const StatusKey = styled.span`
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  color: ${({ theme }) => theme.colors.themeColors[200]};
+`
+
+const StatusValue = styled.span`
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.themeColors[100]};
+  word-break: break-word;
+`
+
+const StrategySelect = styled.select`
+  border-radius: 10px;
+  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
+  background: ${({ theme }) => theme.colors.themeColors[700]};
+  color: ${({ theme }) => theme.colors.themeColors[100]};
+  padding: 8px 10px;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 12px;
+  min-width: 220px;
+`
+
+const LogsContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+`
+
+const LogLine = styled.div`
+  background: ${({ theme }) => theme.colors.themeColors[500]};
+  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+`
+
+const LogLineTitle = styled.div`
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.themeColors[100]};
+`
+
+const LogLineMeta = styled.code`
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 11px;
+  color: ${({ theme }) => theme.colors.themeColors[200]};
+  word-break: break-word;
+`
+
 // ─── Component ────────────────────────────────────────────────────
 
-const GAMMA_LABELS = ['', 'Linear', 'Moderate', 'Balanced', 'Aggressive', 'Extreme']
+const GAMMA_LABELS = [
+  '',
+  'Linear',
+  'Moderate',
+  'Balanced',
+  'Aggressive',
+  'Extreme'
+]
 
-const defaultBuy: CurveParams = { k: 1000, L: 0, c: 0.5, x0: 10000, gamma: 3, feeT: 0.003, interestR: 0 }
-const defaultSell: CurveParams = { k: 500, L: 0, c: 0.5, x0: 8000, gamma: 2, feeT: 0.003, interestR: 0 }
+const defaultBuy: CurveParams = {
+  k: 1000,
+  L: 0,
+  c: 0.5,
+  x0: 10000,
+  gamma: 3,
+  feeT: 0.003,
+  interestR: 0
+}
+const defaultSell: CurveParams = {
+  k: 500,
+  L: 0,
+  c: 0.5,
+  x0: 8000,
+  gamma: 2,
+  feeT: 0.003,
+  interestR: 0
+}
+
+const ASYMMETRIC_API_BASE = (() => {
+  const base = process.env.REACT_APP_SPOT_API_URL || process.env.REACT_APP_API_URL
+  if (!base) return '/api/v1/asymmetric'
+  return `${base.replace(/\/$/, '')}/api/v1/asymmetric`
+})()
 
 const AsymmetricPool: React.FC = () => {
-  const { isConnected, connectWallet } = useSDK()
-  const navigate = useNavigate()
-  const { state: deployState, deploy, reset: resetDeploy } = useAsymmetricDeploy()
+  const { isConnected, connectWallet, walletAddress, signMessage } = useSDK()
+  const {
+    state: deployState,
+    deploy,
+    reset: resetDeploy
+  } = useAsymmetricDeploy()
+  const asymmetricClient = useMemo(
+    () => new AsymmetricClient(ASYMMETRIC_API_BASE),
+    []
+  )
 
   const [activeTab, setActiveTab] = useState<Tab>('strategies')
-  const [selectedTemplate, setSelectedTemplate] = useState<StrategyTemplate | null>(null)
+  const [selectedTemplate, setSelectedTemplate] =
+    useState<StrategyTemplate | null>(null)
   const [showDelegate, setShowDelegate] = useState(false)
   const [showDeployModal, setShowDeployModal] = useState(false)
+  const [lastDeployedStrategy, setLastDeployedStrategy] = useState<{
+    strategyId?: string
+    pairAddress?: string
+  }>({})
 
   // Builder state
   const [buyParams, setBuyParams] = useState<CurveParams>(defaultBuy)
   const [sellParams, setSellParams] = useState<CurveParams>(defaultSell)
+  const [strategies, setStrategies] = useState<StrategyStatus[]>([])
+  const [selectedStrategyId, setSelectedStrategyId] = useState('')
+  const [selectedStrategyStatus, setSelectedStrategyStatus] =
+    useState<StrategyStatus | null>(null)
+  const [strategyLogs, setStrategyLogs] = useState<RebalanceLog[]>([])
+  const [statusLoading, setStatusLoading] = useState(false)
+  const [statusError, setStatusError] = useState<string | null>(null)
 
   // Live preview of liquidity at the mid-point
   const midLiqPreview = useMemo(() => {
@@ -347,15 +520,137 @@ const AsymmetricPool: React.FC = () => {
     return { midBuy, midSell }
   }, [buyParams, sellParams])
 
+  const buildSignedReadAuth = useCallback(
+    async (
+      action: string,
+      fields?: Record<
+        string,
+        string | number | boolean | Array<string | number> | undefined | null
+      >
+    ) => {
+      if (!walletAddress) throw new Error('Wallet not connected')
+      const metadata = createSignedActionMetadata()
+      const signature = await signMessage(
+        buildWalletActionMessage({
+          action,
+          address: walletAddress,
+          nonce: metadata.nonce,
+          timestamp: metadata.timestamp,
+          fields
+        })
+      )
+
+      return {
+        nonce: metadata.nonce,
+        timestamp: metadata.timestamp,
+        signature
+      }
+    },
+    [walletAddress, signMessage]
+  )
+
+  const loadStrategies = useCallback(async () => {
+    if (!walletAddress) return
+
+    const auth = await buildSignedReadAuth('asymmetric.strategies.list')
+    const list = await asymmetricClient.listStrategies(walletAddress, auth)
+    setStrategies(list)
+    if (list.length === 0) {
+      setSelectedStrategyId('')
+      setSelectedStrategyStatus(null)
+      setStrategyLogs([])
+      return
+    }
+
+    if (
+      lastDeployedStrategy.strategyId &&
+      list.some(s => s.id === lastDeployedStrategy.strategyId)
+    ) {
+      setSelectedStrategyId(lastDeployedStrategy.strategyId)
+      return
+    }
+
+    if (selectedStrategyId && list.some(s => s.id === selectedStrategyId)) {
+      return
+    }
+
+    setSelectedStrategyId(list[0].id)
+  }, [
+    walletAddress,
+    buildSignedReadAuth,
+    asymmetricClient,
+    selectedStrategyId,
+    lastDeployedStrategy.strategyId
+  ])
+
+  const loadStrategyDetails = useCallback(
+    async (strategyId: string) => {
+      if (!walletAddress) return
+      setStatusLoading(true)
+      setStatusError(null)
+      try {
+        const [statusAuth, logsAuth] = await Promise.all([
+          buildSignedReadAuth('asymmetric.strategy.read', { strategyId }),
+          buildSignedReadAuth('asymmetric.strategy.logs', {
+            strategyId,
+            limit: 10
+          })
+        ])
+
+        const [status, logs] = await Promise.all([
+          asymmetricClient.getStrategyStatus(strategyId, walletAddress, statusAuth),
+          asymmetricClient.getRebalanceLogs(strategyId, walletAddress, logsAuth, 10)
+        ])
+
+        setSelectedStrategyStatus(status)
+        setStrategyLogs(logs)
+      } catch (err: any) {
+        setStatusError(err?.message || 'Failed to load strategy status')
+      } finally {
+        setStatusLoading(false)
+      }
+    },
+    [walletAddress, buildSignedReadAuth, asymmetricClient]
+  )
+
+  useEffect(() => {
+    if (!isConnected || !walletAddress || activeTab !== 'strategies') return
+    void loadStrategies().catch((err: any) => {
+      setStatusError(err?.message || 'Failed to list asymmetric strategies')
+    })
+  }, [isConnected, walletAddress, activeTab, loadStrategies])
+
+  useEffect(() => {
+    if (!isConnected || !walletAddress || activeTab !== 'strategies') return
+    if (!selectedStrategyId) return
+    void loadStrategyDetails(selectedStrategyId)
+  }, [
+    isConnected,
+    walletAddress,
+    activeTab,
+    selectedStrategyId,
+    loadStrategyDetails
+  ])
+
   const handleSelectTemplate = (t: StrategyTemplate) => {
     setSelectedTemplate(t)
-    setBuyParams({ ...defaultBuy, gamma: t.buyParams.gamma, x0: t.buyParams.x0, feeT: t.buyParams.feeT })
-    setSellParams({ ...defaultSell, gamma: t.sellParams.gamma, x0: t.sellParams.x0, feeT: t.sellParams.feeT })
+    setBuyParams({
+      ...defaultBuy,
+      gamma: t.buyParams.gamma,
+      x0: t.buyParams.x0,
+      feeT: t.buyParams.feeT
+    })
+    setSellParams({
+      ...defaultSell,
+      gamma: t.sellParams.gamma,
+      x0: t.sellParams.x0,
+      feeT: t.sellParams.feeT
+    })
     setActiveTab('builder')
   }
 
   const handleDeploy = async () => {
-    await deploy({
+    const result = await deploy({
       baseToken: process.env.REACT_APP_TOKEN_WLUNES || '',
       quoteToken: process.env.REACT_APP_TOKEN_LUSDT || '',
       buyGamma: buyParams.gamma,
@@ -364,13 +659,29 @@ const AsymmetricPool: React.FC = () => {
       sellGamma: sellParams.gamma,
       sellMaxCapacity: sellParams.x0.toString(),
       sellFeeBps: Math.round(sellParams.feeT * 10000),
-      initialBuyK: (buyParams.k).toString(),
+      initialBuyK: buyParams.k.toString(),
       initialSellK: (sellParams.k * 0.5).toString(),
       pairSymbol: 'WLUNES-LUSDT',
       autoRebalance: true,
-      profitTargetBps: selectedTemplate?.profitTargetBps ?? 300,
+      profitTargetBps: selectedTemplate?.profitTargetBps ?? 300
+    })
+
+    setLastDeployedStrategy({
+      strategyId: result?.strategyId,
+      pairAddress: result?.contractAddress
     })
   }
+
+  const liveState = selectedStrategyStatus?.liveState
+  const persistedConfig =
+    selectedStrategyStatus?.persistedConfig || selectedStrategyStatus
+  const delegation =
+    selectedStrategyStatus?.delegation || {
+      agentManaged: selectedStrategyStatus?.agentManaged ?? false,
+      delegatedToRelayer: liveState?.delegatedToRelayer ?? false,
+      managerAddress: liveState?.managerAddress ?? null,
+      relayerAddress: liveState?.relayerAddress ?? null
+    }
 
   return (
     <PageLayout maxWidth="680px">
@@ -381,19 +692,39 @@ const AsymmetricPool: React.FC = () => {
           <Zap size={24} strokeWidth={2} style={{ color: 'currentColor' }} />
           Asymmetric Liquidity
         </PageTitle>
-        <PageSubtitle>Parametric curves for advanced liquidity providers — human or AI-managed.</PageSubtitle>
+        <PageSubtitle>
+          Parametric curves for advanced liquidity providers — human or
+          AI-managed.
+        </PageSubtitle>
       </PageHeader>
 
       <TabBar>
-        <TabButton active={activeTab === 'strategies'} onClick={() => setActiveTab('strategies')}>
-          <LayoutGrid size={16} strokeWidth={2} style={{ color: 'currentColor' }} />
+        <TabButton
+          active={activeTab === 'strategies'}
+          onClick={() => setActiveTab('strategies')}
+        >
+          <LayoutGrid
+            size={16}
+            strokeWidth={2}
+            style={{ color: 'currentColor' }}
+          />
           Templates
         </TabButton>
-        <TabButton active={activeTab === 'builder'} onClick={() => setActiveTab('builder')}>
-          <Triangle size={16} strokeWidth={2} style={{ color: 'currentColor' }} />
+        <TabButton
+          active={activeTab === 'builder'}
+          onClick={() => setActiveTab('builder')}
+        >
+          <Triangle
+            size={16}
+            strokeWidth={2}
+            style={{ color: 'currentColor' }}
+          />
           Builder Pro
         </TabButton>
-        <TabButton active={activeTab === 'delegate'} onClick={() => setActiveTab('delegate')}>
+        <TabButton
+          active={activeTab === 'delegate'}
+          onClick={() => setActiveTab('delegate')}
+        >
           <Bot size={16} strokeWidth={2} style={{ color: 'currentColor' }} />
           Delegate AI
         </TabButton>
@@ -403,16 +734,178 @@ const AsymmetricPool: React.FC = () => {
       {activeTab === 'strategies' && (
         <>
           <SectionTitle>Pick a Strategy — One Click to Configure</SectionTitle>
-          <StrategyCards selected={selectedTemplate?.id ?? null} onSelect={handleSelectTemplate} />
+          <StrategyCards
+            selected={selectedTemplate?.id ?? null}
+            onSelect={handleSelectTemplate}
+          />
 
           {selectedTemplate && (
             <SelectedCard>
               <span>{selectedTemplate.icon}</span>
               <span>
-                <strong>{selectedTemplate.name}</strong> selected — edit it in the Builder Pro tab
+                <strong>{selectedTemplate.name}</strong> selected — edit it in
+                the Builder Pro tab
               </span>
             </SelectedCard>
           )}
+
+          <StatusPanel>
+            <StatusRow>
+              <SectionTitle style={{ margin: 0 }}>
+                Operational Status (Backend + On-chain)
+              </SectionTitle>
+              <Button
+                status="secondary"
+                width="auto"
+                style={{ padding: '0 14px', minWidth: 'auto' }}
+                onClick={() => {
+                  void loadStrategies()
+                  if (selectedStrategyId) {
+                    void loadStrategyDetails(selectedStrategyId)
+                  }
+                }}
+              >
+                Refresh
+              </Button>
+            </StatusRow>
+
+            {!isConnected && (
+              <StatusValue>
+                Connect your wallet to load persisted config, live curve state
+                and audit logs.
+              </StatusValue>
+            )}
+
+            {isConnected && statusError && <StatusValue>{statusError}</StatusValue>}
+
+            {isConnected && !statusError && strategies.length === 0 && (
+              <StatusValue>
+                No registered asymmetric strategy found for this wallet.
+              </StatusValue>
+            )}
+
+            {isConnected && strategies.length > 0 && (
+              <>
+                <StatusRow>
+                  <StrategySelect
+                    value={selectedStrategyId}
+                    onChange={e => setSelectedStrategyId(e.target.value)}
+                  >
+                    {strategies.map(strategy => (
+                      <option key={strategy.id} value={strategy.id}>
+                        {strategy.id}
+                      </option>
+                    ))}
+                  </StrategySelect>
+
+                  <StatusBadge
+                    variant={
+                      statusLoading
+                        ? 'neutral'
+                        : liveState?.available
+                          ? 'ok'
+                          : 'warn'
+                    }
+                  >
+                    {statusLoading
+                      ? 'Loading...'
+                      : liveState?.available
+                        ? 'Live State Available'
+                        : `Live Unavailable${
+                            liveState?.reason ? ` (${liveState.reason})` : ''
+                          }`}
+                  </StatusBadge>
+                </StatusRow>
+
+                {selectedStrategyStatus && (
+                  <>
+                    <StatusGrid>
+                      <StatusCell>
+                        <StatusKey>Persisted Status</StatusKey>
+                        <StatusValue>{persistedConfig?.status}</StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Auto Rebalance</StatusKey>
+                        <StatusValue>
+                          {persistedConfig?.isAutoRebalance ? 'Enabled' : 'Disabled'}
+                        </StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Pending Amount</StatusKey>
+                        <StatusValue>
+                          {persistedConfig?.pendingRebalanceAmount || '0'}
+                        </StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Retry Count</StatusKey>
+                        <StatusValue>{persistedConfig?.retryCount ?? 0}</StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Agent Managed</StatusKey>
+                        <StatusValue>{delegation.agentManaged ? 'Yes' : 'No'}</StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Delegated To Relayer</StatusKey>
+                        <StatusValue>
+                          {delegation.delegatedToRelayer ? 'Yes' : 'No'}
+                        </StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Manager</StatusKey>
+                        <StatusValue>
+                          {delegation.managerAddress || 'Not configured'}
+                        </StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Relayer</StatusKey>
+                        <StatusValue>
+                          {delegation.relayerAddress || 'Unavailable'}
+                        </StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Live Buy Capacity</StatusKey>
+                        <StatusValue>
+                          {liveState?.buyCurve
+                            ? `${liveState.buyCurve.currentVolume.toFixed(2)} / ${liveState.buyCurve.maxCapacity.toFixed(2)}`
+                            : 'Unavailable'}
+                        </StatusValue>
+                      </StatusCell>
+                      <StatusCell>
+                        <StatusKey>Live Sell Capacity</StatusKey>
+                        <StatusValue>
+                          {liveState?.sellCurve
+                            ? `${liveState.sellCurve.currentVolume.toFixed(2)} / ${liveState.sellCurve.maxCapacity.toFixed(2)}`
+                            : 'Unavailable'}
+                        </StatusValue>
+                      </StatusCell>
+                    </StatusGrid>
+
+                    <SectionTitle style={{ margin: '4px 0 0' }}>
+                      Recent Audit Logs
+                    </SectionTitle>
+                    {strategyLogs.length === 0 ? (
+                      <StatusValue>No logs available yet for this strategy.</StatusValue>
+                    ) : (
+                      <LogsContainer>
+                        {strategyLogs.map(logEntry => (
+                          <LogLine key={logEntry.id}>
+                            <LogLineTitle>
+                              {logEntry.trigger} • {logEntry.status} • {logEntry.side}
+                            </LogLineTitle>
+                            <LogLineMeta>
+                              acquired={logEntry.acquiredAmount} newCapacity=
+                              {logEntry.newCapacity} tx=
+                              {logEntry.txHash || 'n/a'} at {logEntry.createdAt}
+                            </LogLineMeta>
+                          </LogLine>
+                        ))}
+                      </LogsContainer>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </StatusPanel>
         </>
       )}
 
@@ -422,15 +915,22 @@ const AsymmetricPool: React.FC = () => {
           <CurveChart
             buyParams={buyParams}
             sellParams={sellParams}
-            label={selectedTemplate ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                {selectedTemplate.icon} {selectedTemplate.name}
-              </div>
-            ) : 'Custom Curve'}
+            label={
+              selectedTemplate ? (
+                <div
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  {selectedTemplate.icon} {selectedTemplate.name}
+                </div>
+              ) : (
+                'Custom Curve'
+              )
+            }
             interactive
             onGammaChange={(side: 'buy' | 'sell', newGamma: number) => {
               const gamma = Math.round(Math.max(1, Math.min(5, newGamma)))
-              if (side === 'buy') setBuyParams((p: CurveParams) => ({ ...p, gamma }))
+              if (side === 'buy')
+                setBuyParams((p: CurveParams) => ({ ...p, gamma }))
               else setSellParams((p: CurveParams) => ({ ...p, gamma }))
             }}
           />
@@ -439,11 +939,15 @@ const AsymmetricPool: React.FC = () => {
             <PreviewGrid>
               <PreviewItem>
                 <PreviewKey>Buy Liquidity @ 30%</PreviewKey>
-                <PreviewVal color="#34d399">{midLiqPreview.midBuy.toFixed(2)}</PreviewVal>
+                <PreviewVal color="#34d399">
+                  {midLiqPreview.midBuy.toFixed(2)}
+                </PreviewVal>
               </PreviewItem>
               <PreviewItem>
                 <PreviewKey>Sell Liquidity @ 30%</PreviewKey>
-                <PreviewVal color="#f87171">{midLiqPreview.midSell.toFixed(2)}</PreviewVal>
+                <PreviewVal color="#f87171">
+                  {midLiqPreview.midSell.toFixed(2)}
+                </PreviewVal>
               </PreviewItem>
               <PreviewItem>
                 <PreviewKey>Buy γ style</PreviewKey>
@@ -461,12 +965,21 @@ const AsymmetricPool: React.FC = () => {
           <SliderGroup>
             <SliderRow>
               <SliderLabel>
-                Curvature γ <SliderHint>({GAMMA_LABELS[buyParams.gamma]})</SliderHint>
+                Curvature γ{' '}
+                <SliderHint>({GAMMA_LABELS[buyParams.gamma]})</SliderHint>
               </SliderLabel>
               <Slider
-                type="range" min={1} max={5} step={1}
+                type="range"
+                min={1}
+                max={5}
+                step={1}
                 value={buyParams.gamma}
-                onChange={(e) => setBuyParams((p: CurveParams) => ({ ...p, gamma: Number(e.target.value) }))}
+                onChange={e =>
+                  setBuyParams((p: CurveParams) => ({
+                    ...p,
+                    gamma: Number(e.target.value)
+                  }))
+                }
               />
               <SliderValue>{buyParams.gamma}</SliderValue>
             </SliderRow>
@@ -474,9 +987,17 @@ const AsymmetricPool: React.FC = () => {
             <SliderRow>
               <SliderLabel>Max Capacity (LUSDT)</SliderLabel>
               <Slider
-                type="range" min={1000} max={50000} step={1000}
+                type="range"
+                min={1000}
+                max={50000}
+                step={1000}
                 value={buyParams.x0}
-                onChange={(e) => setBuyParams((p: CurveParams) => ({ ...p, x0: Number(e.target.value) }))}
+                onChange={e =>
+                  setBuyParams((p: CurveParams) => ({
+                    ...p,
+                    x0: Number(e.target.value)
+                  }))
+                }
               />
               <SliderValue>{(buyParams.x0 / 1000).toFixed(0)}k</SliderValue>
             </SliderRow>
@@ -484,9 +1005,17 @@ const AsymmetricPool: React.FC = () => {
             <SliderRow>
               <SliderLabel>Fee Target (bps)</SliderLabel>
               <Slider
-                type="range" min={1} max={100} step={1}
+                type="range"
+                min={1}
+                max={100}
+                step={1}
                 value={Math.round(buyParams.feeT * 10000)}
-                onChange={(e) => setBuyParams((p: CurveParams) => ({ ...p, feeT: Number(e.target.value) / 10000 }))}
+                onChange={e =>
+                  setBuyParams((p: CurveParams) => ({
+                    ...p,
+                    feeT: Number(e.target.value) / 10000
+                  }))
+                }
               />
               <SliderValue>{Math.round(buyParams.feeT * 10000)}</SliderValue>
             </SliderRow>
@@ -497,12 +1026,21 @@ const AsymmetricPool: React.FC = () => {
           <SliderGroup>
             <SliderRow>
               <SliderLabel>
-                Curvature γ <SliderHint>({GAMMA_LABELS[sellParams.gamma]})</SliderHint>
+                Curvature γ{' '}
+                <SliderHint>({GAMMA_LABELS[sellParams.gamma]})</SliderHint>
               </SliderLabel>
               <Slider
-                type="range" min={1} max={5} step={1}
+                type="range"
+                min={1}
+                max={5}
+                step={1}
                 value={sellParams.gamma}
-                onChange={(e) => setSellParams((p: CurveParams) => ({ ...p, gamma: Number(e.target.value) }))}
+                onChange={e =>
+                  setSellParams((p: CurveParams) => ({
+                    ...p,
+                    gamma: Number(e.target.value)
+                  }))
+                }
               />
               <SliderValue>{sellParams.gamma}</SliderValue>
             </SliderRow>
@@ -510,9 +1048,17 @@ const AsymmetricPool: React.FC = () => {
             <SliderRow>
               <SliderLabel>Max Capacity (LUNES)</SliderLabel>
               <Slider
-                type="range" min={1000} max={50000} step={1000}
+                type="range"
+                min={1000}
+                max={50000}
+                step={1000}
                 value={sellParams.x0}
-                onChange={(e) => setSellParams((p: CurveParams) => ({ ...p, x0: Number(e.target.value) }))}
+                onChange={e =>
+                  setSellParams((p: CurveParams) => ({
+                    ...p,
+                    x0: Number(e.target.value)
+                  }))
+                }
               />
               <SliderValue>{(sellParams.x0 / 1000).toFixed(0)}k</SliderValue>
             </SliderRow>
@@ -520,18 +1066,33 @@ const AsymmetricPool: React.FC = () => {
             <SliderRow>
               <SliderLabel>Fee Target (bps)</SliderLabel>
               <Slider
-                type="range" min={1} max={100} step={1}
+                type="range"
+                min={1}
+                max={100}
+                step={1}
                 value={Math.round(sellParams.feeT * 10000)}
-                onChange={(e) => setSellParams((p: CurveParams) => ({ ...p, feeT: Number(e.target.value) / 10000 }))}
+                onChange={e =>
+                  setSellParams((p: CurveParams) => ({
+                    ...p,
+                    feeT: Number(e.target.value) / 10000
+                  }))
+                }
               />
               <SliderValue>{Math.round(sellParams.feeT * 10000)}</SliderValue>
             </SliderRow>
           </SliderGroup>
 
           {!isConnected ? (
-            <Button onClick={() => connectWallet()}>Connect Wallet to Deploy</Button>
+            <Button onClick={() => connectWallet()}>
+              Connect Wallet to Deploy
+            </Button>
           ) : (
-            <Button onClick={() => { resetDeploy(); setShowDeployModal(true) }}>
+            <Button
+              onClick={() => {
+                resetDeploy()
+                setShowDeployModal(true)
+              }}
+            >
               Deploy Asymmetric Strategy
             </Button>
           )}
@@ -547,16 +1108,23 @@ const AsymmetricPool: React.FC = () => {
               AI Agent Delegation
             </DelegateTitle>
             <DelegateDescription>
-              Generate a restricted API Key that gives an AI agent (OpenClaw, Phidata, or any MCP-compatible
-              orchestrator) permission to dynamically adjust your curve parameters — without ever being
-              able to withdraw your funds.
+              Generate a restricted API Key that gives an AI agent (OpenClaw,
+              Phidata, or any MCP-compatible orchestrator) permission to
+              dynamically adjust your curve parameters — without ever being able
+              to withdraw your funds.
             </DelegateDescription>
 
             <FeatureList>
-              <FeatureItem>Agent can only call update_curve_parameters()</FeatureItem>
-              <FeatureItem>You set γ guardrails — agent can&apos;t exceed your limits</FeatureItem>
+              <FeatureItem>
+                Agent can only call update_curve_parameters()
+              </FeatureItem>
+              <FeatureItem>
+                You set γ guardrails — agent can&apos;t exceed your limits
+              </FeatureItem>
               <FeatureItem>Key expires in 90 days — auto-renewable</FeatureItem>
-              <FeatureItem>All actions logged in AsymmetricRebalanceLog</FeatureItem>
+              <FeatureItem>
+                All actions logged in AsymmetricRebalanceLog
+              </FeatureItem>
             </FeatureList>
 
             <Button onClick={() => setShowDelegate(true)}>
@@ -568,24 +1136,49 @@ const AsymmetricPool: React.FC = () => {
 
       {/* Modals */}
       {showDelegate && (
-        <AgentDelegationPanel onClose={() => setShowDelegate(false)} />
+        <AgentDelegationPanel
+          onClose={() => setShowDelegate(false)}
+          strategyId={lastDeployedStrategy.strategyId}
+          pairAddress={lastDeployedStrategy.pairAddress}
+        />
       )}
 
       {showDeployModal && (
-        <DeployOverlay onClick={(e) => e.target === e.currentTarget && deployState.step === 'idle' && setShowDeployModal(false)}>
+        <DeployOverlay
+          onClick={e =>
+            e.target === e.currentTarget &&
+            deployState.step === 'idle' &&
+            setShowDeployModal(false)
+          }
+        >
           <DeployModal>
             {(deployState.step === 'idle' || deployState.step === 'error') && (
               <button
                 onClick={() => setShowDeployModal(false)}
                 style={{
-                  width: '40px', height: '40px', fontSize: '20px', cursor: 'pointer',
-                  color: 'inherit', border: 'none', background: 'transparent',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  position: 'absolute', top: '8px', right: '8px',
+                  width: '40px',
+                  height: '40px',
+                  fontSize: '20px',
+                  cursor: 'pointer',
+                  color: 'inherit',
+                  border: 'none',
+                  background: 'transparent',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
                   transition: 'transform 0.3s ease-in-out, color 0.2s ease'
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'rotate(-180deg)'; e.currentTarget.style.color = '#6C38FE'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.transform = 'rotate(0deg)'; e.currentTarget.style.color = 'inherit'; }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.transform = 'rotate(-180deg)'
+                  e.currentTarget.style.color = '#6C38FE'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.transform = 'rotate(0deg)'
+                  e.currentTarget.style.color = 'inherit'
+                }}
               >
                 ✕
               </button>
@@ -597,33 +1190,56 @@ const AsymmetricPool: React.FC = () => {
               <>
                 <DeployModalNote>
                   Your wallet will sign <strong>2 transactions</strong>:<br />
-                  1. Instantiate the AsymmetricPair contract (you become the owner)<br />
-                  2. Seed initial liquidity — buy k = <strong>{buyParams.k}</strong>, sell k = <strong>{Math.round(sellParams.k * 0.5)}</strong>
+                  1. Instantiate the AsymmetricPair contract (you become the
+                  owner)
+                  <br />
+                  2. Seed initial liquidity — buy k ={' '}
+                  <strong>{buyParams.k}</strong>, sell k ={' '}
+                  <strong>{Math.round(sellParams.k * 0.5)}</strong>
                 </DeployModalNote>
                 <RowButtons>
-                  <Button style={{ flex: 1 }} onClick={handleDeploy}>Confirm & Deploy</Button>
-                  <Button status="secondary" width="auto" style={{ padding: '0 24px', minWidth: '120px' }} onClick={() => setShowDeployModal(false)}>Cancel</Button>
+                  <Button style={{ flex: 1 }} onClick={handleDeploy}>
+                    Confirm & Deploy
+                  </Button>
+                  <Button
+                    status="secondary"
+                    width="auto"
+                    style={{ padding: '0 24px', minWidth: '120px' }}
+                    onClick={() => setShowDeployModal(false)}
+                  >
+                    Cancel
+                  </Button>
                 </RowButtons>
               </>
             )}
 
             {deployState.step === 'fetching' && (
-              <StatusBox variant="loading">Fetching verified contract bundle...</StatusBox>
+              <StatusBox variant="loading">
+                Fetching verified contract bundle...
+              </StatusBox>
             )}
             {deployState.step === 'instantiating' && (
               <StatusBox variant="loading">
-                Step 1/2 — Instantiating contract on-chain...<br />
-                <span style={{ fontSize: '11px', opacity: 0.7 }}>Sign the transaction in your wallet</span>
+                Step 1/2 — Instantiating contract on-chain...
+                <br />
+                <span style={{ fontSize: '11px', opacity: 0.7 }}>
+                  Sign the transaction in your wallet
+                </span>
               </StatusBox>
             )}
             {deployState.step === 'deploying' && (
               <StatusBox variant="loading">
-                Step 2/2 — Seeding initial liquidity...<br />
-                <span style={{ fontSize: '11px', opacity: 0.7 }}>Sign the second transaction in your wallet</span>
+                Step 2/2 — Seeding initial liquidity...
+                <br />
+                <span style={{ fontSize: '11px', opacity: 0.7 }}>
+                  Sign the second transaction in your wallet
+                </span>
               </StatusBox>
             )}
             {deployState.step === 'registering' && (
-              <StatusBox variant="loading">Registering strategy on backend...</StatusBox>
+              <StatusBox variant="loading">
+                Registering strategy on backend...
+              </StatusBox>
             )}
 
             {deployState.step === 'done' && (
@@ -631,9 +1247,18 @@ const AsymmetricPool: React.FC = () => {
                 <StatusBox variant="success">
                   ✓ Strategy deployed successfully!
                   <TxHashLink>{deployState.contractAddress}</TxHashLink>
-                  <TxHashLink style={{ opacity: 0.5 }}>{deployState.txHash}</TxHashLink>
+                  <TxHashLink style={{ opacity: 0.5 }}>
+                    {deployState.txHash}
+                  </TxHashLink>
                 </StatusBox>
-                <Button onClick={() => { setShowDeployModal(false); resetDeploy() }}>Close</Button>
+                <Button
+                  onClick={() => {
+                    setShowDeployModal(false)
+                    resetDeploy()
+                  }}
+                >
+                  Close
+                </Button>
               </>
             )}
 
@@ -641,8 +1266,20 @@ const AsymmetricPool: React.FC = () => {
               <>
                 <StatusBox variant="error">{deployState.error}</StatusBox>
                 <RowButtons>
-                  <Button style={{ flex: 1 }} onClick={handleDeploy}>Try Again</Button>
-                  <Button status="secondary" width="auto" style={{ padding: '0 24px', minWidth: '120px' }} onClick={() => { setShowDeployModal(false); resetDeploy() }}>Cancel</Button>
+                  <Button style={{ flex: 1 }} onClick={handleDeploy}>
+                    Try Again
+                  </Button>
+                  <Button
+                    status="secondary"
+                    width="auto"
+                    style={{ padding: '0 24px', minWidth: '120px' }}
+                    onClick={() => {
+                      setShowDeployModal(false)
+                      resetDeploy()
+                    }}
+                  >
+                    Cancel
+                  </Button>
                 </RowButtons>
               </>
             )}

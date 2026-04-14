@@ -87,7 +87,7 @@ const RightCol = styled.div`
 
   /* Hide scrollbar but keep function */
   scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.08) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
   &::-webkit-scrollbar {
     width: 4px;
   }
@@ -95,7 +95,7 @@ const RightCol = styled.div`
     background: transparent;
   }
   &::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
     border-radius: 4px;
   }
 `

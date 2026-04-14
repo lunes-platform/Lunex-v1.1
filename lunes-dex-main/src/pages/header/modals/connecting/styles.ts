@@ -3,7 +3,7 @@ import { Paragraph, Wrapper } from 'components/bases'
 import device from 'components/devices/devices'
 
 export const Content = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     ${device.mobileL} {
       margin: 16px;
       padding: 16px;

@@ -3,7 +3,7 @@ import { Wrapper } from 'components/bases'
 import device from 'components/devices/devices'
 
 export const BoxTokens = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     height: 560px;
     display: inline;
     overflow: auto;
@@ -20,7 +20,7 @@ export const BoxTokens = styled(Wrapper)`
 `
 
 export const Content = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     margin: 24px 0 8px;
     display: grid;
     grid-template-columns: 1fr 1fr 0.1fr;

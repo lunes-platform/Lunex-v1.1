@@ -1,5 +1,5 @@
-import pino from 'pino'
-import { config } from '../config'
+import pino from 'pino';
+import { config } from '../config';
 
 export const log = pino({
   level: process.env.LOG_LEVEL || 'info',
@@ -19,7 +19,20 @@ export const log = pino({
   },
   timestamp: pino.stdTimeFunctions.isoTime,
   redact: {
-    paths: ['*.password', '*.relayerSeed', '*.apiKeyHash', '*.signature'],
+    paths: [
+      '*.password',
+      '*.relayerSeed',
+      '*.apiKeyHash',
+      '*.signature',
+      '*.authorization',
+      '*.Authorization',
+      '*.x-api-key',
+      '*.xApiKey',
+      'req.headers.authorization',
+      'req.headers.x-api-key',
+      'headers.authorization',
+      'headers.x-api-key',
+    ],
     censor: '[REDACTED]',
   },
-})
+});

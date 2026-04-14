@@ -7,6 +7,8 @@
 [![ink!](https://img.shields.io/badge/ink!-4.2.1-purple)](https://use.ink)
 [![License](https://img.shields.io/badge/License-Proprietary-red)](./LICENSE.md)
 
+> Documentação canônica: [Docs Map](docs/README.md) | [Project PRD](docs/prd/PROJECT_PRD.md) | [Project Spec](docs/specs/PROJECT_SPEC.md) | [SDD Workflow](docs/sdd/README.md)
+
 ---
 
 ## Índice
@@ -22,12 +24,13 @@
 9. [SubQuery Indexer](#9-subquery-indexer)
 10. [Setup com Docker (Full Stack)](#10-setup-com-docker-full-stack)
 11. [Produção](#11-produção)
-12. [API Reference](#12-api-reference)
-13. [WebSocket Reference](#13-websocket-reference)
-14. [Variáveis de Ambiente](#14-variáveis-de-ambiente)
-15. [Segurança — Dicas e Configurações](#15-segurança--dicas-e-configurações)
-16. [Testes](#16-testes)
-17. [Troubleshooting](#17-troubleshooting)
+12. [CI/CD Pipeline](#12-cicd-pipeline)
+13. [API Reference](#13-api-reference)
+14. [WebSocket Reference](#14-websocket-reference)
+15. [Variáveis de Ambiente](#15-variáveis-de-ambiente)
+16. [Segurança — Dicas e Configurações](#16-segurança--dicas-e-configurações)
+17. [Testes](#17-testes)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -140,8 +143,8 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant OS as orderService
 
-    L->>API: POST /copytrade/signals<br/>{pairSymbol, side, amount}
-    API->>CS: processSignal()
+    L->>API: POST /copytrade/vaults/{leaderId}/signals<br/>{pairSymbol, side, amountIn}
+    API->>CS: createSignal()
     CS->>DB: Busca seguidores ativos do vault
     loop Para cada seguidor
         CS->>CS: Calcula tamanho proporcional<br/>(shareBalance / totalShares × amount)
@@ -1213,7 +1216,71 @@ O arquivo `ecosystem.config.js` na raiz já está configurado para todos os serv
 
 ---
 
-## 12. API Reference
+## 12. CI/CD Pipeline
+
+O Lunex possui um pipeline completo de CI/CD via GitHub Actions.
+
+### 12.1 Workflows
+
+| Workflow | Gatilho | Descrição |
+|----------|---------|-----------|
+| **CI** (`ci.yml`) | PR, push na `main` | Lint, build, testes unitários, validação SubQuery, compilação de contratos ink!, smoke tests |
+| **PR Check** (`pr-check.yml`) | Pull Request | Verifica apenas os módulos alterados no PR (path filtering) |
+| **Contracts** (`contracts.yml`) | PR, push na `main` | Testes Rust, build de contratos ink!, `cargo audit` de segurança |
+| **Release** (`release.yml`) | Tags `v*.*.*` | Cria release candidate (RC), build de artefatos, imagens Docker, deploy opcional para staging |
+| **Dependabot** (`dependabot.yml`) | Semanal | Atualizações automáticas de dependências |
+
+### 12.2 Status Checks Obrigatórios
+
+Para merge na `main`, os seguintes checks devem passar:
+
+- ✅ `ci / validate` — Lint e typecheck de todos os módulos
+- ✅ `ci / build` — Build de spot-api, frontend, sdk, mcp, subquery
+- ✅ `ci / test` — Testes unitários (com cobertura mínima)
+- ✅ `ci / subquery-validation` — `subql codegen` e `subql build`
+- ✅ `contracts / test` — Testes Rust dos contratos ink!
+- ✅ `pr-check / path-filter` — Verificação de módulos alterados
+
+### 12.3 Release Candidates
+
+Versionamento segue semver com RC automático:
+
+```bash
+# Versão atual no package.json raiz: 0.8.0
+# Tag gerada automaticamente: v0.8.0-rc1, v0.8.0-rc2, ...
+```
+
+Para criar uma release estável:
+
+```bash
+# 1. Atualizar versão no package.json raiz
+# 2. Criar tag e push
+git tag -a v0.9.0 -m "Release v0.9.0"
+git push origin v0.9.0
+
+# O workflow release.yml irá:
+# - Buildar todos os artefatos
+# - Criar GitHub Release
+# - Buildar e pushar imagens Docker
+# - Deploy opcional para staging (com secrets configurados)
+```
+
+### 12.4 Secrets Necessários
+
+Configure em **Settings > Secrets and variables > Actions**:
+
+| Secret | Descrição | Usado em |
+|--------|-----------|----------|
+| `STAGING_HOST` | IP ou hostname do servidor staging | `release.yml` |
+| `STAGING_USER` | Usuário SSH para deploy | `release.yml` |
+| `STAGING_SSH_KEY` | Chave SSH privada (base64) | `release.yml` |
+| `DOCKER_USERNAME` | Usuário Docker Hub | `release.yml` |
+| `DOCKER_PASSWORD` | Token Docker Hub | `release.yml` |
+| `GITHUB_TOKEN` | Token automático do GitHub | Todos os workflows |
+
+---
+
+## 13. API Reference
 
 Base URL: `http://localhost:4000/api/v1`
 
@@ -1279,7 +1346,7 @@ await fetch('/api/v1/orders', {
 
 ---
 
-## 13. WebSocket Reference
+## 14. WebSocket Reference
 
 URL: `ws://localhost:4001`
 
@@ -1311,7 +1378,7 @@ ws.onmessage = (event) => {
 
 ---
 
-## 14. Variáveis de Ambiente
+## 15. Variáveis de Ambiente
 
 ### spot-api/.env (completo)
 
@@ -1399,9 +1466,9 @@ DEV_MODE=false                                  # true = mocks, sem blockchain
 
 ---
 
-## 15. Segurança — Dicas e Configurações
+## 16. Segurança — Dicas e Configurações
 
-### 15.1 Autenticação por assinatura sr25519
+### 16.1 Autenticação por assinatura sr25519
 
 A DEX usa autenticação sem senha — cada ação é verificada por assinatura criptográfica da carteira do usuário.
 
@@ -1548,9 +1615,9 @@ O repositório já possui o workflow `.github/workflows/ci.yml` com verificaçã
 
 ---
 
-## 16. Testes
+## 17. Testes
 
-### 16.1 Contratos Rust (ink!)
+### 17.1 Contratos Rust (ink!)
 
 ```bash
 # Testes unitários de todos os contratos
@@ -1571,7 +1638,7 @@ cargo test -p pair_contract -- --nocapture
 cargo test -p router_contract -- --ignored
 ```
 
-### 16.2 Backend (spot-api)
+### 17.2 Backend (spot-api)
 
 ```bash
 cd spot-api
@@ -1587,7 +1654,7 @@ npm test -- --testPathPattern=marginService --forceExit
 npm run test:e2e -- --forceExit
 ```
 
-### 16.3 Frontend (TypeScript check)
+### 17.3 Frontend (TypeScript check)
 
 ```bash
 cd lunes-dex-main
@@ -1599,7 +1666,7 @@ npx tsc --noEmit
 npm run build
 ```
 
-### 16.4 Simular volume de trades (dev)
+### 17.4 Simular volume de trades (dev)
 
 ```bash
 # Gera trades sintéticos para popular candles/orderbook
@@ -1609,7 +1676,7 @@ npx ts-node scripts/simulate-volume.ts
 
 ---
 
-## 17. Troubleshooting
+## 18. Troubleshooting
 
 ### "Chart data unavailable — spot-api offline"
 

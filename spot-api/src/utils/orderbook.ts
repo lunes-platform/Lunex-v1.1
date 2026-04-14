@@ -4,36 +4,36 @@
  */
 
 export interface OrderbookEntry {
-  orderId: string
-  price: number
-  amount: number
-  remainingAmount: number
-  makerAddress: string
-  timestamp: number
+  orderId: string;
+  price: number;
+  amount: number;
+  remainingAmount: number;
+  makerAddress: string;
+  timestamp: number;
 }
 
 export interface OrderbookSnapshot {
-  bids: Array<{ price: number; amount: number; total: number }>
-  asks: Array<{ price: number; amount: number; total: number }>
+  bids: Array<{ price: number; amount: number; total: number }>;
+  asks: Array<{ price: number; amount: number; total: number }>;
 }
 
 export interface MatchResult {
-  makerOrderId: string
-  takerOrderId: string
-  fillAmount: number
-  fillPrice: number
-  makerAddress: string
-  takerAddress: string
+  makerOrderId: string;
+  takerOrderId: string;
+  fillAmount: number;
+  fillPrice: number;
+  makerAddress: string;
+  takerAddress: string;
 }
 
 export class Orderbook {
-  private bids: OrderbookEntry[] = []
-  private asks: OrderbookEntry[] = []
-  private lastUpdatedAt: number | null = null
-  public readonly symbol: string
+  private bids: OrderbookEntry[] = [];
+  private asks: OrderbookEntry[] = [];
+  private lastUpdatedAt: number | null = null;
+  public readonly symbol: string;
 
   constructor(symbol: string) {
-    this.symbol = symbol
+    this.symbol = symbol;
   }
 
   restoreLimitOrder(
@@ -52,22 +52,22 @@ export class Orderbook {
       remainingAmount,
       makerAddress,
       timestamp,
-    }
+    };
 
     if (side === 'BUY') {
-      this.insertBid(entry)
-      this.touch(timestamp)
-      return
+      this.insertBid(entry);
+      this.touch(timestamp);
+      return;
     }
 
-    this.insertAsk(entry)
-    this.touch(timestamp)
+    this.insertAsk(entry);
+    this.touch(timestamp);
   }
 
   clear() {
-    this.bids = []
-    this.asks = []
-    this.lastUpdatedAt = null
+    this.bids = [];
+    this.asks = [];
+    this.lastUpdatedAt = null;
   }
 
   /**
@@ -81,24 +81,24 @@ export class Orderbook {
     amount: number,
     makerAddress: string,
   ): MatchResult[] {
-    const matches: MatchResult[] = []
-    let remaining = amount
-    const now = Date.now()
-    let touched = false
+    const matches: MatchResult[] = [];
+    let remaining = amount;
+    const now = Date.now();
+    let touched = false;
 
     if (side === 'BUY') {
       // Match against asks (lowest first)
       while (remaining > 0 && this.asks.length > 0) {
-        const bestAsk = this.asks[0]
-        if (price < bestAsk.price) break // No more matches
+        const bestAsk = this.asks[0];
+        if (price < bestAsk.price) break; // No more matches
 
         // Self-trade prevention: skip orders from same address
         if (bestAsk.makerAddress === makerAddress) {
-          break
+          break;
         }
 
-        const fillAmount = Math.min(remaining, bestAsk.remainingAmount)
-        const fillPrice = bestAsk.price // Maker's price (price-time priority)
+        const fillAmount = Math.min(remaining, bestAsk.remainingAmount);
+        const fillPrice = bestAsk.price; // Maker's price (price-time priority)
 
         matches.push({
           makerOrderId: bestAsk.orderId,
@@ -107,14 +107,14 @@ export class Orderbook {
           fillPrice,
           makerAddress: bestAsk.makerAddress,
           takerAddress: makerAddress,
-        })
-        touched = true
+        });
+        touched = true;
 
-        bestAsk.remainingAmount -= fillAmount
-        remaining -= fillAmount
+        bestAsk.remainingAmount -= fillAmount;
+        remaining -= fillAmount;
 
         if (bestAsk.remainingAmount <= 0) {
-          this.asks.shift()
+          this.asks.shift();
         }
       }
 
@@ -127,22 +127,22 @@ export class Orderbook {
           remainingAmount: remaining,
           makerAddress,
           timestamp: now,
-        })
-        touched = true
+        });
+        touched = true;
       }
     } else {
       // SELL: Match against bids (highest first)
       while (remaining > 0 && this.bids.length > 0) {
-        const bestBid = this.bids[0]
-        if (price > bestBid.price) break
+        const bestBid = this.bids[0];
+        if (price > bestBid.price) break;
 
         // Self-trade prevention: skip orders from same address
         if (bestBid.makerAddress === makerAddress) {
-          break
+          break;
         }
 
-        const fillAmount = Math.min(remaining, bestBid.remainingAmount)
-        const fillPrice = bestBid.price
+        const fillAmount = Math.min(remaining, bestBid.remainingAmount);
+        const fillPrice = bestBid.price;
 
         matches.push({
           makerOrderId: bestBid.orderId,
@@ -151,14 +151,14 @@ export class Orderbook {
           fillPrice,
           makerAddress: bestBid.makerAddress,
           takerAddress: makerAddress,
-        })
-        touched = true
+        });
+        touched = true;
 
-        bestBid.remainingAmount -= fillAmount
-        remaining -= fillAmount
+        bestBid.remainingAmount -= fillAmount;
+        remaining -= fillAmount;
 
         if (bestBid.remainingAmount <= 0) {
-          this.bids.shift()
+          this.bids.shift();
         }
       }
 
@@ -170,16 +170,16 @@ export class Orderbook {
           remainingAmount: remaining,
           makerAddress,
           timestamp: now,
-        })
-        touched = true
+        });
+        touched = true;
       }
     }
 
     if (touched) {
-      this.touch(now)
+      this.touch(now);
     }
 
-    return matches
+    return matches;
   }
 
   /**
@@ -191,18 +191,18 @@ export class Orderbook {
     amount: number,
     makerAddress: string,
   ): MatchResult[] {
-    const matches: MatchResult[] = []
-    let remaining = amount
-    const now = Date.now()
-    let touched = false
+    const matches: MatchResult[] = [];
+    let remaining = amount;
+    const now = Date.now();
+    let touched = false;
 
     if (side === 'BUY') {
       while (remaining > 0 && this.asks.length > 0) {
-        const bestAsk = this.asks[0]
+        const bestAsk = this.asks[0];
         // Self-trade prevention
-        if (bestAsk.makerAddress === makerAddress) break
-        const fillAmount = Math.min(remaining, bestAsk.remainingAmount)
-        const fillPrice = bestAsk.price
+        if (bestAsk.makerAddress === makerAddress) break;
+        const fillAmount = Math.min(remaining, bestAsk.remainingAmount);
+        const fillPrice = bestAsk.price;
 
         matches.push({
           makerOrderId: bestAsk.orderId,
@@ -211,23 +211,23 @@ export class Orderbook {
           fillPrice,
           makerAddress: bestAsk.makerAddress,
           takerAddress: makerAddress,
-        })
-        touched = true
+        });
+        touched = true;
 
-        bestAsk.remainingAmount -= fillAmount
-        remaining -= fillAmount
+        bestAsk.remainingAmount -= fillAmount;
+        remaining -= fillAmount;
 
         if (bestAsk.remainingAmount <= 0) {
-          this.asks.shift()
+          this.asks.shift();
         }
       }
     } else {
       while (remaining > 0 && this.bids.length > 0) {
-        const bestBid = this.bids[0]
+        const bestBid = this.bids[0];
         // Self-trade prevention
-        if (bestBid.makerAddress === makerAddress) break
-        const fillAmount = Math.min(remaining, bestBid.remainingAmount)
-        const fillPrice = bestBid.price
+        if (bestBid.makerAddress === makerAddress) break;
+        const fillAmount = Math.min(remaining, bestBid.remainingAmount);
+        const fillPrice = bestBid.price;
 
         matches.push({
           makerOrderId: bestBid.orderId,
@@ -236,42 +236,42 @@ export class Orderbook {
           fillPrice,
           makerAddress: bestBid.makerAddress,
           takerAddress: makerAddress,
-        })
-        touched = true
+        });
+        touched = true;
 
-        bestBid.remainingAmount -= fillAmount
-        remaining -= fillAmount
+        bestBid.remainingAmount -= fillAmount;
+        remaining -= fillAmount;
 
         if (bestBid.remainingAmount <= 0) {
-          this.bids.shift()
+          this.bids.shift();
         }
       }
     }
 
     if (touched) {
-      this.touch(now)
+      this.touch(now);
     }
 
-    return matches
+    return matches;
   }
 
   /**
    * Cancel an order by removing it from the book.
    */
   cancelOrder(orderId: string): boolean {
-    let idx = this.bids.findIndex((o) => o.orderId === orderId)
+    let idx = this.bids.findIndex((o) => o.orderId === orderId);
     if (idx >= 0) {
-      this.bids.splice(idx, 1)
-      this.touch(Date.now())
-      return true
+      this.bids.splice(idx, 1);
+      this.touch(Date.now());
+      return true;
     }
-    idx = this.asks.findIndex((o) => o.orderId === orderId)
+    idx = this.asks.findIndex((o) => o.orderId === orderId);
     if (idx >= 0) {
-      this.asks.splice(idx, 1)
-      this.touch(Date.now())
-      return true
+      this.asks.splice(idx, 1);
+      this.touch(Date.now());
+      return true;
     }
-    return false
+    return false;
   }
 
   /**
@@ -282,54 +282,55 @@ export class Orderbook {
       entries: OrderbookEntry[],
       maxLevels: number,
     ): Array<{ price: number; amount: number; total: number }> => {
-      const levels = new Map<number, number>()
+      const levels = new Map<number, number>();
 
       for (const entry of entries) {
-        const existing = levels.get(entry.price) || 0
-        levels.set(entry.price, existing + entry.remainingAmount)
+        const existing = levels.get(entry.price) || 0;
+        levels.set(entry.price, existing + entry.remainingAmount);
       }
 
-      const result: Array<{ price: number; amount: number; total: number }> = []
-      let cumulative = 0
+      const result: Array<{ price: number; amount: number; total: number }> =
+        [];
+      let cumulative = 0;
       for (const [price, amount] of levels) {
-        cumulative += amount
-        result.push({ price, amount, total: cumulative })
-        if (result.length >= maxLevels) break
+        cumulative += amount;
+        result.push({ price, amount, total: cumulative });
+        if (result.length >= maxLevels) break;
       }
-      return result
-    }
+      return result;
+    };
 
     return {
       bids: aggregateLevels(this.bids, depth),
       asks: aggregateLevels(this.asks, depth),
-    }
+    };
   }
 
   getBestBid(): number | null {
-    return this.bids.length > 0 ? this.bids[0].price : null
+    return this.bids.length > 0 ? this.bids[0].price : null;
   }
 
   getBestAsk(): number | null {
-    return this.asks.length > 0 ? this.asks[0].price : null
+    return this.asks.length > 0 ? this.asks[0].price : null;
   }
 
   getSpread(): number | null {
-    const bid = this.getBestBid()
-    const ask = this.getBestAsk()
-    if (bid === null || ask === null) return null
-    return ask - bid
+    const bid = this.getBestBid();
+    const ask = this.getBestAsk();
+    if (bid === null || ask === null) return null;
+    return ask - bid;
   }
 
   getLastUpdatedAt(): number | null {
-    return this.lastUpdatedAt
+    return this.lastUpdatedAt;
   }
 
   getBidCount(): number {
-    return this.bids.length
+    return this.bids.length;
   }
 
   getAskCount(): number {
-    return this.asks.length
+    return this.asks.length;
   }
 
   // ─── Internal sorted insert ───
@@ -337,29 +338,36 @@ export class Orderbook {
   private insertBid(entry: OrderbookEntry) {
     // Bids: sorted descending by price, then ascending by timestamp
     const idx = this.bids.findIndex(
-      (b) => entry.price > b.price || (entry.price === b.price && entry.timestamp < b.timestamp),
-    )
+      (b) =>
+        entry.price > b.price ||
+        (entry.price === b.price && entry.timestamp < b.timestamp),
+    );
     if (idx === -1) {
-      this.bids.push(entry)
+      this.bids.push(entry);
     } else {
-      this.bids.splice(idx, 0, entry)
+      this.bids.splice(idx, 0, entry);
     }
   }
 
   private insertAsk(entry: OrderbookEntry) {
     // Asks: sorted ascending by price, then ascending by timestamp
     const idx = this.asks.findIndex(
-      (a) => entry.price < a.price || (entry.price === a.price && entry.timestamp < a.timestamp),
-    )
+      (a) =>
+        entry.price < a.price ||
+        (entry.price === a.price && entry.timestamp < a.timestamp),
+    );
     if (idx === -1) {
-      this.asks.push(entry)
+      this.asks.push(entry);
     } else {
-      this.asks.splice(idx, 0, entry)
+      this.asks.splice(idx, 0, entry);
     }
   }
 
   private touch(timestamp: number) {
-    this.lastUpdatedAt = this.lastUpdatedAt === null ? timestamp : Math.max(this.lastUpdatedAt, timestamp)
+    this.lastUpdatedAt =
+      this.lastUpdatedAt === null
+        ? timestamp
+        : Math.max(this.lastUpdatedAt, timestamp);
   }
 }
 
@@ -367,28 +375,28 @@ export class Orderbook {
  * Manages orderbooks for all trading pairs.
  */
 export class OrderbookManager {
-  private books = new Map<string, Orderbook>()
+  private books = new Map<string, Orderbook>();
 
   getOrCreate(symbol: string): Orderbook {
-    let book = this.books.get(symbol)
+    let book = this.books.get(symbol);
     if (!book) {
-      book = new Orderbook(symbol)
-      this.books.set(symbol, book)
+      book = new Orderbook(symbol);
+      this.books.set(symbol, book);
     }
-    return book
+    return book;
   }
 
   get(symbol: string): Orderbook | undefined {
-    return this.books.get(symbol)
+    return this.books.get(symbol);
   }
 
   getAll(): Map<string, Orderbook> {
-    return this.books
+    return this.books;
   }
 
   clearAll() {
-    this.books.clear()
+    this.books.clear();
   }
 }
 
-export const orderbookManager = new OrderbookManager()
+export const orderbookManager = new OrderbookManager();

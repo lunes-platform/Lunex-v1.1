@@ -9,59 +9,59 @@
 import { useState, useEffect, useRef } from 'react'
 
 interface Options {
-    decimals?: number
-    duration?: number  // ms
-    prefix?: string
-    suffix?: string
+  decimals?: number
+  duration?: number // ms
+  prefix?: string
+  suffix?: string
 }
 
 export function useAnimatedCounter(
-    target: number,
-    { decimals = 0, duration = 500, prefix = '', suffix = '' }: Options = {},
+  target: number,
+  { decimals = 0, duration = 500, prefix = '', suffix = '' }: Options = {}
 ): string {
-    const [current, setCurrent] = useState(target)
-    const startRef = useRef(target)
-    const startTimeRef = useRef<number | null>(null)
-    const frameRef = useRef<number | null>(null)
+  const [current, setCurrent] = useState(target)
+  const startRef = useRef(target)
+  const startTimeRef = useRef<number | null>(null)
+  const frameRef = useRef<number | null>(null)
 
-    useEffect(() => {
-        // Skip animation if prefers-reduced-motion
-        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-            setCurrent(target)
-            return
-        }
+  useEffect(() => {
+    // Skip animation if prefers-reduced-motion
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setCurrent(target)
+      return
+    }
 
-        const from = startRef.current
-        startTimeRef.current = null
+    const from = startRef.current
+    startTimeRef.current = null
 
-        const animate = (timestamp: number) => {
-            if (!startTimeRef.current) startTimeRef.current = timestamp
-            const elapsed = timestamp - startTimeRef.current
-            const progress = Math.min(elapsed / duration, 1)
+    const animate = (timestamp: number) => {
+      if (!startTimeRef.current) startTimeRef.current = timestamp
+      const elapsed = timestamp - startTimeRef.current
+      const progress = Math.min(elapsed / duration, 1)
 
-            // Ease out cubic
-            const eased = 1 - Math.pow(1 - progress, 3)
-            const value = from + (target - from) * eased
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3)
+      const value = from + (target - from) * eased
 
-            setCurrent(value)
+      setCurrent(value)
 
-            if (progress < 1) {
-                frameRef.current = requestAnimationFrame(animate)
-            } else {
-                startRef.current = target
-            }
-        }
-
-        if (frameRef.current) cancelAnimationFrame(frameRef.current)
+      if (progress < 1) {
         frameRef.current = requestAnimationFrame(animate)
+      } else {
+        startRef.current = target
+      }
+    }
 
-        return () => {
-            if (frameRef.current) cancelAnimationFrame(frameRef.current)
-        }
-    }, [target, duration])
+    if (frameRef.current) cancelAnimationFrame(frameRef.current)
+    frameRef.current = requestAnimationFrame(animate)
 
-    const formatted = current.toFixed(decimals)
-    return `${prefix}${formatted}${suffix}`
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current)
+    }
+  }, [target, duration])
+
+  const formatted = current.toFixed(decimals)
+  return `${prefix}${formatted}${suffix}`
 }
 
 /**
@@ -72,19 +72,22 @@ export function useAnimatedCounter(
  *   const flash = useFlashOnChange(price)
  *   <span style={{ color: flash === 'up' ? '#26D07C' : flash === 'down' ? '#FF284C' : 'inherit' }}>
  */
-export function useFlashOnChange(value: number, duration = 800): 'up' | 'down' | null {
-    const [flash, setFlash] = useState<'up' | 'down' | null>(null)
-    const prevRef = useRef(value)
+export function useFlashOnChange(
+  value: number,
+  duration = 800
+): 'up' | 'down' | null {
+  const [flash, setFlash] = useState<'up' | 'down' | null>(null)
+  const prevRef = useRef(value)
 
-    useEffect(() => {
-        if (value !== prevRef.current) {
-            setFlash(value > prevRef.current ? 'up' : 'down')
-            prevRef.current = value
+  useEffect(() => {
+    if (value !== prevRef.current) {
+      setFlash(value > prevRef.current ? 'up' : 'down')
+      prevRef.current = value
 
-            const t = setTimeout(() => setFlash(null), duration)
-            return () => clearTimeout(t)
-        }
-    }, [value, duration])
+      const t = setTimeout(() => setFlash(null), duration)
+      return () => clearTimeout(t)
+    }
+  }, [value, duration])
 
-    return flash
+  return flash
 }

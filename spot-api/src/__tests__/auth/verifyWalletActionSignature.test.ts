@@ -1,20 +1,49 @@
 jest.mock('@polkadot/util-crypto', () => ({
   cryptoWaitReady: jest.fn().mockResolvedValue(undefined),
   signatureVerify: jest.fn(),
-}))
+}));
 
-import { signatureVerify } from '@polkadot/util-crypto'
-import { verifyWalletActionSignature } from '../../middleware/auth'
+jest.mock('../../utils/redis', () => {
+  const store = new Map<string, string>();
 
-const signatureVerifyMock = signatureVerify as jest.MockedFunction<typeof signatureVerify>
+  const mockRedis = {
+    get: jest.fn(async (key: string) => store.get(key) ?? null),
+    set: jest.fn(async (key: string, value: string) => {
+      store.set(key, value);
+      return 'OK';
+    }),
+    _clear: () => store.clear(),
+  };
+
+  return {
+    getRedis: jest.fn(() => mockRedis),
+    disconnectRedis: jest.fn(async () => undefined),
+    __mockRedis: mockRedis,
+  };
+});
+
+import { signatureVerify } from '@polkadot/util-crypto';
+import { verifyWalletActionSignature } from '../../middleware/auth';
+import * as redisModule from '../../utils/redis';
+
+const signatureVerifyMock = signatureVerify as jest.MockedFunction<
+  typeof signatureVerify
+>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockRedis = (redisModule as any).__mockRedis as {
+  _clear: () => void;
+};
 
 describe('verifyWalletActionSignature security', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
-  })
+    jest.clearAllMocks();
+    mockRedis._clear();
+  });
 
   it('rejects invalid signatures', async () => {
-    signatureVerifyMock.mockReturnValue({ isValid: false } as ReturnType<typeof signatureVerify>)
+    signatureVerifyMock.mockReturnValue({ isValid: false } as ReturnType<
+      typeof signatureVerify
+    >);
 
     const result = await verifyWalletActionSignature({
       action: 'copytrade.deposit',
@@ -27,31 +56,35 @@ describe('verifyWalletActionSignature security', () => {
         token: 'USDT',
         amount: '100',
       },
-    })
+    });
 
-    expect(result).toEqual({ ok: false, error: 'Invalid signature' })
-  })
+    expect(result).toEqual({ ok: false, error: 'Invalid signature' });
+  });
 
   it('rejects expired signatures before verification', async () => {
-    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<typeof signatureVerify>)
+    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<
+      typeof signatureVerify
+    >);
 
     const result = await verifyWalletActionSignature({
       action: 'social.follow-leader',
       address: '5ExpiredAddress111111111111111111111111111111111',
       nonce: 'nonce-expired-signature',
-      timestamp: Date.now() - (10 * 60 * 1000),
+      timestamp: Date.now() - 10 * 60 * 1000,
       signature: 'signed-payload',
       fields: {
         leaderId: 'leader-1',
       },
-    })
+    });
 
-    expect(result).toEqual({ ok: false, error: 'Expired signature' })
-    expect(signatureVerifyMock).not.toHaveBeenCalled()
-  })
+    expect(result).toEqual({ ok: false, error: 'Expired signature' });
+    expect(signatureVerifyMock).not.toHaveBeenCalled();
+  });
 
   it('rejects replayed signed actions with the same action, address, and nonce', async () => {
-    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<typeof signatureVerify>)
+    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<
+      typeof signatureVerify
+    >);
 
     const input = {
       action: 'copytrade.withdraw',
@@ -63,13 +96,16 @@ describe('verifyWalletActionSignature security', () => {
         leaderId: 'leader-1',
         shares: '50',
       },
-    }
+    };
 
-    const first = await verifyWalletActionSignature(input)
-    const second = await verifyWalletActionSignature(input)
+    const first = await verifyWalletActionSignature(input);
+    const second = await verifyWalletActionSignature(input);
 
-    expect(first.ok).toBe(true)
-    expect(second).toEqual({ ok: false, error: 'Signature nonce already used' })
-    expect(signatureVerifyMock).toHaveBeenCalledTimes(1)
-  })
-})
+    expect(first.ok).toBe(true);
+    expect(second).toEqual({
+      ok: false,
+      error: 'Signature nonce already used',
+    });
+    expect(signatureVerifyMock).toHaveBeenCalledTimes(1);
+  });
+});

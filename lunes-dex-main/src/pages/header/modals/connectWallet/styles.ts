@@ -4,7 +4,7 @@ import Modals from 'components/modal'
 import device from 'components/devices/devices'
 
 export const Modal = styled(Modals)`
-  ${({ ...props }) => css`
+  ${css`
     height: 670px;
     ${device.mobileL} {
       height: 550px;
@@ -16,7 +16,7 @@ export const Modal = styled(Modals)`
 `
 
 export const Content = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     position: relative;
     flex-direction: row;
     justify-content: space-evenly;
@@ -38,7 +38,7 @@ export const Content = styled(Wrapper)`
 `
 
 export const Network = styled(Button)`
-  ${({ ...props }) => css`
+  ${css`
     width: 150px;
     height: 100px;
     justify-content: space-evenly;

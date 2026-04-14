@@ -24,9 +24,14 @@ const NavItem = styled.span<SubNavProps>`
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    border-bottom: 2px solid ${active ? theme.colors.themeColors[800] : 'transparent'};
-    color: ${active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
-    transition: color 0.2s, border-color 0.2s;
+    border-bottom: 2px solid
+      ${active ? theme.colors.themeColors[800] : 'transparent'};
+    color: ${active
+      ? theme.colors.themeColors[100]
+      : theme.colors.themeColors[200]};
+    transition:
+      color 0.2s,
+      border-color 0.2s;
     margin-bottom: -1px;
 
     &:hover {
@@ -50,7 +55,10 @@ interface TradeSubNavProps {
   onSettingsClick?: () => void
 }
 
-const TradeSubNav: React.FC<TradeSubNavProps> = ({ active, onSettingsClick }) => {
+const TradeSubNav: React.FC<TradeSubNavProps> = ({
+  active,
+  onSettingsClick
+}) => {
   const navigate = useNavigate()
 
   return (
@@ -61,10 +69,17 @@ const TradeSubNav: React.FC<TradeSubNavProps> = ({ active, onSettingsClick }) =>
       <NavItem active={active === 'pool'} onClick={() => navigate('/pool')}>
         Liquidity pool
       </NavItem>
-      <NavItem active={active === 'staking'} onClick={() => navigate('/staking')}>
+      <NavItem
+        active={active === 'staking'}
+        onClick={() => navigate('/staking')}
+      >
         Staking
       </NavItem>
-      <SettingsIcon src="/img/tab-bar.svg" alt="settings" onClick={onSettingsClick} />
+      <SettingsIcon
+        src="/img/tab-bar.svg"
+        alt="settings"
+        onClick={onSettingsClick}
+      />
     </NavWrapper>
   )
 }

@@ -17,7 +17,9 @@ export function buildSpotCancelSignMessage(orderId: string) {
 
 let signedActionNonceCounter = 0
 
-function normalizeSignedValue(value: string | number | boolean | Array<string | number> | undefined | null) {
+function normalizeSignedValue(
+  value: string | number | boolean | Array<string | number> | undefined | null
+) {
   if (Array.isArray(value)) {
     return value.join(',')
   }
@@ -33,7 +35,7 @@ export function createSignedActionMetadata() {
   signedActionNonceCounter = (signedActionNonceCounter + 1) % 1000
   return {
     nonce: `${Date.now()}${signedActionNonceCounter.toString().padStart(3, '0')}`,
-    timestamp: Date.now(),
+    timestamp: Date.now()
   }
 }
 
@@ -42,12 +44,12 @@ export function buildWalletActionMessage(input: {
   address: string
   nonce: string
   timestamp: number | string
-  fields?: Record<string, string | number | boolean | Array<string | number> | undefined | null>
+  fields?: Record<
+    string,
+    string | number | boolean | Array<string | number> | undefined | null
+  >
 }) {
-  const lines = [
-    `lunex-auth:${input.action}`,
-    `address:${input.address}`,
-  ]
+  const lines = [`lunex-auth:${input.action}`, `address:${input.address}`]
 
   const orderedFields = Object.entries(input.fields ?? {})
     .filter(([, value]) => value !== undefined && value !== null)
@@ -77,8 +79,8 @@ export function buildMarginCollateralSignMessage(input: {
     timestamp: input.timestamp,
     fields: {
       token: input.token,
-      amount: input.amount,
-    },
+      amount: input.amount
+    }
   })
 }
 
@@ -100,8 +102,8 @@ export function buildAgentRegisterSignMessage(input: {
       agentType: input.agentType,
       framework: input.framework,
       strategyDescription: input.strategyDescription,
-      linkLeaderId: input.linkLeaderId,
-    },
+      linkLeaderId: input.linkLeaderId
+    }
   })
 }
 
@@ -123,8 +125,47 @@ export function buildAgentCreateApiKeySignMessage(input: {
       agentId: input.agentId,
       label: input.label,
       permissions: input.permissions,
-      expiresInDays: input.expiresInDays,
-    },
+      expiresInDays: input.expiresInDays
+    }
+  })
+}
+
+export function buildAsymmetricCreateStrategySignMessage(input: {
+  address: string
+  pairAddress: string
+  isAutoRebalance: boolean
+  buyK: string
+  buyGamma: number
+  buyMaxCapacity: string
+  buyFeeTargetBps?: number
+  sellGamma: number
+  sellMaxCapacity: string
+  sellFeeTargetBps?: number
+  sellProfitTargetBps?: number
+  leverageL?: string
+  allocationC?: number
+  nonce: string
+  timestamp: number
+}) {
+  return buildWalletActionMessage({
+    action: 'asymmetric.strategy.create',
+    address: input.address,
+    nonce: input.nonce,
+    timestamp: input.timestamp,
+    fields: {
+      pairAddress: input.pairAddress,
+      isAutoRebalance: input.isAutoRebalance,
+      buyK: input.buyK,
+      buyGamma: input.buyGamma,
+      buyMaxCapacity: input.buyMaxCapacity,
+      buyFeeTargetBps: input.buyFeeTargetBps,
+      sellGamma: input.sellGamma,
+      sellMaxCapacity: input.sellMaxCapacity,
+      sellFeeTargetBps: input.sellFeeTargetBps,
+      sellProfitTargetBps: input.sellProfitTargetBps,
+      leverageL: input.leverageL,
+      allocationC: input.allocationC
+    }
   })
 }
 
@@ -146,8 +187,8 @@ export function buildMarginOpenPositionSignMessage(input: {
       pairSymbol: input.pairSymbol,
       side: input.side,
       collateralAmount: input.collateralAmount,
-      leverage: input.leverage,
-    },
+      leverage: input.leverage
+    }
   })
 }
 
@@ -163,8 +204,8 @@ export function buildMarginClosePositionSignMessage(input: {
     nonce: input.nonce,
     timestamp: input.timestamp,
     fields: {
-      positionId: input.positionId,
-    },
+      positionId: input.positionId
+    }
   })
 }
 
@@ -180,7 +221,7 @@ export function buildMarginLiquidatePositionSignMessage(input: {
     nonce: input.nonce,
     timestamp: input.timestamp,
     fields: {
-      positionId: input.positionId,
-    },
+      positionId: input.positionId
+    }
   })
 }

@@ -55,15 +55,6 @@ export interface PairInfo {
   totalSupply: string
 }
 
-export interface SwapQuote {
-  amountOut: string
-  amountOutFormatted: string
-  priceImpact: string
-  minimumReceived: string
-  executionPrice: string
-  route: string[]
-}
-
 // Dry-run gas limit (conservative)
 const DRY_GAS = { refTime: BigInt('50000000000'), proofSize: BigInt('1000000') }
 
@@ -186,14 +177,17 @@ class ContractService {
           19: 'ContractReverted',
           20: 'CodeNotFound',
           23: 'ContractTrapped',
-          25: 'ContractReverted',
+          25: 'ContractReverted'
         }
         if (mod.index?.toNumber?.() === 24 || mod.index === 24) {
           const name = palletContracts[errorIdx] ?? `Error(${errorIdx})`
           if (name === 'ContractReverted') {
             return 'O contrato reverteu. Verifique saldo de tokens e allowances.'
           }
-          if (name === 'StorageDepositNotEnoughFunds' || name === 'StorageDepositLimitExhausted') {
+          if (
+            name === 'StorageDepositNotEnoughFunds' ||
+            name === 'StorageDepositLimitExhausted'
+          ) {
             return 'Saldo LUNES insuficiente para storage deposit.'
           }
           if (name === 'OutOfGas') {
@@ -424,7 +418,7 @@ class ContractService {
         const addr = json?.ok ?? json
         return addr &&
           addr !==
-          '0x0000000000000000000000000000000000000000000000000000000000000000'
+            '0x0000000000000000000000000000000000000000000000000000000000000000'
           ? String(addr)
           : null
       }
@@ -442,11 +436,13 @@ class ContractService {
   async allPairsLength(): Promise<number> {
     if (!this.api || !this.factoryContract) return 0
     try {
-      const FACTORY_ADDR = process.env.REACT_APP_FACTORY_CONTRACT || '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
-      const { result, output } = await this.factoryContract.query.allPairsLength(
-        FACTORY_ADDR,
-        { gasLimit: this.makeDryGas() }
-      )
+      const FACTORY_ADDR =
+        process.env.REACT_APP_FACTORY_CONTRACT ||
+        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
+      const { result, output } =
+        await this.factoryContract.query.allPairsLength(FACTORY_ADDR, {
+          gasLimit: this.makeDryGas()
+        })
       if (result.isOk && output) {
         const j = output.toJSON() as any
         return Number(j?.ok ?? j ?? 0)
@@ -464,7 +460,9 @@ class ContractService {
   async allPairs(index: number): Promise<string | null> {
     if (!this.api || !this.factoryContract) return null
     try {
-      const FACTORY_ADDR = process.env.REACT_APP_FACTORY_CONTRACT || '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
+      const FACTORY_ADDR =
+        process.env.REACT_APP_FACTORY_CONTRACT ||
+        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
       const { result, output } = await this.factoryContract.query.allPairs(
         FACTORY_ADDR,
         { gasLimit: this.makeDryGas() },
@@ -540,10 +538,9 @@ class ContractService {
     if (!this.api || !this.isValidAddress(pairAddress)) return null
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
     try {
-      const { result, output } = await contract.query.token0(
-        pairAddress,
-        { gasLimit: this.makeDryGas() }
-      )
+      const { result, output } = await contract.query.token0(pairAddress, {
+        gasLimit: this.makeDryGas()
+      })
       if (result.isOk && output) {
         const j = output.toJSON() as any
         return String(j?.ok ?? j ?? '')
@@ -562,10 +559,9 @@ class ContractService {
     if (!this.api || !this.isValidAddress(pairAddress)) return null
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
     try {
-      const { result, output } = await contract.query.token1(
-        pairAddress,
-        { gasLimit: this.makeDryGas() }
-      )
+      const { result, output } = await contract.query.token1(pairAddress, {
+        gasLimit: this.makeDryGas()
+      })
       if (result.isOk && output) {
         const j = output.toJSON() as any
         return String(j?.ok ?? j ?? '')
@@ -584,10 +580,9 @@ class ContractService {
     if (!this.api || !this.isValidAddress(pairAddress)) return '0'
     const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
     try {
-      const { result, output } = await contract.query.totalSupply(
-        pairAddress,
-        { gasLimit: this.makeDryGas() }
-      )
+      const { result, output } = await contract.query.totalSupply(pairAddress, {
+        gasLimit: this.makeDryGas()
+      })
       if (result.isOk && output) {
         const j = output.toJSON() as any
         return String(j?.ok ?? j ?? '0').replace(/,/g, '')
@@ -697,13 +692,14 @@ class ContractService {
       if (!contracts) throw new Error('Contracts not initialized')
 
       // Approve input token only if allowance is insufficient
-      const currentAllowance = await this.getAllowance(path[0], account.address, contracts.router)
-      const approved = BigInt(currentAllowance) >= BigInt(amountIn) || await this.approveToken(
+      const currentAllowance = await this.getAllowance(
         path[0],
-        contracts.router,
-        amountIn,
-        account
+        account.address,
+        contracts.router
       )
+      const approved =
+        BigInt(currentAllowance) >= BigInt(amountIn) ||
+        (await this.approveToken(path[0], contracts.router, amountIn, account))
       if (!approved) throw new Error('Failed to approve token')
 
       // Use deadline in ms
@@ -780,39 +776,56 @@ class ContractService {
       // Only approve if current allowance is insufficient (avoids redundant signatures)
       const [allowanceA, allowanceB] = await Promise.all([
         this.getAllowance(tokenA, account.address, contracts.router),
-        this.getAllowance(tokenB, account.address, contracts.router),
+        this.getAllowance(tokenB, account.address, contracts.router)
       ])
       if (BigInt(allowanceA) < BigInt(amountADesired)) {
-        await this.approveToken(tokenA, contracts.router, amountADesired, account)
+        await this.approveToken(
+          tokenA,
+          contracts.router,
+          amountADesired,
+          account
+        )
       }
       if (BigInt(allowanceB) < BigInt(amountBDesired)) {
-        await this.approveToken(tokenB, contracts.router, amountBDesired, account)
+        await this.approveToken(
+          tokenB,
+          contracts.router,
+          amountBDesired,
+          account
+        )
       }
 
       const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
 
-      const { gasRequired, output: dryOutput } = await this.routerContract.query.addLiquidity(
-        account.address,
-        { gasLimit: this.makeDryGas() },
-        tokenA,
-        tokenB,
-        amountADesired,
-        amountBDesired,
-        amountAMin,
-        amountBMin,
-        to,
-        deadlineMs
-      )
+      const { gasRequired, output: dryOutput } =
+        await this.routerContract.query.addLiquidity(
+          account.address,
+          { gasLimit: this.makeDryGas() },
+          tokenA,
+          tokenB,
+          amountADesired,
+          amountBDesired,
+          amountAMin,
+          amountBMin,
+          to,
+          deadlineMs
+        )
 
       // Detect contract-level errors before signing (ink! Err variant in dry-run output)
       if (dryOutput) {
         const dryJson = (dryOutput as any).toJSON?.() as any
         const dryErr = dryJson?.err ?? dryJson?.Err
         if (dryErr !== undefined && dryErr !== null) {
-          const errName = typeof dryErr === 'string' ? dryErr : JSON.stringify(dryErr)
+          const errName =
+            typeof dryErr === 'string' ? dryErr : JSON.stringify(dryErr)
           // Check for common causes and give actionable messages
-          if (errName.toLowerCase().includes('insufficientbalance') || errName.toLowerCase().includes('balance')) {
-            throw new Error(`Saldo insuficiente de tokens para adicionar liquidez (${errName})`)
+          if (
+            errName.toLowerCase().includes('insufficientbalance') ||
+            errName.toLowerCase().includes('balance')
+          ) {
+            throw new Error(
+              `Saldo insuficiente de tokens para adicionar liquidez (${errName})`
+            )
           }
           throw new Error(`addLiquidity reverteria na chain: ${errName}`)
         }
@@ -840,7 +853,9 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+                reject(
+                  new Error(this.decodeDispatchError(result.dispatchError))
+                )
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
@@ -973,7 +988,7 @@ class ContractService {
           }
         }
       }
-    } catch (err) {
+    } catch {
       console.warn(
         'getStakingUserInfo: Query failed (contract not deployed or ABI mismatch).'
       )
@@ -1138,7 +1153,7 @@ class ContractService {
       const { result, output } = await this.stakingContract.query.getProposal(
         this.contracts?.staking || '',
         { gasLimit: this.makeDryGas() },
-        proposalId,
+        proposalId
       )
 
       if (result.isOk && output) {
@@ -1156,7 +1171,7 @@ class ContractService {
             votingDeadline: Number(obj.votingDeadline ?? 0),
             executed: Boolean(obj.executed),
             active: Boolean(obj.active),
-            fee: String(obj.fee ?? '0'),
+            fee: String(obj.fee ?? '0')
           }
         }
       }
@@ -1172,11 +1187,12 @@ class ContractService {
   async getVotingPower(accountAddress: string): Promise<string> {
     if (!this.api || !this.stakingContract) return '0'
     try {
-      const { result, output } = await this.stakingContract.query.getVotingPower(
-        accountAddress,
-        { gasLimit: this.makeDryGas() },
-        accountAddress,
-      )
+      const { result, output } =
+        await this.stakingContract.query.getVotingPower(
+          accountAddress,
+          { gasLimit: this.makeDryGas() },
+          accountAddress
+        )
 
       if (result.isOk && output) {
         const json = output.toJSON() as any
@@ -1195,7 +1211,7 @@ class ContractService {
   async vote(
     proposalId: number,
     approve: boolean,
-    account: InjectedAccountWithMeta,
+    account: InjectedAccountWithMeta
   ): Promise<string | null> {
     if (!this.api || !this.stakingContract) {
       throw new Error('Staking contract not connected')
@@ -1208,7 +1224,7 @@ class ContractService {
         account.address,
         { gasLimit: this.makeDryGas() },
         proposalId,
-        approve,
+        approve
       )
 
       return await new Promise((resolve, reject) => {
@@ -1217,7 +1233,11 @@ class ContractService {
           return
         }
         this.stakingContract.tx
-          .vote({ gasLimit: gasRequired, storageDepositLimit: null }, proposalId, approve)
+          .vote(
+            { gasLimit: gasRequired, storageDepositLimit: null },
+            proposalId,
+            approve
+          )
           .signAndSend(
             account.address,
             { signer: injector.signer },
@@ -1227,7 +1247,7 @@ class ContractService {
               } else if (result.status.isInBlock || result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
-            },
+            }
           )
           .catch(reject)
       })
@@ -1245,7 +1265,7 @@ class ContractService {
     name: string,
     description: string,
     tokenAddress: string,
-    account: InjectedAccountWithMeta,
+    account: InjectedAccountWithMeta
   ): Promise<string | null> {
     if (!this.api || !this.stakingContract) {
       throw new Error('Staking contract not connected')
@@ -1255,10 +1275,11 @@ class ContractService {
       const injector = await web3FromAddress(account.address)
 
       // Get the current proposal fee from contract
-      const { output: feeOutput } = await this.stakingContract.query.getCurrentProposalFee(
-        account.address,
-        { gasLimit: this.makeDryGas() },
-      )
+      const { output: feeOutput } =
+        await this.stakingContract.query.getCurrentProposalFee(
+          account.address,
+          { gasLimit: this.makeDryGas() }
+        )
 
       let fee = BigInt('100000000000') // Default 1000 LUNES (8 decimals)
       if (feeOutput) {
@@ -1272,7 +1293,7 @@ class ContractService {
         { gasLimit: this.makeDryGas(), value: fee },
         name,
         description,
-        tokenAddress,
+        tokenAddress
       )
 
       return await new Promise((resolve, reject) => {
@@ -1285,7 +1306,7 @@ class ContractService {
             { gasLimit: gasRequired, storageDepositLimit: null, value: fee },
             name,
             description,
-            tokenAddress,
+            tokenAddress
           )
           .signAndSend(
             account.address,
@@ -1296,7 +1317,7 @@ class ContractService {
               } else if (result.status.isInBlock || result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
-            },
+            }
           )
           .catch(reject)
       })
@@ -1309,13 +1330,17 @@ class ContractService {
   /**
    * Get the total number of proposals (from listing stats)
    */
-  async getListingStats(): Promise<{ totalProposals: number; approvedProposals: number } | null> {
+  async getListingStats(): Promise<{
+    totalProposals: number
+    approvedProposals: number
+  } | null> {
     if (!this.api || !this.stakingContract) return null
     try {
-      const { result, output } = await this.stakingContract.query.getListingStats(
-        this.contracts?.staking || '',
-        { gasLimit: this.makeDryGas() },
-      )
+      const { result, output } =
+        await this.stakingContract.query.getListingStats(
+          this.contracts?.staking || '',
+          { gasLimit: this.makeDryGas() }
+        )
 
       if (result.isOk && output) {
         const json = output.toJSON() as any
@@ -1323,7 +1348,7 @@ class ContractService {
         if (obj && typeof obj === 'object') {
           return {
             totalProposals: Number(obj.totalProposals ?? 0),
-            approvedProposals: Number(obj.approvedProposals ?? 0),
+            approvedProposals: Number(obj.approvedProposals ?? 0)
           }
         }
       }

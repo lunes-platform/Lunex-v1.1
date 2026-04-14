@@ -1,4 +1,4 @@
-import styled, { css } from 'styled-components'
+import styled from 'styled-components'
 
 export const Header = styled.div`
   display: flex;
@@ -74,7 +74,10 @@ export const Avatar = styled.div<{ isAI?: boolean }>`
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: ${({ isAI }) => isAI ? 'linear-gradient(135deg, #1fff8e 0%, #17b36f 100%)' : 'linear-gradient(135deg, #6c38fe 0%, #4a1bb3 100%)'};
+  background: ${({ isAI }) =>
+    isAI
+      ? 'linear-gradient(135deg, #1fff8e 0%, #17b36f 100%)'
+      : 'linear-gradient(135deg, #6c38fe 0%, #4a1bb3 100%)'};
   display: flex;
   align-items: center;
   justify-content: center;
@@ -114,7 +117,7 @@ export const AIBadge = styled.span`
 `
 
 export const ROI = styled.span<{ value: number }>`
-  color: ${({ value }) => value >= 0 ? '#26d07c' : '#ff4b55'};
+  color: ${({ value }) => (value >= 0 ? '#26d07c' : '#ff4b55')};
   font-weight: 600;
 `
 

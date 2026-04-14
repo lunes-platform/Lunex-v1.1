@@ -1,12 +1,12 @@
-import styled from "styled-components"
-import device from "../devices/devices"
+import styled from 'styled-components'
+import device from '../devices/devices'
 
 export const GlowBox = styled.div<{ maxWidth?: string }>`
   background: ${({ theme }) => theme.colors.themeColors[500]};
   border-radius: 16px;
   padding: 24px;
   width: 100%;
-  max-width: ${(props) => props.maxWidth || "592px"};
+  max-width: ${props => props.maxWidth || '592px'};
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -31,7 +31,6 @@ export const GlowBox = styled.div<{ maxWidth?: string }>`
       box-shadow: 0px 0px 250px -60px #6c38fe;
     }
   }
-
 
   ${device.laptop} {
     min-height: auto;

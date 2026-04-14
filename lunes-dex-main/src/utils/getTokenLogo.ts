@@ -18,7 +18,7 @@ const KNOWN_LOGOS: Record<string, string> = {
   LUSDT: '/img/lusdt.svg',
   GMC: '/img/gmc.svg',
   LETH: '/img/leth.svg',
-  LBTC: '/img/lbtc.svg',
+  LBTC: '/img/lbtc.svg'
 }
 
 /**
@@ -98,27 +98,6 @@ export function getTokenLogo(address: string, symbol?: string): string {
   img.src = url
 
   return url
-}
-
-/**
- * Preload registry tokens from API to warm the cache.
- */
-export async function preloadTokenLogos(): Promise<void> {
-  try {
-    const res = await fetch(`${API_BASE}/api/v1/tokens`)
-    if (!res.ok) return
-    const data = await res.json()
-    for (const token of data.tokens ?? []) {
-      if (token.logoURI) {
-        const url = token.logoURI.startsWith('http')
-          ? token.logoURI
-          : `${API_BASE}${token.logoURI}`
-        logoCache.set(token.address, url)
-      }
-    }
-  } catch {
-    // Silent — non-critical
-  }
 }
 
 export { generateIdenticon }

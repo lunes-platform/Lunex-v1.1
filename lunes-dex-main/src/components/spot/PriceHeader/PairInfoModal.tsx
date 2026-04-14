@@ -59,7 +59,7 @@ const TitleIcon = styled.div`
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6C38FF;
+  color: #6c38ff;
   flex-shrink: 0;
 `
 
@@ -146,14 +146,15 @@ const StatusBadge = styled.span<{ online: boolean }>`
   gap: 6px;
   font-size: 11px;
   font-weight: 600;
-  color: ${({ online }) => online ? '#00C076' : 'rgba(255,255,255,0.4)'};
+  color: ${({ online }) => (online ? '#00C076' : 'rgba(255,255,255,0.4)')};
 
   &::before {
     content: '';
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: ${({ online }) => online ? '#00C076' : 'rgba(255,255,255,0.2)'};
+    background: ${({ online }) =>
+      online ? '#00C076' : 'rgba(255,255,255,0.2)'};
   }
 `
 
@@ -193,7 +194,8 @@ const PairInfoModal: React.FC<Props> = ({ onClose }) => {
 
   useEffect(() => {
     setLoading(true)
-    spotApi.getMarketInfo(selectedPair)
+    spotApi
+      .getMarketInfo(selectedPair)
       .then(data => setMarketInfo(data))
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -212,7 +214,16 @@ const PairInfoModal: React.FC<Props> = ({ onClose }) => {
         <Header>
           <TitleRow>
             <TitleIcon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <circle cx="12" cy="12" r="10" />
                 <line x1="12" y1="16" x2="12" y2="12" />
                 <line x1="12" y1="8" x2="12.01" y2="8" />
@@ -237,7 +248,8 @@ const PairInfoModal: React.FC<Props> = ({ onClose }) => {
             <InfoRow>
               <Label>24h Change</Label>
               <Value style={{ color: change >= 0 ? '#00C076' : '#FF4B55' }}>
-                {change >= 0 ? '+' : ''}{change.toFixed(2)}%
+                {change >= 0 ? '+' : ''}
+                {change.toFixed(2)}%
               </Value>
             </InfoRow>
 
@@ -308,7 +320,9 @@ const PairInfoModal: React.FC<Props> = ({ onClose }) => {
 
                 <InfoRow>
                   <Label>Listed</Label>
-                  <Value>{new Date(pair.listingDate).toLocaleDateString()}</Value>
+                  <Value>
+                    {new Date(pair.listingDate).toLocaleDateString()}
+                  </Value>
                 </InfoRow>
               </>
             )}
@@ -322,7 +336,9 @@ const PairInfoModal: React.FC<Props> = ({ onClose }) => {
                 </FullRow>
                 <InfoRow>
                   <Label>Total Swaps</Label>
-                  <Value>{Number(marketInfo.onChain.swapCount).toLocaleString()}</Value>
+                  <Value>
+                    {Number(marketInfo.onChain.swapCount).toLocaleString()}
+                  </Value>
                 </InfoRow>
                 <InfoRow>
                   <Label>Last Swap</Label>

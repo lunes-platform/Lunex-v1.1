@@ -32,12 +32,6 @@ const Header = styled.div`
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 `
 
-const Title = styled.span`
-  font-size: 13px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.8);
-`
-
 const TabRow = styled.div`
   display: flex;
   gap: 2px;
@@ -51,8 +45,9 @@ const MiniTab = styled.button<{ active?: boolean }>`
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s;
-  background: ${({ active }) => active ? 'rgba(0,192,118,0.15)' : 'transparent'};
-  color: ${({ active }) => active ? '#00C076' : 'rgba(255,255,255,0.4)'};
+  background: ${({ active }) =>
+    active ? 'rgba(0,192,118,0.15)' : 'transparent'};
+  color: ${({ active }) => (active ? '#00C076' : 'rgba(255,255,255,0.4)')};
 
   &:hover {
     color: rgba(255, 255, 255, 0.7);
@@ -123,13 +118,13 @@ const OrderRow = styled.div<{ side: 'ask' | 'bid'; depth: number }>`
     bottom: 0;
     width: ${({ depth }) => depth}%;
     background: ${({ side }) =>
-    side === 'ask' ? 'rgba(255,75,85,0.1)' : 'rgba(0,192,118,0.1)'};
+      side === 'ask' ? 'rgba(255,75,85,0.1)' : 'rgba(0,192,118,0.1)'};
     transition: width 0.3s ease;
   }
 
   &:hover::before {
     background: ${({ side }) =>
-    side === 'ask' ? 'rgba(255,75,85,0.2)' : 'rgba(0,192,118,0.2)'};
+      side === 'ask' ? 'rgba(255,75,85,0.2)' : 'rgba(0,192,118,0.2)'};
   }
 `
 
@@ -191,14 +186,13 @@ const TradeRow = styled.div<{ side: 'buy' | 'sell'; isNew?: boolean }>`
   font-size: 12px;
   height: 20px;
   min-height: 20px;
-  animation: ${({ side, isNew }) => isNew
-    ? (side === 'buy' ? flashGreen : flashRed)
-    : 'none'
-  } 0.6s ease;
+  animation: ${({ side, isNew }) =>
+      isNew ? (side === 'buy' ? flashGreen : flashRed) : 'none'}
+    0.6s ease;
 `
 
 const TradePrice = styled.span<{ side: 'buy' | 'sell' }>`
-  color: ${({ side }) => side === 'buy' ? '#00C076' : '#FF4B55'};
+  color: ${({ side }) => (side === 'buy' ? '#00C076' : '#FF4B55')};
   font-weight: 600;
 `
 
@@ -276,7 +270,11 @@ const OrderBook: React.FC = () => {
     if (isConnected && orderbook?.asks && orderbook.asks.length > 0) {
       return orderbook.asks
         .filter((a): a is NonNullable<typeof a> => a != null)
-        .map(a => ({ price: Number(a.price), amount: Number(a.amount), total: Number(a.total) }))
+        .map(a => ({
+          price: Number(a.price),
+          amount: Number(a.amount),
+          total: Number(a.total)
+        }))
     }
     return []
   }, [isConnected, orderbook])
@@ -285,7 +283,11 @@ const OrderBook: React.FC = () => {
     if (isConnected && orderbook?.bids && orderbook.bids.length > 0) {
       return orderbook.bids
         .filter((b): b is NonNullable<typeof b> => b != null)
-        .map(b => ({ price: Number(b.price), amount: Number(b.amount), total: Number(b.total) }))
+        .map(b => ({
+          price: Number(b.price),
+          amount: Number(b.amount),
+          total: Number(b.total)
+        }))
     }
     return []
   }, [isConnected, orderbook])
@@ -299,7 +301,9 @@ const OrderBook: React.FC = () => {
           price: parseFloat(t.price),
           amount: parseFloat(t.amount),
           side: t.side.toLowerCase() as 'buy' | 'sell',
-          time: new Date(t.createdAt).toLocaleTimeString('en-US', { hour12: false }),
+          time: new Date(t.createdAt).toLocaleTimeString('en-US', {
+            hour12: false
+          })
         }))
     }
     return []
@@ -316,23 +320,34 @@ const OrderBook: React.FC = () => {
 
   const maxAsk = Math.max(...groupedAsks.map(o => o.total), 1)
   const maxBid = Math.max(...groupedBids.map(o => o.total), 1)
-  const spread = groupedAsks[0] && groupedBids[0] ? groupedAsks[0].price - groupedBids[0].price : 0
+  const spread =
+    groupedAsks[0] && groupedBids[0]
+      ? groupedAsks[0].price - groupedBids[0].price
+      : 0
 
   return (
     <Wrapper>
       <Header>
         <TabRow>
-          <MiniTab active={viewMode === 'book'} onClick={() => setViewMode('book')}>
+          <MiniTab
+            active={viewMode === 'book'}
+            onClick={() => setViewMode('book')}
+          >
             Book
           </MiniTab>
-          <MiniTab active={viewMode === 'trades'} onClick={() => setViewMode('trades')}>
+          <MiniTab
+            active={viewMode === 'trades'}
+            onClick={() => setViewMode('trades')}
+          >
             Trades
           </MiniTab>
         </TabRow>
         {viewMode === 'book' && (
           <PrecisionSelect
             value={precision}
-            onChange={e => setPrecision(Number(e.target.value) as PrecisionLevel)}
+            onChange={e =>
+              setPrecision(Number(e.target.value) as PrecisionLevel)
+            }
           >
             <option value={5}>0.00001</option>
             <option value={4}>0.0001</option>
@@ -355,18 +370,29 @@ const OrderBook: React.FC = () => {
             <>
               {/* ASKS */}
               <AskSection>
-                {groupedAsks.slice(0, 22).reverse().map((o, i) => (
-                  <OrderRow key={i} side="ask" depth={(o.total / maxAsk) * 100}>
-                    <PriceText side="ask">{o.price.toFixed(precision)}</PriceText>
-                    <NumText>{o.amount.toFixed(0)}</NumText>
-                    <NumText>{o.total.toFixed(2)}</NumText>
-                  </OrderRow>
-                ))}
+                {groupedAsks
+                  .slice(0, 22)
+                  .reverse()
+                  .map((o, i) => (
+                    <OrderRow
+                      key={i}
+                      side="ask"
+                      depth={(o.total / maxAsk) * 100}
+                    >
+                      <PriceText side="ask">
+                        {o.price.toFixed(precision)}
+                      </PriceText>
+                      <NumText>{o.amount.toFixed(0)}</NumText>
+                      <NumText>{o.total.toFixed(2)}</NumText>
+                    </OrderRow>
+                  ))}
               </AskSection>
 
               {/* SPREAD */}
               <SpreadBar>
-                <CurrentPrice>{groupedBids[0]?.price.toFixed(precision) ?? '—'}</CurrentPrice>
+                <CurrentPrice>
+                  {groupedBids[0]?.price.toFixed(precision) ?? '—'}
+                </CurrentPrice>
                 <SpreadLabel>Spread</SpreadLabel>
                 <SpreadValue>{spread.toFixed(precision + 1)}</SpreadValue>
               </SpreadBar>
@@ -375,7 +401,9 @@ const OrderBook: React.FC = () => {
               <BidSection>
                 {groupedBids.slice(0, 22).map((o, i) => (
                   <OrderRow key={i} side="bid" depth={(o.total / maxBid) * 100}>
-                    <PriceText side="bid">{o.price.toFixed(precision)}</PriceText>
+                    <PriceText side="bid">
+                      {o.price.toFixed(precision)}
+                    </PriceText>
                     <NumText>{o.amount.toFixed(0)}</NumText>
                     <NumText>{o.total.toFixed(2)}</NumText>
                   </OrderRow>

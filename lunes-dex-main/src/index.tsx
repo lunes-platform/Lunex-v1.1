@@ -8,6 +8,15 @@ import { AppProvider } from './context/useContext'
 import { SDKProvider } from './context/SDKContext'
 import { ToastProvider } from './components/feedback/ToastProvider'
 
+if (import.meta.env.PROD) {
+  const noop = () => undefined
+  console.log = noop
+  console.info = noop
+  console.warn = noop
+  console.debug = noop
+  console.error = noop
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement)
 root.render(
   <React.StrictMode>

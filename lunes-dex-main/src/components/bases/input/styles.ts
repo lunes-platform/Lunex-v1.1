@@ -67,10 +67,10 @@ export const Text = styled.p<Partial<StyledProps>>`
     color: ${props.status === 'success'
       ? props.theme.colors.success[500]
       : props.status === 'warning'
-      ? props.theme.colors.warning[500]
-      : props.status === 'error'
-      ? props.theme.colors.critical[500]
-      : props.theme.colors.themeColors[100]};
+        ? props.theme.colors.warning[500]
+        : props.status === 'error'
+          ? props.theme.colors.critical[500]
+          : props.theme.colors.themeColors[100]};
     img {
       margin-right: 8px;
     }
@@ -104,12 +104,12 @@ export const Input = styled.input<Partial<StyledProps>>`
       ${props.border
         ? props.theme.colors.themeColors[100]
         : props.status === 'success'
-        ? props.theme.colors.success[500]
-        : props.status === 'warning'
-        ? props.theme.colors.warning[500]
-        : props.status === 'error'
-        ? props.theme.colors.critical[500]
-        : 'transparent'};
+          ? props.theme.colors.success[500]
+          : props.status === 'warning'
+            ? props.theme.colors.warning[500]
+            : props.status === 'error'
+              ? props.theme.colors.critical[500]
+              : 'transparent'};
     border-radius: 16px;
     display: flex;
     text-align: left;
@@ -118,29 +118,29 @@ export const Input = styled.input<Partial<StyledProps>>`
     color: ${props.status === 'success'
       ? props.theme.colors.success[500]
       : props.status === 'warning'
-      ? props.theme.colors.warning[500]
-      : props.status === 'error'
-      ? props.theme.colors.critical[500]
-      : props.theme.colors.themeColors[100]};
+        ? props.theme.colors.warning[500]
+        : props.status === 'error'
+          ? props.theme.colors.critical[500]
+          : props.theme.colors.themeColors[100]};
     background-color: ${props.theme.colors.themeColors[600]};
     ::placeholder {
       color: ${props.status === 'success'
         ? props.theme.colors.success[500]
         : props.status === 'warning'
-        ? props.theme.colors.warning[500]
-        : props.status === 'error'
-        ? props.theme.colors.critical[500]
-        : props.theme.colors.themeColors[200]};
+          ? props.theme.colors.warning[500]
+          : props.status === 'error'
+            ? props.theme.colors.critical[500]
+            : props.theme.colors.themeColors[200]};
     }
     :hover {
       border: 1px solid
         ${props.status === 'success'
           ? props.theme.colors.success[500]
           : props.status === 'warning'
-          ? props.theme.colors.warning[500]
-          : props.status === 'error'
-          ? props.theme.colors.critical[500]
-          : props.theme.colors.themeColors[800]};
+            ? props.theme.colors.warning[500]
+            : props.status === 'error'
+              ? props.theme.colors.critical[500]
+              : props.theme.colors.themeColors[800]};
     }
     :focus {
       background-color: ${props.theme.colors.themeColors[500]};
@@ -148,10 +148,10 @@ export const Input = styled.input<Partial<StyledProps>>`
         ${props.status === 'success'
           ? props.theme.colors.success[500]
           : props.status === 'warning'
-          ? props.theme.colors.warning[500]
-          : props.status === 'error'
-          ? props.theme.colors.critical[500]
-          : props.theme.colors.themeColors[800]};
+            ? props.theme.colors.warning[500]
+            : props.status === 'error'
+              ? props.theme.colors.critical[500]
+              : props.theme.colors.themeColors[800]};
       box-shadow: ${props.status === 'default'
         ? `0px 0px 0px 1px rgba(0, 0, 0, 0.6),
         0px 0px 0px 4px rgba(108, 56, 255, 0.3)`
@@ -160,10 +160,10 @@ export const Input = styled.input<Partial<StyledProps>>`
         color: ${props.status === 'success'
           ? props.theme.colors.success[500]
           : props.status === 'warning'
-          ? props.theme.colors.warning[500]
-          : props.status === 'error'
-          ? props.theme.colors.critical[500]
-          : props.theme.colors.themeColors[100]};
+            ? props.theme.colors.warning[500]
+            : props.status === 'error'
+              ? props.theme.colors.critical[500]
+              : props.theme.colors.themeColors[100]};
       }
     }
     :disabled {

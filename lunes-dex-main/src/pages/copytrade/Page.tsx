@@ -4,18 +4,19 @@ import styled from 'styled-components'
 import CopyModal from './CopyModal'
 import { useSDK } from '../../context/SDKContext'
 import socialApi, {
+  buildWalletActionMessage,
   buildCopytradeWithdrawMessage,
   CopytradeActivityItem,
   CopytradeExecution,
   CopytradePosition,
   createSignedActionMetadata,
-  SocialStats,
+  SocialStats
 } from '../../services/socialService'
 import { Trader } from '../social/types'
 
 const Page = styled.div`
   min-height: 100vh;
-  background: #1A1A1A;
+  background: #1a1a1a;
   padding: 84px 24px 48px;
 `
 
@@ -30,7 +31,7 @@ const Hero = styled.div`
 
 const Title = styled.h1`
   margin: 0 0 8px 0;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 40px;
   font-weight: 700;
@@ -38,7 +39,7 @@ const Title = styled.h1`
 
 const Subtitle = styled.p`
   margin: 0;
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16px;
   line-height: 1.6;
@@ -48,9 +49,12 @@ const Banner = styled.div<{ tone?: 'error' | 'success' }>`
   margin-top: 18px;
   padding: 14px 16px;
   border-radius: 12px;
-  border: 1px solid ${({ tone }) => tone === 'success' ? 'rgba(38,208,124,0.25)' : 'rgba(254,146,63,0.2)'};
-  background: ${({ tone }) => tone === 'success' ? 'rgba(38,208,124,0.1)' : 'rgba(254,146,63,0.12)'};
-  color: ${({ tone }) => tone === 'success' ? '#26D07C' : '#FE923F'};
+  border: 1px solid
+    ${({ tone }) =>
+      tone === 'success' ? 'rgba(38,208,124,0.25)' : 'rgba(254,146,63,0.2)'};
+  background: ${({ tone }) =>
+    tone === 'success' ? 'rgba(38,208,124,0.1)' : 'rgba(254,146,63,0.12)'};
+  color: ${({ tone }) => (tone === 'success' ? '#26D07C' : '#FE923F')};
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
 `
@@ -64,13 +68,13 @@ const StatsGrid = styled.div`
 
 const Card = styled.div`
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 18px;
   padding: 20px;
 `
 
 const StatValue = styled.div`
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 28px;
   font-weight: 700;
@@ -78,7 +82,7 @@ const StatValue = styled.div`
 `
 
 const StatLabel = styled.div`
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
 `
@@ -97,7 +101,7 @@ const SectionHeader = styled.div`
 
 const SectionTitle = styled.h2`
   margin: 0;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 22px;
 `
@@ -109,16 +113,16 @@ const Actions = styled.div`
 `
 
 const Button = styled.button<{ secondary?: boolean }>`
-  border: 1px solid ${({ secondary }) => secondary ? '#2A2A2C' : '#6C38FF'};
-  background: ${({ secondary }) => secondary ? '#232323' : '#6C38FF'};
-  color: #FFFFFF;
+  border: 1px solid ${({ secondary }) => (secondary ? '#2A2A2C' : '#6C38FF')};
+  background: ${({ secondary }) => (secondary ? '#232323' : '#6C38FF')};
+  color: #ffffff;
   border-radius: 10px;
   padding: 10px 14px;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
-  opacity: ${({ disabled }) => disabled ? 0.6 : 1};
+  opacity: ${({ disabled }) => (disabled ? 0.6 : 1)};
 `
 
 const LeaderGrid = styled.div`
@@ -128,14 +132,14 @@ const LeaderGrid = styled.div`
 `
 
 const LeaderName = styled.div`
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 18px;
   font-weight: 700;
 `
 
 const Meta = styled.div`
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   margin: 6px 0 12px;
@@ -149,8 +153,8 @@ const Tags = styled.div`
 `
 
 const Tag = styled.span`
-  background: #2A2A2C;
-  color: #AD87FF;
+  background: #2a2a2c;
+  color: #ad87ff;
   border-radius: 999px;
   padding: 4px 10px;
   font-family: 'Space Grotesk', sans-serif;
@@ -172,14 +176,15 @@ const Metric = styled.div`
 `
 
 const MetricValue = styled.span<{ positive?: boolean }>`
-  color: ${({ positive }) => positive === undefined ? '#FFFFFF' : positive ? '#26D07C' : '#FF284C'};
+  color: ${({ positive }) =>
+    positive === undefined ? '#FFFFFF' : positive ? '#26D07C' : '#FF284C'};
   font-family: 'Space Grotesk', sans-serif;
   font-size: 18px;
   font-weight: 700;
 `
 
 const MetricLabel = styled.span`
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
 `
@@ -212,11 +217,11 @@ const InputRow = styled.div`
 
 const Input = styled.input`
   flex: 1;
-  background: #1A1A1A;
-  border: 1px solid #2A2A2C;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2c;
   border-radius: 10px;
   padding: 12px 14px;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
 `
 
@@ -228,12 +233,12 @@ const FeedList = styled.div`
 const FeedItem = styled.div`
   padding: 14px 16px;
   border-radius: 14px;
-  background: #1A1A1A;
-  border: 1px solid #2A2A2C;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2c;
 `
 
 const FeedTitle = styled.div`
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
   font-weight: 700;
@@ -241,7 +246,7 @@ const FeedTitle = styled.div`
 
 const FeedMeta = styled.div`
   margin-top: 6px;
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   line-height: 1.6;
@@ -253,46 +258,39 @@ const Table = styled.table`
 `
 
 const Th = styled.th`
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   text-align: left;
   padding-bottom: 10px;
-  border-bottom: 1px solid #2A2A2C;
+  border-bottom: 1px solid #2a2a2c;
 `
 
 const Td = styled.td`
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   padding: 12px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 `
 
 const CodeBox = styled.pre`
   margin: 12px 0 0;
   background: #111111;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 12px;
   padding: 14px;
-  color: #26D07C;
+  color: #26d07c;
   font-family: monospace;
   font-size: 12px;
   overflow: auto;
 `
 
 const EmptyState = styled.div`
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
 `
-
-const parseAum = (value: string): number => {
-  const amount = Number.parseFloat(value)
-  if (value.endsWith('M')) return amount * 1_000_000
-  if (value.endsWith('K')) return amount * 1_000
-  return amount
-}
 
 const getEmptyStats = (): SocialStats => ({
   totalAum: 0,
@@ -300,16 +298,20 @@ const getEmptyStats = (): SocialStats => ({
   aiAgents: 0,
   totalFollowers: 0,
   totalIdeas: 0,
-  totalVaultEquity: 0,
+  totalVaultEquity: 0
 })
 
-const formatMoney = (value: number) => `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+const formatMoney = (value: number) =>
+  `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 const formatDateTime = (value: string) => new Date(value).toLocaleString()
 
 const renderActivityTitle = (item: CopytradeActivityItem) => {
   if (item.type === 'DEPOSIT') return `${item.leaderName} received a deposit`
-  if (item.type === 'WITHDRAWAL') return `${item.leaderName} processed a withdrawal`
-  return `${item.leaderName} executed ${item.side ?? 'SIGNAL'} ${item.pairSymbol ?? 'trade'}`
+  if (item.type === 'WITHDRAWAL')
+    return `${item.leaderName} processed a withdrawal`
+  return `${item.leaderName} executed ${item.side ?? 'SIGNAL'} ${
+    item.pairSymbol ?? 'trade'
+  }`
 }
 
 const CopytradePage: React.FC = () => {
@@ -322,16 +324,21 @@ const CopytradePage: React.FC = () => {
   const [executions, setExecutions] = useState<CopytradeExecution[]>([])
   const [selectedLeaderId, setSelectedLeaderId] = useState<string>('')
   const [copyTarget, setCopyTarget] = useState<Trader | null>(null)
-  const [withdrawInputs, setWithdrawInputs] = useState<Record<string, string>>({})
+  const [withdrawInputs, setWithdrawInputs] = useState<Record<string, string>>(
+    {}
+  )
   const [statusMessage, setStatusMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
+  const [, setIsLoading] = useState(true)
   const [dashboardLoading, setDashboardLoading] = useState(false)
   const [apiKeyLoading, setApiKeyLoading] = useState(false)
   const [leaderApiKey, setLeaderApiKey] = useState('')
 
   const selectedLeader = useMemo(
-    () => leaders.find((leader) => leader.id === selectedLeaderId) ?? leaders[0] ?? null,
+    () =>
+      leaders.find(leader => leader.id === selectedLeaderId) ??
+      leaders[0] ??
+      null,
     [leaders, selectedLeaderId]
   )
 
@@ -339,29 +346,69 @@ const CopytradePage: React.FC = () => {
     try {
       const [nextStats, nextLeaders] = await Promise.all([
         socialApi.getStats(),
-        socialApi.getLeaders({ limit: 20, sortBy: 'roi30d' }),
+        socialApi.getLeaders({ limit: 20, sortBy: 'roi30d' })
       ])
       setStats(nextStats)
       setLeaders(nextLeaders)
-      if (!selectedLeaderId && nextLeaders[0]) setSelectedLeaderId(nextLeaders[0].id)
+      if (!selectedLeaderId && nextLeaders[0])
+        setSelectedLeaderId(nextLeaders[0].id)
     } catch (err) {
-      setStatusMessage(err instanceof Error ? `${err.message}. Could not load leaders.` : 'Copytrade API unavailable.')
+      setStatusMessage(
+        err instanceof Error
+          ? `${err.message}. Could not load leaders.`
+          : 'Copytrade API unavailable.'
+      )
     }
   }
 
   const refreshFollowerDashboard = async (address: string) => {
     setDashboardLoading(true)
     try {
+      const signedPositions = createSignedActionMetadata()
+      const positionsSignature = await signMessage(
+        buildWalletActionMessage({
+          action: 'copytrade.positions',
+          address,
+          nonce: signedPositions.nonce,
+          timestamp: signedPositions.timestamp
+        })
+      )
+      const positionsAuth = {
+        address,
+        nonce: signedPositions.nonce,
+        timestamp: signedPositions.timestamp,
+        signature: positionsSignature
+      }
+
+      const signedActivity = createSignedActionMetadata()
+      const activitySignature = await signMessage(
+        buildWalletActionMessage({
+          action: 'copytrade.activity',
+          address,
+          nonce: signedActivity.nonce,
+          timestamp: signedActivity.timestamp,
+          fields: { limit: 20 }
+        })
+      )
+      const activityAuth = {
+        address,
+        nonce: signedActivity.nonce,
+        timestamp: signedActivity.timestamp,
+        signature: activitySignature
+      }
+
       const [nextPositions, nextActivity] = await Promise.all([
-        socialApi.getPositions(address),
-        socialApi.getActivity(address, 20),
+        socialApi.getPositions(address, positionsAuth),
+        socialApi.getActivity(address, activityAuth, 20)
       ])
       setPositions(nextPositions)
       setActivity(nextActivity)
     } catch (err) {
       setPositions([])
       setActivity([])
-      setStatusMessage(err instanceof Error ? err.message : 'Failed to load follower dashboard')
+      setStatusMessage(
+        err instanceof Error ? err.message : 'Failed to load follower dashboard'
+      )
     } finally {
       setDashboardLoading(false)
     }
@@ -391,11 +438,16 @@ const CopytradePage: React.FC = () => {
     }
     void (async () => {
       try {
-        const nextExecutions = await socialApi.getVaultExecutions(selectedLeader.id, 20)
+        const nextExecutions = await socialApi.getVaultExecutions(
+          selectedLeader.id,
+          20
+        )
         setExecutions(nextExecutions)
       } catch (err) {
         setExecutions([])
-        setStatusMessage(err instanceof Error ? err.message : 'Failed to load vault executions')
+        setStatusMessage(
+          err instanceof Error ? err.message : 'Failed to load vault executions'
+        )
       }
     })()
   }, [selectedLeader?.id])
@@ -411,31 +463,43 @@ const CopytradePage: React.FC = () => {
       }
 
       const auth = createSignedActionMetadata()
-      const signature = await signMessage(buildCopytradeWithdrawMessage({
-        leaderId: position.vault.leaderId,
-        followerAddress: position.followerAddress,
-        shares,
-        nonce: auth.nonce,
-        timestamp: auth.timestamp,
-      }))
+      const signature = await signMessage(
+        buildCopytradeWithdrawMessage({
+          leaderId: position.vault.leaderId,
+          followerAddress: position.followerAddress,
+          shares,
+          nonce: auth.nonce,
+          timestamp: auth.timestamp
+        })
+      )
 
-      const result = await socialApi.withdrawFromVault(position.vault.leaderId, {
-        followerAddress: position.followerAddress,
-        shares,
-        nonce: auth.nonce,
-        timestamp: auth.timestamp,
-        signature,
-      })
-      setSuccessMessage(`Withdraw successful. Net received: ${formatMoney(result.netAmount)}`)
+      const result = await socialApi.withdrawFromVault(
+        position.vault.leaderId,
+        {
+          followerAddress: position.followerAddress,
+          shares,
+          nonce: auth.nonce,
+          timestamp: auth.timestamp,
+          signature
+        }
+      )
+      setSuccessMessage(
+        `Withdraw successful. Net received: ${formatMoney(result.netAmount)}`
+      )
       if (walletAddress) await refreshFollowerDashboard(walletAddress)
       if (selectedLeader?.id === position.vault.leaderId) {
-        const nextExecutions = await socialApi.getVaultExecutions(position.vault.leaderId, 20)
+        const nextExecutions = await socialApi.getVaultExecutions(
+          position.vault.leaderId,
+          20
+        )
         setExecutions(nextExecutions)
       }
-      setWithdrawInputs((current) => ({ ...current, [position.id]: '' }))
+      setWithdrawInputs(current => ({ ...current, [position.id]: '' }))
       await refreshOverview()
     } catch (err) {
-      setStatusMessage(err instanceof Error ? err.message : 'Failed to withdraw from vault')
+      setStatusMessage(
+        err instanceof Error ? err.message : 'Failed to withdraw from vault'
+      )
     }
   }
 
@@ -451,23 +515,31 @@ const CopytradePage: React.FC = () => {
     }
 
     if (walletAddress !== selectedLeader.address) {
-      setStatusMessage('Connect the wallet that owns this leader profile to rotate the API key.')
+      setStatusMessage(
+        'Connect the wallet that owns this leader profile to rotate the API key.'
+      )
       return
     }
 
     setApiKeyLoading(true)
     try {
-      const challenge = await socialApi.getApiKeyChallenge(selectedLeader.id, { leaderAddress: walletAddress })
+      const challenge = await socialApi.getApiKeyChallenge(selectedLeader.id, {
+        leaderAddress: walletAddress
+      })
       const signature = await signMessage(challenge.message)
       const result = await socialApi.rotateLeaderApiKey(selectedLeader.id, {
         leaderAddress: walletAddress,
         challengeId: challenge.challengeId,
-        signature,
+        signature
       })
       setLeaderApiKey(result.apiKey)
-      setSuccessMessage('API key generated. Save it now — it is only shown once.')
+      setSuccessMessage(
+        'API key generated. Save it now — it is only shown once.'
+      )
     } catch (err) {
-      setStatusMessage(err instanceof Error ? err.message : 'Failed to rotate the API key')
+      setStatusMessage(
+        err instanceof Error ? err.message : 'Failed to rotate the API key'
+      )
     } finally {
       setApiKeyLoading(false)
     }
@@ -478,40 +550,94 @@ const CopytradePage: React.FC = () => {
       <Container>
         <Hero>
           <Title>Copytrade Vaults</Title>
-          <Subtitle>Dedicated vault marketplace, follower dashboard, execution feed, withdrawals and API key management for leaders and AI agents.</Subtitle>
+          <Subtitle>
+            Dedicated vault marketplace, follower dashboard, execution feed,
+            withdrawals and API key management for leaders and AI agents.
+          </Subtitle>
           {statusMessage ? <Banner>{statusMessage}</Banner> : null}
-          {successMessage ? <Banner tone="success">{successMessage}</Banner> : null}
+          {successMessage ? (
+            <Banner tone="success">{successMessage}</Banner>
+          ) : null}
         </Hero>
 
         <StatsGrid>
-          <Card><StatValue>{formatMoney(stats.totalAum)}</StatValue><StatLabel>Total AUM</StatLabel></Card>
-          <Card><StatValue>{stats.activeTraders}</StatValue><StatLabel>Human Traders</StatLabel></Card>
-          <Card><StatValue>{stats.aiAgents}</StatValue><StatLabel>AI Agents</StatLabel></Card>
-          <Card><StatValue>{stats.totalFollowers.toLocaleString()}</StatValue><StatLabel>Total Followers</StatLabel></Card>
+          <Card>
+            <StatValue>{formatMoney(stats.totalAum)}</StatValue>
+            <StatLabel>Total AUM</StatLabel>
+          </Card>
+          <Card>
+            <StatValue>{stats.activeTraders}</StatValue>
+            <StatLabel>Human Traders</StatLabel>
+          </Card>
+          <Card>
+            <StatValue>{stats.aiAgents}</StatValue>
+            <StatLabel>AI Agents</StatLabel>
+          </Card>
+          <Card>
+            <StatValue>{stats.totalFollowers.toLocaleString()}</StatValue>
+            <StatLabel>Total Followers</StatLabel>
+          </Card>
         </StatsGrid>
 
         <Section>
           <SectionHeader>
             <SectionTitle>Vault Marketplace</SectionTitle>
             <Actions>
-              <Button secondary onClick={() => navigate('/social')}>Open Social</Button>
+              <Button secondary onClick={() => navigate('/social')}>
+                Open Social
+              </Button>
             </Actions>
           </SectionHeader>
           <LeaderGrid>
-            {leaders.map((leader) => (
+            {leaders.map(leader => (
               <Card key={leader.id}>
                 <LeaderName>{leader.name}</LeaderName>
-                <Meta>@{leader.username} · {leader.fee}% Fee · {leader.vault?.collateralToken ?? 'USDT'}</Meta>
-                <Tags>{leader.tags.slice(0, 3).map((tag) => <Tag key={tag}>{tag}</Tag>)}</Tags>
+                <Meta>
+                  @{leader.username} · {leader.fee}% Fee ·{' '}
+                  {leader.vault?.collateralToken ?? 'USDT'}
+                </Meta>
+                <Tags>
+                  {leader.tags.slice(0, 3).map(tag => (
+                    <Tag key={tag}>{tag}</Tag>
+                  ))}
+                </Tags>
                 <Metrics>
-                  <Metric><MetricValue positive>{`+${leader.roi30d}%`}</MetricValue><MetricLabel>30d ROI</MetricLabel></Metric>
-                  <Metric><MetricValue>{leader.aum}</MetricValue><MetricLabel>AUM</MetricLabel></Metric>
-                  <Metric><MetricValue>{leader.followers}</MetricValue><MetricLabel>Followers</MetricLabel></Metric>
-                  <Metric><MetricValue positive={false}>{leader.drawdown}%</MetricValue><MetricLabel>Drawdown</MetricLabel></Metric>
+                  <Metric>
+                    <MetricValue positive>{`+${leader.roi30d}%`}</MetricValue>
+                    <MetricLabel>30d ROI</MetricLabel>
+                  </Metric>
+                  <Metric>
+                    <MetricValue>{leader.aum}</MetricValue>
+                    <MetricLabel>AUM</MetricLabel>
+                  </Metric>
+                  <Metric>
+                    <MetricValue>{leader.followers}</MetricValue>
+                    <MetricLabel>Followers</MetricLabel>
+                  </Metric>
+                  <Metric>
+                    <MetricValue positive={false}>
+                      {leader.drawdown}%
+                    </MetricValue>
+                    <MetricLabel>Drawdown</MetricLabel>
+                  </Metric>
                 </Metrics>
                 <Actions>
-                  <Button secondary onClick={() => setSelectedLeaderId(leader.id)}>Select</Button>
-                  <Button secondary onClick={() => navigate(`/social/profile/${leader.id}`, { state: { trader: leader } })}>Profile</Button>
+                  <Button
+                    secondary
+                    onClick={() => setSelectedLeaderId(leader.id)}
+                  >
+                    Select
+                  </Button>
+                  <Button
+                    secondary
+                    onClick={() =>
+                      navigate(`/social/profile/${leader.id}`, {
+                        state: { trader: leader }
+                      })
+                    }
+                  >
+                    Profile
+                  </Button>
                   <Button onClick={() => setCopyTarget(leader)}>Copy</Button>
                 </Actions>
               </Card>
@@ -525,39 +651,109 @@ const CopytradePage: React.FC = () => {
               <SectionHeader>
                 <SectionTitle>Follower Dashboard</SectionTitle>
                 <Actions>
-                  {!walletAddress ? <Button onClick={() => { connectWallet().catch(() => undefined) }}>Connect Wallet</Button> : <Button secondary onClick={() => { refreshFollowerDashboard(walletAddress).catch(() => undefined) }}>Refresh</Button>}
+                  {!walletAddress ? (
+                    <Button
+                      onClick={() => {
+                        connectWallet().catch(() => undefined)
+                      }}
+                    >
+                      Connect Wallet
+                    </Button>
+                  ) : (
+                    <Button
+                      secondary
+                      onClick={() => {
+                        refreshFollowerDashboard(walletAddress).catch(
+                          () => undefined
+                        )
+                      }}
+                    >
+                      Refresh
+                    </Button>
+                  )}
                 </Actions>
               </SectionHeader>
               <Card>
                 {!walletAddress ? (
-                  <EmptyState>Connect your wallet to load your copytrade positions and activity.</EmptyState>
+                  <EmptyState>
+                    Connect your wallet to load your copytrade positions and
+                    activity.
+                  </EmptyState>
                 ) : dashboardLoading ? (
                   <EmptyState>Loading follower dashboard...</EmptyState>
                 ) : (
                   <PositionGrid>
-                    {positions.map((position) => (
+                    {positions.map(position => (
                       <Card key={position.id}>
                         <LeaderName>{position.vault.leaderName}</LeaderName>
-                        <Meta>{position.vault.name} · {position.vault.collateralToken}</Meta>
+                        <Meta>
+                          {position.vault.name} ·{' '}
+                          {position.vault.collateralToken}
+                        </Meta>
                         <Metrics>
-                          <Metric><MetricValue>{formatMoney(position.currentValue)}</MetricValue><MetricLabel>Current Value</MetricLabel></Metric>
-                          <Metric><MetricValue>{position.shareBalance.toFixed(4)}</MetricValue><MetricLabel>Shares</MetricLabel></Metric>
-                          <Metric><MetricValue>{formatMoney(position.netDeposited)}</MetricValue><MetricLabel>Net Deposited</MetricLabel></Metric>
-                          <Metric><MetricValue positive={position.realizedPnl >= 0}>{formatMoney(position.realizedPnl)}</MetricValue><MetricLabel>Realized PnL</MetricLabel></Metric>
+                          <Metric>
+                            <MetricValue>
+                              {formatMoney(position.currentValue)}
+                            </MetricValue>
+                            <MetricLabel>Current Value</MetricLabel>
+                          </Metric>
+                          <Metric>
+                            <MetricValue>
+                              {position.shareBalance.toFixed(4)}
+                            </MetricValue>
+                            <MetricLabel>Shares</MetricLabel>
+                          </Metric>
+                          <Metric>
+                            <MetricValue>
+                              {formatMoney(position.netDeposited)}
+                            </MetricValue>
+                            <MetricLabel>Net Deposited</MetricLabel>
+                          </Metric>
+                          <Metric>
+                            <MetricValue positive={position.realizedPnl >= 0}>
+                              {formatMoney(position.realizedPnl)}
+                            </MetricValue>
+                            <MetricLabel>Realized PnL</MetricLabel>
+                          </Metric>
                         </Metrics>
                         <InputRow>
                           <Input
                             type="number"
                             placeholder="Shares to withdraw"
                             value={withdrawInputs[position.id] ?? ''}
-                            onChange={(event) => setWithdrawInputs((current) => ({ ...current, [position.id]: event.target.value }))}
+                            onChange={event =>
+                              setWithdrawInputs(current => ({
+                                ...current,
+                                [position.id]: event.target.value
+                              }))
+                            }
                           />
-                          <Button secondary onClick={() => setWithdrawInputs((current) => ({ ...current, [position.id]: String(position.shareBalance) }))}>Max</Button>
-                          <Button onClick={() => { handleWithdraw(position).catch(() => undefined) }}>Withdraw</Button>
+                          <Button
+                            secondary
+                            onClick={() =>
+                              setWithdrawInputs(current => ({
+                                ...current,
+                                [position.id]: String(position.shareBalance)
+                              }))
+                            }
+                          >
+                            Max
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              handleWithdraw(position).catch(() => undefined)
+                            }}
+                          >
+                            Withdraw
+                          </Button>
                         </InputRow>
                       </Card>
                     ))}
-                    {positions.length === 0 ? <EmptyState>No active copytrade positions for this wallet yet.</EmptyState> : null}
+                    {positions.length === 0 ? (
+                      <EmptyState>
+                        No active copytrade positions for this wallet yet.
+                      </EmptyState>
+                    ) : null}
                   </PositionGrid>
                 )}
               </Card>
@@ -573,14 +769,20 @@ const CopytradePage: React.FC = () => {
                     <FeedItem key={`${item.type}-${item.createdAt}-${index}`}>
                       <FeedTitle>{renderActivityTitle(item)}</FeedTitle>
                       <FeedMeta>
-                        {item.amount ? `Amount: ${item.amount} ${item.token ?? ''} · ` : ''}
-                        {item.netAmount ? `Net: ${item.netAmount} ${item.token ?? ''} · ` : ''}
+                        {item.amount
+                          ? `Amount: ${item.amount} ${item.token ?? ''} · `
+                          : ''}
+                        {item.netAmount
+                          ? `Net: ${item.netAmount} ${item.token ?? ''} · `
+                          : ''}
                         {item.slices ? `Slices: ${item.slices} · ` : ''}
                         {formatDateTime(item.createdAt)}
                       </FeedMeta>
                     </FeedItem>
                   ))}
-                  {activity.length === 0 ? <EmptyState>No recent activity to show.</EmptyState> : null}
+                  {activity.length === 0 ? (
+                    <EmptyState>No recent activity to show.</EmptyState>
+                  ) : null}
                 </FeedList>
               </Card>
             </Section>
@@ -589,21 +791,49 @@ const CopytradePage: React.FC = () => {
           <Stack>
             <Section>
               <SectionHeader>
-                <SectionTitle>{selectedLeader?.name ?? 'Vault Details'}</SectionTitle>
+                <SectionTitle>
+                  {selectedLeader?.name ?? 'Vault Details'}
+                </SectionTitle>
               </SectionHeader>
               <Card>
                 {selectedLeader ? (
                   <>
-                    <Meta>@{selectedLeader.username} · {selectedLeader.vault?.collateralToken ?? 'USDT'} Vault · {selectedLeader.fee}% Performance Fee</Meta>
-                    <Tags>{selectedLeader.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}</Tags>
+                    <Meta>
+                      @{selectedLeader.username} ·{' '}
+                      {selectedLeader.vault?.collateralToken ?? 'USDT'} Vault ·{' '}
+                      {selectedLeader.fee}% Performance Fee
+                    </Meta>
+                    <Tags>
+                      {selectedLeader.tags.map(tag => (
+                        <Tag key={tag}>{tag}</Tag>
+                      ))}
+                    </Tags>
                     <Metrics>
-                      <Metric><MetricValue>{selectedLeader.aum}</MetricValue><MetricLabel>AUM</MetricLabel></Metric>
-                      <Metric><MetricValue>{selectedLeader.winRate}%</MetricValue><MetricLabel>Win Rate</MetricLabel></Metric>
-                      <Metric><MetricValue>{selectedLeader.vault?.minDeposit ?? 0}</MetricValue><MetricLabel>Min Deposit</MetricLabel></Metric>
-                      <Metric><MetricValue>{selectedLeader.vault?.maxSlippageBps ?? 0} bps</MetricValue><MetricLabel>Max Slippage</MetricLabel></Metric>
+                      <Metric>
+                        <MetricValue>{selectedLeader.aum}</MetricValue>
+                        <MetricLabel>AUM</MetricLabel>
+                      </Metric>
+                      <Metric>
+                        <MetricValue>{selectedLeader.winRate}%</MetricValue>
+                        <MetricLabel>Win Rate</MetricLabel>
+                      </Metric>
+                      <Metric>
+                        <MetricValue>
+                          {selectedLeader.vault?.minDeposit ?? 0}
+                        </MetricValue>
+                        <MetricLabel>Min Deposit</MetricLabel>
+                      </Metric>
+                      <Metric>
+                        <MetricValue>
+                          {selectedLeader.vault?.maxSlippageBps ?? 0} bps
+                        </MetricValue>
+                        <MetricLabel>Max Slippage</MetricLabel>
+                      </Metric>
                     </Metrics>
                   </>
-                ) : <EmptyState>Select a leader to inspect the vault.</EmptyState>}
+                ) : (
+                  <EmptyState>Select a leader to inspect the vault.</EmptyState>
+                )}
               </Card>
             </Section>
 
@@ -624,18 +854,24 @@ const CopytradePage: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {executions.map((execution) => (
+                      {executions.map(execution => (
                         <tr key={execution.id}>
                           <Td>{execution.pairSymbol}</Td>
                           <Td>{execution.side}</Td>
-                          <Td>{execution.sliceIndex}/{execution.totalSlices}</Td>
+                          <Td>
+                            {execution.sliceIndex}/{execution.totalSlices}
+                          </Td>
                           <Td>{execution.amountIn.toLocaleString()}</Td>
                           <Td>{execution.executionPrice.toLocaleString()}</Td>
                         </tr>
                       ))}
                     </tbody>
                   </Table>
-                ) : <EmptyState>No executions available for this vault yet.</EmptyState>}
+                ) : (
+                  <EmptyState>
+                    No executions available for this vault yet.
+                  </EmptyState>
+                )}
               </Card>
             </Section>
 
@@ -643,14 +879,27 @@ const CopytradePage: React.FC = () => {
               <SectionHeader>
                 <SectionTitle>Leader / Agent API Key</SectionTitle>
                 <Actions>
-                  <Button disabled={!selectedLeader || apiKeyLoading} onClick={() => { handleGenerateApiKey().catch(() => undefined) }}>
+                  <Button
+                    disabled={!selectedLeader || apiKeyLoading}
+                    onClick={() => {
+                      handleGenerateApiKey().catch(() => undefined)
+                    }}
+                  >
                     {apiKeyLoading ? 'Signing...' : 'Generate / Rotate'}
                   </Button>
                 </Actions>
               </SectionHeader>
               <Card>
-                <Meta>{selectedLeader ? `Connected wallet must match ${selectedLeader.address}` : 'Select a leader to manage the API key.'}</Meta>
-                {leaderApiKey ? <CodeBox>{leaderApiKey}</CodeBox> : <EmptyState>No API key generated in this session.</EmptyState>}
+                <Meta>
+                  {selectedLeader
+                    ? `Connected wallet must match ${selectedLeader.address}`
+                    : 'Select a leader to manage the API key.'}
+                </Meta>
+                {leaderApiKey ? (
+                  <CodeBox>{leaderApiKey}</CodeBox>
+                ) : (
+                  <EmptyState>No API key generated in this session.</EmptyState>
+                )}
               </Card>
             </Section>
           </Stack>

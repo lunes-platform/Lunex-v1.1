@@ -22,6 +22,7 @@ COPY --from=builder --chown=lunex:lunex /app/dist ./dist
 COPY --from=builder --chown=lunex:lunex /app/node_modules ./node_modules
 COPY --from=builder --chown=lunex:lunex /app/package.json ./
 COPY --from=builder --chown=lunex:lunex /app/prisma ./prisma
+COPY --from=builder --chown=lunex:lunex /app/abis ./abis
 # Pre-create writable directories used at runtime
 RUN mkdir -p /app/public/tokens /app/uploads && chown -R lunex:lunex /app/public /app/uploads
 

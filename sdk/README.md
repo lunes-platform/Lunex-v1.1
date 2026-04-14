@@ -141,6 +141,34 @@ const result = await sdk.router.swapExactTokensForTokens({
 });
 ```
 
+### Spot Orderbook (Signed)
+
+```typescript
+// Create signed order payload (timestamp is included in the signed message)
+const signedOrder = await sdk.orders.prepareSignedOrder({
+  pairSymbol: 'LUNES/LUSDT',
+  side: 'BUY',
+  type: 'LIMIT',
+  price: '1.05',
+  amount: '100',
+  makerAddress: userAddress,
+  signMessage: walletSignMessage
+});
+await sdk.orders.createOrder(signedOrder);
+
+// Signed reads
+const orders = await sdk.orders.getUserOrders({
+  makerAddress: userAddress,
+  limit: 20,
+  auth: { signMessage: walletSignMessage }
+});
+const trades = await sdk.orders.getUserTrades({
+  address: userAddress,
+  limit: 20,
+  auth: { signMessage: walletSignMessage }
+});
+```
+
 ### Staking
 
 ```typescript
@@ -197,26 +225,68 @@ console.log('Votes against:', result.votesAgainst);
 ### Trading Rewards
 
 ```typescript
-// Get trading position
-const position = await sdk.rewards.getPosition(userAddress);
-console.log('Tier:', position.tier);
-console.log('Monthly volume:', position.monthlyVolume);
-console.log('Pending rewards:', position.pendingRewards);
+// Public pool overview
+const pool = await sdk.rewards.getPool();
+console.log('Reward pool:', pool.rewardPool);
+console.log('Staker claim mode:', pool.stakerClaimMode);
+console.log('Split valid:', pool.split.splitValid);
 
-// Claim rewards
-const result = await sdk.rewards.claimRewards();
-console.log('Claimed:', result.amount);
-
-// Get leaderboard
-const { leaderboard } = await sdk.rewards.getLeaderboard({
-  period: 'monthly',
-  limit: 100
+// Public reward-engine rankings
+const rankings = await sdk.rewards.getRankings({
+  limit: 10,
+  segment: 'all',
+  week: 'current'
 });
+console.log('Top leader:', rankings.leaders[0]?.name);
+console.log('Top trader:', rankings.traders[0]?.address);
 
-// Get current epoch
-const epoch = await sdk.rewards.getCurrentEpoch();
-console.log('Epoch ID:', epoch.epochId);
-console.log('Days remaining:', epoch.daysRemaining);
+// Signed read for DB-backed leader/trader rewards
+const pending = await sdk.rewards.getPending({
+  address: userAddress,
+  nonce,
+  timestamp,
+  signature
+});
+console.log('Leader rewards:', pending.leaderRewards);
+console.log('Trader rewards:', pending.traderRewards);
+
+// Claim DB-backed leader/trader rewards
+const result = await sdk.rewards.claimRewards({
+  address: userAddress,
+  nonce,
+  timestamp,
+  signature
+});
+console.log('Claimed:', result.claimed);
+
+// Distributed weeks with payout observability
+const weeks = await sdk.rewards.getWeeks(5);
+console.log('Latest trader pool:', weeks[0]?.traderPoolAmount);
+console.log('Latest staker mode:', weeks[0]?.observability.staker.claimMode);
+
+// Staker rewards are claimed on-chain via sdk.staking.claimRewards()
+```
+
+### Copytrade
+
+```typescript
+// Deposit into a leader vault with signed payload
+const deposit = await sdk.copytrade.depositToVault(leaderId, signedDepositInput);
+console.log('Execution mode:', deposit.executionMode);
+console.log('On-chain tx:', deposit.txHash);
+
+// Withdraw follower shares
+const withdrawal = await sdk.copytrade.withdrawFromVault(leaderId, signedWithdrawInput);
+console.log('Net amount:', withdrawal.netAmount);
+console.log('Execution mode:', withdrawal.executionMode);
+
+// Signed reads (positions/activity)
+const positions = await sdk.copytrade.getPositions(userAddress, {
+  signMessage: walletSignMessage
+});
+const activity = await sdk.copytrade.getActivity(userAddress, 50, {
+  signMessage: walletSignMessage
+});
 ```
 
 ### WNative (Wrapping)

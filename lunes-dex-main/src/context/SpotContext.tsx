@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef, ReactNode } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  ReactNode
+} from 'react'
 import {
   spotApi,
   spotWs,
@@ -8,8 +16,14 @@ import {
   SpotTrade,
   OrderbookSnapshot,
   CreateOrderParams,
+  SignedActionAuth
 } from '../services/spotService'
-import { buildSpotCancelSignMessage, buildSpotOrderSignMessage } from '../utils/signing'
+import {
+  buildSpotCancelSignMessage,
+  buildSpotOrderSignMessage,
+  buildWalletActionMessage,
+  createSignedActionMetadata
+} from '../utils/signing'
 import { useSDK } from './SDKContext'
 
 // ─── Types ───
@@ -35,10 +49,15 @@ export interface SpotContextState {
   // Actions
   setSelectedPair: (symbol: string) => void
   setWalletAddress: (address: string | null) => void
-  createOrder: (params: Omit<CreateOrderParams, 'makerAddress' | 'nonce' | 'signature'> & {
+  createOrder: (
+    params: Omit<CreateOrderParams, 'makerAddress' | 'nonce' | 'signature'> & {
+      signMessage: (message: string) => Promise<string>
+    }
+  ) => Promise<boolean>
+  cancelOrder: (
+    orderId: string,
     signMessage: (message: string) => Promise<string>
-  }) => Promise<boolean>
-  cancelOrder: (orderId: string, signMessage: (message: string) => Promise<string>) => Promise<boolean>
+  ) => Promise<boolean>
   refreshOrders: () => Promise<void>
   refreshTrades: () => Promise<void>
 }
@@ -52,7 +71,7 @@ interface SpotProviderProps {
 }
 
 export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
-  const { walletAddress: sdkWalletAddress } = useSDK()
+  const { walletAddress: sdkWalletAddress, signMessage } = useSDK()
   const [isConnected, setIsConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [pairs, setPairs] = useState<SpotPair[]>([])
@@ -67,6 +86,46 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
   const nonceCounter = useRef(Date.now())
   const prevPairRef = useRef(selectedPair)
+  const readAuthCache = useRef(
+    new Map<string, SignedActionAuth & { expiresAt: number }>()
+  )
+
+  const signReadAction = useCallback(
+    async (
+      action: string,
+      address: string,
+      fields?: Record<string, string | number>
+    ): Promise<SignedActionAuth> => {
+      const cacheKey = `${action}:${address}:${JSON.stringify(fields ?? {})}`
+      const cached = readAuthCache.current.get(cacheKey)
+      if (cached && cached.expiresAt > Date.now()) {
+        return {
+          nonce: cached.nonce,
+          timestamp: cached.timestamp,
+          signature: cached.signature
+        }
+      }
+
+      const metadata = createSignedActionMetadata()
+      const signature = await signMessage(
+        buildWalletActionMessage({
+          action,
+          address,
+          nonce: metadata.nonce,
+          timestamp: metadata.timestamp,
+          fields
+        })
+      )
+
+      const auth = { ...metadata, signature }
+      readAuthCache.current.set(cacheKey, {
+        ...auth,
+        expiresAt: Date.now() + 4 * 60 * 1000
+      })
+      return auth
+    },
+    [signMessage]
+  )
 
   useEffect(() => {
     setWalletAddress(sdkWalletAddress)
@@ -79,7 +138,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         const p = await spotApi.getPairs()
         setPairs(p)
         setIsConnected(true)
-      } catch (err) {
+      } catch {
         console.warn('[Spot] API not available, using offline mode')
         setIsConnected(false)
       }
@@ -106,7 +165,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     }
 
     const handleTrade = (data: SpotTrade) => {
-      setRecentTrades((prev) => [data, ...prev.slice(0, 49)])
+      setRecentTrades(prev => [data, ...prev.slice(0, 49)])
     }
 
     const handleTicker = (data: SpotTicker) => {
@@ -144,7 +203,9 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         const [tickerData, obData, tradesData] = await Promise.all([
           spotApi.getTicker(selectedPair).catch(() => null),
           spotApi.getOrderbook(selectedPair).catch(() => null),
-          spotApi.getRecentTrades(selectedPair, 50).catch(() => ({ trades: [] })),
+          spotApi
+            .getRecentTrades(selectedPair, 50)
+            .catch(() => ({ trades: [] }))
         ])
 
         if (tickerData) setTicker(tickerData)
@@ -168,9 +229,21 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
     const fetchUserData = async () => {
       try {
+        const [ordersAuth, tradesAuth] = await Promise.all([
+          signReadAction('orders.list', walletAddress, {
+            limit: 50,
+            offset: 0
+          }),
+          signReadAction('trades.list', walletAddress, { limit: 50, offset: 0 })
+        ])
+
         const [ordersRes, tradesRes] = await Promise.all([
-          spotApi.getUserOrders(walletAddress, undefined, 50).catch(() => ({ orders: [] })),
-          spotApi.getUserTrades(walletAddress, 50).catch(() => ({ trades: [] })),
+          spotApi
+            .getUserOrders(walletAddress, ordersAuth, undefined, 50)
+            .catch(() => ({ orders: [] })),
+          spotApi
+            .getUserTrades(walletAddress, tradesAuth, 50)
+            .catch(() => ({ trades: [] }))
         ])
         setUserOrders(ordersRes.orders)
         setUserTrades(tradesRes.trades)
@@ -191,7 +264,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     return () => {
       spotWs.unsubscribe(userChannel, handleUserUpdate)
     }
-  }, [walletAddress, isConnected])
+  }, [walletAddress, isConnected, signReadAction])
 
   // ─── Actions ───
 
@@ -209,9 +282,12 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
   const createOrder = useCallback(
     async (
-      params: Omit<CreateOrderParams, 'makerAddress' | 'nonce' | 'signature'> & {
+      params: Omit<
+        CreateOrderParams,
+        'makerAddress' | 'nonce' | 'signature'
+      > & {
         signMessage: (message: string) => Promise<string>
-      },
+      }
     ): Promise<boolean> => {
       if (!walletAddress) {
         setError('Connect your wallet first')
@@ -232,7 +308,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           stopPrice: params.stopPrice,
           amount: params.amount,
           nonce,
-          timestamp,
+          timestamp
         })
         const signature = await params.signMessage(messageToSign)
 
@@ -247,11 +323,15 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           nonce,
           timestamp,
           signature,
-          makerAddress: walletAddress,
+          makerAddress: walletAddress
         })
 
         // Refresh user orders
-        const ordersRes = await spotApi.getUserOrders(walletAddress)
+        const ordersAuth = await signReadAction('orders.list', walletAddress, {
+          limit: 50,
+          offset: 0
+        })
+        const ordersRes = await spotApi.getUserOrders(walletAddress, ordersAuth)
         setUserOrders(ordersRes.orders)
 
         return true
@@ -262,13 +342,13 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         setIsLoading(false)
       }
     },
-    [walletAddress, generateNonce],
+    [walletAddress, generateNonce, signReadAction]
   )
 
   const cancelOrder = useCallback(
     async (
       orderId: string,
-      signMessage: (message: string) => Promise<string>,
+      signMessage: (message: string) => Promise<string>
     ): Promise<boolean> => {
       if (!walletAddress) {
         setError('Connect your wallet first')
@@ -285,7 +365,11 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         await spotApi.cancelOrder(orderId, walletAddress, signature)
 
         // Refresh user orders
-        const ordersRes = await spotApi.getUserOrders(walletAddress)
+        const ordersAuth = await signReadAction('orders.list', walletAddress, {
+          limit: 50,
+          offset: 0
+        })
+        const ordersRes = await spotApi.getUserOrders(walletAddress, ordersAuth)
         setUserOrders(ordersRes.orders)
 
         return true
@@ -296,28 +380,36 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         setIsLoading(false)
       }
     },
-    [walletAddress],
+    [walletAddress, signReadAction]
   )
 
   const refreshOrders = useCallback(async () => {
     if (!walletAddress || !isConnected) return
     try {
-      const res = await spotApi.getUserOrders(walletAddress)
+      const auth = await signReadAction('orders.list', walletAddress, {
+        limit: 50,
+        offset: 0
+      })
+      const res = await spotApi.getUserOrders(walletAddress, auth)
       setUserOrders(res.orders)
     } catch {
       // ignore
     }
-  }, [walletAddress, isConnected])
+  }, [walletAddress, isConnected, signReadAction])
 
   const refreshTrades = useCallback(async () => {
     if (!walletAddress || !isConnected) return
     try {
-      const res = await spotApi.getUserTrades(walletAddress)
+      const auth = await signReadAction('trades.list', walletAddress, {
+        limit: 50,
+        offset: 0
+      })
+      const res = await spotApi.getUserTrades(walletAddress, auth)
       setUserTrades(res.trades)
     } catch {
       // ignore
     }
-  }, [walletAddress, isConnected])
+  }, [walletAddress, isConnected, signReadAction])
 
   const value: SpotContextState = {
     isConnected,
@@ -336,7 +428,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     createOrder,
     cancelOrder,
     refreshOrders,
-    refreshTrades,
+    refreshTrades
   }
 
   return <SpotContext.Provider value={value}>{children}</SpotContext.Provider>
@@ -351,5 +443,3 @@ export const useSpot = (): SpotContextState => {
   }
   return context
 }
-
-export default SpotContext

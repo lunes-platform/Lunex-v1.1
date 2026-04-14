@@ -1,22 +1,22 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
-    createChart,
-    ColorType,
-    IChartApi,
-    CandlestickData,
-    Time,
-    CandlestickSeries,
-    HistogramSeries,
-    LineSeries,
-    ISeriesApi,
-    SeriesType,
+  createChart,
+  ColorType,
+  IChartApi,
+  CandlestickData,
+  Time,
+  CandlestickSeries,
+  HistogramSeries,
+  LineSeries,
+  ISeriesApi,
+  SeriesType
 } from 'lightweight-charts'
-import styled, { css, keyframes } from 'styled-components'
+import styled, { keyframes } from 'styled-components'
 import { spotApi, SpotCandle } from '../../../services/spotService'
 import { useSpot } from '../../../context/SpotContext'
 
 interface CandleWithVolume extends CandlestickData {
-    volume: number
+  volume: number
 }
 
 // ──────────── Animations ────────────
@@ -52,7 +52,8 @@ const TfButton = styled.button<{ active?: boolean }>`
   font-family: 'Space Grotesk', sans-serif;
   cursor: pointer;
   transition: all 0.15s;
-  background: ${({ active }) => (active ? 'rgba(108, 56, 255, 0.25)' : 'transparent')};
+  background: ${({ active }) =>
+    active ? 'rgba(108, 56, 255, 0.25)' : 'transparent'};
   color: ${({ active }) => (active ? '#ffffff' : 'rgba(255,255,255,0.5)')};
 
   &:hover {
@@ -93,12 +94,12 @@ const LineToggleBtn = styled.button<{ lineColor: string; active?: boolean }>`
   gap: 6px;
   padding: 4px 10px;
   border-radius: 6px;
-  border: 1px solid ${({ lineColor, active }) =>
-        active ? lineColor : 'rgba(255,255,255,0.1)'};
+  border: 1px solid
+    ${({ lineColor, active }) => (active ? lineColor : 'rgba(255,255,255,0.1)')};
   background: ${({ lineColor, active }) =>
-        active ? `${lineColor}15` : 'transparent'};
+    active ? `${lineColor}15` : 'transparent'};
   color: ${({ lineColor, active }) =>
-        active ? lineColor : 'rgba(255,255,255,0.5)'};
+    active ? lineColor : 'rgba(255,255,255,0.5)'};
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -146,9 +147,8 @@ const PnlDisplay = styled.span<{ positive: boolean }>`
   padding: 2px 8px;
   border-radius: 4px;
   background: ${({ positive }) =>
-        positive ? 'rgba(0,192,118,0.1)' : 'rgba(255,75,85,0.1)'};
-  color: ${({ positive }) =>
-        positive ? '#00C076' : '#FF4B55'};
+    positive ? 'rgba(0,192,118,0.1)' : 'rgba(255,75,85,0.1)'};
+  color: ${({ positive }) => (positive ? '#00C076' : '#FF4B55')};
 `
 
 const Spacer = styled.div`
@@ -167,35 +167,34 @@ const ClearBtn = styled.button`
 
   &:hover {
     border-color: rgba(255, 75, 85, 0.4);
-    color: #FF4B55;
+    color: #ff4b55;
   }
 `
 
 // ──────────── Types ────────────
 
 interface TradeLine {
-    enabled: boolean
-    price: number
+  enabled: boolean
+  price: number
 }
 
 interface TradeLines {
-    entry: TradeLine
-    takeProfit: TradeLine
-    stopLoss: TradeLine
+  entry: TradeLine
+  takeProfit: TradeLine
+  stopLoss: TradeLine
 }
 
 // ──────────── Constants ────────────
 
 const LINE_COLORS = {
-    entry: '#3B82F6', // Blue
-    takeProfit: '#00C076', // Green
-    stopLoss: '#FF4B55', // Red
+  entry: '#3B82F6', // Blue
+  takeProfit: '#00C076', // Green
+  stopLoss: '#FF4B55' // Red
 }
 
 const DEFAULT_ENTRY = 0.02345
-const DEFAULT_TP = 0.02500
-const DEFAULT_SL = 0.02200
-
+const DEFAULT_TP = 0.025
+const DEFAULT_SL = 0.022
 
 const OfflineBanner = styled.div`
   position: absolute;
@@ -208,7 +207,7 @@ const OfflineBanner = styled.div`
   background: rgba(24, 24, 24, 0.92);
   z-index: 10;
   font-size: 13px;
-  color: rgba(255,255,255,0.45);
+  color: rgba(255, 255, 255, 0.45);
 `
 
 const OfflineIcon = styled.span`
@@ -219,374 +218,419 @@ const OfflineIcon = styled.span`
 // ──────────── Component ────────────
 
 const ChartPanel: React.FC = () => {
-    const containerRef = useRef<HTMLDivElement>(null)
-    const chartRef = useRef<IChartApi | null>(null)
-    const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null)
-    const [activeTimeframe, setActiveTimeframe] = useState('1h')
-    const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick')
-    const [showTradeLines, setShowTradeLines] = useState(false)
-    const [isOffline, setIsOffline] = useState(false)
-    const [noData, setNoData] = useState(false)
-    const [tradeLines, setTradeLines] = useState<TradeLines>({
-        entry: { enabled: false, price: DEFAULT_ENTRY },
-        takeProfit: { enabled: false, price: DEFAULT_TP },
-        stopLoss: { enabled: false, price: DEFAULT_SL },
-    })
-    const { selectedPair } = useSpot()
+  const containerRef = useRef<HTMLDivElement>(null)
+  const chartRef = useRef<IChartApi | null>(null)
+  const seriesRef = useRef<ISeriesApi<SeriesType> | null>(null)
+  const [activeTimeframe, setActiveTimeframe] = useState('1h')
+  const [chartType, setChartType] = useState<'candlestick' | 'line'>(
+    'candlestick'
+  )
+  const [showTradeLines, setShowTradeLines] = useState(false)
+  const [isOffline, setIsOffline] = useState(false)
+  const [noData, setNoData] = useState(false)
+  const [tradeLines, setTradeLines] = useState<TradeLines>({
+    entry: { enabled: false, price: DEFAULT_ENTRY },
+    takeProfit: { enabled: false, price: DEFAULT_TP },
+    stopLoss: { enabled: false, price: DEFAULT_SL }
+  })
+  const { selectedPair } = useSpot()
 
-    // Fetch candles from API — do NOT fall back to random data which could mislead traders
-    const loadCandles = useCallback(async (): Promise<{ data: CandleWithVolume[]; offline: boolean }> => {
-        try {
-            const res = await spotApi.getCandles(selectedPair, activeTimeframe, 200)
-            // API responded — it's online regardless of candle count
-            if (res.candles && res.candles.length > 0) {
-                return {
-                    data: res.candles.map((c: SpotCandle) => ({
-                        time: (new Date(c.openTime).getTime() / 1000) as Time,
-                        open: parseFloat(c.open),
-                        high: parseFloat(c.high),
-                        low: parseFloat(c.low),
-                        close: parseFloat(c.close),
-                        volume: parseFloat(c.volume) || 0,
-                    })).sort((a, b) => (a.time as number) - (b.time as number)),
-                    offline: false,
-                }
-            }
-            // API online but no trades executed yet
-            return { data: [], offline: false }
-        } catch {
-            // API unreachable — show offline banner
-            return { data: [], offline: true }
-        }
-    }, [selectedPair, activeTimeframe])
-
-    // Create / destroy chart
-    useEffect(() => {
-        if (!containerRef.current) return
-
-        const container = containerRef.current
-        const chart = createChart(container, {
-            layout: {
-                background: { type: ColorType.Solid, color: '#181818' },
-                textColor: 'rgba(255, 255, 255, 0.5)',
-            },
-            grid: {
-                vertLines: { color: 'rgba(255,255,255,0.04)' },
-                horzLines: { color: 'rgba(255,255,255,0.04)' },
-            },
-            crosshair: { mode: 1 },
-            rightPriceScale: {
-                borderColor: 'rgba(255,255,255,0.1)',
-                scaleMargins: { top: 0.1, bottom: 0.25 },
-            },
-            timeScale: {
-                borderColor: 'rgba(255,255,255,0.1)',
-                timeVisible: true,
-                secondsVisible: false,
-            },
-            width: container.clientWidth,
-            height: container.clientHeight || 360,
-        })
-
-        chartRef.current = chart
-        let isMounted = true
-
-        loadCandles().then(({ data, offline }) => {
-            if (!isMounted || !chart) return
-
-            setIsOffline(offline)
-            setNoData(!offline && data.length === 0)
-            if (offline || data.length === 0) return // never render random data
-
-            if (chartType === 'candlestick') {
-                const candleSeries = chart.addSeries(CandlestickSeries, {
-                    upColor: '#00C076',
-                    downColor: '#FF4B55',
-                    borderUpColor: '#00C076',
-                    borderDownColor: '#FF4B55',
-                    wickUpColor: '#00C076',
-                    wickDownColor: '#FF4B55',
-                })
-                candleSeries.setData(data)
-                seriesRef.current = candleSeries as unknown as ISeriesApi<SeriesType>
-
-                const volSeries = chart.addSeries(HistogramSeries, {
-                    color: 'rgba(0, 192, 118, 0.3)',
-                    priceFormat: { type: 'volume' },
-                    priceScaleId: 'volume',
-                })
-                chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
-                volSeries.setData(
-                    data.map(d => ({
-                        time: d.time,
-                        value: d.volume,
-                        color: d.close >= d.open ? 'rgba(0,192,118,0.25)' : 'rgba(255,75,85,0.25)',
-                    }))
-                )
-            } else {
-                const lineSeries = chart.addSeries(LineSeries, { color: '#00C076', lineWidth: 2 })
-                lineSeries.setData(data.map(d => ({ time: d.time, value: d.close })))
-                seriesRef.current = lineSeries as unknown as ISeriesApi<SeriesType>
-            }
-
-            chart.timeScale().fitContent()
-        })
-
-        const resizeObserver = new ResizeObserver(() => {
-            if (container && chart) {
-                chart.applyOptions({ width: container.clientWidth, height: container.clientHeight || 360 })
-            }
-        })
-        resizeObserver.observe(container)
-
-        return () => {
-            isMounted = false
-            resizeObserver.disconnect()
-            chart.remove()
-            chartRef.current = null
-            seriesRef.current = null
-        }
-    }, [activeTimeframe, chartType, loadCandles])
-
-
-    // Manage price lines
-    useEffect(() => {
-        const series = seriesRef.current
-        if (!series) return
-
-        // Remove all existing price lines
-        const existingLines = (series as any)._priceLines || []
-        // We'll use a different approach - recreate on each change
-
-        // Helper to create a price line
-        const lines: any[] = []
-
-        if (tradeLines.entry.enabled) {
-            const line = series.createPriceLine({
-                price: tradeLines.entry.price,
-                color: LINE_COLORS.entry,
-                lineWidth: 2,
-                lineStyle: 0, // Solid
-                axisLabelVisible: true,
-                title: '► Entry',
-            })
-            lines.push(line)
-        }
-
-        if (tradeLines.takeProfit.enabled) {
-            const line = series.createPriceLine({
-                price: tradeLines.takeProfit.price,
-                color: LINE_COLORS.takeProfit,
-                lineWidth: 2,
-                lineStyle: 2, // Dashed
-                axisLabelVisible: true,
-                title: '▲ TP',
-            })
-            lines.push(line)
-        }
-
-        if (tradeLines.stopLoss.enabled) {
-            const line = series.createPriceLine({
-                price: tradeLines.stopLoss.price,
-                color: LINE_COLORS.stopLoss,
-                lineWidth: 2,
-                lineStyle: 2, // Dashed
-                axisLabelVisible: true,
-                title: '▼ SL',
-            })
-            lines.push(line)
-        }
-
-        return () => {
-            lines.forEach(line => {
-                try {
-                    series.removePriceLine(line)
-                } catch {
-                    // line already removed
-                }
-            })
-        }
-    }, [tradeLines])
-
-    const toggleLine = useCallback((key: keyof TradeLines) => {
-        setTradeLines(prev => ({
-            ...prev,
-            [key]: { ...prev[key], enabled: !prev[key].enabled },
-        }))
-    }, [])
-
-    const updatePrice = useCallback((key: keyof TradeLines, value: string) => {
-        const num = parseFloat(value)
-        if (!isNaN(num) && num > 0) {
-            setTradeLines(prev => ({
-                ...prev,
-                [key]: { ...prev[key], price: num },
+  // Fetch candles from API — do NOT fall back to random data which could mislead traders
+  const loadCandles = useCallback(async (): Promise<{
+    data: CandleWithVolume[]
+    offline: boolean
+  }> => {
+    try {
+      const res = await spotApi.getCandles(selectedPair, activeTimeframe, 200)
+      // API responded — it's online regardless of candle count
+      if (res.candles && res.candles.length > 0) {
+        return {
+          data: res.candles
+            .map((c: SpotCandle) => ({
+              time: (new Date(c.openTime).getTime() / 1000) as Time,
+              open: parseFloat(c.open),
+              high: parseFloat(c.high),
+              low: parseFloat(c.low),
+              close: parseFloat(c.close),
+              volume: parseFloat(c.volume) || 0
             }))
+            .sort((a, b) => (a.time as number) - (b.time as number)),
+          offline: false
         }
-    }, [])
+      }
+      // API online but no trades executed yet
+      return { data: [], offline: false }
+    } catch {
+      // API unreachable — show offline banner
+      return { data: [], offline: true }
+    }
+  }, [selectedPair, activeTimeframe])
 
-    const clearAll = useCallback(() => {
-        setTradeLines({
-            entry: { enabled: false, price: DEFAULT_ENTRY },
-            takeProfit: { enabled: false, price: DEFAULT_TP },
-            stopLoss: { enabled: false, price: DEFAULT_SL },
+  // Create / destroy chart
+  useEffect(() => {
+    if (!containerRef.current) return
+
+    const container = containerRef.current
+    const chart = createChart(container, {
+      layout: {
+        background: { type: ColorType.Solid, color: '#181818' },
+        textColor: 'rgba(255, 255, 255, 0.5)'
+      },
+      grid: {
+        vertLines: { color: 'rgba(255,255,255,0.04)' },
+        horzLines: { color: 'rgba(255,255,255,0.04)' }
+      },
+      crosshair: { mode: 1 },
+      rightPriceScale: {
+        borderColor: 'rgba(255,255,255,0.1)',
+        scaleMargins: { top: 0.1, bottom: 0.25 }
+      },
+      timeScale: {
+        borderColor: 'rgba(255,255,255,0.1)',
+        timeVisible: true,
+        secondsVisible: false
+      },
+      width: container.clientWidth,
+      height: container.clientHeight || 360
+    })
+
+    chartRef.current = chart
+    let isMounted = true
+
+    loadCandles().then(({ data, offline }) => {
+      if (!isMounted || !chart) return
+
+      setIsOffline(offline)
+      setNoData(!offline && data.length === 0)
+      if (offline || data.length === 0) return // never render random data
+
+      if (chartType === 'candlestick') {
+        const candleSeries = chart.addSeries(CandlestickSeries, {
+          upColor: '#00C076',
+          downColor: '#FF4B55',
+          borderUpColor: '#00C076',
+          borderDownColor: '#FF4B55',
+          wickUpColor: '#00C076',
+          wickDownColor: '#FF4B55'
         })
-    }, [])
+        candleSeries.setData(data)
+        seriesRef.current = candleSeries as unknown as ISeriesApi<SeriesType>
 
-    // Calculate PnL
-    const pnl = tradeLines.entry.enabled && tradeLines.takeProfit.enabled
-        ? ((tradeLines.takeProfit.price - tradeLines.entry.price) / tradeLines.entry.price * 100)
-        : null
+        const volSeries = chart.addSeries(HistogramSeries, {
+          color: 'rgba(0, 192, 118, 0.3)',
+          priceFormat: { type: 'volume' },
+          priceScaleId: 'volume'
+        })
+        chart
+          .priceScale('volume')
+          .applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+        volSeries.setData(
+          data.map(d => ({
+            time: d.time,
+            value: d.volume,
+            color:
+              d.close >= d.open
+                ? 'rgba(0,192,118,0.25)'
+                : 'rgba(255,75,85,0.25)'
+          }))
+        )
+      } else {
+        const lineSeries = chart.addSeries(LineSeries, {
+          color: '#00C076',
+          lineWidth: 2
+        })
+        lineSeries.setData(data.map(d => ({ time: d.time, value: d.close })))
+        seriesRef.current = lineSeries as unknown as ISeriesApi<SeriesType>
+      }
 
-    const risk = tradeLines.entry.enabled && tradeLines.stopLoss.enabled
-        ? ((tradeLines.stopLoss.price - tradeLines.entry.price) / tradeLines.entry.price * 100)
-        : null
+      chart.timeScale().fitContent()
+    })
 
-    const riskReward = pnl !== null && risk !== null && risk !== 0
-        ? Math.abs(pnl / risk)
-        : null
+    const resizeObserver = new ResizeObserver(() => {
+      if (container && chart) {
+        chart.applyOptions({
+          width: container.clientWidth,
+          height: container.clientHeight || 360
+        })
+      }
+    })
+    resizeObserver.observe(container)
 
-    return (
-        <Wrapper>
-            <Controls>
-                {TIMEFRAMES.map(tf => (
-                    <TfButton
-                        key={tf}
-                        active={activeTimeframe === tf}
-                        onClick={() => setActiveTimeframe(tf)}
-                    >
-                        {tf}
-                    </TfButton>
-                ))}
-                <Divider />
-                <TfButton
-                    active={chartType === 'candlestick'}
-                    onClick={() => setChartType('candlestick')}
-                    title="Candlestick"
-                >
-                    ▪▪
-                </TfButton>
-                <TfButton
-                    active={chartType === 'line'}
-                    onClick={() => setChartType('line')}
-                    title="Line"
-                >
-                    ╱
-                </TfButton>
-                <Divider />
-                <TfButton
-                    active={showTradeLines}
-                    onClick={() => setShowTradeLines(v => !v)}
-                    title="Trade Lines"
-                >
-                    ⊞ Trade
-                </TfButton>
-            </Controls>
+    return () => {
+      isMounted = false
+      resizeObserver.disconnect()
+      chart.remove()
+      chartRef.current = null
+      seriesRef.current = null
+    }
+  }, [activeTimeframe, chartType, loadCandles])
 
-            {showTradeLines && (
-                <TradeLinesPanel>
-                    {/* Entry */}
-                    <LineToggleBtn
-                        lineColor={LINE_COLORS.entry}
-                        active={tradeLines.entry.enabled}
-                        onClick={() => toggleLine('entry')}
-                    >
-                        <LineDot dotColor={LINE_COLORS.entry} />
-                        Entry
-                    </LineToggleBtn>
-                    {tradeLines.entry.enabled && (
-                        <PriceInput
-                            lineColor={LINE_COLORS.entry}
-                            type="number"
-                            step={0.00001}
-                            value={tradeLines.entry.price}
-                            onChange={e => updatePrice('entry', e.target.value)}
-                        />
-                    )}
+  // Manage price lines
+  useEffect(() => {
+    const series = seriesRef.current
+    if (!series) return
 
-                    {/* Take Profit */}
-                    <LineToggleBtn
-                        lineColor={LINE_COLORS.takeProfit}
-                        active={tradeLines.takeProfit.enabled}
-                        onClick={() => toggleLine('takeProfit')}
-                    >
-                        <LineDot dotColor={LINE_COLORS.takeProfit} />
-                        TP
-                    </LineToggleBtn>
-                    {tradeLines.takeProfit.enabled && (
-                        <PriceInput
-                            lineColor={LINE_COLORS.takeProfit}
-                            type="number"
-                            step={0.00001}
-                            value={tradeLines.takeProfit.price}
-                            onChange={e => updatePrice('takeProfit', e.target.value)}
-                        />
-                    )}
+    // We'll use a different approach - recreate on each change
 
-                    {/* Stop Loss */}
-                    <LineToggleBtn
-                        lineColor={LINE_COLORS.stopLoss}
-                        active={tradeLines.stopLoss.enabled}
-                        onClick={() => toggleLine('stopLoss')}
-                    >
-                        <LineDot dotColor={LINE_COLORS.stopLoss} />
-                        SL
-                    </LineToggleBtn>
-                    {tradeLines.stopLoss.enabled && (
-                        <PriceInput
-                            lineColor={LINE_COLORS.stopLoss}
-                            type="number"
-                            step={0.00001}
-                            value={tradeLines.stopLoss.price}
-                            onChange={e => updatePrice('stopLoss', e.target.value)}
-                        />
-                    )}
+    // Helper to create a price line
+    const lines: any[] = []
 
-                    <Spacer />
+    if (tradeLines.entry.enabled) {
+      const line = series.createPriceLine({
+        price: tradeLines.entry.price,
+        color: LINE_COLORS.entry,
+        lineWidth: 2,
+        lineStyle: 0, // Solid
+        axisLabelVisible: true,
+        title: '► Entry'
+      })
+      lines.push(line)
+    }
 
-                    {/* PnL / Risk-Reward */}
-                    {pnl !== null && (
-                        <PnlDisplay positive={pnl >= 0}>
-                            TP: {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%
-                        </PnlDisplay>
-                    )}
-                    {risk !== null && (
-                        <PnlDisplay positive={false}>
-                            SL: {risk.toFixed(2)}%
-                        </PnlDisplay>
-                    )}
-                    {riskReward !== null && (
-                        <LineLabel>
-                            R:R {riskReward.toFixed(1)}:1
-                        </LineLabel>
-                    )}
+    if (tradeLines.takeProfit.enabled) {
+      const line = series.createPriceLine({
+        price: tradeLines.takeProfit.price,
+        color: LINE_COLORS.takeProfit,
+        lineWidth: 2,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: '▲ TP'
+      })
+      lines.push(line)
+    }
 
-                    <ClearBtn onClick={clearAll}>
-                        ✕ Clear
-                    </ClearBtn>
-                </TradeLinesPanel>
-            )}
+    if (tradeLines.stopLoss.enabled) {
+      const line = series.createPriceLine({
+        price: tradeLines.stopLoss.price,
+        color: LINE_COLORS.stopLoss,
+        lineWidth: 2,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: '▼ SL'
+      })
+      lines.push(line)
+    }
 
-            <ChartContainer ref={containerRef}>
-                {isOffline && (
-                    <OfflineBanner>
-                        <OfflineIcon><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></OfflineIcon>
-                        Chart data unavailable — spot-api offline
-                    </OfflineBanner>
-                )}
-                {noData && !isOffline && (
-                    <OfflineBanner>
-                        <OfflineIcon>
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                            </svg>
-                        </OfflineIcon>
-                        No trades yet — place an order to start the chart
-                    </OfflineBanner>
-                )}
-            </ChartContainer>
-        </Wrapper>
-    )
+    return () => {
+      lines.forEach(line => {
+        try {
+          series.removePriceLine(line)
+        } catch {
+          // line already removed
+        }
+      })
+    }
+  }, [tradeLines])
+
+  const toggleLine = useCallback((key: keyof TradeLines) => {
+    setTradeLines(prev => ({
+      ...prev,
+      [key]: { ...prev[key], enabled: !prev[key].enabled }
+    }))
+  }, [])
+
+  const updatePrice = useCallback((key: keyof TradeLines, value: string) => {
+    const num = parseFloat(value)
+    if (!isNaN(num) && num > 0) {
+      setTradeLines(prev => ({
+        ...prev,
+        [key]: { ...prev[key], price: num }
+      }))
+    }
+  }, [])
+
+  const clearAll = useCallback(() => {
+    setTradeLines({
+      entry: { enabled: false, price: DEFAULT_ENTRY },
+      takeProfit: { enabled: false, price: DEFAULT_TP },
+      stopLoss: { enabled: false, price: DEFAULT_SL }
+    })
+  }, [])
+
+  // Calculate PnL
+  const pnl =
+    tradeLines.entry.enabled && tradeLines.takeProfit.enabled
+      ? ((tradeLines.takeProfit.price - tradeLines.entry.price) /
+          tradeLines.entry.price) *
+        100
+      : null
+
+  const risk =
+    tradeLines.entry.enabled && tradeLines.stopLoss.enabled
+      ? ((tradeLines.stopLoss.price - tradeLines.entry.price) /
+          tradeLines.entry.price) *
+        100
+      : null
+
+  const riskReward =
+    pnl !== null && risk !== null && risk !== 0 ? Math.abs(pnl / risk) : null
+
+  return (
+    <Wrapper>
+      <Controls>
+        {TIMEFRAMES.map(tf => (
+          <TfButton
+            key={tf}
+            active={activeTimeframe === tf}
+            onClick={() => setActiveTimeframe(tf)}
+          >
+            {tf}
+          </TfButton>
+        ))}
+        <Divider />
+        <TfButton
+          active={chartType === 'candlestick'}
+          onClick={() => setChartType('candlestick')}
+          title="Candlestick"
+        >
+          ▪▪
+        </TfButton>
+        <TfButton
+          active={chartType === 'line'}
+          onClick={() => setChartType('line')}
+          title="Line"
+        >
+          ╱
+        </TfButton>
+        <Divider />
+        <TfButton
+          active={showTradeLines}
+          onClick={() => setShowTradeLines(v => !v)}
+          title="Trade Lines"
+        >
+          ⊞ Trade
+        </TfButton>
+      </Controls>
+
+      {showTradeLines && (
+        <TradeLinesPanel>
+          {/* Entry */}
+          <LineToggleBtn
+            lineColor={LINE_COLORS.entry}
+            active={tradeLines.entry.enabled}
+            onClick={() => toggleLine('entry')}
+          >
+            <LineDot dotColor={LINE_COLORS.entry} />
+            Entry
+          </LineToggleBtn>
+          {tradeLines.entry.enabled && (
+            <PriceInput
+              lineColor={LINE_COLORS.entry}
+              type="number"
+              step={0.00001}
+              value={tradeLines.entry.price}
+              onChange={e => updatePrice('entry', e.target.value)}
+            />
+          )}
+
+          {/* Take Profit */}
+          <LineToggleBtn
+            lineColor={LINE_COLORS.takeProfit}
+            active={tradeLines.takeProfit.enabled}
+            onClick={() => toggleLine('takeProfit')}
+          >
+            <LineDot dotColor={LINE_COLORS.takeProfit} />
+            TP
+          </LineToggleBtn>
+          {tradeLines.takeProfit.enabled && (
+            <PriceInput
+              lineColor={LINE_COLORS.takeProfit}
+              type="number"
+              step={0.00001}
+              value={tradeLines.takeProfit.price}
+              onChange={e => updatePrice('takeProfit', e.target.value)}
+            />
+          )}
+
+          {/* Stop Loss */}
+          <LineToggleBtn
+            lineColor={LINE_COLORS.stopLoss}
+            active={tradeLines.stopLoss.enabled}
+            onClick={() => toggleLine('stopLoss')}
+          >
+            <LineDot dotColor={LINE_COLORS.stopLoss} />
+            SL
+          </LineToggleBtn>
+          {tradeLines.stopLoss.enabled && (
+            <PriceInput
+              lineColor={LINE_COLORS.stopLoss}
+              type="number"
+              step={0.00001}
+              value={tradeLines.stopLoss.price}
+              onChange={e => updatePrice('stopLoss', e.target.value)}
+            />
+          )}
+
+          <Spacer />
+
+          {/* PnL / Risk-Reward */}
+          {pnl !== null && (
+            <PnlDisplay positive={pnl >= 0}>
+              TP: {pnl >= 0 ? '+' : ''}
+              {pnl.toFixed(2)}%
+            </PnlDisplay>
+          )}
+          {risk !== null && (
+            <PnlDisplay positive={false}>SL: {risk.toFixed(2)}%</PnlDisplay>
+          )}
+          {riskReward !== null && (
+            <LineLabel>R:R {riskReward.toFixed(1)}:1</LineLabel>
+          )}
+
+          <ClearBtn onClick={clearAll}>✕ Clear</ClearBtn>
+        </TradeLinesPanel>
+      )}
+
+      <ChartContainer ref={containerRef}>
+        {isOffline && (
+          <OfflineBanner>
+            <OfflineIcon>
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="1" y1="1" x2="23" y2="23" />
+                <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" />
+                <path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" />
+                <path d="M10.71 5.05A16 16 0 0 1 22.56 9" />
+                <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" />
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+                <line x1="12" y1="20" x2="12.01" y2="20" />
+              </svg>
+            </OfflineIcon>
+            Chart data unavailable — spot-api offline
+          </OfflineBanner>
+        )}
+        {noData && !isOffline && (
+          <OfflineBanner>
+            <OfflineIcon>
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </OfflineIcon>
+            No trades yet — place an order to start the chart
+          </OfflineBanner>
+        )}
+      </ChartContainer>
+    </Wrapper>
+  )
 }
 
 export default ChartPanel

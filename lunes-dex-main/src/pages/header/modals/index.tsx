@@ -5,4 +5,11 @@ import StatusTransaction from './statusTransaction'
 import Settings from './settings'
 import WalletModal from './walletModal'
 
-export { ModalConnectWallet, Connecting, Account, StatusTransaction, Settings, WalletModal }
+export {
+  ModalConnectWallet,
+  Connecting,
+  Account,
+  StatusTransaction,
+  Settings,
+  WalletModal
+}

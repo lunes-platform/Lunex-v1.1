@@ -41,7 +41,7 @@ interface UseSwapReturn {
 
 const useSwap = (): UseSwapReturn => {
   const sdk = useSDK()
-  
+
   // Estado local
   const [tokenIn, setTokenIn] = useState<Token | null>(null)
   const [tokenOut, setTokenOut] = useState<Token | null>(null)
@@ -66,13 +66,19 @@ const useSwap = (): UseSwapReturn => {
     try {
       // Converter amount para wei
       const amountInWei = sdk.parseAmount(amountIn, tokenIn.decimals)
-      
+
       // Obter quote do SDK
-      const quoteResult = await sdk.getQuote(amountInWei, [tokenIn.address, tokenOut.address])
-      
+      const quoteResult = await sdk.getQuote(amountInWei, [
+        tokenIn.address,
+        tokenOut.address
+      ])
+
       if (quoteResult) {
-        const amountOutFormatted = sdk.formatAmount(quoteResult.amountOut, tokenOut.decimals)
-        
+        const amountOutFormatted = sdk.formatAmount(
+          quoteResult.amountOut,
+          tokenOut.decimals
+        )
+
         setQuote({
           ...quoteResult,
           amountOutFormatted

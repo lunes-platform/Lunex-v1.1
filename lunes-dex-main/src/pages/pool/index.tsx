@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import styled, { css } from 'styled-components'
+import styled from 'styled-components'
 import { useNavigate } from 'react-router-dom'
-import * as B from '../../components/bases'
 import PageLayout from '../../components/layout'
-import { useLiquidity } from '../../hooks'
+import useLiquidity from '../../hooks/useLiquidity'
 import { useSDK } from '../../context/SDKContext'
 import TradeSubNav from '../../components/tradeSubNav'
 import TokenIcon from '../../components/TokenIcon'
@@ -64,17 +63,61 @@ const ProBannerArrow = styled.span`
 
 // Real deployed token addresses
 const availableTokens = [
-  { address: process.env.REACT_APP_TOKEN_WLUNES || '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo', symbol: 'WLUNES', name: 'Wrapped Lunes', decimals: 8, icon: '/img/lunes.svg' },
-  { address: process.env.REACT_APP_TOKEN_LUSDT || '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf', symbol: 'LUSDT', name: 'Lunes USD', decimals: 6, icon: '/img/lusdt.svg' },
-  { address: process.env.REACT_APP_TOKEN_LBTC || '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg', symbol: 'LBTC', name: 'Lunes BTC', decimals: 8, icon: '/img/lbtc.svg' },
-  { address: process.env.REACT_APP_TOKEN_LETH || '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS', symbol: 'LETH', name: 'Lunes ETH', decimals: 8, icon: '/img/leth.svg' },
-  { address: process.env.REACT_APP_TOKEN_GMC || '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ', symbol: 'GMC', name: 'GameCoin', decimals: 8, icon: '/img/gmc.svg' },
-  { address: process.env.REACT_APP_TOKEN_LUP || '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3', symbol: 'LUP', name: 'Lunex Protocol', decimals: 8, icon: '/img/lup.svg' },
+  {
+    address:
+      process.env.REACT_APP_TOKEN_WLUNES ||
+      '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo',
+    symbol: 'WLUNES',
+    name: 'Wrapped Lunes',
+    decimals: 8,
+    icon: '/img/lunes.svg'
+  },
+  {
+    address:
+      process.env.REACT_APP_TOKEN_LUSDT ||
+      '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf',
+    symbol: 'LUSDT',
+    name: 'Lunes USD',
+    decimals: 6,
+    icon: '/img/lusdt.svg'
+  },
+  {
+    address:
+      process.env.REACT_APP_TOKEN_LBTC ||
+      '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg',
+    symbol: 'LBTC',
+    name: 'Lunes BTC',
+    decimals: 8,
+    icon: '/img/lbtc.svg'
+  },
+  {
+    address:
+      process.env.REACT_APP_TOKEN_LETH ||
+      '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS',
+    symbol: 'LETH',
+    name: 'Lunes ETH',
+    decimals: 8,
+    icon: '/img/leth.svg'
+  },
+  {
+    address:
+      process.env.REACT_APP_TOKEN_GMC ||
+      '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ',
+    symbol: 'GMC',
+    name: 'GameCoin',
+    decimals: 8,
+    icon: '/img/gmc.svg'
+  },
+  {
+    address:
+      process.env.REACT_APP_TOKEN_LUP ||
+      '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3',
+    symbol: 'LUP',
+    name: 'Lunex Protocol',
+    decimals: 8,
+    icon: '/img/lup.svg'
+  }
 ]
-
-
-
-
 
 const TabContainer = styled.div`
   display: flex;
@@ -94,12 +137,15 @@ const Tab = styled.button<{ active: boolean }>`
   font-weight: 600;
   font-size: 14px;
   transition: all 0.2s;
-  
-  background: ${({ active, theme }) => active ? theme.colors.themeColors[800] : 'transparent'};
-  color: ${({ active, theme }) => active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
-  
+
+  background: ${({ active, theme }) =>
+    active ? theme.colors.themeColors[800] : 'transparent'};
+  color: ${({ active, theme }) =>
+    active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
+
   &:hover {
-    background: ${({ active, theme }) => active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
+    background: ${({ active, theme }) =>
+      active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
   }
 `
 
@@ -114,7 +160,9 @@ const InputContainer = styled.div`
   &:focus-within {
     background-color: ${({ theme }) => theme.colors.themeColors[500]};
     border: 1px solid ${({ theme }) => theme.colors.themeColors[800]};
-    box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.6), 0px 0px 0px 4px rgba(108, 56, 255, 0.3);
+    box-shadow:
+      0px 0px 0px 1px rgba(0, 0, 0, 0.6),
+      0px 0px 0px 4px rgba(108, 56, 255, 0.3);
   }
 `
 
@@ -153,17 +201,17 @@ const Input = styled.input`
   color: ${({ theme }) => theme.colors.themeColors[100]};
   outline: none;
   border-radius: 0;
-  
+
   &:focus {
     outline: none !important;
     border: none !important;
     box-shadow: none !important;
   }
-  
+
   &::placeholder {
     color: ${({ theme }) => theme.colors.themeColors[200]};
   }
-  
+
   &:disabled {
     opacity: 0.5;
   }
@@ -178,17 +226,17 @@ const TokenButton = styled.button`
   border-radius: 16px;
   padding: 8px 12px;
   cursor: pointer;
-  
+
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
-  
+
   img {
     width: 24px;
     height: 24px;
   }
-  
+
   &:hover {
     opacity: 0.9;
   }
@@ -212,12 +260,12 @@ const InfoRow = styled.div`
   display: flex;
   justify-content: space-between;
   padding: 8px 0;
-  
+
   span {
     font-family: 'Inter', sans-serif;
     font-size: 14px;
     color: ${({ theme }) => theme.colors.themeColors[200]};
-    
+
     &:last-child {
       color: ${({ theme }) => theme.colors.themeColors[100]};
     }
@@ -231,16 +279,16 @@ const ActionButton = styled.button`
   border: none;
   border-radius: 16px;
   cursor: pointer;
-  
+
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 16px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
-  
+
   &:hover:not(:disabled) {
     opacity: 0.9;
   }
-  
+
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -253,12 +301,12 @@ const MaxButton = styled.button`
   border-radius: 8px;
   padding: 8px 16px;
   cursor: pointer;
-  
+
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 12px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
-  
+
   &:hover {
     opacity: 0.9;
   }
@@ -302,7 +350,7 @@ const ModalHeader = styled.div`
   align-items: center;
   padding: 16px 24px;
   border-bottom: 1px solid ${({ theme }) => theme.colors.themeColors[300]};
-  
+
   h3 {
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 600;
@@ -318,7 +366,7 @@ const CloseButton = styled.button`
   font-size: 24px;
   color: ${({ theme }) => theme.colors.themeColors[200]};
   cursor: pointer;
-  
+
   &:hover {
     color: ${({ theme }) => theme.colors.themeColors[100]};
   }
@@ -335,25 +383,25 @@ const TokenItem = styled.div`
   gap: 16px;
   padding: 12px 24px;
   cursor: pointer;
-  
+
   &:hover {
     background: ${({ theme }) => theme.colors.themeColors[600]};
   }
-  
+
   img {
     width: 36px;
     height: 36px;
     border-radius: 50%;
     object-fit: contain;
   }
-  
+
   div {
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: flex-start;
     gap: 2px;
-    
+
     span {
       font-family: 'Space Grotesk', sans-serif;
       font-weight: 600;
@@ -361,7 +409,7 @@ const TokenItem = styled.div`
       line-height: 1;
       color: ${({ theme }) => theme.colors.themeColors[100]};
     }
-    
+
     small {
       font-family: 'Inter', sans-serif;
       font-size: 13px;
@@ -384,26 +432,38 @@ const Pool: React.FC = () => {
   const [balanceB, setBalanceB] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!sdk.walletAddress || !liquidity.tokenA) { setBalanceA(null); return }
-    sdk.getTokenBalance(liquidity.tokenA.address, sdk.walletAddress)
-      .then(raw => setBalanceA(sdk.formatAmount(raw, liquidity.tokenA!.decimals)))
+    if (!sdk.walletAddress || !liquidity.tokenA) {
+      setBalanceA(null)
+      return
+    }
+    sdk
+      .getTokenBalance(liquidity.tokenA.address, sdk.walletAddress)
+      .then(raw =>
+        setBalanceA(sdk.formatAmount(raw, liquidity.tokenA!.decimals))
+      )
       .catch(() => setBalanceA(null))
   }, [liquidity.tokenA, sdk.walletAddress])
 
   useEffect(() => {
-    if (!sdk.walletAddress || !liquidity.tokenB) { setBalanceB(null); return }
-    sdk.getTokenBalance(liquidity.tokenB.address, sdk.walletAddress)
-      .then(raw => setBalanceB(sdk.formatAmount(raw, liquidity.tokenB!.decimals)))
+    if (!sdk.walletAddress || !liquidity.tokenB) {
+      setBalanceB(null)
+      return
+    }
+    sdk
+      .getTokenBalance(liquidity.tokenB.address, sdk.walletAddress)
+      .then(raw =>
+        setBalanceB(sdk.formatAmount(raw, liquidity.tokenB!.decimals))
+      )
       .catch(() => setBalanceB(null))
   }, [liquidity.tokenB, sdk.walletAddress])
 
   // Handlers
-  const handleSelectTokenA = (token: typeof availableTokens[0]) => {
+  const handleSelectTokenA = (token: (typeof availableTokens)[0]) => {
     liquidity.setTokenA(token)
     setShowTokenSelectA(false)
   }
 
-  const handleSelectTokenB = (token: typeof availableTokens[0]) => {
+  const handleSelectTokenB = (token: (typeof availableTokens)[0]) => {
     liquidity.setTokenB(token)
     setShowTokenSelectB(false)
   }
@@ -432,10 +492,16 @@ const Pool: React.FC = () => {
       {/* Pro Mode Banner */}
       <ProBanner onClick={() => navigate('/pool/asymmetric')}>
         <ProBannerLeft>
-          <ProBannerIcon><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></ProBannerIcon>
+          <ProBannerIcon>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          </ProBannerIcon>
           <ProBannerText>
             <ProBannerTitle>Asymmetric Liquidity — Pro Mode</ProBannerTitle>
-            <ProBannerSubtitle>Parametric curves, templates &amp; AI delegation</ProBannerSubtitle>
+            <ProBannerSubtitle>
+              Parametric curves, templates &amp; AI delegation
+            </ProBannerSubtitle>
           </ProBannerText>
         </ProBannerLeft>
         <ProBannerArrow>›</ProBannerArrow>
@@ -446,7 +512,10 @@ const Pool: React.FC = () => {
         <Tab active={activeTab === 'add'} onClick={() => setActiveTab('add')}>
           Add Liquidity
         </Tab>
-        <Tab active={activeTab === 'remove'} onClick={() => setActiveTab('remove')}>
+        <Tab
+          active={activeTab === 'remove'}
+          onClick={() => setActiveTab('remove')}
+        >
           Remove Liquidity
         </Tab>
       </TabContainer>
@@ -466,13 +535,17 @@ const Pool: React.FC = () => {
                 type="number"
                 placeholder="0.0"
                 value={liquidity.amountA}
-                onChange={(e) => liquidity.setAmountA(e.target.value)}
+                onChange={e => liquidity.setAmountA(e.target.value)}
                 disabled={!liquidity.tokenA}
               />
               <TokenButton onClick={() => setShowTokenSelectA(true)}>
                 {liquidity.tokenA ? (
                   <>
-                    <TokenIcon address={liquidity.tokenA.address} symbol={liquidity.tokenA.symbol} size={24} />
+                    <TokenIcon
+                      address={liquidity.tokenA.address}
+                      symbol={liquidity.tokenA.symbol}
+                      size={24}
+                    />
                     {liquidity.tokenA.symbol}
                   </>
                 ) : (
@@ -499,13 +572,17 @@ const Pool: React.FC = () => {
                 type="number"
                 placeholder="0.0"
                 value={liquidity.amountB}
-                onChange={(e) => liquidity.setAmountB(e.target.value)}
+                onChange={e => liquidity.setAmountB(e.target.value)}
                 disabled={!liquidity.tokenB}
               />
               <TokenButton onClick={() => setShowTokenSelectB(true)}>
                 {liquidity.tokenB ? (
                   <>
-                    <TokenIcon address={liquidity.tokenB.address} symbol={liquidity.tokenB.symbol} size={24} />
+                    <TokenIcon
+                      address={liquidity.tokenB.address}
+                      symbol={liquidity.tokenB.symbol}
+                      size={24}
+                    />
                     {liquidity.tokenB.symbol}
                   </>
                 ) : (
@@ -522,7 +599,9 @@ const Pool: React.FC = () => {
               <InfoRow>
                 <span>Price</span>
                 <span>
-                  1 {liquidity.tokenA?.symbol} = {Number(liquidity.poolInfo.token0Price).toFixed(6)} {liquidity.tokenB?.symbol}
+                  1 {liquidity.tokenA?.symbol} ={' '}
+                  {Number(liquidity.poolInfo.token0Price).toFixed(6)}{' '}
+                  {liquidity.tokenB?.symbol}
                 </span>
               </InfoRow>
               <InfoRow>
@@ -544,7 +623,12 @@ const Pool: React.FC = () => {
           ) : (
             <ActionButton
               onClick={handleAddLiquidity}
-              disabled={!liquidity.tokenA || !liquidity.tokenB || !liquidity.amountA || liquidity.isLoading}
+              disabled={
+                !liquidity.tokenA ||
+                !liquidity.tokenB ||
+                !liquidity.amountA ||
+                liquidity.isLoading
+              }
             >
               {liquidity.isLoading ? 'Processing...' : 'Add Liquidity'}
             </ActionButton>
@@ -557,7 +641,9 @@ const Pool: React.FC = () => {
             <InputHeader>
               <Label>LP Tokens to remove</Label>
               {liquidity.poolInfo && (
-                <Balance>Balance: {sdk.formatAmount(liquidity.poolInfo.lpBalance, 8)}</Balance>
+                <Balance>
+                  Balance: {sdk.formatAmount(liquidity.poolInfo.lpBalance, 8)}
+                </Balance>
               )}
             </InputHeader>
             <InputRow>
@@ -565,13 +651,15 @@ const Pool: React.FC = () => {
                 type="number"
                 placeholder="0.0"
                 value={lpAmountToRemove}
-                onChange={(e) => setLpAmountToRemove(e.target.value)}
+                onChange={e => setLpAmountToRemove(e.target.value)}
               />
-              <MaxButton onClick={() => {
-                if (liquidity.poolInfo) {
-                  setLpAmountToRemove(liquidity.poolInfo.lpBalance)
-                }
-              }}>
+              <MaxButton
+                onClick={() => {
+                  if (liquidity.poolInfo) {
+                    setLpAmountToRemove(liquidity.poolInfo.lpBalance)
+                  }
+                }}
+              >
                 MAX
               </MaxButton>
             </InputRow>
@@ -585,11 +673,25 @@ const Pool: React.FC = () => {
               </InfoRow>
               <InfoRow>
                 <span>{liquidity.tokenA?.symbol}</span>
-                <span>~{calculateExpectedAmount(lpAmountToRemove, liquidity.poolInfo.reserve0, liquidity.poolInfo.totalSupply)}</span>
+                <span>
+                  ~
+                  {calculateExpectedAmount(
+                    lpAmountToRemove,
+                    liquidity.poolInfo.reserve0,
+                    liquidity.poolInfo.totalSupply
+                  )}
+                </span>
               </InfoRow>
               <InfoRow>
                 <span>{liquidity.tokenB?.symbol}</span>
-                <span>~{calculateExpectedAmount(lpAmountToRemove, liquidity.poolInfo.reserve1, liquidity.poolInfo.totalSupply)}</span>
+                <span>
+                  ~
+                  {calculateExpectedAmount(
+                    lpAmountToRemove,
+                    liquidity.poolInfo.reserve1,
+                    liquidity.poolInfo.totalSupply
+                  )}
+                </span>
               </InfoRow>
             </PoolInfoContainer>
           )}
@@ -618,12 +720,21 @@ const Pool: React.FC = () => {
           <ModalContent>
             <ModalHeader>
               <h3>Selecionar Token</h3>
-              <CloseButton onClick={() => setShowTokenSelectA(false)}>×</CloseButton>
+              <CloseButton onClick={() => setShowTokenSelectA(false)}>
+                ×
+              </CloseButton>
             </ModalHeader>
             <TokenList>
               {availableTokens.map(token => (
-                <TokenItem key={token.address} onClick={() => handleSelectTokenA(token)}>
-                  <TokenIcon address={token.address} symbol={token.symbol} size={36} />
+                <TokenItem
+                  key={token.address}
+                  onClick={() => handleSelectTokenA(token)}
+                >
+                  <TokenIcon
+                    address={token.address}
+                    symbol={token.symbol}
+                    size={36}
+                  />
                   <div>
                     <span>{token.symbol}</span>
                     <small>{token.name}</small>
@@ -641,12 +752,21 @@ const Pool: React.FC = () => {
           <ModalContent>
             <ModalHeader>
               <h3>Selecionar Token</h3>
-              <CloseButton onClick={() => setShowTokenSelectB(false)}>×</CloseButton>
+              <CloseButton onClick={() => setShowTokenSelectB(false)}>
+                ×
+              </CloseButton>
             </ModalHeader>
             <TokenList>
               {availableTokens.map(token => (
-                <TokenItem key={token.address} onClick={() => handleSelectTokenB(token)}>
-                  <TokenIcon address={token.address} symbol={token.symbol} size={36} />
+                <TokenItem
+                  key={token.address}
+                  onClick={() => handleSelectTokenB(token)}
+                >
+                  <TokenIcon
+                    address={token.address}
+                    symbol={token.symbol}
+                    size={36}
+                  />
                   <div>
                     <span>{token.symbol}</span>
                     <small>{token.name}</small>
@@ -662,7 +782,11 @@ const Pool: React.FC = () => {
 }
 
 // Helper function
-const calculateExpectedAmount = (lpAmount: string, reserve: string, totalSupply: string): string => {
+const calculateExpectedAmount = (
+  lpAmount: string,
+  reserve: string,
+  totalSupply: string
+): string => {
   try {
     const lp = BigInt(lpAmount)
     const res = BigInt(reserve)

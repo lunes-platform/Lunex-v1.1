@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
 import styled, { css, keyframes } from 'styled-components'
 import * as B from '../../components/bases'
 import { useSDK, parseBlockchainError } from '../../context/SDKContext'
@@ -48,7 +47,8 @@ const StatsContainer = styled.div`
 `
 
 const StatCard = styled.div<{ highlight?: boolean }>`
-  background: ${({ theme, highlight }) => highlight ? theme.colors.themeColors[800] : theme.colors.themeColors[600]};
+  background: ${({ theme, highlight }) =>
+    highlight ? theme.colors.themeColors[800] : theme.colors.themeColors[600]};
   border-radius: 12px;
   padding: 16px;
   text-align: center;
@@ -79,19 +79,19 @@ const UserInfoRow = styled.div`
   justify-content: space-between;
   align-items: center;
   padding: 8px 0;
-  
+
   &:not(:last-child) {
     border-bottom: 1px solid ${({ theme }) => theme.colors.themeColors[300]};
   }
-  
+
   span {
     font-family: 'Inter', sans-serif;
     font-size: 14px;
-    
+
     &:first-child {
       color: ${({ theme }) => theme.colors.themeColors[200]};
     }
-    
+
     &:last-child {
       color: ${({ theme }) => theme.colors.themeColors[100]};
       font-weight: 600;
@@ -119,11 +119,11 @@ const ClaimButton = styled.button`
   font-weight: 600;
   color: #000;
   cursor: pointer;
-  
+
   &:hover:not(:disabled) {
     opacity: 0.9;
   }
-  
+
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;
@@ -148,12 +148,15 @@ const Tab = styled.button<{ active: boolean }>`
   font-weight: 600;
   font-size: 14px;
   transition: all 0.2s;
-  
-  background: ${({ active, theme }) => active ? theme.colors.themeColors[800] : 'transparent'};
-  color: ${({ active, theme }) => active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
-  
+
+  background: ${({ active, theme }) =>
+    active ? theme.colors.themeColors[800] : 'transparent'};
+  color: ${({ active, theme }) =>
+    active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
+
   &:hover {
-    background: ${({ active, theme }) => active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
+    background: ${({ active, theme }) =>
+      active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
   }
 `
 
@@ -168,7 +171,9 @@ const InputContainer = styled.div`
   &:focus-within {
     background-color: ${({ theme }) => theme.colors.themeColors[500]};
     border: 1px solid ${({ theme }) => theme.colors.themeColors[800]};
-    box-shadow: 0px 0px 0px 1px rgba(0, 0, 0, 0.6), 0px 0px 0px 4px rgba(108, 56, 255, 0.3);
+    box-shadow:
+      0px 0px 0px 1px rgba(0, 0, 0, 0.6),
+      0px 0px 0px 4px rgba(108, 56, 255, 0.3);
   }
 `
 
@@ -191,12 +196,12 @@ const MaxButton = styled.button`
   border-radius: 8px;
   padding: 8px 16px;
   cursor: pointer;
-  
+
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 12px;
   color: ${({ theme }) => theme.colors.themeColors[100]};
-  
+
   &:hover {
     opacity: 0.9;
   }
@@ -212,13 +217,13 @@ const Input = styled.input`
   color: ${({ theme }) => theme.colors.themeColors[100]};
   outline: none;
   border-radius: 0;
-  
+
   &:focus {
     outline: none !important;
     border: none !important;
     box-shadow: none !important;
   }
-  
+
   &::placeholder {
     color: ${({ theme }) => theme.colors.themeColors[200]};
   }
@@ -273,13 +278,13 @@ const InfoTitle = styled.h3`
 const InfoList = styled.ul`
   margin: 0;
   padding-left: 20px;
-  
+
   li {
     font-family: 'Inter', sans-serif;
     font-size: 12px;
     color: ${({ theme }) => theme.colors.themeColors[200]};
     margin-bottom: 8px;
-    
+
     &:last-child {
       margin-bottom: 0;
     }
@@ -322,7 +327,7 @@ const TxStatusBanner = styled.div<{ phase: TxPhase }>`
   align-items: center;
   gap: 10px;
   animation: ${fadeIn} 0.3s ease;
-  
+
   ${({ phase }) => {
     switch (phase) {
       case 'signing':
@@ -380,7 +385,6 @@ interface StakingInfo {
 // ─── Component ──────────────────────────────────────────────────
 const Staking: React.FC = () => {
   const sdk = useSDK()
-  const navigate = useNavigate()
 
   // Estado local
   const [stakingInfo, setStakingInfo] = useState<StakingInfo | null>(null)
@@ -390,7 +394,6 @@ const Staking: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lpBalance, setLpBalance] = useState('0')
-  const [lpTokenAddress, setLpTokenAddress] = useState<string>('')
   const [txPhase, setTxPhase] = useState<TxPhase>('idle')
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
@@ -411,9 +414,11 @@ const Staking: React.FC = () => {
       const pairInfo = await sdk.getPairInfo(TOKENS.WLUNES, TOKENS.LUSDT)
 
       if (pairInfo?.address) {
-        setLpTokenAddress(pairInfo.address)
         // Buscar balance de LP tokens do par encontrado
-        const balance = await sdk.getTokenBalance(pairInfo.address, sdk.walletAddress)
+        const balance = await sdk.getTokenBalance(
+          pairInfo.address,
+          sdk.walletAddress
+        )
         setLpBalance(sdk.formatAmount(balance, 8))
       }
     } catch (err: unknown) {
@@ -532,7 +537,8 @@ const Staking: React.FC = () => {
 
   // Handler para claim rewards
   const handleClaimRewards = async () => {
-    if (!sdk.walletAddress || !stakingInfo?.pendingRewards || !stakingAvailable) return
+    if (!sdk.walletAddress || !stakingInfo?.pendingRewards || !stakingAvailable)
+      return
 
     setIsLoading(true)
     setError(null)
@@ -541,7 +547,7 @@ const Staking: React.FC = () => {
 
     try {
       setTxPhase('processing')
-      const success = await sdk.claimRewards()
+      const success = await sdk.claimStakingRewards()
       if (success) {
         setTxPhase('success')
         setSuccessMsg('Rewards claimed successfully!')
@@ -562,11 +568,16 @@ const Staking: React.FC = () => {
   // ─── Transaction Phase Label ──────────────────────────────────
   const getTxPhaseLabel = (): string => {
     switch (txPhase) {
-      case 'signing': return 'Waiting for wallet signature...'
-      case 'processing': return 'Processing transaction on blockchain...'
-      case 'success': return 'Transaction confirmed!'
-      case 'error': return 'Transaction failed'
-      default: return ''
+      case 'signing':
+        return 'Waiting for wallet signature...'
+      case 'processing':
+        return 'Processing transaction on blockchain...'
+      case 'success':
+        return 'Transaction confirmed!'
+      case 'error':
+        return 'Transaction failed'
+      default:
+        return ''
     }
   }
 
@@ -585,8 +596,9 @@ const Staking: React.FC = () => {
         <ComingSoonBanner>
           <ComingSoonTitle>⏳ Staking — Coming Soon</ComingSoonTitle>
           <ComingSoonText>
-            The staking contract is being prepared for deployment on the Lunes blockchain.
-            Once deployed, you'll be able to stake your LP tokens and earn LUNES rewards.
+            The staking contract is being prepared for deployment on the Lunes
+            blockchain. Once deployed, you'll be able to stake your LP tokens
+            and earn LUNES rewards.
           </ComingSoonText>
         </ComingSoonBanner>
       )}
@@ -596,7 +608,8 @@ const Staking: React.FC = () => {
         <StatCard>
           <StatLabel>Total Staked</StatLabel>
           <StatValue>
-            {stakingInfo ? sdk.formatAmount(stakingInfo.totalStaked, 8) : '0'} LP
+            {stakingInfo ? sdk.formatAmount(stakingInfo.totalStaked, 8) : '0'}{' '}
+            LP
           </StatValue>
         </StatCard>
         <StatCard highlight>
@@ -621,7 +634,10 @@ const Staking: React.FC = () => {
             <RewardsValue>
               {sdk.formatAmount(stakingInfo.pendingRewards, 8)} LUNES
               {Number(stakingInfo.pendingRewards) > 0 && (
-                <ClaimButton onClick={handleClaimRewards} disabled={isLoading || !stakingAvailable}>
+                <ClaimButton
+                  onClick={handleClaimRewards}
+                  disabled={isLoading || !stakingAvailable}
+                >
                   Claim
                 </ClaimButton>
               )}
@@ -636,10 +652,16 @@ const Staking: React.FC = () => {
 
       {/* Tabs */}
       <TabContainer>
-        <Tab active={activeTab === 'stake'} onClick={() => setActiveTab('stake')}>
+        <Tab
+          active={activeTab === 'stake'}
+          onClick={() => setActiveTab('stake')}
+        >
           Stake
         </Tab>
-        <Tab active={activeTab === 'unstake'} onClick={() => setActiveTab('unstake')}>
+        <Tab
+          active={activeTab === 'unstake'}
+          onClick={() => setActiveTab('unstake')}
+        >
           Unstake
         </Tab>
       </TabContainer>
@@ -655,7 +677,9 @@ const Staking: React.FC = () => {
             type="number"
             placeholder="0.0"
             value={stakeAmount}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setStakeAmount(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setStakeAmount(e.target.value)
+            }
             disabled={!stakingAvailable}
           />
           <HelpText>Available LP tokens: {lpBalance}</HelpText>
@@ -664,21 +688,28 @@ const Staking: React.FC = () => {
         <InputContainer>
           <InputHeader>
             <Label>Amount to Unstake</Label>
-            <MaxButton onClick={() => {
-              if (stakingInfo) {
-                setUnstakeAmount(sdk.formatAmount(stakingInfo.userStaked, 8))
-              }
-            }}>MAX</MaxButton>
+            <MaxButton
+              onClick={() => {
+                if (stakingInfo) {
+                  setUnstakeAmount(sdk.formatAmount(stakingInfo.userStaked, 8))
+                }
+              }}
+            >
+              MAX
+            </MaxButton>
           </InputHeader>
           <Input
             type="number"
             placeholder="0.0"
             value={unstakeAmount}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUnstakeAmount(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setUnstakeAmount(e.target.value)
+            }
             disabled={!stakingAvailable}
           />
           <HelpText>
-            Staked: {stakingInfo ? sdk.formatAmount(stakingInfo.userStaked, 8) : '0'} LP
+            Staked:{' '}
+            {stakingInfo ? sdk.formatAmount(stakingInfo.userStaked, 8) : '0'} LP
           </HelpText>
         </InputContainer>
       )}
@@ -702,30 +733,54 @@ const Staking: React.FC = () => {
       {error && txPhase === 'idle' && <ErrorMessage>{error}</ErrorMessage>}
 
       {!sdk.isConnected ? (
-        <B.Button onClick={() => sdk.connectWallet()} width="100%" padding="16px 24px" margin="0" style={{ borderRadius: '16px' }}>
+        <B.Button
+          onClick={() => sdk.connectWallet()}
+          width="100%"
+          padding="16px 24px"
+          margin="0"
+          style={{ borderRadius: '16px' }}
+        >
           Connect Wallet
         </B.Button>
       ) : activeTab === 'stake' ? (
         <B.Button
           onClick={handleStake}
-          disabled={isLoading || !stakeAmount || Number(stakeAmount) <= 0 || !stakingAvailable}
+          disabled={
+            isLoading ||
+            !stakeAmount ||
+            Number(stakeAmount) <= 0 ||
+            !stakingAvailable
+          }
           width="100%"
           padding="16px 24px"
           margin="0"
           style={{ borderRadius: '16px' }}
         >
-          {isLoading ? 'Processing...' : !stakingAvailable ? 'Coming Soon' : 'Stake'}
+          {isLoading
+            ? 'Processing...'
+            : !stakingAvailable
+              ? 'Coming Soon'
+              : 'Stake'}
         </B.Button>
       ) : (
         <B.Button
           onClick={handleUnstake}
-          disabled={isLoading || !unstakeAmount || Number(unstakeAmount) <= 0 || !stakingAvailable}
+          disabled={
+            isLoading ||
+            !unstakeAmount ||
+            Number(unstakeAmount) <= 0 ||
+            !stakingAvailable
+          }
           width="100%"
           padding="16px 24px"
           margin="0"
           style={{ borderRadius: '16px' }}
         >
-          {isLoading ? 'Processing...' : !stakingAvailable ? 'Coming Soon' : 'Unstake'}
+          {isLoading
+            ? 'Processing...'
+            : !stakingAvailable
+              ? 'Coming Soon'
+              : 'Unstake'}
         </B.Button>
       )}
 

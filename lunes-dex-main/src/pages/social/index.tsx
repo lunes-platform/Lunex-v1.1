@@ -6,26 +6,182 @@ import CopyModal from '../copytrade/CopyModal'
 import { Trader } from './types'
 import { TraderCardSkeleton } from 'components/bases/skeleton'
 import { useSDK } from '../../context/SDKContext'
-import socialApi, { SocialIdeaFeedItem, SocialStats, PipelineStatus } from '../../services/socialService'
-import { pageEntrance, interactiveButton, staggerChildren, interactiveCard, timing, easing } from '../../styles/motion'
+import socialApi, {
+  SocialIdeaFeedItem,
+  SocialStats,
+  PipelineStatus
+} from '../../services/socialService'
+import {
+  pageEntrance,
+  interactiveButton,
+  staggerChildren,
+  timing,
+  easing
+} from '../../styles/motion'
 
 // ── SVG Icons ──
-const AllIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
-const TrophyIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 21h8" /><path d="M12 17v4" /><path d="M7 4H4.5a2.5 2.5 0 000 5H7" /><path d="M17 4h2.5a2.5 2.5 0 010 5H17" /><path d="M7 4h10v8a5 5 0 01-10 0V4z" /></svg>
-const UsersIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>
-const BotIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" /><path d="M12 7v4" /><line x1="8" y1="16" x2="8" y2="16" strokeLinecap="round" strokeWidth="3" /><line x1="12" y1="16" x2="12" y2="16" strokeLinecap="round" strokeWidth="3" /><line x1="16" y1="16" x2="16" y2="16" strokeLinecap="round" strokeWidth="3" /></svg>
-const SearchIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-const IdeaIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
-const WalletIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 010-4h14v4" /><path d="M3 5v14a2 2 0 002 2h16v-5" /><path d="M18 12a2 2 0 100 4 2 2 0 000-4z" /></svg>
-const VaultIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="12" cy="12" r="4" /><path d="M12 8v1M12 15v1M8 12h1M15 12h1" /></svg>
-const HeartIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
-const MessageIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
+const AllIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <rect x="3" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+    <rect x="14" y="14" width="7" height="7" rx="1" />
+  </svg>
+)
+const TrophyIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M8 21h8" />
+    <path d="M12 17v4" />
+    <path d="M7 4H4.5a2.5 2.5 0 000 5H7" />
+    <path d="M17 4h2.5a2.5 2.5 0 010 5H17" />
+    <path d="M7 4h10v8a5 5 0 01-10 0V4z" />
+  </svg>
+)
+const UsersIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 00-3-3.87" />
+    <path d="M16 3.13a4 4 0 010 7.75" />
+  </svg>
+)
+const BotIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <rect x="3" y="11" width="18" height="10" rx="2" />
+    <circle cx="12" cy="5" r="2" />
+    <path d="M12 7v4" />
+    <line x1="8" y1="16" x2="8" y2="16" strokeLinecap="round" strokeWidth="3" />
+    <line
+      x1="12"
+      y1="16"
+      x2="12"
+      y2="16"
+      strokeLinecap="round"
+      strokeWidth="3"
+    />
+    <line
+      x1="16"
+      y1="16"
+      x2="16"
+      y2="16"
+      strokeLinecap="round"
+      strokeWidth="3"
+    />
+  </svg>
+)
+const SearchIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
+)
+const IdeaIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4" />
+    <path d="M12 8h.01" />
+  </svg>
+)
+const WalletIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M21 12V7H5a2 2 0 010-4h14v4" />
+    <path d="M3 5v14a2 2 0 002 2h16v-5" />
+    <path d="M18 12a2 2 0 100 4 2 2 0 000-4z" />
+  </svg>
+)
+const VaultIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 8v1M12 15v1M8 12h1M15 12h1" />
+  </svg>
+)
+const HeartIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
+  </svg>
+)
+const MessageIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+  </svg>
+)
 
 // ── Styled Components ──
 
 const Page = styled.div`
   min-height: 100vh;
-  background: #1A1A1A;
+  background: #1a1a1a;
   padding: 80px 24px 48px;
   ${pageEntrance}
 `
@@ -45,12 +201,12 @@ const Title = styled.h1`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 42px;
   font-weight: 800;
-  color: #FFFFFF;
+  color: #ffffff;
   margin: 0 0 12px 0;
   letter-spacing: -1px;
 
   span {
-    background: linear-gradient(135deg, #6C38FF, #AD87FF);
+    background: linear-gradient(135deg, #6c38ff, #ad87ff);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
   }
@@ -59,7 +215,7 @@ const Title = styled.h1`
 const Subtitle = styled.p`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16px;
-  color: #8A8A8E;
+  color: #8a8a8e;
   margin: 0;
   max-width: 560px;
   margin: 0 auto;
@@ -83,7 +239,7 @@ const StatsBar = styled.div`
 
 const StatItem = styled.div`
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 12px;
   padding: 20px;
   text-align: center;
@@ -93,13 +249,13 @@ const StatValue = styled.div`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 24px;
   font-weight: 700;
-  color: #FFFFFF;
+  color: #ffffff;
 `
 
 const StatLabel = styled.div`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
-  color: #47474A;
+  color: #47474a;
   margin-top: 4px;
   display: flex;
   align-items: center;
@@ -116,9 +272,11 @@ const OnChainBadge = styled.span<{ active?: boolean }>`
   font-family: 'Space Grotesk', sans-serif;
   padding: 3px 8px;
   border-radius: 20px;
-  background: ${({ active }) => active ? 'rgba(38,208,124,0.12)' : 'rgba(255,165,0,0.1)'};
-  color: ${({ active }) => active ? '#26D07C' : '#FFA500'};
-  border: 1px solid ${({ active }) => active ? 'rgba(38,208,124,0.2)' : 'rgba(255,165,0,0.2)'};
+  background: ${({ active }) =>
+    active ? 'rgba(38,208,124,0.12)' : 'rgba(255,165,0,0.1)'};
+  color: ${({ active }) => (active ? '#26D07C' : '#FFA500')};
+  border: 1px solid
+    ${({ active }) => (active ? 'rgba(38,208,124,0.2)' : 'rgba(255,165,0,0.2)')};
 
   &::before {
     content: '';
@@ -126,12 +284,17 @@ const OnChainBadge = styled.span<{ active?: boolean }>`
     height: 5px;
     border-radius: 50%;
     background: currentColor;
-    animation: ${({ active }) => active ? 'pulse 2s infinite' : 'none'};
+    animation: ${({ active }) => (active ? 'pulse 2s infinite' : 'none')};
   }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
   }
 `
 
@@ -141,7 +304,7 @@ const TabsContainer = styled.div`
   background: #232323;
   border-radius: 12px;
   padding: 4px;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
 `
 
 const HeaderActions = styled.div`
@@ -152,8 +315,8 @@ const HeaderActions = styled.div`
 `
 
 const CreateProfileBtn = styled.button`
-  background: #6C38FF;
-  color: #FFFFFF;
+  background: #6c38ff;
+  color: #ffffff;
   border: none;
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;
@@ -181,13 +344,14 @@ const Tab = styled.button<{ active: boolean }>`
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: ${({ active }) => active ? '#6C38FF' : 'transparent'};
-  color: ${({ active }) => active ? '#FFFFFF' : '#8A8A8E'};
+  background: ${({ active }) => (active ? '#6C38FF' : 'transparent')};
+  color: ${({ active }) => (active ? '#FFFFFF' : '#8A8A8E')};
   position: relative;
 
   &:hover {
-    color: #FFFFFF;
-    background: ${({ active }) => active ? '#6C38FF' : 'rgba(108, 56, 255, 0.08)'};
+    color: #ffffff;
+    background: ${({ active }) =>
+      active ? '#6C38FF' : 'rgba(108, 56, 255, 0.08)'};
   }
 
   &:active {
@@ -217,38 +381,38 @@ const SearchInputWrapper = styled.div`
   svg {
     position: absolute;
     left: 14px;
-    color: #47474A;
+    color: #47474a;
   }
 `
 
 const SearchInput = styled.input`
   width: 100%;
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 8px;
   padding: 12px 16px 12px 40px;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
-  color: #FFFFFF;
+  color: #ffffff;
   outline: none;
 
   &::placeholder {
-    color: #47474A;
+    color: #47474a;
   }
 
   &:focus {
-    border-color: #6C38FF;
+    border-color: #6c38ff;
   }
 `
 
 const SortSelect = styled.select`
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 8px;
   padding: 12px 16px;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
-  color: #FFFFFF;
+  color: #ffffff;
   outline: none;
   cursor: pointer;
 
@@ -260,7 +424,7 @@ const SortSelect = styled.select`
 const EmptyState = styled.div`
   text-align: center;
   padding: 80px 0;
-  color: #47474A;
+  color: #47474a;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16px;
 `
@@ -270,8 +434,8 @@ const Toast = styled.div`
   position: fixed;
   bottom: 32px;
   right: 32px;
-  background: #26D07C;
-  color: #1A1A1A;
+  background: #26d07c;
+  color: #1a1a1a;
   padding: 12px 24px;
   border-radius: 8px;
   font-family: 'Space Grotesk', sans-serif;
@@ -282,21 +446,32 @@ const Toast = styled.div`
   gap: 8px;
   box-shadow: 0 8px 32px rgba(38, 208, 124, 0.2);
   z-index: 10000;
-  animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1), fadeOut 0.3s 2.7s forwards;
+  animation:
+    slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    fadeOut 0.3s 2.7s forwards;
 
   @keyframes slideIn {
-    from { transform: translateY(100%); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
   @keyframes fadeOut {
-    to { opacity: 0; pointer-events: none; }
+    to {
+      opacity: 0;
+      pointer-events: none;
+    }
   }
 `
 
 const StatusBanner = styled.div`
   background: rgba(254, 146, 63, 0.12);
   border: 1px solid rgba(254, 146, 63, 0.2);
-  color: #FE923F;
+  color: #fe923f;
   border-radius: 12px;
   padding: 14px 16px;
   margin-bottom: 24px;
@@ -307,7 +482,7 @@ const StatusBanner = styled.div`
 const IdeaCard = styled.button`
   width: 100%;
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 16px;
   padding: 20px;
   text-align: left;
@@ -315,7 +490,7 @@ const IdeaCard = styled.button`
   transition: all 0.2s;
 
   &:hover {
-    border-color: #6C38FF44;
+    border-color: #6c38ff44;
     transform: translateY(-2px);
   }
 `
@@ -330,7 +505,7 @@ const IdeaHeader = styled.div`
 
 const IdeaTitle = styled.h3`
   margin: 0;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16px;
   font-weight: 700;
@@ -343,8 +518,9 @@ const IdeaTitle = styled.h3`
 `
 
 const DirectionBadge = styled.span<{ bullish: boolean }>`
-  color: ${({ bullish }) => bullish ? '#26D07C' : '#FF284C'};
-  background: ${({ bullish }) => bullish ? 'rgba(38,208,124,0.1)' : 'rgba(255,40,76,0.1)'};
+  color: ${({ bullish }) => (bullish ? '#26D07C' : '#FF284C')};
+  background: ${({ bullish }) =>
+    bullish ? 'rgba(38,208,124,0.1)' : 'rgba(255,40,76,0.1)'};
   padding: 4px 10px;
   border-radius: 6px;
   font-family: 'Space Grotesk', sans-serif;
@@ -353,7 +529,7 @@ const DirectionBadge = styled.span<{ bullish: boolean }>`
 `
 
 const IdeaLeader = styled.div`
-  color: #AD87FF;
+  color: #ad87ff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   font-weight: 600;
@@ -362,7 +538,7 @@ const IdeaLeader = styled.div`
 
 const IdeaDescription = styled.p`
   margin: 0 0 14px 0;
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
   line-height: 1.6;
@@ -378,7 +554,7 @@ const IdeaMeta = styled.div`
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  color: #47474A;
+  color: #47474a;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   align-items: center;
@@ -391,8 +567,8 @@ const IdeaMetaItem = styled.span`
 `
 
 const IdeaTag = styled.span`
-  background: #2A2A2C;
-  color: #8A8A8E;
+  background: #2a2a2c;
+  color: #8a8a8e;
   padding: 3px 8px;
   border-radius: 6px;
   font-family: 'Space Grotesk', sans-serif;
@@ -409,7 +585,7 @@ const getEmptyStats = (): SocialStats => ({
   aiAgents: 0,
   totalFollowers: 0,
   totalIdeas: 0,
-  totalVaultEquity: 0,
+  totalVaultEquity: 0
 })
 
 const formatAumLabel = (value: number): string => {
@@ -440,11 +616,12 @@ const SocialTrade: React.FC = () => {
       try {
         const [nextStats, nextPipeline] = await Promise.allSettled([
           socialApi.getStats(),
-          socialApi.getPipelineStatus(),
+          socialApi.getPipelineStatus()
         ])
         if (isMounted) {
           if (nextStats.status === 'fulfilled') setStats(nextStats.value)
-          if (nextPipeline.status === 'fulfilled') setPipeline(nextPipeline.value)
+          if (nextPipeline.status === 'fulfilled')
+            setPipeline(nextPipeline.value)
         }
       } catch {
         // Stats remain empty on failure
@@ -482,13 +659,17 @@ const SocialTrade: React.FC = () => {
             tab: activeTab,
             search,
             sortBy: sortBy as 'roi30d' | 'followers' | 'winRate' | 'sharpe',
-            limit: 50,
+            limit: 50
           })
           if (isMounted) setLeaders(nextLeaders)
         }
       } catch (err) {
         if (!isMounted) return
-        setStatusMessage(err instanceof Error ? `${err.message}. Could not load data.` : 'API unavailable.')
+        setStatusMessage(
+          err instanceof Error
+            ? `${err.message}. Could not load data.`
+            : 'API unavailable.'
+        )
       } finally {
         if (isMounted) setIsLoading(false)
       }
@@ -522,35 +703,58 @@ const SocialTrade: React.FC = () => {
         <StatsBar>
           <StatItem>
             <StatValue>${formatAumLabel(stats.totalAum)}</StatValue>
-            <StatLabel><WalletIcon /> Total AUM</StatLabel>
+            <StatLabel>
+              <WalletIcon /> Total AUM
+            </StatLabel>
           </StatItem>
           <StatItem>
             <StatValue>{stats.activeTraders}</StatValue>
-            <StatLabel><UsersIcon /> Active Traders</StatLabel>
+            <StatLabel>
+              <UsersIcon /> Active Traders
+            </StatLabel>
           </StatItem>
           <StatItem>
             <StatValue>{stats.aiAgents}</StatValue>
-            <StatLabel><BotIcon /> AI Agents</StatLabel>
+            <StatLabel>
+              <BotIcon /> AI Agents
+            </StatLabel>
           </StatItem>
           <StatItem>
             <StatValue>{stats.totalFollowers.toLocaleString()}</StatValue>
-            <StatLabel><UsersIcon /> Total Followers</StatLabel>
+            <StatLabel>
+              <UsersIcon /> Total Followers
+            </StatLabel>
           </StatItem>
           <StatItem>
             <StatValue>{stats.totalIdeas}</StatValue>
-            <StatLabel><IdeaIcon /> Published Ideas</StatLabel>
+            <StatLabel>
+              <IdeaIcon /> Published Ideas
+            </StatLabel>
           </StatItem>
           <StatItem>
             <StatValue>${formatAumLabel(stats.totalVaultEquity)}</StatValue>
-            <StatLabel><VaultIcon /> Vault Equity</StatLabel>
+            <StatLabel>
+              <VaultIcon /> Vault Equity
+            </StatLabel>
           </StatItem>
         </StatsBar>
 
         {pipeline && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', justifyContent: 'flex-end' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              marginBottom: '16px',
+              justifyContent: 'flex-end'
+            }}
+          >
             <OnChainBadge active={pipeline.indexedEvents > 0}>
               {pipeline.indexedEvents > 0
-                ? `On-chain: ${pipeline.indexedEvents.toLocaleString()} events indexed · block ${pipeline.latestIndexedEvent?.blockNumber?.toLocaleString() ?? '—'}`
+                ? `On-chain: ${pipeline.indexedEvents.toLocaleString()} events indexed · block ${
+                    pipeline.latestIndexedEvent?.blockNumber?.toLocaleString() ??
+                    '—'
+                  }`
                 : 'Waiting for on-chain events'}
             </OnChainBadge>
             {pipeline.snapshots > 0 && (
@@ -565,15 +769,52 @@ const SocialTrade: React.FC = () => {
 
         <HeaderActions>
           <TabsContainer>
-            <Tab active={activeTab === 'all'} onClick={() => setActiveTab('all')}><AllIcon /> All</Tab>
-            <Tab active={activeTab === 'traders'} onClick={() => setActiveTab('traders')}><UsersIcon /> Traders</Tab>
-            <Tab active={activeTab === 'bots'} onClick={() => setActiveTab('bots')}><BotIcon /> AI Bots</Tab>
-            <Tab active={activeTab === 'leaderboard'} onClick={() => setActiveTab('leaderboard')}><TrophyIcon /> Leaderboard</Tab>
-            <Tab active={activeTab === 'ideas'} onClick={() => setActiveTab('ideas')}><IdeaIcon /> Ideas</Tab>
+            <Tab
+              active={activeTab === 'all'}
+              onClick={() => setActiveTab('all')}
+            >
+              <AllIcon /> All
+            </Tab>
+            <Tab
+              active={activeTab === 'traders'}
+              onClick={() => setActiveTab('traders')}
+            >
+              <UsersIcon /> Traders
+            </Tab>
+            <Tab
+              active={activeTab === 'bots'}
+              onClick={() => setActiveTab('bots')}
+            >
+              <BotIcon /> AI Bots
+            </Tab>
+            <Tab
+              active={activeTab === 'leaderboard'}
+              onClick={() => setActiveTab('leaderboard')}
+            >
+              <TrophyIcon /> Leaderboard
+            </Tab>
+            <Tab
+              active={activeTab === 'ideas'}
+              onClick={() => setActiveTab('ideas')}
+            >
+              <IdeaIcon /> Ideas
+            </Tab>
           </TabsContainer>
 
           <CreateProfileBtn onClick={() => navigate('/social/settings')}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /><line x1="19" y1="8" x2="23" y2="8" /><line x1="21" y1="6" x2="21" y2="10" /></svg>
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+              <line x1="19" y1="8" x2="23" y2="8" />
+              <line x1="21" y1="6" x2="21" y2="10" />
+            </svg>
             Become a Leader
           </CreateProfileBtn>
         </HeaderActions>
@@ -581,8 +822,21 @@ const SocialTrade: React.FC = () => {
         {activeTab !== 'ideas' ? (
           <>
             {activeTab === 'leaderboard' && (
-              <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(108,56,255,0.08)', border: '1px solid rgba(108,56,255,0.2)', borderRadius: '10px', fontSize: '13px', color: '#AD87FF', fontFamily: "'Space Grotesk', sans-serif" }}>
-                <strong>Leaderboard</strong> — ranked by risk-adjusted performance (Sharpe ratio), computed from on-chain activity via the Lunes blockchain indexer.
+              <div
+                style={{
+                  marginBottom: '12px',
+                  padding: '10px 14px',
+                  background: 'rgba(108,56,255,0.08)',
+                  border: '1px solid rgba(108,56,255,0.2)',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  color: '#AD87FF',
+                  fontFamily: "'Space Grotesk', sans-serif"
+                }}
+              >
+                <strong>Leaderboard</strong> — ranked by risk-adjusted
+                performance (Sharpe ratio), computed from on-chain activity via
+                the Lunes blockchain indexer.
               </div>
             )}
             <SearchBar>
@@ -591,10 +845,13 @@ const SocialTrade: React.FC = () => {
                 <SearchInput
                   placeholder="Search traders, bots, or strategies..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={e => setSearch(e.target.value)}
                 />
               </SearchInputWrapper>
-              <SortSelect value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+              <SortSelect
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+              >
                 <option value="roi30d">Sort by ROI (30d)</option>
                 <option value="followers">Sort by Followers</option>
                 <option value="winRate">Sort by Win Rate</option>
@@ -603,18 +860,18 @@ const SocialTrade: React.FC = () => {
             </SearchBar>
 
             <Grid>
-              {isLoading ? (
-                Array.from({ length: 6 }).map((_, i) => <TraderCardSkeleton key={`skeleton-${i}`} />)
-              ) : (
-                leaders.map((trader, i) => (
-                  <TraderCard
-                    key={trader.id}
-                    trader={trader}
-                    rank={i + 1}
-                    onCopy={setCopyTarget}
-                  />
-                ))
-              )}
+              {isLoading
+                ? Array.from({ length: 6 }).map((_, i) => (
+                    <TraderCardSkeleton key={`skeleton-${i}`} />
+                  ))
+                : leaders.map((trader, i) => (
+                    <TraderCard
+                      key={trader.id}
+                      trader={trader}
+                      rank={i + 1}
+                      onCopy={setCopyTarget}
+                    />
+                  ))}
             </Grid>
 
             {!isLoading && leaders.length === 0 && (
@@ -623,30 +880,44 @@ const SocialTrade: React.FC = () => {
           </>
         ) : (
           <Grid>
-            {isLoading ? (
-              Array.from({ length: 3 }).map((_, i) => <TraderCardSkeleton key={`idea-skeleton-${i}`} />)
-            ) : (
-              ideas.map((idea) => (
-                <IdeaCard
-                  key={idea.id}
-                  onClick={() => idea.leader ? navigate(`/social/profile/${idea.leader.id}`) : undefined}
-                >
-                  <IdeaHeader>
-                    <IdeaTitle>{idea.title}</IdeaTitle>
-                    <DirectionBadge bullish={idea.direction === 'Bullish'}>{idea.direction}</DirectionBadge>
-                  </IdeaHeader>
-                  {idea.leader ? <IdeaLeader>@{idea.leader.username}</IdeaLeader> : null}
-                  <IdeaDescription>{idea.description}</IdeaDescription>
-                  <IdeaMeta>
-                    <IdeaMetaItem><HeartIcon /> {idea.likes}</IdeaMetaItem>
-                    <IdeaMetaItem><MessageIcon /> {idea.comments}</IdeaMetaItem>
-                    <IdeaMetaItem>{idea.pair}</IdeaMetaItem>
-                    <IdeaMetaItem>{idea.date}</IdeaMetaItem>
-                    {idea.tags.map((tag) => <IdeaTag key={tag}>{tag}</IdeaTag>)}
-                  </IdeaMeta>
-                </IdeaCard>
-              ))
-            )}
+            {isLoading
+              ? Array.from({ length: 3 }).map((_, i) => (
+                  <TraderCardSkeleton key={`idea-skeleton-${i}`} />
+                ))
+              : ideas.map(idea => (
+                  <IdeaCard
+                    key={idea.id}
+                    onClick={() =>
+                      idea.leader
+                        ? navigate(`/social/profile/${idea.leader.id}`)
+                        : undefined
+                    }
+                  >
+                    <IdeaHeader>
+                      <IdeaTitle>{idea.title}</IdeaTitle>
+                      <DirectionBadge bullish={idea.direction === 'Bullish'}>
+                        {idea.direction}
+                      </DirectionBadge>
+                    </IdeaHeader>
+                    {idea.leader ? (
+                      <IdeaLeader>@{idea.leader.username}</IdeaLeader>
+                    ) : null}
+                    <IdeaDescription>{idea.description}</IdeaDescription>
+                    <IdeaMeta>
+                      <IdeaMetaItem>
+                        <HeartIcon /> {idea.likes}
+                      </IdeaMetaItem>
+                      <IdeaMetaItem>
+                        <MessageIcon /> {idea.comments}
+                      </IdeaMetaItem>
+                      <IdeaMetaItem>{idea.pair}</IdeaMetaItem>
+                      <IdeaMetaItem>{idea.date}</IdeaMetaItem>
+                      {idea.tags.map(tag => (
+                        <IdeaTag key={tag}>{tag}</IdeaTag>
+                      ))}
+                    </IdeaMeta>
+                  </IdeaCard>
+                ))}
           </Grid>
         )}
 
@@ -657,9 +928,13 @@ const SocialTrade: React.FC = () => {
         <CopyModal
           trader={copyTarget as any}
           onClose={() => setCopyTarget(null)}
-          onConfirm={(amount) => {
+          onConfirm={amount => {
             const token = copyTarget?.vault?.collateralToken ?? 'USDT'
-            setToastMessage(`Success: Deposited ${String(amount)} ${token} into ${copyTarget?.name ?? ''}'s Vault!`)
+            setToastMessage(
+              `Success: Deposited ${String(amount)} ${token} into ${
+                copyTarget?.name ?? ''
+              }'s Vault!`
+            )
             setCopyTarget(null)
             setTimeout(() => setToastMessage(''), 3000)
           }}
@@ -667,7 +942,17 @@ const SocialTrade: React.FC = () => {
 
         {toastMessage && (
           <Toast>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
             {toastMessage}
           </Toast>
         )}

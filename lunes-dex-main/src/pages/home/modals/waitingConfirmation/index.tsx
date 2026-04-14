@@ -2,7 +2,6 @@ import React from 'react'
 import { useAppContext } from 'context/useContext'
 //Modals
 import Modal from 'components/modal'
-import * as S from './styles'
 import * as B from 'components/bases'
 
 type WaitingConfirmationProps = {

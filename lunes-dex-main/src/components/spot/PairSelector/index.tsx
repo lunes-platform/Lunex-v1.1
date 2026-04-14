@@ -100,7 +100,7 @@ const FilterTab = styled.button<{ active?: boolean }>`
 
   &:hover {
     background: ${({ active }) =>
-    active ? 'rgba(108, 56, 255, 0.2)' : 'rgba(255,255,255,0.08)'};
+      active ? 'rgba(108, 56, 255, 0.2)' : 'rgba(255,255,255,0.08)'};
   }
 `
 
@@ -216,8 +216,14 @@ interface PairSelectorProps {
 }
 
 const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
-  const { selectedPair, setSelectedPair, pairs: apiPairs, ticker, walletAddress } = useSpot()
-  const { favorites, isFavorite, toggleFavorite } = useFavorites(walletAddress)
+  const {
+    selectedPair,
+    setSelectedPair,
+    pairs: apiPairs,
+    ticker,
+    walletAddress
+  } = useSpot()
+  const { isFavorite, toggleFavorite } = useFavorites(walletAddress)
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState(value || selectedPair)
   const [search, setSearch] = useState('')
@@ -268,10 +274,13 @@ const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
     }
   }, [open])
 
-  const handleToggleFav = useCallback((symbol: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    toggleFavorite(symbol)
-  }, [toggleFavorite])
+  const handleToggleFav = useCallback(
+    (symbol: string, e: React.MouseEvent) => {
+      e.stopPropagation()
+      toggleFavorite(symbol)
+    },
+    [toggleFavorite]
+  )
 
   const filteredPairs = useMemo(() => {
     let result = allPairs
@@ -282,7 +291,7 @@ const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
       // Native-coin pairs: base is LUNES or WLUNES, or quote is LUNES
       result = result.filter(p => {
         const [base, quote] = p.symbol.split('/')
-        return base === 'LUNES' || base === 'WLUNES' || quote === 'LUNES'
+        return LUNES_ECOSYSTEM_BASES.includes(base) || quote === 'LUNES'
       })
     } else if (filter === 'LUSDT') {
       result = result.filter(p => p.quote === 'LUSDT')
@@ -303,8 +312,6 @@ const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
     setOpen(false)
     setSearch('')
   }
-
-  const selectedPairData = allPairs.find(p => p.symbol === selected)
 
   return (
     <Wrapper ref={wrapperRef}>

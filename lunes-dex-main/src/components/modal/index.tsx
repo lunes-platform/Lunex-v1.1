@@ -34,12 +34,7 @@ export type ModalProps = {
 - closeExternal: ()=>void
 ### Have fun and be happy!
 */
-const Modal = ({
-  children,
-  direction,
-  loading,
-  ...props
-}: Partial<ModalProps>) => {
+const Modal = ({ children, loading, ...props }: Partial<ModalProps>) => {
   return (
     <S.Container>
       <S.CloseExternal onClick={props.closeExternal} {...props} />

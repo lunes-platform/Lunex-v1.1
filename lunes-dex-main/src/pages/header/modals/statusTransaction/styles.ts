@@ -2,7 +2,7 @@ import styled, { css } from 'styled-components'
 import { Paragraph } from 'components/bases'
 
 export const View = styled(Paragraph)`
-  ${({ ...props }) => css`
+  ${css`
     margin-bottom: 8px;
     display: flex;
     align-items: center;

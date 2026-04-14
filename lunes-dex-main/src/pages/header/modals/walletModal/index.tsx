@@ -61,7 +61,7 @@ const AvatarCircle = styled.div`
   width: 38px;
   height: 38px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #6C38FF 0%, #00C076 100%);
+  background: linear-gradient(135deg, #6c38ff 0%, #00c076 100%);
   flex-shrink: 0;
 `
 
@@ -80,7 +80,7 @@ const AddressText = styled.span`
 
 const CopyBtn = styled.button`
   font-size: 11px;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255, 255, 255, 0.4);
   background: none;
   border: none;
   cursor: pointer;
@@ -88,7 +88,9 @@ const CopyBtn = styled.button`
   transition: color 0.15s;
   text-align: left;
 
-  &:hover { color: #6C38FF; }
+  &:hover {
+    color: #6c38ff;
+  }
 `
 
 const HeaderActions = styled.div`
@@ -100,17 +102,17 @@ const HeaderActions = styled.div`
 const DisconnectBtn = styled.button`
   padding: 6px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(255,75,85,0.3);
-  background: rgba(255,75,85,0.06);
-  color: #FF4B55;
+  border: 1px solid rgba(255, 75, 85, 0.3);
+  background: rgba(255, 75, 85, 0.06);
+  color: #ff4b55;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
 
   &:hover {
-    background: rgba(255,75,85,0.14);
-    border-color: rgba(255,75,85,0.6);
+    background: rgba(255, 75, 85, 0.14);
+    border-color: rgba(255, 75, 85, 0.6);
   }
 `
 
@@ -118,9 +120,9 @@ const CloseBtn = styled.button`
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.5);
   cursor: pointer;
   font-size: 14px;
   display: flex;
@@ -129,7 +131,7 @@ const CloseBtn = styled.button`
   transition: all 0.15s;
 
   &:hover {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
     color: #fff;
   }
 `
@@ -152,13 +154,15 @@ const Tab = styled.button<{ $active: boolean }>`
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s;
-  background: ${({ $active }) => $active ? 'rgba(108, 56, 255, 0.2)' : 'transparent'};
-  color: ${({ $active }) => $active ? '#ffffff' : 'rgba(255,255,255,0.4)'};
-  border: 1px solid ${({ $active }) => $active ? 'rgba(108, 56, 255, 0.4)' : 'transparent'};
+  background: ${({ $active }) =>
+    $active ? 'rgba(108, 56, 255, 0.2)' : 'transparent'};
+  color: ${({ $active }) => ($active ? '#ffffff' : 'rgba(255,255,255,0.4)')};
+  border: 1px solid
+    ${({ $active }) => ($active ? 'rgba(108, 56, 255, 0.4)' : 'transparent')};
 
   &:hover {
     background: rgba(108, 56, 255, 0.12);
-    color: rgba(255,255,255,0.8);
+    color: rgba(255, 255, 255, 0.8);
   }
 `
 
@@ -169,10 +173,14 @@ const ScrollBody = styled.div`
   overflow-y: auto;
   padding: 16px 20px 20px;
 
-  &::-webkit-scrollbar { width: 4px; }
-  &::-webkit-scrollbar-track { background: transparent; }
+  &::-webkit-scrollbar {
+    width: 4px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
   &::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.1);
+    background: rgba(255, 255, 255, 0.1);
     border-radius: 2px;
   }
 `
@@ -180,14 +188,14 @@ const ScrollBody = styled.div`
 const LoadingState = styled.div`
   text-align: center;
   padding: 32px 0;
-  color: rgba(255,255,255,0.35);
+  color: rgba(255, 255, 255, 0.35);
   font-size: 13px;
 `
 
 const EmptyState = styled.div`
   text-align: center;
   padding: 28px 0;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255, 255, 255, 0.3);
   font-size: 12px;
   line-height: 1.6;
 `
@@ -200,11 +208,11 @@ const TokenRow = styled.div<{ $zero?: boolean }>`
   gap: 12px;
   padding: 11px 12px;
   border-radius: 10px;
-  opacity: ${({ $zero }) => $zero ? 0.45 : 1};
+  opacity: ${({ $zero }) => ($zero ? 0.45 : 1)};
   transition: background 0.15s;
 
   &:hover {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255, 255, 255, 0.04);
   }
 `
 
@@ -212,7 +220,7 @@ const TokenIcon = styled.img`
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
 `
 
@@ -224,19 +232,19 @@ const TokenInfo = styled.div`
 const TokenSymbol = styled.div`
   font-size: 13px;
   font-weight: 700;
-  color: rgba(255,255,255,0.9);
+  color: rgba(255, 255, 255, 0.9);
 `
 
 const TokenName = styled.div`
   font-size: 11px;
-  color: rgba(255,255,255,0.35);
+  color: rgba(255, 255, 255, 0.35);
   margin-top: 1px;
 `
 
 const TokenBalance = styled.div`
   font-size: 13px;
   font-weight: 600;
-  color: rgba(255,255,255,0.85);
+  color: rgba(255, 255, 255, 0.85);
   font-variant-numeric: tabular-nums;
 `
 
@@ -249,15 +257,15 @@ const Section = styled.div`
 const SectionTitle = styled.div`
   font-size: 10px;
   font-weight: 700;
-  color: rgba(255,255,255,0.3);
+  color: rgba(255, 255, 255, 0.3);
   text-transform: uppercase;
   letter-spacing: 1px;
   margin-bottom: 8px;
 `
 
 const Card = styled.div`
-  background: rgba(255,255,255,0.03);
-  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 12px;
   padding: 14px 16px;
 `
@@ -269,22 +277,20 @@ const CardRow = styled.div`
   padding: 5px 0;
 
   &:not(:last-child) {
-    border-bottom: 1px solid rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   }
 `
 
 const CardLabel = styled.span`
   font-size: 12px;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255, 255, 255, 0.4);
 `
 
 const CardValue = styled.span<{ $green?: boolean; $yellow?: boolean }>`
   font-size: 13px;
   font-weight: 600;
   color: ${({ $green, $yellow }) =>
-    $green ? '#00C076' :
-    $yellow ? '#F7B731' :
-    'rgba(255,255,255,0.85)'};
+    $green ? '#00C076' : $yellow ? '#F7B731' : 'rgba(255,255,255,0.85)'};
 `
 
 const ActionBtn = styled.button<{ $variant?: 'green' | 'purple' | 'outline' }>`
@@ -297,13 +303,15 @@ const ActionBtn = styled.button<{ $variant?: 'green' | 'purple' | 'outline' }>`
   border: 1px solid;
 
   ${({ $variant }) => {
-    if ($variant === 'green') return `
+    if ($variant === 'green')
+      return `
       background: rgba(0,192,118,0.12);
       border-color: rgba(0,192,118,0.35);
       color: #00C076;
       &:hover { background: rgba(0,192,118,0.2); }
     `
-    if ($variant === 'outline') return `
+    if ($variant === 'outline')
+      return `
       background: transparent;
       border-color: rgba(255,255,255,0.12);
       color: rgba(255,255,255,0.6);
@@ -329,8 +337,8 @@ const ReferralCodeBox = styled.div`
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  background: rgba(108,56,255,0.08);
-  border: 1px solid rgba(108,56,255,0.2);
+  background: rgba(108, 56, 255, 0.08);
+  border: 1px solid rgba(108, 56, 255, 0.2);
   border-radius: 10px;
   margin-bottom: 12px;
 `
@@ -361,13 +369,15 @@ const PoolIcons = styled.div`
     border: 2px solid #111115;
   }
 
-  img:last-child { margin-left: -8px; }
+  img:last-child {
+    margin-left: -8px;
+  }
 `
 
 const PoolName = styled.span`
   font-size: 13px;
   font-weight: 700;
-  color: rgba(255,255,255,0.85);
+  color: rgba(255, 255, 255, 0.85);
 `
 
 const Badge = styled.span<{ $color?: string }>`
@@ -375,9 +385,11 @@ const Badge = styled.span<{ $color?: string }>`
   font-weight: 600;
   padding: 2px 7px;
   border-radius: 4px;
-  background: ${({ $color }) => $color ? `${$color}22` : 'rgba(108,56,255,0.15)'};
+  background: ${({ $color }) =>
+    $color ? `${$color}22` : 'rgba(108,56,255,0.15)'};
   color: ${({ $color }) => $color ?? '#a78bfa'};
-  border: 1px solid ${({ $color }) => $color ? `${$color}44` : 'rgba(108,56,255,0.3)'};
+  border: 1px solid
+    ${({ $color }) => ($color ? `${$color}44` : 'rgba(108,56,255,0.3)')};
 `
 
 // ──────────────────── Helpers ────────────────────
@@ -469,14 +481,32 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
       for (const token of tokens) {
         if (token.isNative) {
           const num = Number(sdk.balance || 0) / Math.pow(10, token.decimals)
-          results.push({ acronym: token.acronym, name: token.token, icon: token.icon, balance: fmt(num), rawBalance: num })
+          results.push({
+            acronym: token.acronym,
+            name: token.token,
+            icon: token.icon,
+            balance: fmt(num),
+            rawBalance: num
+          })
         } else if (token.address) {
           try {
             const raw = await sdk.getTokenBalance(token.address, address)
             const num = Number(raw) / Math.pow(10, token.decimals)
-            results.push({ acronym: token.acronym, name: token.token, icon: token.icon, balance: fmt(num), rawBalance: num })
+            results.push({
+              acronym: token.acronym,
+              name: token.token,
+              icon: token.icon,
+              balance: fmt(num),
+              rawBalance: num
+            })
           } catch {
-            results.push({ acronym: token.acronym, name: token.token, icon: token.icon, balance: '0', rawBalance: 0 })
+            results.push({
+              acronym: token.acronym,
+              name: token.token,
+              icon: token.icon,
+              balance: '0',
+              rawBalance: 0
+            })
           }
         }
       }
@@ -493,12 +523,13 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
     setStakingLoading(true)
     try {
       const info = await sdk.getStakingUserInfo(address)
-      if (info) setStaking({
-        userStaked: info.userStaked,
-        pendingRewards: info.pendingRewards,
-        apr: info.apr,
-        lockPeriod: info.lockPeriod,
-      })
+      if (info)
+        setStaking({
+          userStaked: info.userStaked,
+          pendingRewards: info.pendingRewards,
+          apr: info.apr,
+          lockPeriod: info.lockPeriod
+        })
     } finally {
       setStakingLoading(false)
     }
@@ -510,14 +541,18 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
     setAffiliateLoading(true)
     try {
       const [codeRes, dashRes] = await Promise.all([
-        fetch(`${SPOT_API}/api/v1/affiliates/code?address=${address}`).then(r => r.json()).catch(() => null),
-        fetch(`${SPOT_API}/api/v1/affiliates/dashboard?address=${address}`).then(r => r.json()).catch(() => null),
+        fetch(`${SPOT_API}/api/v1/affiliates/code?address=${address}`)
+          .then(r => r.json())
+          .catch(() => null),
+        fetch(`${SPOT_API}/api/v1/affiliates/dashboard?address=${address}`)
+          .then(r => r.json())
+          .catch(() => null)
       ])
       setAffiliate({
         code: codeRes?.code ?? '—',
         totalEarnings: dashRes?.dashboard?.totalEarnings ?? 0,
         directReferrals: dashRes?.dashboard?.directReferrals ?? 0,
-        totalVolume: dashRes?.dashboard?.totalVolume ?? 0,
+        totalVolume: dashRes?.dashboard?.totalVolume ?? 0
       })
     } finally {
       setAffiliateLoading(false)
@@ -529,12 +564,12 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
     if (activeTab === 'balances' && balances.length === 0) loadBalances()
     if (activeTab === 'staking' && !staking) loadStaking()
     if (activeTab === 'affiliates' && !affiliate) loadAffiliate()
-  }, [activeTab])  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleClaimRewards = async () => {
     setClaimLoading(true)
     try {
-      await sdk.claimRewards()
+      await sdk.claimStakingRewards()
       await loadStaking()
     } finally {
       setClaimLoading(false)
@@ -553,7 +588,8 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
 
   const renderBalances = () => {
     if (balancesLoading) return <LoadingState>Loading balances…</LoadingState>
-    if (balances.length === 0) return <EmptyState>Connect wallet to view balances</EmptyState>
+    if (balances.length === 0)
+      return <EmptyState>Connect wallet to view balances</EmptyState>
     return (
       <>
         {balances.map(t => (
@@ -561,7 +597,9 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
             <TokenIcon
               src={t.icon}
               alt={t.acronym}
-              onError={e => { (e.target as HTMLImageElement).src = '/img/lunes-green.svg' }}
+              onError={e => {
+                ;(e.target as HTMLImageElement).src = '/img/lunes-green.svg'
+              }}
             />
             <TokenInfo>
               <TokenSymbol>{t.acronym}</TokenSymbol>
@@ -575,7 +613,8 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
   }
 
   const renderStaking = () => {
-    if (stakingLoading) return <LoadingState>Loading staking info…</LoadingState>
+    if (stakingLoading)
+      return <LoadingState>Loading staking info…</LoadingState>
 
     const staked = staking ? Number(staking.userStaked) / 1e8 : 0
     const rewards = staking ? Number(staking.pendingRewards) / 1e8 : 0
@@ -597,7 +636,9 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
             </CardRow>
             <CardRow>
               <CardLabel>APR</CardLabel>
-              <CardValue $yellow>{apr > 0 ? `${apr.toFixed(2)}%` : '—'}</CardValue>
+              <CardValue $yellow>
+                {apr > 0 ? `${apr.toFixed(2)}%` : '—'}
+              </CardValue>
             </CardRow>
             {staking && staking.lockPeriod > 0 && (
               <CardRow>
@@ -608,11 +649,21 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
           </Card>
           <BtnRow>
             {rewards > 0 && (
-              <ActionBtn $variant="green" onClick={handleClaimRewards} disabled={claimLoading}>
+              <ActionBtn
+                $variant="green"
+                onClick={handleClaimRewards}
+                disabled={claimLoading}
+              >
                 {claimLoading ? 'Claiming…' : `Claim ${fmt(rewards)} LUNES`}
               </ActionBtn>
             )}
-            <ActionBtn $variant="outline" onClick={() => { onClose(); window.location.href = '/staking' }}>
+            <ActionBtn
+              $variant="outline"
+              onClick={() => {
+                onClose()
+                window.location.href = '/staking'
+              }}
+            >
               {hasStake ? 'Manage Stake' : 'Start Staking'}
             </ActionBtn>
           </BtnRow>
@@ -636,11 +687,41 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
 
   const renderPools = () => {
     const activePairs = [
-      { symbol: 'LUNES/LUSDT', base: 'LUNES', quote: 'LUSDT', baseIcon: '/img/lunes-green.svg', quoteIcon: '/img/lusdt.svg' },
-      { symbol: 'LBTC/LUSDT',  base: 'LBTC',  quote: 'LUSDT', baseIcon: '/img/lbtc.svg',       quoteIcon: '/img/lusdt.svg' },
-      { symbol: 'LETH/LUSDT',  base: 'LETH',  quote: 'LUSDT', baseIcon: '/img/leth.svg',       quoteIcon: '/img/lusdt.svg' },
-      { symbol: 'GMC/LUSDT',   base: 'GMC',   quote: 'LUSDT', baseIcon: '/img/gmc.svg',        quoteIcon: '/img/lusdt.svg' },
-      { symbol: 'LUP/LUSDT',   base: 'LUP',   quote: 'LUSDT', baseIcon: '/img/up.svg',         quoteIcon: '/img/lusdt.svg' },
+      {
+        symbol: 'LUNES/LUSDT',
+        base: 'LUNES',
+        quote: 'LUSDT',
+        baseIcon: '/img/lunes-green.svg',
+        quoteIcon: '/img/lusdt.svg'
+      },
+      {
+        symbol: 'LBTC/LUSDT',
+        base: 'LBTC',
+        quote: 'LUSDT',
+        baseIcon: '/img/lbtc.svg',
+        quoteIcon: '/img/lusdt.svg'
+      },
+      {
+        symbol: 'LETH/LUSDT',
+        base: 'LETH',
+        quote: 'LUSDT',
+        baseIcon: '/img/leth.svg',
+        quoteIcon: '/img/lusdt.svg'
+      },
+      {
+        symbol: 'GMC/LUSDT',
+        base: 'GMC',
+        quote: 'LUSDT',
+        baseIcon: '/img/gmc.svg',
+        quoteIcon: '/img/lusdt.svg'
+      },
+      {
+        symbol: 'LUP/LUSDT',
+        base: 'LUP',
+        quote: 'LUSDT',
+        baseIcon: '/img/up.svg',
+        quoteIcon: '/img/lusdt.svg'
+      }
     ]
 
     return (
@@ -648,13 +729,31 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
         <Section>
           <SectionTitle>Active Pairs</SectionTitle>
           {activePairs.map(pair => (
-            <Card key={pair.symbol} style={{ marginBottom: 8, cursor: 'pointer' }}
-              onClick={() => { onClose(); window.location.href = '/pools' }}
+            <Card
+              key={pair.symbol}
+              style={{ marginBottom: 8, cursor: 'pointer' }}
+              onClick={() => {
+                onClose()
+                window.location.href = '/pools'
+              }}
             >
               <PoolPair>
                 <PoolIcons>
-                  <img src={pair.baseIcon} alt={pair.base} onError={e => { (e.target as HTMLImageElement).src = '/img/lunes-green.svg' }} />
-                  <img src={pair.quoteIcon} alt={pair.quote} onError={e => { (e.target as HTMLImageElement).src = '/img/lusdt.svg' }} />
+                  <img
+                    src={pair.baseIcon}
+                    alt={pair.base}
+                    onError={e => {
+                      ;(e.target as HTMLImageElement).src =
+                        '/img/lunes-green.svg'
+                    }}
+                  />
+                  <img
+                    src={pair.quoteIcon}
+                    alt={pair.quote}
+                    onError={e => {
+                      ;(e.target as HTMLImageElement).src = '/img/lusdt.svg'
+                    }}
+                  />
                 </PoolIcons>
                 <PoolName>{pair.symbol}</PoolName>
                 <Badge $color="#00C076">Active</Badge>
@@ -667,7 +766,13 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
           ))}
         </Section>
         <BtnRow>
-          <ActionBtn $variant="purple" onClick={() => { onClose(); window.location.href = '/pools' }}>
+          <ActionBtn
+            $variant="purple"
+            onClick={() => {
+              onClose()
+              window.location.href = '/pools'
+            }}
+          >
             Add Liquidity
           </ActionBtn>
         </BtnRow>
@@ -676,7 +781,8 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
   }
 
   const renderAffiliates = () => {
-    if (affiliateLoading) return <LoadingState>Loading affiliate data…</LoadingState>
+    if (affiliateLoading)
+      return <LoadingState>Loading affiliate data…</LoadingState>
 
     const code = affiliate?.code ?? '—'
     const earnings = affiliate?.totalEarnings ?? 0
@@ -689,7 +795,11 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
           <SectionTitle>Your Referral Link</SectionTitle>
           <ReferralCodeBox>
             <ReferralCode>{code}</ReferralCode>
-            <ActionBtn $variant="outline" onClick={copyReferralCode} style={{ padding: '5px 12px', fontSize: '11px' }}>
+            <ActionBtn
+              $variant="outline"
+              onClick={copyReferralCode}
+              style={{ padding: '5px 12px', fontSize: '11px' }}
+            >
               {codeCopied ? '✓ Copied' : 'Copy Link'}
             </ActionBtn>
           </ReferralCodeBox>
@@ -714,7 +824,13 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
         </Section>
 
         <BtnRow>
-          <ActionBtn $variant="purple" onClick={() => { onClose(); window.location.href = '/affiliates' }}>
+          <ActionBtn
+            $variant="purple"
+            onClick={() => {
+              onClose()
+              window.location.href = '/affiliates'
+            }}
+          >
             Full Dashboard
           </ActionBtn>
         </BtnRow>
@@ -725,7 +841,6 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
   return (
     <Overlay onClick={onClose}>
       <Modal onClick={e => e.stopPropagation()}>
-
         {/* Header */}
         <ModalHeader>
           <AddressRow>
@@ -738,7 +853,12 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
             </AddressBlock>
           </AddressRow>
           <HeaderActions>
-            <DisconnectBtn onClick={() => { onDisconnect(); onClose() }}>
+            <DisconnectBtn
+              onClick={() => {
+                onDisconnect()
+                onClose()
+              }}
+            >
               Disconnect
             </DisconnectBtn>
             <CloseBtn onClick={onClose}>✕</CloseBtn>
@@ -747,20 +867,39 @@ const WalletModal: React.FC<Props> = ({ onClose, onDisconnect }) => {
 
         {/* Tabs */}
         <TabBar>
-          <Tab $active={activeTab === 'balances'} onClick={() => setActiveTab('balances')}>Balances</Tab>
-          <Tab $active={activeTab === 'staking'} onClick={() => setActiveTab('staking')}>Staking</Tab>
-          <Tab $active={activeTab === 'pools'} onClick={() => setActiveTab('pools')}>Pools</Tab>
-          <Tab $active={activeTab === 'affiliates'} onClick={() => setActiveTab('affiliates')}>Affiliates</Tab>
+          <Tab
+            $active={activeTab === 'balances'}
+            onClick={() => setActiveTab('balances')}
+          >
+            Balances
+          </Tab>
+          <Tab
+            $active={activeTab === 'staking'}
+            onClick={() => setActiveTab('staking')}
+          >
+            Staking
+          </Tab>
+          <Tab
+            $active={activeTab === 'pools'}
+            onClick={() => setActiveTab('pools')}
+          >
+            Pools
+          </Tab>
+          <Tab
+            $active={activeTab === 'affiliates'}
+            onClick={() => setActiveTab('affiliates')}
+          >
+            Affiliates
+          </Tab>
         </TabBar>
 
         {/* Body */}
         <ScrollBody>
-          {activeTab === 'balances'   && renderBalances()}
-          {activeTab === 'staking'    && renderStaking()}
-          {activeTab === 'pools'      && renderPools()}
+          {activeTab === 'balances' && renderBalances()}
+          {activeTab === 'staking' && renderStaking()}
+          {activeTab === 'pools' && renderPools()}
           {activeTab === 'affiliates' && renderAffiliates()}
         </ScrollBody>
-
       </Modal>
     </Overlay>
   )

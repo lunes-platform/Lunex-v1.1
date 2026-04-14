@@ -48,7 +48,9 @@ const Header = () => {
         {/* Governance and Rewards - moved from TabBar to header */}
         <S.NavLinks>
           <S.NavLink
-            active={location.pathname === '/swap' || location.pathname === '/trade'}
+            active={
+              location.pathname === '/swap' || location.pathname === '/trade'
+            }
             onClick={() => navigate('/swap')}
           >
             Swap
@@ -60,13 +62,19 @@ const Header = () => {
             Spot
           </S.NavLink>
           <S.NavLink
-            active={location.pathname === '/pools' || location.pathname === '/pool' || location.pathname === '/liquidity'}
+            active={
+              location.pathname === '/pools' ||
+              location.pathname === '/pool' ||
+              location.pathname === '/liquidity'
+            }
             onClick={() => navigate('/pools')}
           >
             Liquidity Pool
           </S.NavLink>
           <S.NavLink
-            active={location.pathname === '/staking' || location.pathname === '/stake'}
+            active={
+              location.pathname === '/staking' || location.pathname === '/stake'
+            }
             onClick={() => navigate('/staking')}
           >
             Staking
@@ -90,13 +98,19 @@ const Header = () => {
             Agent
           </S.NavLink>
           <S.NavLink
-            active={location.pathname === '/rewards' || location.pathname === '/community'}
+            active={
+              location.pathname === '/rewards' ||
+              location.pathname === '/community'
+            }
             onClick={() => navigate('/rewards')}
           >
             Rewards
           </S.NavLink>
           <S.NavLink
-            active={location.pathname === '/affiliates' || location.pathname === '/referral'}
+            active={
+              location.pathname === '/affiliates' ||
+              location.pathname === '/referral'
+            }
             onClick={() => navigate('/affiliates')}
           >
             Affiliates
@@ -104,11 +118,25 @@ const Header = () => {
 
           <S.DropdownContainer>
             <S.NavLink
-              active={['/governance', '/protocol-stats', '/docs'].includes(location.pathname)}
+              active={['/governance', '/protocol-stats', '/docs'].includes(
+                location.pathname
+              )}
             >
               More
-              <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <svg
+                width="10"
+                height="6"
+                viewBox="0 0 10 6"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M1 1L5 5L9 1"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             </S.NavLink>
             <S.DropdownMenu>
@@ -153,7 +181,9 @@ const Header = () => {
               style={{ fontSize: '13px' }}
               isPending={!!state.selectedOption1 && !!state.selectedOption2}
               onClick={() =>
-                sdk.isConnected ? setModal('account') : setModal('connectWallet')
+                sdk.isConnected
+                  ? setModal('account')
+                  : setModal('connectWallet')
               }
             >
               {!!state.selectedOption1 && !!state.selectedOption2
@@ -180,14 +210,16 @@ const Header = () => {
         </S.Nav>
       </S.Header>
 
-      {modal === 'settings' && (
-        <M.Settings close={() => setModal('null')} />
-      )}
+      {modal === 'settings' && <M.Settings close={() => setModal('null')} />}
 
       {modal === 'connectWallet' && (
         <M.ModalConnectWallet
-          connectNetwork={(walletSource?: string) => handleConnectWallet(walletSource)}
-          connectWallet={(walletSource?: string) => handleConnectWallet(walletSource)}
+          connectNetwork={(walletSource?: string) =>
+            handleConnectWallet(walletSource)
+          }
+          connectWallet={(walletSource?: string) =>
+            handleConnectWallet(walletSource)
+          }
           close={() => setModal('null')}
         />
       )}

@@ -44,7 +44,7 @@ interface UseLiquidityReturn {
 
 const useLiquidity = (): UseLiquidityReturn => {
   const sdk = useSDK()
-  
+
   // Estado local
   const [tokenA, setTokenA] = useState<Token | null>(null)
   const [tokenB, setTokenB] = useState<Token | null>(null)
@@ -67,7 +67,7 @@ const useLiquidity = (): UseLiquidityReturn => {
 
     try {
       const pairInfo = await sdk.getPairInfo(tokenA.address, tokenB.address)
-      
+
       if (pairInfo) {
         // Calcular preços e share
         const reserve0 = BigInt(pairInfo.reserve0)
@@ -78,8 +78,11 @@ const useLiquidity = (): UseLiquidityReturn => {
         let poolShare = '0'
 
         if (sdk.walletAddress) {
-          lpBalance = await sdk.getTokenBalance(pairInfo.address, sdk.walletAddress)
-          
+          lpBalance = await sdk.getTokenBalance(
+            pairInfo.address,
+            sdk.walletAddress
+          )
+
           if (totalSupply > BigInt(0)) {
             const share = (BigInt(lpBalance) * BigInt(10000)) / totalSupply
             poolShare = (Number(share) / 100).toFixed(2)
@@ -89,7 +92,7 @@ const useLiquidity = (): UseLiquidityReturn => {
         // Calcular preços relativos
         let token0Price = '0'
         let token1Price = '0'
-        
+
         if (reserve0 > BigInt(0) && reserve1 > BigInt(0)) {
           token0Price = (Number(reserve1) / Number(reserve0)).toString()
           token1Price = (Number(reserve0) / Number(reserve1)).toString()
@@ -127,11 +130,14 @@ const useLiquidity = (): UseLiquidityReturn => {
     if (poolInfo && amountA && tokenA && tokenB) {
       const reserve0 = BigInt(poolInfo.reserve0)
       const reserve1 = BigInt(poolInfo.reserve1)
-      
+
       if (reserve0 > BigInt(0) && reserve1 > BigInt(0)) {
         const amountAWei = BigInt(sdk.parseAmount(amountA, tokenA.decimals))
         const amountBWei = (amountAWei * reserve1) / reserve0
-        const amountBFormatted = sdk.formatAmount(amountBWei.toString(), tokenB.decimals)
+        const amountBFormatted = sdk.formatAmount(
+          amountBWei.toString(),
+          tokenB.decimals
+        )
         setAmountB(amountBFormatted)
       }
     }
@@ -188,58 +194,67 @@ const useLiquidity = (): UseLiquidityReturn => {
   }, [tokenA, tokenB, amountA, amountB, slippage, sdk, refreshPoolInfo])
 
   // Remover liquidez
-  const removeLiquidity = useCallback(async (lpAmount: string): Promise<boolean> => {
-    if (!tokenA || !tokenB || !lpAmount || !poolInfo) {
-      setError('Invalid parameters')
-      return false
-    }
-
-    if (!sdk.walletAddress) {
-      setError('Connect your wallet')
-      return false
-    }
-
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const deadline = sdk.calculateDeadline(20)
-
-      // Calcular amounts mínimos baseado na proporção do LP
-      const lpAmountBigInt = BigInt(lpAmount)
-      const totalSupply = BigInt(poolInfo.totalSupply)
-      const reserve0 = BigInt(poolInfo.reserve0)
-      const reserve1 = BigInt(poolInfo.reserve1)
-
-      const amountAExpected = (lpAmountBigInt * reserve0) / totalSupply
-      const amountBExpected = (lpAmountBigInt * reserve1) / totalSupply
-
-      const amountAMin = sdk.calculateMinAmount(amountAExpected.toString(), slippage)
-      const amountBMin = sdk.calculateMinAmount(amountBExpected.toString(), slippage)
-
-      const result = await sdk.removeLiquidity({
-        tokenA: tokenA.address,
-        tokenB: tokenB.address,
-        liquidity: lpAmount,
-        amountAMin,
-        amountBMin,
-        to: sdk.walletAddress,
-        deadline
-      })
-
-      if (result) {
-        await refreshPoolInfo()
+  const removeLiquidity = useCallback(
+    async (lpAmount: string): Promise<boolean> => {
+      if (!tokenA || !tokenB || !lpAmount || !poolInfo) {
+        setError('Invalid parameters')
+        return false
       }
 
-      return result
-    } catch (err: unknown) {
-      setError(parseBlockchainError(err))
-      console.error('Error removing liquidity:', err)
-      return false
-    } finally {
-      setIsLoading(false)
-    }
-  }, [tokenA, tokenB, poolInfo, slippage, sdk, refreshPoolInfo])
+      if (!sdk.walletAddress) {
+        setError('Connect your wallet')
+        return false
+      }
+
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const deadline = sdk.calculateDeadline(20)
+
+        // Calcular amounts mínimos baseado na proporção do LP
+        const lpAmountBigInt = BigInt(lpAmount)
+        const totalSupply = BigInt(poolInfo.totalSupply)
+        const reserve0 = BigInt(poolInfo.reserve0)
+        const reserve1 = BigInt(poolInfo.reserve1)
+
+        const amountAExpected = (lpAmountBigInt * reserve0) / totalSupply
+        const amountBExpected = (lpAmountBigInt * reserve1) / totalSupply
+
+        const amountAMin = sdk.calculateMinAmount(
+          amountAExpected.toString(),
+          slippage
+        )
+        const amountBMin = sdk.calculateMinAmount(
+          amountBExpected.toString(),
+          slippage
+        )
+
+        const result = await sdk.removeLiquidity({
+          tokenA: tokenA.address,
+          tokenB: tokenB.address,
+          liquidity: lpAmount,
+          amountAMin,
+          amountBMin,
+          to: sdk.walletAddress,
+          deadline
+        })
+
+        if (result) {
+          await refreshPoolInfo()
+        }
+
+        return result
+      } catch (err: unknown) {
+        setError(parseBlockchainError(err))
+        console.error('Error removing liquidity:', err)
+        return false
+      } finally {
+        setIsLoading(false)
+      }
+    },
+    [tokenA, tokenB, poolInfo, slippage, sdk, refreshPoolInfo]
+  )
 
   return {
     tokenA,

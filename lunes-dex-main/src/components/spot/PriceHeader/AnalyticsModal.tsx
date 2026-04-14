@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React from 'react'
 import styled, { keyframes } from 'styled-components'
 import { useSpot } from 'context/SpotContext'
 
@@ -58,7 +58,7 @@ const TitleIcon = styled.div`
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6C38FF;
+  color: #6c38ff;
   flex-shrink: 0;
 `
 
@@ -147,14 +147,19 @@ const Bar = styled.div<{ height: number; accent?: boolean }>`
   flex: 1;
   height: ${({ height }) => height}%;
   min-height: 2px;
-  background: ${({ accent }) => accent
-    ? 'linear-gradient(to top, rgba(108, 56, 255, 0.3), rgba(108, 56, 255, 0.7))'
-    : 'linear-gradient(to top, rgba(108, 56, 255, 0.15), rgba(108, 56, 255, 0.35))'};
+  background: ${({ accent }) =>
+    accent
+      ? 'linear-gradient(to top, rgba(108, 56, 255, 0.3), rgba(108, 56, 255, 0.7))'
+      : 'linear-gradient(to top, rgba(108, 56, 255, 0.15), rgba(108, 56, 255, 0.35))'};
   border-radius: 4px 4px 0 0;
   transition: height 0.3s ease;
 
   &:hover {
-    background: linear-gradient(to top, rgba(108, 56, 255, 0.4), rgba(108, 56, 255, 0.8));
+    background: linear-gradient(
+      to top,
+      rgba(108, 56, 255, 0.4),
+      rgba(108, 56, 255, 0.8)
+    );
   }
 `
 
@@ -211,9 +216,11 @@ const AnalyticsModal: React.FC<Props> = ({ onClose }) => {
 
   // 7-day trend — only show today's real volume; past days are unknown without historical data
   const volumeTrend = Array.from({ length: 7 }, (_, i) => ({
-    day: new Date(Date.now() - (6 - i) * 86400000).toLocaleDateString('en', { weekday: 'short' }),
-    value: i === 6 ? volume : 0,  // only today's real volume is known
-    isToday: i === 6,
+    day: new Date(Date.now() - (6 - i) * 86400000).toLocaleDateString('en', {
+      weekday: 'short'
+    }),
+    value: i === 6 ? volume : 0, // only today's real volume is known
+    isToday: i === 6
   }))
 
   const maxVol = Math.max(...volumeTrend.map(v => v.value), 1)
@@ -224,7 +231,16 @@ const AnalyticsModal: React.FC<Props> = ({ onClose }) => {
         <Header>
           <TitleRow>
             <TitleIcon>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <line x1="18" y1="20" x2="18" y2="10" />
                 <line x1="12" y1="20" x2="12" y2="4" />
                 <line x1="6" y1="20" x2="6" y2="14" />
@@ -242,11 +258,15 @@ const AnalyticsModal: React.FC<Props> = ({ onClose }) => {
           </StatCard>
           <StatCard>
             <StatLabel>Trades</StatLabel>
-            <StatValue>{tradeCount > 0 ? tradeCount.toLocaleString() : '--'}</StatValue>
+            <StatValue>
+              {tradeCount > 0 ? tradeCount.toLocaleString() : '--'}
+            </StatValue>
           </StatCard>
           <StatCard>
             <StatLabel>Spread</StatLabel>
-            <StatValue>{spread > 0 ? `${(spread * 100).toFixed(3)}%` : '--'}</StatValue>
+            <StatValue>
+              {spread > 0 ? `${(spread * 100).toFixed(3)}%` : '--'}
+            </StatValue>
           </StatCard>
         </StatsGrid>
 
@@ -273,13 +293,17 @@ const AnalyticsModal: React.FC<Props> = ({ onClose }) => {
           <StatCard>
             <StatLabel>Best Bid</StatLabel>
             <StatValue style={{ color: '#00C076', fontSize: '14px' }}>
-              {bestBid > 0 ? `$${bestBid >= 1 ? bestBid.toFixed(4) : bestBid.toFixed(8)}` : '--'}
+              {bestBid > 0
+                ? `$${bestBid >= 1 ? bestBid.toFixed(4) : bestBid.toFixed(8)}`
+                : '--'}
             </StatValue>
           </StatCard>
           <StatCard>
             <StatLabel>Best Ask</StatLabel>
             <StatValue style={{ color: '#FF4B55', fontSize: '14px' }}>
-              {bestAsk > 0 ? `$${bestAsk >= 1 ? bestAsk.toFixed(4) : bestAsk.toFixed(8)}` : '--'}
+              {bestAsk > 0
+                ? `$${bestAsk >= 1 ? bestAsk.toFixed(4) : bestAsk.toFixed(8)}`
+                : '--'}
             </StatValue>
           </StatCard>
         </DepthGrid>

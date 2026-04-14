@@ -11,18 +11,18 @@ import styled, { keyframes, css } from 'styled-components'
 
 // ─── Timing Tokens ───────────────────────────────────────────────
 export const timing = {
-    instant: '100ms',
-    fast: '150ms',
-    normal: '200ms',
-    smooth: '300ms',
-    slow: '500ms',
+  instant: '100ms',
+  fast: '150ms',
+  normal: '200ms',
+  smooth: '300ms',
+  slow: '500ms'
 } as const
 
 export const easing = {
-    default: 'cubic-bezier(0.4, 0, 0.2, 1)',
-    spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
-    decelerate: 'cubic-bezier(0, 0, 0.2, 1)',
-    accelerate: 'cubic-bezier(0.4, 0, 1, 1)',
+  default: 'cubic-bezier(0.4, 0, 0.2, 1)',
+  spring: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+  decelerate: 'cubic-bezier(0, 0, 0.2, 1)',
+  accelerate: 'cubic-bezier(0.4, 0, 1, 1)'
 } as const
 
 // ─── Keyframes ───────────────────────────────────────────────────
@@ -131,8 +131,10 @@ export const interactiveCard = css`
 
   &:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(108, 56, 255, 0.1);
-    border-color: #3A3A3C;
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.3),
+      0 0 0 1px rgba(108, 56, 255, 0.1);
+    border-color: #3a3a3c;
   }
 `
 
@@ -140,7 +142,9 @@ export const interactiveCard = css`
 export const elevatedCard = css`
   ${interactiveCard}
   &:hover {
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(108, 56, 255, 0.08);
+    box-shadow:
+      0 12px 40px rgba(0, 0, 0, 0.4),
+      0 0 20px rgba(108, 56, 255, 0.08);
     border-color: rgba(108, 56, 255, 0.2);
   }
 `
@@ -155,21 +159,19 @@ export const staggerChildren = (delayMs = 50) => css`
   & > * {
     animation: ${fadeInUp} ${timing.smooth} ${easing.decelerate} both;
   }
-  ${Array.from({ length: 12 }, (_, i) => `
+  ${Array.from(
+    { length: 12 },
+    (_, i) => `
     & > *:nth-child(${i + 1}) {
       animation-delay: ${i * delayMs}ms;
     }
-  `).join('')}
+  `
+  ).join('')}
 `
 
 /** Shimmer loading placeholder */
 export const shimmerLoading = css`
-  background: linear-gradient(
-    90deg,
-    #232323 25%,
-    #2A2A2C 50%,
-    #232323 75%
-  );
+  background: linear-gradient(90deg, #232323 25%, #2a2a2c 50%, #232323 75%);
   background-size: 200% 100%;
   animation: ${shimmer} 1.5s ease-in-out infinite;
 `
@@ -182,7 +184,11 @@ export const numberUpdate = css`
 // ─── Styled Components ──────────────────────────────────────────
 
 /** Skeleton loader with shimmer */
-export const Skeleton = styled.div<{ width?: string; height?: string; radius?: string }>`
+export const Skeleton = styled.div<{
+  width?: string
+  height?: string
+  radius?: string
+}>`
   width: ${({ width }) => width || '100%'};
   height: ${({ height }) => height || '16px'};
   border-radius: ${({ radius }) => radius || '6px'};
@@ -201,7 +207,8 @@ export const Spinner = styled.div<{ size?: number; color?: string }>`
 
 /** Fade-in wrapper */
 export const FadeIn = styled.div<{ delay?: number; duration?: string }>`
-  animation: ${fadeIn} ${({ duration }) => duration || timing.smooth} ${easing.decelerate} both;
+  animation: ${fadeIn} ${({ duration }) => duration || timing.smooth}
+    ${easing.decelerate} both;
   animation-delay: ${({ delay }) => delay || 0}ms;
 `
 
@@ -223,13 +230,13 @@ export const AnimatedCheckmark = styled.svg`
   height: 24px;
 
   circle {
-    fill: #26D07C;
+    fill: #26d07c;
     opacity: 0;
     animation: ${fadeIn} ${timing.normal} ${easing.decelerate} 0.1s both;
   }
 
   path {
-    stroke: #FFFFFF;
+    stroke: #ffffff;
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -256,7 +263,11 @@ export const RippleContainer = styled.span`
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%) scale(0);
-    background: radial-gradient(circle, rgba(255,255,255,0.2) 0%, transparent 70%);
+    background: radial-gradient(
+      circle,
+      rgba(255, 255, 255, 0.2) 0%,
+      transparent 70%
+    );
     border-radius: 50%;
   }
 `

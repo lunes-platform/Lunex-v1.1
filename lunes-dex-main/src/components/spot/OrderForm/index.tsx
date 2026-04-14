@@ -53,7 +53,8 @@ const Tab = styled.button<{ active?: boolean }>`
   background: transparent;
   cursor: pointer;
   transition: all 0.15s;
-  border-bottom: 2px solid ${({ active }) => (active ? '#00C076' : 'transparent')};
+  border-bottom: 2px solid
+    ${({ active }) => (active ? '#00C076' : 'transparent')};
   color: ${({ active }) => (active ? '#ffffff' : 'rgba(255,255,255,0.4)')};
   margin-bottom: -1px;
 
@@ -87,11 +88,15 @@ const SideBtn = styled.button<{ side: 'buy' | 'sell'; active?: boolean }>`
 
   ${({ side, active }) => css`
     background: ${active
-            ? side === 'buy' ? '#00C076' : '#FF4B55'
-            : side === 'buy' ? 'rgba(0,192,118,0.1)' : 'rgba(255,75,85,0.1)'
-        };
+      ? side === 'buy'
+        ? '#00C076'
+        : '#FF4B55'
+      : side === 'buy'
+        ? 'rgba(0,192,118,0.1)'
+        : 'rgba(255,75,85,0.1)'};
     color: ${active ? '#ffffff' : side === 'buy' ? '#00C076' : '#FF4B55'};
-    border: 1px solid ${side === 'buy' ? 'rgba(0,192,118,0.3)' : 'rgba(255,75,85,0.3)'};
+    border: 1px solid
+      ${side === 'buy' ? 'rgba(0,192,118,0.3)' : 'rgba(255,75,85,0.3)'};
 
     &:hover {
       background: ${side === 'buy' ? '#00C076' : '#FF4B55'};
@@ -117,7 +122,9 @@ const FieldWrapper = styled.div`
 const Input = styled.input<{ hasError?: boolean }>`
   width: 100%;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid ${({ hasError }) => hasError ? 'rgba(255,75,85,0.6)' : 'rgba(255, 255, 255, 0.1)'};
+  border: 1px solid
+    ${({ hasError }) =>
+      hasError ? 'rgba(255,75,85,0.6)' : 'rgba(255, 255, 255, 0.1)'};
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 13px;
@@ -127,7 +134,7 @@ const Input = styled.input<{ hasError?: boolean }>`
   transition: border-color 0.15s;
 
   &:focus {
-    border-color: ${({ hasError }) => hasError ? '#FF4B55' : '#00C076'};
+    border-color: ${({ hasError }) => (hasError ? '#FF4B55' : '#00C076')};
   }
 
   &::placeholder {
@@ -156,13 +163,13 @@ const Suffix = styled.span`
 
 const ErrorText = styled.span`
   font-size: 10px;
-  color: #FF4B55;
+  color: #ff4b55;
   animation: ${fadeIn} 0.2s ease;
 `
 
 const Slider = styled.input`
   width: 100%;
-  accent-color: #00C076;
+  accent-color: #00c076;
   cursor: pointer;
 `
 
@@ -181,21 +188,22 @@ const SubmitBtn = styled.button<{ side: 'buy' | 'sell'; disabled?: boolean }>`
   border: none;
   font-size: 14px;
   font-weight: 700;
-  cursor: ${({ disabled }) => disabled ? 'not-allowed' : 'pointer'};
+  cursor: ${({ disabled }) => (disabled ? 'not-allowed' : 'pointer')};
   transition: all 0.2s;
   background: ${({ side, disabled }) =>
-        disabled
-            ? 'rgba(255,255,255,0.08)'
-            : side === 'buy' ? '#00C076' : '#FF4B55'
-    };
-  color: ${({ disabled }) => disabled ? 'rgba(255,255,255,0.3)' : '#ffffff'};
+    disabled
+      ? 'rgba(255,255,255,0.08)'
+      : side === 'buy'
+        ? '#00C076'
+        : '#FF4B55'};
+  color: ${({ disabled }) => (disabled ? 'rgba(255,255,255,0.3)' : '#ffffff')};
   letter-spacing: 0.3px;
   margin-top: auto;
 
   &:hover:not(:disabled) {
     opacity: 0.9;
     transform: translateY(-1px) scale(1.01);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   }
 
   &:active:not(:disabled) {
@@ -314,7 +322,7 @@ const FeeSplitGrid = styled.div`
   gap: 4px 12px;
   margin-top: 8px;
   padding: 10px 12px;
-  background: rgba(255,255,255,0.03);
+  background: rgba(255, 255, 255, 0.03);
   border-radius: 8px;
 `
 
@@ -322,10 +330,10 @@ const FeeSplitItem = styled.div`
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: rgba(255,255,255,0.35);
+  color: rgba(255, 255, 255, 0.35);
 
   span:last-child {
-    color: rgba(255,255,255,0.55);
+    color: rgba(255, 255, 255, 0.55);
     font-weight: 600;
   }
 `
@@ -358,7 +366,7 @@ const ModalConfirmBtn = styled.button<{ side: 'buy' | 'sell' }>`
   padding: 10px;
   border-radius: 10px;
   border: none;
-  background: ${({ side }) => side === 'buy' ? '#00C076' : '#FF4B55'};
+  background: ${({ side }) => (side === 'buy' ? '#00C076' : '#FF4B55')};
   color: #ffffff;
   font-size: 13px;
   font-weight: 700;
@@ -376,634 +384,807 @@ type OrderTab = 'limit' | 'market' | 'stop' | 'stop-limit' | 'margin'
 type Side = 'buy' | 'sell'
 
 interface OrderData {
-    type: string
-    side: Side
-    price: number
-    stopPrice?: number
-    amount: number
-    total: number
-    fee: number
-    feeRate: number
-    feeBreakdown: FeeBreakdown
+  type: string
+  side: Side
+  price: number
+  stopPrice?: number
+  amount: number
+  total: number
+  fee: number
+  feeRate: number
+  feeBreakdown: FeeBreakdown
 }
 
 // ──────────────────── Confirm Modal Component ────────────────────
 
 interface ConfirmModalProps {
-    order: OrderData
-    loading?: boolean
-    onConfirm: () => void
-    onCancel: () => void
+  order: OrderData
+  loading?: boolean
+  onConfirm: () => void
+  onCancel: () => void
 }
 
-const ConfirmOrderModal: React.FC<ConfirmModalProps> = ({ order, loading, onConfirm, onCancel }) => (
-    <ModalOverlay onClick={onCancel}>
-        <ModalCard onClick={e => e.stopPropagation()}>
-            <ModalTitle>
-                {order.side === 'buy' ? '▲' : '▼'} Confirm {order.type}
-            </ModalTitle>
+const ConfirmOrderModal: React.FC<ConfirmModalProps> = ({
+  order,
+  loading,
+  onConfirm,
+  onCancel
+}) => (
+  <ModalOverlay onClick={onCancel}>
+    <ModalCard onClick={e => e.stopPropagation()}>
+      <ModalTitle>
+        {order.side === 'buy' ? '▲' : '▼'} Confirm {order.type}
+      </ModalTitle>
 
-            <ModalRow>
-                <ModalLabel>Type</ModalLabel>
-                <ModalValue>{order.type} {order.side === 'buy' ? 'Buy' : 'Sell'}</ModalValue>
-            </ModalRow>
-            {order.stopPrice ? (
-                <ModalRow>
-                    <ModalLabel>Trigger</ModalLabel>
-                    <ModalValue>{order.stopPrice.toFixed(5)} USDT</ModalValue>
-                </ModalRow>
-            ) : null}
-            <ModalRow>
-                <ModalLabel>{order.type === 'Stop' ? 'Estimate' : 'Price'}</ModalLabel>
-                <ModalValue>{order.price.toFixed(5)} USDT</ModalValue>
-            </ModalRow>
-            <ModalRow>
-                <ModalLabel>Amount</ModalLabel>
-                <ModalValue>{order.amount.toLocaleString()} LUNES</ModalValue>
-            </ModalRow>
-            <ModalRow>
-                <ModalLabel>Total</ModalLabel>
-                <ModalValue>{order.total.toFixed(2)} USDT</ModalValue>
-            </ModalRow>
-            <ModalFeeRow>
-                <ModalLabel>Fee ({(order.feeRate * 100).toFixed(2)}%)</ModalLabel>
-                <ModalValue style={{ color: 'rgba(255,255,255,0.5)' }}>
-                    ~{order.fee.toFixed(4)} USDT
-                </ModalValue>
-            </ModalFeeRow>
-            {order.fee > 0 && (
-                <FeeSplitGrid>
-                    <FeeSplitItem><span>Team</span><span>{order.feeBreakdown.team.toFixed(4)}</span></FeeSplitItem>
-                    <FeeSplitItem><span>Stakers</span><span>{order.feeBreakdown.stakers.toFixed(4)}</span></FeeSplitItem>
-                    <FeeSplitItem><span>Affiliates</span><span>{order.feeBreakdown.affiliates.toFixed(4)}</span></FeeSplitItem>
-                    {order.feeBreakdown.treasury > 0 && (
-                        <FeeSplitItem><span>Treasury</span><span>{order.feeBreakdown.treasury.toFixed(4)}</span></FeeSplitItem>
-                    )}
-                </FeeSplitGrid>
-            )}
+      <ModalRow>
+        <ModalLabel>Type</ModalLabel>
+        <ModalValue>
+          {order.type} {order.side === 'buy' ? 'Buy' : 'Sell'}
+        </ModalValue>
+      </ModalRow>
+      {order.stopPrice ? (
+        <ModalRow>
+          <ModalLabel>Trigger</ModalLabel>
+          <ModalValue>{order.stopPrice.toFixed(5)} USDT</ModalValue>
+        </ModalRow>
+      ) : null}
+      <ModalRow>
+        <ModalLabel>{order.type === 'Stop' ? 'Estimate' : 'Price'}</ModalLabel>
+        <ModalValue>{order.price.toFixed(5)} USDT</ModalValue>
+      </ModalRow>
+      <ModalRow>
+        <ModalLabel>Amount</ModalLabel>
+        <ModalValue>{order.amount.toLocaleString()} LUNES</ModalValue>
+      </ModalRow>
+      <ModalRow>
+        <ModalLabel>Total</ModalLabel>
+        <ModalValue>{order.total.toFixed(2)} USDT</ModalValue>
+      </ModalRow>
+      <ModalFeeRow>
+        <ModalLabel>Fee ({(order.feeRate * 100).toFixed(2)}%)</ModalLabel>
+        <ModalValue style={{ color: 'rgba(255,255,255,0.5)' }}>
+          ~{order.fee.toFixed(4)} USDT
+        </ModalValue>
+      </ModalFeeRow>
+      {order.fee > 0 && (
+        <FeeSplitGrid>
+          <FeeSplitItem>
+            <span>Team</span>
+            <span>{order.feeBreakdown.team.toFixed(4)}</span>
+          </FeeSplitItem>
+          <FeeSplitItem>
+            <span>Stakers</span>
+            <span>{order.feeBreakdown.stakers.toFixed(4)}</span>
+          </FeeSplitItem>
+          <FeeSplitItem>
+            <span>Affiliates</span>
+            <span>{order.feeBreakdown.affiliates.toFixed(4)}</span>
+          </FeeSplitItem>
+          {order.feeBreakdown.treasury > 0 && (
+            <FeeSplitItem>
+              <span>Treasury</span>
+              <span>{order.feeBreakdown.treasury.toFixed(4)}</span>
+            </FeeSplitItem>
+          )}
+        </FeeSplitGrid>
+      )}
 
-            <ModalActions>
-                <ModalCancelBtn onClick={onCancel} disabled={loading}>Cancel</ModalCancelBtn>
-                <ModalConfirmBtn side={order.side} onClick={onConfirm} disabled={loading}>
-                    {loading ? 'Processing...' : order.side === 'buy' ? '▲ Confirm Buy' : '▼ Confirm Sell'}
-                </ModalConfirmBtn>
-            </ModalActions>
-        </ModalCard>
-    </ModalOverlay>
+      <ModalActions>
+        <ModalCancelBtn onClick={onCancel} disabled={loading}>
+          Cancel
+        </ModalCancelBtn>
+        <ModalConfirmBtn
+          side={order.side}
+          onClick={onConfirm}
+          disabled={loading}
+        >
+          {loading
+            ? 'Processing...'
+            : order.side === 'buy'
+              ? '▲ Confirm Buy'
+              : '▼ Confirm Sell'}
+        </ModalConfirmBtn>
+      </ModalActions>
+    </ModalCard>
+  </ModalOverlay>
 )
 
 // ──────────────────── Sub-forms ────────────────────
 
 interface FormProps {
-    side: Side
-    onSubmit: (order: OrderData) => void
-    balanceUsdt?: number
-    balanceLunes?: number
-    marketPrice?: number
-    makerFee?: number
-    takerFee?: number
+  side: Side
+  onSubmit: (order: OrderData) => void
+  balanceUsdt?: number
+  balanceLunes?: number
+  marketPrice?: number
+  makerFee?: number
+  takerFee?: number
 }
 
-const MarketForm: React.FC<FormProps> = ({ side, onSubmit, balanceUsdt = 0, balanceLunes = 0, marketPrice = MARKET_PRICE, makerFee = DEFAULT_MAKER_FEE, takerFee = DEFAULT_TAKER_FEE }) => {
-    const [amount, setAmount] = useState('')
-    const [sliderVal, setSliderVal] = useState(0)
-    const numAmount = parseFloat(amount) || 0
-    const total = numAmount * marketPrice
-    const fee = total * takerFee
+const MarketForm: React.FC<FormProps> = ({
+  side,
+  onSubmit,
+  balanceUsdt = 0,
+  balanceLunes = 0,
+  marketPrice = MARKET_PRICE,
+  takerFee = DEFAULT_TAKER_FEE
+}) => {
+  const [amount, setAmount] = useState('')
+  const [sliderVal, setSliderVal] = useState(0)
+  const numAmount = parseFloat(amount) || 0
+  const total = numAmount * marketPrice
+  const fee = total * takerFee
 
-    const amountError = useMemo(() => {
-        if (!amount) return ''
-        if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} LUNES`
-        if (numAmount > MAX_AMOUNT) return `Max: ${MAX_AMOUNT.toLocaleString()} LUNES`
-        if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
-        if (side === 'sell' && numAmount > balanceLunes) return 'Insufficient balance'
-        return ''
-    }, [amount, numAmount, total, side, balanceUsdt, balanceLunes])
+  const amountError = useMemo(() => {
+    if (!amount) return ''
+    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} LUNES`
+    if (numAmount > MAX_AMOUNT)
+      return `Max: ${MAX_AMOUNT.toLocaleString()} LUNES`
+    if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
+    if (side === 'sell' && numAmount > balanceLunes)
+      return 'Insufficient balance'
+    return ''
+  }, [amount, numAmount, total, side, balanceUsdt, balanceLunes])
 
-    const isValid = numAmount >= MIN_AMOUNT && !amountError
+  const isValid = numAmount >= MIN_AMOUNT && !amountError
 
-    const handleSlider = (pct: number) => {
-        setSliderVal(pct)
-        const maxAmount = side === 'buy'
-            ? Math.floor(balanceUsdt / marketPrice)
-            : balanceLunes
-        setAmount(String(Math.floor(maxAmount * pct / 100)))
-    }
+  const handleSlider = (pct: number) => {
+    setSliderVal(pct)
+    const maxAmount =
+      side === 'buy' ? Math.floor(balanceUsdt / marketPrice) : balanceLunes
+    setAmount(String(Math.floor((maxAmount * pct) / 100)))
+  }
 
-    const handleSubmit = () => {
-        if (!isValid) return
-        onSubmit({
-            type: 'Market',
-            side,
-            price: marketPrice,
-            amount: numAmount,
-            total,
-            fee,
-            feeRate: takerFee,
-            feeBreakdown: calcFeeBreakdown(fee, false),
-        })
-    }
+  const handleSubmit = () => {
+    if (!isValid) return
+    onSubmit({
+      type: 'Market',
+      side,
+      price: marketPrice,
+      amount: numAmount,
+      total,
+      fee,
+      feeRate: takerFee,
+      feeBreakdown: calcFeeBreakdown(fee, false)
+    })
+  }
 
-    return (
-        <>
-            <SlippageWarning>
-                Market order — price may vary (slippage ~0.1-0.5%)
-            </SlippageWarning>
-            <FieldWrapper>
-                <FieldLabel>Amount (LUNES)</FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00"
-                        value={amount}
-                        onChange={e => setAmount(e.target.value)}
-                        hasError={!!amountError}
-                        min={MIN_AMOUNT}
-                        step={1}
-                    />
-                    <Suffix>LUNES</Suffix>
-                </InputWithSuffix>
-                {amountError && <ErrorText>{amountError}</ErrorText>}
-            </FieldWrapper>
-            <Slider
-                type="range"
-                min={0}
-                max={100}
-                value={sliderVal}
-                onChange={e => handleSlider(Number(e.target.value))}
+  return (
+    <>
+      <SlippageWarning>
+        Market order — price may vary (slippage ~0.1-0.5%)
+      </SlippageWarning>
+      <FieldWrapper>
+        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            hasError={!!amountError}
+            min={MIN_AMOUNT}
+            step={1}
+          />
+          <Suffix>LUNES</Suffix>
+        </InputWithSuffix>
+        {amountError && <ErrorText>{amountError}</ErrorText>}
+      </FieldWrapper>
+      <Slider
+        type="range"
+        min={0}
+        max={100}
+        value={sliderVal}
+        onChange={e => handleSlider(Number(e.target.value))}
+      />
+      <SliderLabels>
+        <span>0%</span>
+        <span>25%</span>
+        <span>50%</span>
+        <span>75%</span>
+        <span>100%</span>
+      </SliderLabels>
+      <FieldWrapper>
+        <FieldLabel>Total (USDT)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="text"
+            value={total > 0 ? total.toFixed(2) : ''}
+            placeholder="0.00"
+            readOnly
+          />
+          <Suffix>USDT</Suffix>
+        </InputWithSuffix>
+      </FieldWrapper>
+      <AvailableRow>
+        <span>Available</span>
+        <span>
+          {side === 'buy'
+            ? `${balanceUsdt.toFixed(2)} USDT`
+            : `${balanceLunes.toLocaleString()} LUNES`}
+        </span>
+      </AvailableRow>
+      {numAmount > 0 && (
+        <FeeRow>
+          <span>
+            Fee (Taker {(takerFee * 100).toFixed(2)}%)
+            <Tooltip
+              content={`Market execution fee (${(takerFee * 100).toFixed(
+                2
+              )}%). Deducted from total received.`}
             />
-            <SliderLabels>
-                <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
-            </SliderLabels>
-            <FieldWrapper>
-                <FieldLabel>Total (USDT)</FieldLabel>
-                <InputWithSuffix>
-                    <Input type="text" value={total > 0 ? total.toFixed(2) : ''} placeholder="0.00" readOnly />
-                    <Suffix>USDT</Suffix>
-                </InputWithSuffix>
-            </FieldWrapper>
-            <AvailableRow>
-                <span>Available</span>
-                <span>{side === 'buy' ? `${balanceUsdt.toFixed(2)} USDT` : `${balanceLunes.toLocaleString()} LUNES`}</span>
-            </AvailableRow>
-            {numAmount > 0 && (
-                <FeeRow>
-                    <span>
-                        Fee (Taker {(takerFee * 100).toFixed(2)}%)
-                        <Tooltip content={`Market execution fee (${(takerFee * 100).toFixed(2)}%). Deducted from total received.`} />
-                    </span>
-                    <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
-                </FeeRow>
-            )}
-            <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-                {side === 'buy' ? '▲ Buy LUNES (Market)' : '▼ Sell LUNES (Market)'}
-            </SubmitBtn>
-        </>
-    )
+          </span>
+          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+        </FeeRow>
+      )}
+      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
+        {side === 'buy' ? '▲ Buy LUNES (Market)' : '▼ Sell LUNES (Market)'}
+      </SubmitBtn>
+    </>
+  )
 }
 
-const LimitForm: React.FC<FormProps> = ({ side, onSubmit, balanceUsdt = 0, balanceLunes = 0, marketPrice = MARKET_PRICE, makerFee = DEFAULT_MAKER_FEE, takerFee = DEFAULT_TAKER_FEE }) => {
-    const [price, setPrice] = useState('')
-    const [amount, setAmount] = useState('')
-    const [sliderVal, setSliderVal] = useState(0)
-    const numPrice = parseFloat(price) || 0
-    const numAmount = parseFloat(amount) || 0
-    const total = numPrice * numAmount
-    const fee = total * makerFee
+const LimitForm: React.FC<FormProps> = ({
+  side,
+  onSubmit,
+  balanceUsdt = 0,
+  balanceLunes = 0,
+  marketPrice = MARKET_PRICE,
+  makerFee = DEFAULT_MAKER_FEE
+}) => {
+  const [price, setPrice] = useState('')
+  const [amount, setAmount] = useState('')
+  const [sliderVal, setSliderVal] = useState(0)
+  const numPrice = parseFloat(price) || 0
+  const numAmount = parseFloat(amount) || 0
+  const total = numPrice * numAmount
+  const fee = total * makerFee
 
-    const priceError = useMemo(() => {
-        if (!price) return ''
-        if (numPrice < MIN_PRICE) return `Min: ${MIN_PRICE}`
-        if (numPrice > MAX_PRICE) return `Max: ${MAX_PRICE}`
-        return ''
-    }, [price, numPrice])
+  const priceError = useMemo(() => {
+    if (!price) return ''
+    if (numPrice < MIN_PRICE) return `Min: ${MIN_PRICE}`
+    if (numPrice > MAX_PRICE) return `Max: ${MAX_PRICE}`
+    return ''
+  }, [price, numPrice])
 
-    const amountError = useMemo(() => {
-        if (!amount) return ''
-        if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} LUNES`
-        if (numAmount > MAX_AMOUNT) return `Max: ${MAX_AMOUNT.toLocaleString()} LUNES`
-        if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
-        if (side === 'sell' && numAmount > balanceLunes) return 'Insufficient balance'
-        return ''
-    }, [amount, numAmount, total, side, balanceUsdt, balanceLunes])
+  const amountError = useMemo(() => {
+    if (!amount) return ''
+    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} LUNES`
+    if (numAmount > MAX_AMOUNT)
+      return `Max: ${MAX_AMOUNT.toLocaleString()} LUNES`
+    if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
+    if (side === 'sell' && numAmount > balanceLunes)
+      return 'Insufficient balance'
+    return ''
+  }, [amount, numAmount, total, side, balanceUsdt, balanceLunes])
 
-    const isValid = numPrice >= MIN_PRICE && numAmount >= MIN_AMOUNT && !priceError && !amountError
+  const isValid =
+    numPrice >= MIN_PRICE &&
+    numAmount >= MIN_AMOUNT &&
+    !priceError &&
+    !amountError
 
-    const handleSlider = (pct: number) => {
-        setSliderVal(pct)
-        const effectivePrice = numPrice || marketPrice
-        const maxAmount = side === 'buy'
-            ? Math.floor(balanceUsdt / effectivePrice)
-            : balanceLunes
-        setAmount(String(Math.floor(maxAmount * pct / 100)))
-    }
+  const handleSlider = (pct: number) => {
+    setSliderVal(pct)
+    const effectivePrice = numPrice || marketPrice
+    const maxAmount =
+      side === 'buy' ? Math.floor(balanceUsdt / effectivePrice) : balanceLunes
+    setAmount(String(Math.floor((maxAmount * pct) / 100)))
+  }
 
-    const handleSubmit = () => {
-        if (!isValid) return
-        onSubmit({
-            type: 'Limit',
-            side,
-            price: numPrice,
-            amount: numAmount,
-            total,
-            fee,
-            feeRate: makerFee,
-            feeBreakdown: calcFeeBreakdown(fee, true),
-        })
-    }
+  const handleSubmit = () => {
+    if (!isValid) return
+    onSubmit({
+      type: 'Limit',
+      side,
+      price: numPrice,
+      amount: numAmount,
+      total,
+      fee,
+      feeRate: makerFee,
+      feeBreakdown: calcFeeBreakdown(fee, true)
+    })
+  }
 
-    return (
-        <>
-            <FieldWrapper>
-                <FieldLabel>Price (USDT)</FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00000"
-                        value={price}
-                        onChange={e => setPrice(e.target.value)}
-                        hasError={!!priceError}
-                        step={0.00001}
-                        min={MIN_PRICE}
-                    />
-                    <Suffix>USDT</Suffix>
-                </InputWithSuffix>
-                {priceError && <ErrorText>{priceError}</ErrorText>}
-            </FieldWrapper>
-            <FieldWrapper>
-                <FieldLabel>Amount (LUNES)</FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00"
-                        value={amount}
-                        onChange={e => setAmount(e.target.value)}
-                        hasError={!!amountError}
-                        min={MIN_AMOUNT}
-                        step={1}
-                    />
-                    <Suffix>LUNES</Suffix>
-                </InputWithSuffix>
-                {amountError && <ErrorText>{amountError}</ErrorText>}
-            </FieldWrapper>
-            <Slider
-                type="range"
-                min={0}
-                max={100}
-                value={sliderVal}
-                onChange={e => handleSlider(Number(e.target.value))}
+  return (
+    <>
+      <FieldWrapper>
+        <FieldLabel>Price (USDT)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00000"
+            value={price}
+            onChange={e => setPrice(e.target.value)}
+            hasError={!!priceError}
+            step={0.00001}
+            min={MIN_PRICE}
+          />
+          <Suffix>USDT</Suffix>
+        </InputWithSuffix>
+        {priceError && <ErrorText>{priceError}</ErrorText>}
+      </FieldWrapper>
+      <FieldWrapper>
+        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            hasError={!!amountError}
+            min={MIN_AMOUNT}
+            step={1}
+          />
+          <Suffix>LUNES</Suffix>
+        </InputWithSuffix>
+        {amountError && <ErrorText>{amountError}</ErrorText>}
+      </FieldWrapper>
+      <Slider
+        type="range"
+        min={0}
+        max={100}
+        value={sliderVal}
+        onChange={e => handleSlider(Number(e.target.value))}
+      />
+      <SliderLabels>
+        <span>0%</span>
+        <span>25%</span>
+        <span>50%</span>
+        <span>75%</span>
+        <span>100%</span>
+      </SliderLabels>
+      <FieldWrapper>
+        <FieldLabel>Total (USDT)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="text"
+            value={total > 0 ? total.toFixed(2) : ''}
+            placeholder="0.00"
+            readOnly
+          />
+          <Suffix>USDT</Suffix>
+        </InputWithSuffix>
+      </FieldWrapper>
+      <AvailableRow>
+        <span>Available</span>
+        <span>
+          {side === 'buy'
+            ? `${balanceUsdt.toFixed(2)} USDT`
+            : `${balanceLunes.toLocaleString()} LUNES`}
+        </span>
+      </AvailableRow>
+      {total > 0 && (
+        <FeeRow>
+          <span>
+            Fee (Maker {(makerFee * 100).toFixed(2)}%)
+            <Tooltip
+              content={`Limit orders pay a lower Maker fee (${(
+                makerFee * 100
+              ).toFixed(2)}%) as they add liquidity to the book.`}
+              position="top"
             />
-            <SliderLabels>
-                <span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span>
-            </SliderLabels>
-            <FieldWrapper>
-                <FieldLabel>Total (USDT)</FieldLabel>
-                <InputWithSuffix>
-                    <Input type="text" value={total > 0 ? total.toFixed(2) : ''} placeholder="0.00" readOnly />
-                    <Suffix>USDT</Suffix>
-                </InputWithSuffix>
-            </FieldWrapper>
-            <AvailableRow>
-                <span>Available</span>
-                <span>{side === 'buy' ? `${balanceUsdt.toFixed(2)} USDT` : `${balanceLunes.toLocaleString()} LUNES`}</span>
-            </AvailableRow>
-            {total > 0 && (
-                <FeeRow>
-                    <span>
-                        Fee (Maker {(makerFee * 100).toFixed(2)}%)
-                        <Tooltip content={`Limit orders pay a lower Maker fee (${(makerFee * 100).toFixed(2)}%) as they add liquidity to the book.`} position="top" />
-                    </span>
-                    <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
-                </FeeRow>
-            )}
-            <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-                {side === 'buy' ? '▲ Buy LUNES (Limit)' : '▼ Sell LUNES (Limit)'}
-            </SubmitBtn>
-        </>
-    )
+          </span>
+          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+        </FeeRow>
+      )}
+      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
+        {side === 'buy' ? '▲ Buy LUNES (Limit)' : '▼ Sell LUNES (Limit)'}
+      </SubmitBtn>
+    </>
+  )
 }
 
-const StopForm: React.FC<FormProps> = ({ side, onSubmit, balanceUsdt = 0, balanceLunes = 0, marketPrice = MARKET_PRICE, makerFee = DEFAULT_MAKER_FEE, takerFee = DEFAULT_TAKER_FEE }) => {
-    const [stopPrice, setStopPrice] = useState('')
-    const [amount, setAmount] = useState('')
-    const numStop = parseFloat(stopPrice) || 0
-    const numAmount = parseFloat(amount) || 0
-    const total = numStop * numAmount
-    const fee = total * takerFee
+const StopForm: React.FC<FormProps> = ({
+  side,
+  onSubmit,
+  balanceUsdt = 0,
+  balanceLunes = 0,
+  marketPrice = MARKET_PRICE,
+  takerFee = DEFAULT_TAKER_FEE
+}) => {
+  const [stopPrice, setStopPrice] = useState('')
+  const [amount, setAmount] = useState('')
+  const numStop = parseFloat(stopPrice) || 0
+  const numAmount = parseFloat(amount) || 0
+  const total = numStop * numAmount
+  const fee = total * takerFee
 
-    const isValid = numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
+  const isValid = numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
 
-    const handleSubmit = () => {
-        if (!isValid) return
-        onSubmit({
-            type: 'Stop',
-            side,
-            price: marketPrice,
-            stopPrice: numStop,
-            amount: numAmount,
-            total,
-            fee,
-            feeRate: takerFee,
-            feeBreakdown: calcFeeBreakdown(fee, false),
-        })
-    }
+  const handleSubmit = () => {
+    if (!isValid) return
+    onSubmit({
+      type: 'Stop',
+      side,
+      price: marketPrice,
+      stopPrice: numStop,
+      amount: numAmount,
+      total,
+      fee,
+      feeRate: takerFee,
+      feeBreakdown: calcFeeBreakdown(fee, false)
+    })
+  }
 
-    return (
-        <>
-            <InfoBox>
-                When the market reaches the <strong>Stop Price</strong>, a market order will be executed.
-            </InfoBox>
-            <FieldWrapper>
-                <FieldLabel>
-                    Stop Price (USDT)
-                    <Tooltip content="The trigger price to activate your market order." position="right" />
-                </FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00000"
-                        value={stopPrice}
-                        onChange={e => setStopPrice(e.target.value)}
-                        step={0.00001}
-                        min={MIN_PRICE}
-                    />
-                    <Suffix>USDT</Suffix>
-                </InputWithSuffix>
-            </FieldWrapper>
-            <FieldWrapper>
-                <FieldLabel>Amount (LUNES)</FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00"
-                        value={amount}
-                        onChange={e => setAmount(e.target.value)}
-                        min={MIN_AMOUNT}
-                        step={1}
-                    />
-                    <Suffix>LUNES</Suffix>
-                </InputWithSuffix>
-            </FieldWrapper>
-            <AvailableRow>
-                <span>Available</span>
-                <span>{side === 'buy' ? `${balanceUsdt.toFixed(2)} USDT` : `${balanceLunes.toLocaleString()} LUNES`}</span>
-            </AvailableRow>
-            {total > 0 && (
-                <FeeRow>
-                    <span>Fee (Taker {(takerFee * 100).toFixed(2)}%)</span>
-                    <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
-                </FeeRow>
-            )}
-            <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-                {side === 'buy' ? '▲ Stop Buy' : '▼ Stop Sell'}
-            </SubmitBtn>
-        </>
-    )
+  return (
+    <>
+      <InfoBox>
+        When the market reaches the <strong>Stop Price</strong>, a market order
+        will be executed.
+      </InfoBox>
+      <FieldWrapper>
+        <FieldLabel>
+          Stop Price (USDT)
+          <Tooltip
+            content="The trigger price to activate your market order."
+            position="right"
+          />
+        </FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00000"
+            value={stopPrice}
+            onChange={e => setStopPrice(e.target.value)}
+            step={0.00001}
+            min={MIN_PRICE}
+          />
+          <Suffix>USDT</Suffix>
+        </InputWithSuffix>
+      </FieldWrapper>
+      <FieldWrapper>
+        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            min={MIN_AMOUNT}
+            step={1}
+          />
+          <Suffix>LUNES</Suffix>
+        </InputWithSuffix>
+      </FieldWrapper>
+      <AvailableRow>
+        <span>Available</span>
+        <span>
+          {side === 'buy'
+            ? `${balanceUsdt.toFixed(2)} USDT`
+            : `${balanceLunes.toLocaleString()} LUNES`}
+        </span>
+      </AvailableRow>
+      {total > 0 && (
+        <FeeRow>
+          <span>Fee (Taker {(takerFee * 100).toFixed(2)}%)</span>
+          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+        </FeeRow>
+      )}
+      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
+        {side === 'buy' ? '▲ Stop Buy' : '▼ Stop Sell'}
+      </SubmitBtn>
+    </>
+  )
 }
 
-const StopLimitForm: React.FC<FormProps> = ({ side, onSubmit, balanceUsdt = 0, balanceLunes = 0, makerFee = DEFAULT_MAKER_FEE, takerFee = DEFAULT_TAKER_FEE }) => {
-    const [stopPrice, setStopPrice] = useState('')
-    const [limitPrice, setLimitPrice] = useState('')
-    const [amount, setAmount] = useState('')
-    const numStop = parseFloat(stopPrice) || 0
-    const numLimit = parseFloat(limitPrice) || 0
-    const numAmount = parseFloat(amount) || 0
-    const total = numLimit * numAmount
-    const fee = total * makerFee
+const StopLimitForm: React.FC<FormProps> = ({
+  side,
+  onSubmit,
+  balanceUsdt = 0,
+  balanceLunes = 0,
+  makerFee = DEFAULT_MAKER_FEE
+}) => {
+  const [stopPrice, setStopPrice] = useState('')
+  const [limitPrice, setLimitPrice] = useState('')
+  const [amount, setAmount] = useState('')
+  const numStop = parseFloat(stopPrice) || 0
+  const numLimit = parseFloat(limitPrice) || 0
+  const numAmount = parseFloat(amount) || 0
+  const total = numLimit * numAmount
+  const fee = total * makerFee
 
-    const isValid = numStop >= MIN_PRICE && numLimit >= MIN_PRICE && numAmount >= MIN_AMOUNT
+  const isValid =
+    numStop >= MIN_PRICE && numLimit >= MIN_PRICE && numAmount >= MIN_AMOUNT
 
-    const handleSubmit = () => {
-        if (!isValid) return
-        onSubmit({
-            type: 'Stop-Limit',
-            side,
-            price: numLimit,
-            stopPrice: numStop,
-            amount: numAmount,
-            total,
-            fee,
-            feeRate: makerFee,
-            feeBreakdown: calcFeeBreakdown(fee, true),
-        })
-    }
+  const handleSubmit = () => {
+    if (!isValid) return
+    onSubmit({
+      type: 'Stop-Limit',
+      side,
+      price: numLimit,
+      stopPrice: numStop,
+      amount: numAmount,
+      total,
+      fee,
+      feeRate: makerFee,
+      feeBreakdown: calcFeeBreakdown(fee, true)
+    })
+  }
 
-    return (
-        <>
-            <InfoBox>
-                When the <strong>Stop Price</strong> is reached, a Limit order at the <strong>Limit Price</strong> will be placed.
-            </InfoBox>
-            <FieldWrapper>
-                <FieldLabel>
-                    Stop Price (USDT)
-                    <Tooltip content="The trigger price to submit your Limit order to the book." position="right" />
-                </FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00000"
-                        value={stopPrice}
-                        onChange={e => setStopPrice(e.target.value)}
-                        step={0.00001}
-                    />
-                    <Suffix>USDT</Suffix>
-                </InputWithSuffix>
-            </FieldWrapper>
-            <FieldWrapper>
-                <FieldLabel>Limit Price (USDT)</FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00000"
-                        value={limitPrice}
-                        onChange={e => setLimitPrice(e.target.value)}
-                        step={0.00001}
-                    />
-                    <Suffix>USDT</Suffix>
-                </InputWithSuffix>
-            </FieldWrapper>
-            <FieldWrapper>
-                <FieldLabel>Amount (LUNES)</FieldLabel>
-                <InputWithSuffix>
-                    <Input
-                        type="number"
-                        placeholder="0.00"
-                        value={amount}
-                        onChange={e => setAmount(e.target.value)}
-                        min={MIN_AMOUNT}
-                        step={1}
-                    />
-                    <Suffix>LUNES</Suffix>
-                </InputWithSuffix>
-            </FieldWrapper>
-            <AvailableRow>
-                <span>Available</span>
-                <span>{side === 'buy' ? `${balanceUsdt.toFixed(2)} USDT` : `${balanceLunes.toLocaleString()} LUNES`}</span>
-            </AvailableRow>
-            {total > 0 && (
-                <FeeRow>
-                    <span>Fee (Maker {(makerFee * 100).toFixed(2)}%)</span>
-                    <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
-                </FeeRow>
-            )}
-            <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-                {side === 'buy' ? '▲ Stop-Limit Buy' : '▼ Stop-Limit Sell'}
-            </SubmitBtn>
-        </>
-    )
+  return (
+    <>
+      <InfoBox>
+        When the <strong>Stop Price</strong> is reached, a Limit order at the{' '}
+        <strong>Limit Price</strong> will be placed.
+      </InfoBox>
+      <FieldWrapper>
+        <FieldLabel>
+          Stop Price (USDT)
+          <Tooltip
+            content="The trigger price to submit your Limit order to the book."
+            position="right"
+          />
+        </FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00000"
+            value={stopPrice}
+            onChange={e => setStopPrice(e.target.value)}
+            step={0.00001}
+          />
+          <Suffix>USDT</Suffix>
+        </InputWithSuffix>
+      </FieldWrapper>
+      <FieldWrapper>
+        <FieldLabel>Limit Price (USDT)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00000"
+            value={limitPrice}
+            onChange={e => setLimitPrice(e.target.value)}
+            step={0.00001}
+          />
+          <Suffix>USDT</Suffix>
+        </InputWithSuffix>
+      </FieldWrapper>
+      <FieldWrapper>
+        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <InputWithSuffix>
+          <Input
+            type="number"
+            placeholder="0.00"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            min={MIN_AMOUNT}
+            step={1}
+          />
+          <Suffix>LUNES</Suffix>
+        </InputWithSuffix>
+      </FieldWrapper>
+      <AvailableRow>
+        <span>Available</span>
+        <span>
+          {side === 'buy'
+            ? `${balanceUsdt.toFixed(2)} USDT`
+            : `${balanceLunes.toLocaleString()} LUNES`}
+        </span>
+      </AvailableRow>
+      {total > 0 && (
+        <FeeRow>
+          <span>Fee (Maker {(makerFee * 100).toFixed(2)}%)</span>
+          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+        </FeeRow>
+      )}
+      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
+        {side === 'buy' ? '▲ Stop-Limit Buy' : '▼ Stop-Limit Sell'}
+      </SubmitBtn>
+    </>
+  )
 }
 
 // ──────────────────── Main Component ────────────────────
 
 const ORDER_TABS: Array<{ key: OrderTab; label: string }> = [
-    { key: 'limit', label: 'Limit' },
-    { key: 'market', label: 'Market' },
-    { key: 'stop', label: 'Stop' },
-    { key: 'stop-limit', label: 'Stop-Limit' },
-    { key: 'margin', label: 'Margin' },
+  { key: 'limit', label: 'Limit' },
+  { key: 'market', label: 'Market' },
+  { key: 'stop', label: 'Stop' },
+  { key: 'stop-limit', label: 'Stop-Limit' },
+  { key: 'margin', label: 'Margin' }
 ]
 
-const LUSDT_ADDRESS = process.env.REACT_APP_TOKEN_LUSDT || '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf'
+const LUSDT_ADDRESS =
+  process.env.REACT_APP_TOKEN_LUSDT ||
+  '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf'
 
 const OrderForm: React.FC = () => {
-    const { selectedPair, pairs, ticker, createOrder, isLoading, error, walletAddress } = useSpot()
-    const { walletAddress: sdkWalletAddress, connectWallet, signMessage } = useSDK()
-    const [activeTab, setActiveTab] = useState<OrderTab>('limit')
-    const [side, setSide] = useState<Side>('buy')
-    const [pendingOrder, setPendingOrder] = useState<OrderData | null>(null)
-    const [submitStatus, setSubmitStatus] = useState<string | null>(null)
-    const [balanceUsdt, setBalanceUsdt] = useState(0)
-    const [balanceLunes, setBalanceLunes] = useState(0)
+  const {
+    selectedPair,
+    pairs,
+    ticker,
+    createOrder,
+    isLoading,
+    error,
+    walletAddress
+  } = useSpot()
+  const {
+    walletAddress: sdkWalletAddress,
+    connectWallet,
+    signMessage
+  } = useSDK()
+  const [activeTab, setActiveTab] = useState<OrderTab>('limit')
+  const [side, setSide] = useState<Side>('buy')
+  const [pendingOrder, setPendingOrder] = useState<OrderData | null>(null)
+  const [submitStatus, setSubmitStatus] = useState<string | null>(null)
+  const [balanceUsdt, setBalanceUsdt] = useState(0)
+  const [balanceLunes, setBalanceLunes] = useState(0)
 
-    // Fetch real balances when wallet connects
-    useEffect(() => {
-        if (!sdkWalletAddress) {
-            setBalanceUsdt(0)
-            setBalanceLunes(0)
-            return
-        }
-        Promise.all([
-            contractService.getTokenBalance(LUSDT_ADDRESS, sdkWalletAddress).catch(() => '0'),
-            contractService.getNativeBalance(sdkWalletAddress).catch(() => '0'),
-        ]).then(([lusdtRaw, lunesRaw]) => {
-            setBalanceUsdt(Number(lusdtRaw) / 1e6) // LUSDT: 6 decimals
-            setBalanceLunes(Number(lunesRaw) / 1e8) // LUNES: 8 decimals
-        })
-    }, [sdkWalletAddress])
+  // Fetch real balances when wallet connects
+  useEffect(() => {
+    if (!sdkWalletAddress) {
+      setBalanceUsdt(0)
+      setBalanceLunes(0)
+      return
+    }
+    Promise.all([
+      contractService
+        .getTokenBalance(LUSDT_ADDRESS, sdkWalletAddress)
+        .catch(() => '0'),
+      contractService.getNativeBalance(sdkWalletAddress).catch(() => '0')
+    ]).then(([lusdtRaw, lunesRaw]) => {
+      setBalanceUsdt(Number(lusdtRaw) / 1e6) // LUSDT: 6 decimals
+      setBalanceLunes(Number(lunesRaw) / 1e8) // LUNES: 8 decimals
+    })
+  }, [sdkWalletAddress])
 
-    const handleSubmit = useCallback((order: OrderData) => {
-        setPendingOrder(order)
-    }, [])
+  const handleSubmit = useCallback((order: OrderData) => {
+    setPendingOrder(order)
+  }, [])
 
-    const handleConfirm = useCallback(async () => {
-        if (!pendingOrder) return
-        setSubmitStatus(null)
+  const handleConfirm = useCallback(async () => {
+    if (!pendingOrder) return
+    setSubmitStatus(null)
 
-        if (!sdkWalletAddress) {
-            await connectWallet()
-            return
-        }
-
-        const typeMap: Record<string, 'LIMIT' | 'MARKET' | 'STOP' | 'STOP_LIMIT'> = {
-            Limit: 'LIMIT',
-            Market: 'MARKET',
-            Stop: 'STOP',
-            'Stop-Limit': 'STOP_LIMIT',
-        }
-        const orderType = typeMap[pendingOrder.type] || 'LIMIT'
-        const orderPrice = orderType === 'LIMIT' || orderType === 'STOP_LIMIT'
-            ? pendingOrder.price.toString()
-            : undefined
-        const orderStopPrice = orderType === 'STOP' || orderType === 'STOP_LIMIT'
-            ? pendingOrder.stopPrice?.toString()
-            : undefined
-
-        const success = await createOrder({
-            pairSymbol: selectedPair,
-            side: pendingOrder.side === 'buy' ? 'BUY' : 'SELL',
-            type: orderType,
-            price: orderPrice,
-            stopPrice: orderStopPrice,
-            amount: pendingOrder.amount.toString(),
-            timestamp: Date.now(),
-            signMessage,
-        })
-
-        if (success) {
-            setSubmitStatus(
-                orderType === 'STOP' || orderType === 'STOP_LIMIT'
-                    ? 'Order armed successfully. It will trigger when the market reaches your stop price.'
-                    : 'Order submitted successfully!'
-            )
-        }
-        setPendingOrder(null)
-    }, [pendingOrder, sdkWalletAddress, connectWallet, createOrder, selectedPair, signMessage])
-
-    const handleCancel = useCallback(() => {
-        setPendingOrder(null)
-    }, [])
-
-    const liveMarketPrice = ticker?.lastPrice ?? MARKET_PRICE
-    const activePair = pairs.find(p => p.symbol === selectedPair)
-    const makerFee = activePair ? activePair.makerFeeBps / 10000 : DEFAULT_MAKER_FEE
-    const takerFee = activePair ? activePair.takerFeeBps / 10000 : DEFAULT_TAKER_FEE
-    const formProps = { side, onSubmit: handleSubmit, balanceUsdt, balanceLunes, marketPrice: liveMarketPrice, makerFee, takerFee }
-
-    const renderForm = () => {
-        switch (activeTab) {
-            case 'market': return <MarketForm {...formProps} />
-            case 'stop': return <StopForm {...formProps} />
-            case 'stop-limit': return <StopLimitForm {...formProps} />
-            case 'margin': return (
-                <MarginTab
-                    side={side}
-                    selectedPair={selectedPair}
-                    walletAddress={sdkWalletAddress}
-                    signMessage={signMessage}
-                    connectWallet={connectWallet}
-                />
-            )
-            default: return <LimitForm {...formProps} />
-        }
+    if (!sdkWalletAddress) {
+      await connectWallet()
+      return
     }
 
-    return (
-        <Wrapper>
-            <Tabs>
-                {ORDER_TABS.map(t => (
-                    <Tab key={t.key} active={activeTab === t.key} onClick={() => setActiveTab(t.key)}>
-                        {t.label}
-                    </Tab>
-                ))}
-            </Tabs>
+    const typeMap: Record<string, 'LIMIT' | 'MARKET' | 'STOP' | 'STOP_LIMIT'> =
+      {
+        Limit: 'LIMIT',
+        Market: 'MARKET',
+        Stop: 'STOP',
+        'Stop-Limit': 'STOP_LIMIT'
+      }
+    const orderType = typeMap[pendingOrder.type] || 'LIMIT'
+    const orderPrice =
+      orderType === 'LIMIT' || orderType === 'STOP_LIMIT'
+        ? pendingOrder.price.toString()
+        : undefined
+    const orderStopPrice =
+      orderType === 'STOP' || orderType === 'STOP_LIMIT'
+        ? pendingOrder.stopPrice?.toString()
+        : undefined
 
-            <Body>
-                <SideTabs>
-                    <SideBtn side="buy" active={side === 'buy'} onClick={() => setSide('buy')}>
-                        Buy
-                    </SideBtn>
-                    <SideBtn side="sell" active={side === 'sell'} onClick={() => setSide('sell')}>
-                        Sell
-                    </SideBtn>
-                </SideTabs>
+    const success = await createOrder({
+      pairSymbol: selectedPair,
+      side: pendingOrder.side === 'buy' ? 'BUY' : 'SELL',
+      type: orderType,
+      price: orderPrice,
+      stopPrice: orderStopPrice,
+      amount: pendingOrder.amount.toString(),
+      timestamp: Date.now(),
+      signMessage
+    })
 
-                {submitStatus ? <InfoBox>{submitStatus}</InfoBox> : null}
-                {error ? <WarningBox>{error}</WarningBox> : null}
-                {!walletAddress ? <WarningBox>Connect your wallet to sign and submit Spot orders.</WarningBox> : null}
+    if (success) {
+      setSubmitStatus(
+        orderType === 'STOP' || orderType === 'STOP_LIMIT'
+          ? 'Order armed successfully. It will trigger when the market reaches your stop price.'
+          : 'Order submitted successfully!'
+      )
+    }
+    setPendingOrder(null)
+  }, [
+    pendingOrder,
+    sdkWalletAddress,
+    connectWallet,
+    createOrder,
+    selectedPair,
+    signMessage
+  ])
 
-                {renderForm()}
-            </Body>
+  const handleCancel = useCallback(() => {
+    setPendingOrder(null)
+  }, [])
 
-            {pendingOrder && (
-                <ConfirmOrderModal
-                    order={pendingOrder}
-                    loading={isLoading}
-                    onConfirm={handleConfirm}
-                    onCancel={handleCancel}
-                />
-            )}
-        </Wrapper>
-    )
+  const liveMarketPrice = ticker?.lastPrice ?? MARKET_PRICE
+  const activePair = pairs.find(p => p.symbol === selectedPair)
+  const makerFee = activePair
+    ? activePair.makerFeeBps / 10000
+    : DEFAULT_MAKER_FEE
+  const takerFee = activePair
+    ? activePair.takerFeeBps / 10000
+    : DEFAULT_TAKER_FEE
+  const formProps = {
+    side,
+    onSubmit: handleSubmit,
+    balanceUsdt,
+    balanceLunes,
+    marketPrice: liveMarketPrice,
+    makerFee,
+    takerFee
+  }
+
+  const renderForm = () => {
+    switch (activeTab) {
+      case 'market':
+        return <MarketForm {...formProps} />
+      case 'stop':
+        return <StopForm {...formProps} />
+      case 'stop-limit':
+        return <StopLimitForm {...formProps} />
+      case 'margin':
+        return (
+          <MarginTab
+            side={side}
+            selectedPair={selectedPair}
+            walletAddress={sdkWalletAddress}
+            signMessage={signMessage}
+            connectWallet={connectWallet}
+          />
+        )
+      default:
+        return <LimitForm {...formProps} />
+    }
+  }
+
+  return (
+    <Wrapper>
+      <Tabs>
+        {ORDER_TABS.map(t => (
+          <Tab
+            key={t.key}
+            active={activeTab === t.key}
+            onClick={() => setActiveTab(t.key)}
+          >
+            {t.label}
+          </Tab>
+        ))}
+      </Tabs>
+
+      <Body>
+        <SideTabs>
+          <SideBtn
+            side="buy"
+            active={side === 'buy'}
+            onClick={() => setSide('buy')}
+          >
+            Buy
+          </SideBtn>
+          <SideBtn
+            side="sell"
+            active={side === 'sell'}
+            onClick={() => setSide('sell')}
+          >
+            Sell
+          </SideBtn>
+        </SideTabs>
+
+        {submitStatus ? <InfoBox>{submitStatus}</InfoBox> : null}
+        {error ? <WarningBox>{error}</WarningBox> : null}
+        {!walletAddress ? (
+          <WarningBox>
+            Connect your wallet to sign and submit Spot orders.
+          </WarningBox>
+        ) : null}
+
+        {renderForm()}
+      </Body>
+
+      {pendingOrder && (
+        <ConfirmOrderModal
+          order={pendingOrder}
+          loading={isLoading}
+          onConfirm={handleConfirm}
+          onCancel={handleCancel}
+        />
+      )}
+    </Wrapper>
+  )
 }
 
 export default OrderForm

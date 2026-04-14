@@ -1,4 +1,11 @@
-const MARGIN_API_URL = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
+const MARGIN_API_URL =
+  process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
+
+interface SignedReadAuth {
+  nonce: string
+  timestamp: number
+  signature: string
+}
 
 export interface MarginAccountOverview {
   id: string
@@ -93,9 +100,9 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${MARGIN_API_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
-      ...(options?.headers ?? {}),
+      ...(options?.headers ?? {})
     },
-    ...options,
+    ...options
   })
 
   const data = await response.json()
@@ -107,20 +114,36 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const marginApi = {
-  async getOverview(address: string): Promise<MarginOverview> {
-    return await fetchApi<MarginOverview>(`/api/v1/margin?address=${encodeURIComponent(address)}`)
+  async getOverview(
+    address: string,
+    auth: SignedReadAuth
+  ): Promise<MarginOverview> {
+    return await fetchApi<MarginOverview>(
+      `/api/v1/margin?address=${encodeURIComponent(address)}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+    )
   },
 
-  async getPriceHealth(pairSymbol?: string): Promise<MarginPriceHealthSnapshot> {
-    const query = pairSymbol ? `?pairSymbol=${encodeURIComponent(pairSymbol)}` : ''
-    return await fetchApi<MarginPriceHealthSnapshot>(`/api/v1/margin/price-health${query}`)
+  async getPriceHealth(
+    pairSymbol?: string
+  ): Promise<MarginPriceHealthSnapshot> {
+    const query = pairSymbol
+      ? `?pairSymbol=${encodeURIComponent(pairSymbol)}`
+      : ''
+    return await fetchApi<MarginPriceHealthSnapshot>(
+      `/api/v1/margin/price-health${query}`
+    )
   },
 
-  async resetPriceHealth(pairSymbol?: string): Promise<MarginPriceHealthSnapshot> {
-    return await fetchApi<MarginPriceHealthSnapshot>('/api/v1/margin/price-health/reset', {
-      method: 'POST',
-      body: JSON.stringify(pairSymbol ? { pairSymbol } : {}),
-    })
+  async resetPriceHealth(
+    pairSymbol?: string
+  ): Promise<MarginPriceHealthSnapshot> {
+    return await fetchApi<MarginPriceHealthSnapshot>(
+      '/api/v1/margin/price-health/reset',
+      {
+        method: 'POST',
+        body: JSON.stringify(pairSymbol ? { pairSymbol } : {})
+      }
+    )
   },
 
   async depositCollateral(input: {
@@ -131,10 +154,13 @@ export const marginApi = {
     timestamp: number
     signature: string
   }): Promise<{ account: MarginAccountOverview }> {
-    return await fetchApi<{ account: MarginAccountOverview }>('/api/v1/margin/collateral/deposit', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    })
+    return await fetchApi<{ account: MarginAccountOverview }>(
+      '/api/v1/margin/collateral/deposit',
+      {
+        method: 'POST',
+        body: JSON.stringify(input)
+      }
+    )
   },
 
   async withdrawCollateral(input: {
@@ -145,10 +171,13 @@ export const marginApi = {
     timestamp: number
     signature: string
   }): Promise<{ account: MarginAccountOverview }> {
-    return await fetchApi<{ account: MarginAccountOverview }>('/api/v1/margin/collateral/withdraw', {
-      method: 'POST',
-      body: JSON.stringify(input),
-    })
+    return await fetchApi<{ account: MarginAccountOverview }>(
+      '/api/v1/margin/collateral/withdraw',
+      {
+        method: 'POST',
+        body: JSON.stringify(input)
+      }
+    )
   },
 
   async openPosition(input: {
@@ -161,9 +190,12 @@ export const marginApi = {
     timestamp: number
     signature: string
   }): Promise<{ position: MarginPositionOverview; overview: MarginOverview }> {
-    return await fetchApi<{ position: MarginPositionOverview; overview: MarginOverview }>('/api/v1/margin/positions', {
+    return await fetchApi<{
+      position: MarginPositionOverview
+      overview: MarginOverview
+    }>('/api/v1/margin/positions', {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify(input)
     })
   },
 
@@ -174,15 +206,18 @@ export const marginApi = {
     timestamp: number
     signature: string
   }): Promise<MarginOverview> {
-    return await fetchApi<MarginOverview>(`/api/v1/margin/positions/${input.positionId}/close`, {
-      method: 'POST',
-      body: JSON.stringify({
-        address: input.address,
-        nonce: input.nonce,
-        timestamp: input.timestamp,
-        signature: input.signature,
-      }),
-    })
+    return await fetchApi<MarginOverview>(
+      `/api/v1/margin/positions/${input.positionId}/close`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          address: input.address,
+          nonce: input.nonce,
+          timestamp: input.timestamp,
+          signature: input.signature
+        })
+      }
+    )
   },
 
   async liquidatePosition(input: {
@@ -192,16 +227,17 @@ export const marginApi = {
     timestamp: number
     signature: string
   }): Promise<MarginOverview> {
-    return await fetchApi<MarginOverview>(`/api/v1/margin/positions/${input.positionId}/liquidate`, {
-      method: 'POST',
-      body: JSON.stringify({
-        liquidatorAddress: input.liquidatorAddress,
-        nonce: input.nonce,
-        timestamp: input.timestamp,
-        signature: input.signature,
-      }),
-    })
-  },
+    return await fetchApi<MarginOverview>(
+      `/api/v1/margin/positions/${input.positionId}/liquidate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          liquidatorAddress: input.liquidatorAddress,
+          nonce: input.nonce,
+          timestamp: input.timestamp,
+          signature: input.signature
+        })
+      }
+    )
+  }
 }
-
-export default marginApi

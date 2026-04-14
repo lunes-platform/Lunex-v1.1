@@ -41,7 +41,7 @@ export const Content = styled(Wrapper)`
 `
 
 export const Address = styled(Span)`
-  ${({ ...props }) => css`
+  ${css`
     width: 30%;
     margin-right: auto;
     display: block;
@@ -51,7 +51,7 @@ export const Address = styled(Span)`
 `
 
 export const LinkBox = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     span {
       display: flex;
       align-items: center;
@@ -67,7 +67,7 @@ export const LinkBox = styled(Wrapper)`
 `
 
 export const BoxTransaction = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     ${device.mobileL} {
       padding: 32px 16px;
     }

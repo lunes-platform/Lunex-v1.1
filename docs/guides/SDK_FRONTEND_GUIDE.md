@@ -29,7 +29,7 @@ const sdk = new LunexSDK({
 | `sdk.factory` | Factory de pares | `getPairs()`, `getPair()` |
 | `sdk.pair` | Info de pares | `getReserves()`, `getPrice()` |
 | `sdk.staking` | Staking | `stake()`, `unstake()`, `claimRewards()` |
-| `sdk.rewards` | Trading Rewards | `getPosition()`, `claimRewards()` |
+| `sdk.rewards` | Reward pool + DB-backed leader/trader rewards | `getPool()`, `getPending()`, `claimRewards()` |
 | `sdk.wnative` | Wrap/Unwrap | `deposit()`, `withdraw()` |
 | `sdk.utils` | Utilidades | `formatAmount()`, `convertDecimals()` |
 

@@ -186,17 +186,21 @@ export const Button = styled.button<{ primary?: boolean }>`
   font-weight: 700;
   font-size: 14px;
   cursor: pointer;
-  transition: opacity 0.2s, transform 0.2s;
-  
-  background: ${({ primary, theme }) => primary ? theme.colors.themeColors[800] : theme.colors.themeColors[600]};
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+
+  background: ${({ primary, theme }) =>
+    primary ? theme.colors.themeColors[800] : theme.colors.themeColors[600]};
   color: #ffffff;
-  border: ${({ primary, theme }) => primary ? 'none' : `1px solid ${theme.colors.themeColors[400]}`};
+  border: ${({ primary, theme }) =>
+    primary ? 'none' : `1px solid ${theme.colors.themeColors[400]}`};
 
   &:hover {
     opacity: 0.9;
     transform: translateY(-1px);
   }
-  
+
   &:disabled {
     opacity: 0.5;
     cursor: not-allowed;

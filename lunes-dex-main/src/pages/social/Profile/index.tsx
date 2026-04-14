@@ -12,36 +12,168 @@ import socialApi, {
   buildLikeIdeaMessage,
   buildUnfollowLeaderMessage,
   buildUnlikeIdeaMessage,
-  createSignedActionMetadata,
+  createSignedActionMetadata
 } from '../../../services/socialService'
 
 // ── SVG Icons ──
-const ArrowLeftIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" /></svg>
-const UsersIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
-const ChartIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
-const WalletIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12V7H5a2 2 0 010-4h14v4" /><path d="M3 5v14a2 2 0 002 2h16v-5" /><path d="M18 12a2 2 0 100 4 2 2 0 000-4z" /></svg>
-const BarChartIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg>
-const ListIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></svg>
-const IdeaIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18h6" /><path d="M10 22h4" /><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0018 8 6 6 0 006 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 019 14" /></svg>
-const ShareIcon = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg>
-const HeartIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" /></svg>
-const MessageIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
-const TwitterIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26l8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
-const TelegramIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 10l-4 4l6 6l4 -16l-18 7l4 2l2 6l3 -4" /></svg>
-const DiscordIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 12a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" /><path d="M14 12a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" /><path d="M15.5 17c0 1 1.5 3 2 3c1.5 0 2.833 -1.667 3.5 -3c.667 -1.667 .5 -5.833 -1.5 -11.5c-1.457 -1.015 -3 -1.34 -4.5 -1.5l-1 2.5a16.989 16.989 0 0 0 -6 0l-1 -2.5c-1.5 .16 -3.043 .485 -4.5 1.5c-2 5.667 -2.167 9.833 -1.5 11.5c.667 1.333 2 3 3.5 3c.5 0 2 -2 2 -3" /><path d="M7 16.5c3.5 1 6.5 1 10 0" /></svg>
+const ArrowLeftIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <line x1="19" y1="12" x2="5" y2="12" />
+    <polyline points="12 19 5 12 12 5" />
+  </svg>
+)
+const UsersIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+  </svg>
+)
+const ChartIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+  </svg>
+)
+const WalletIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M21 12V7H5a2 2 0 010-4h14v4" />
+    <path d="M3 5v14a2 2 0 002 2h16v-5" />
+    <path d="M18 12a2 2 0 100 4 2 2 0 000-4z" />
+  </svg>
+)
+const BarChartIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <line x1="18" y1="20" x2="18" y2="10" />
+    <line x1="12" y1="20" x2="12" y2="4" />
+    <line x1="6" y1="20" x2="6" y2="14" />
+  </svg>
+)
+const ListIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <line x1="8" y1="6" x2="21" y2="6" />
+    <line x1="8" y1="12" x2="21" y2="12" />
+    <line x1="8" y1="18" x2="21" y2="18" />
+    <line x1="3" y1="6" x2="3.01" y2="6" />
+    <line x1="3" y1="12" x2="3.01" y2="12" />
+    <line x1="3" y1="18" x2="3.01" y2="18" />
+  </svg>
+)
+const IdeaIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M9 18h6" />
+    <path d="M10 22h4" />
+    <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0018 8 6 6 0 006 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 019 14" />
+  </svg>
+)
+const ShareIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <circle cx="18" cy="5" r="3" />
+    <circle cx="6" cy="12" r="3" />
+    <circle cx="18" cy="19" r="3" />
+    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+  </svg>
+)
+const TwitterIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M18.244 2.25h3.308l-7.227 8.26l8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+  </svg>
+)
+const TelegramIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M15 10l-4 4l6 6l4 -16l-18 7l4 2l2 6l3 -4" />
+  </svg>
+)
+const DiscordIcon = () => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path d="M8 12a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" />
+    <path d="M14 12a1 1 0 1 0 2 0a1 1 0 0 0 -2 0" />
+    <path d="M15.5 17c0 1 1.5 3 2 3c1.5 0 2.833 -1.667 3.5 -3c.667 -1.667 .5 -5.833 -1.5 -11.5c-1.457 -1.015 -3 -1.34 -4.5 -1.5l-1 2.5a16.989 16.989 0 0 0 -6 0l-1 -2.5c-1.5 .16 -3.043 .485 -4.5 1.5c-2 5.667 -2.167 9.833 -1.5 11.5c.667 1.333 2 3 3.5 3c.5 0 2 -2 2 -3" />
+    <path d="M7 16.5c3.5 1 6.5 1 10 0" />
+  </svg>
+)
 
 // ── Styled ──
 
 const Page = styled.div`
   min-height: 100vh;
-  background: #1A1A1A;
+  background: #1a1a1a;
   padding-top: 64px;
 `
 
 const BackBtn = styled.button`
   background: transparent;
   border: none;
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
   cursor: pointer;
@@ -49,7 +181,9 @@ const BackBtn = styled.button`
   display: flex;
   align-items: center;
   gap: 8px;
-  &:hover { color: #FFFFFF; }
+  &:hover {
+    color: #ffffff;
+  }
 `
 
 const CoverBanner = styled.div<{ isAI?: boolean }>`
@@ -73,7 +207,7 @@ const AvatarLarge = styled.div<{ isAI?: boolean }>`
   width: 96px;
   height: 96px;
   border-radius: 50%;
-  border: 4px solid #1A1A1A;
+  border: 4px solid #1a1a1a;
   background: ${({ isAI }) =>
     isAI
       ? 'linear-gradient(135deg, #6C38FF, #3C1CB7)'
@@ -102,7 +236,7 @@ const ProfileName = styled.h1`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 28px;
   font-weight: 800;
-  color: #FFFFFF;
+  color: #ffffff;
   margin: 0;
   display: flex;
   align-items: center;
@@ -122,14 +256,14 @@ const Badge = styled.span<{ color?: string }>`
 const ProfileMeta = styled.div`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
-  color: #8A8A8E;
+  color: #8a8a8e;
   margin-top: 4px;
 `
 
 const ProfileBio = styled.p`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 15px;
-  color: #8A8A8E;
+  color: #8a8a8e;
   line-height: 1.6;
   margin: 16px 0;
   max-width: 600px;
@@ -148,8 +282,8 @@ const SocialLink = styled.a`
   gap: 8px;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid #2A2A2C;
-  color: #FFFFFF;
+  border: 1px solid #2a2a2c;
+  color: #ffffff;
   text-decoration: none;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
@@ -171,16 +305,16 @@ const PStat = styled.div`
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #8A8A8E;
+  color: #8a8a8e;
 
   span {
     font-family: 'Space Grotesk', sans-serif;
     font-weight: 700;
-    color: #FFFFFF;
+    color: #ffffff;
     font-size: 16px;
   }
   small {
-    color: #47474A;
+    color: #47474a;
     font-size: 13px;
     font-family: 'Space Grotesk', sans-serif;
   }
@@ -201,13 +335,13 @@ const FollowersHeader = styled.div`
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
   font-weight: 700;
 
   small {
-    color: #47474A;
+    color: #47474a;
     font-size: 12px;
     font-weight: 500;
   }
@@ -226,18 +360,18 @@ const FollowerChip = styled.div`
   padding: 10px 12px;
   border-radius: 10px;
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
 `
 
 const FollowerAvatar = styled.div`
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3C1CB7, #6C38FF);
+  background: linear-gradient(135deg, #3c1cb7, #6c38ff);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 11px;
   font-weight: 700;
@@ -249,14 +383,14 @@ const FollowerInfo = styled.div`
   gap: 2px;
 
   strong {
-    color: #FFFFFF;
+    color: #ffffff;
     font-family: 'Space Grotesk', sans-serif;
     font-size: 13px;
     font-weight: 700;
   }
 
   span {
-    color: #8A8A8E;
+    color: #8a8a8e;
     font-family: 'Space Grotesk', sans-serif;
     font-size: 11px;
   }
@@ -265,22 +399,24 @@ const FollowerInfo = styled.div`
 const CopyBtn = styled.button`
   padding: 12px 32px;
   border-radius: 8px;
-  background: #6C38FF;
+  background: #6c38ff;
   border: none;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;
   font-size: 15px;
   cursor: pointer;
-  &:hover { background: #5228DB; }
+  &:hover {
+    background: #5228db;
+  }
 `
 
 const SecondaryBtn = styled.button`
   padding: 12px 24px;
   border-radius: 8px;
   background: transparent;
-  border: 1px solid #2A2A2C;
-  color: #FFFFFF;
+  border: 1px solid #2a2a2c;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
@@ -288,13 +424,15 @@ const SecondaryBtn = styled.button`
   display: flex;
   align-items: center;
   gap: 8px;
-  &:hover { background: #232323; }
+  &:hover {
+    background: #232323;
+  }
 `
 
 const Tabs = styled.div`
   display: flex;
   gap: 0;
-  border-bottom: 1px solid #2A2A2C;
+  border-bottom: 1px solid #2a2a2c;
   margin-bottom: 32px;
 `
 
@@ -302,17 +440,20 @@ const PTab = styled.button<{ active: boolean }>`
   padding: 16px 24px;
   border: none;
   background: transparent;
-  color: ${({ active }) => active ? '#FFFFFF' : '#47474A'};
+  color: ${({ active }) => (active ? '#FFFFFF' : '#47474A')};
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 14px;
   cursor: pointer;
-  border-bottom: 2px solid ${({ active }) => active ? '#6C38FF' : 'transparent'};
+  border-bottom: 2px solid
+    ${({ active }) => (active ? '#6C38FF' : 'transparent')};
   transition: all 0.2s;
   display: flex;
   align-items: center;
   gap: 8px;
-  &:hover { color: #FFFFFF; }
+  &:hover {
+    color: #ffffff;
+  }
 `
 
 const Content = styled.div`
@@ -323,7 +464,7 @@ const Content = styled.div`
 
 const ChartContainer = styled.div`
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 16px;
   padding: 24px;
   margin-bottom: 24px;
@@ -332,7 +473,7 @@ const ChartContainer = styled.div`
 const ChartTitle = styled.h3`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 18px;
-  color: #FFFFFF;
+  color: #ffffff;
   margin: 0 0 16px 0;
 `
 
@@ -345,7 +486,7 @@ const MetricsGrid = styled.div`
 
 const MetricCard = styled.div`
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 12px;
   padding: 20px;
   text-align: center;
@@ -361,7 +502,7 @@ const MetricVal = styled.div<{ color?: string }>`
 const MetricLbl = styled.div`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
-  color: #47474A;
+  color: #47474a;
   margin-top: 4px;
 `
 
@@ -371,17 +512,17 @@ const TradesTable = styled.table`
   background: #232323;
   border-radius: 12px;
   overflow: hidden;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
 `
 
 const TTh = styled.th`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   font-weight: 600;
-  color: #47474A;
+  color: #47474a;
   padding: 14px 16px;
   text-align: left;
-  border-bottom: 1px solid #2A2A2C;
+  border-bottom: 1px solid #2a2a2c;
 `
 
 const TTd = styled.td<{ color?: string }>`
@@ -389,19 +530,21 @@ const TTd = styled.td<{ color?: string }>`
   font-size: 14px;
   color: ${({ color }) => color || '#FFFFFF'};
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(42,42,44,0.5);
+  border-bottom: 1px solid rgba(42, 42, 44, 0.5);
 `
 
 const IdeaCard = styled.div`
   background: #232323;
-  border: 1px solid #2A2A2C;
+  border: 1px solid #2a2a2c;
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 16px;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
   &:hover {
-    border-color: #3A3A3C;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    border-color: #3a3a3c;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
   }
 `
 
@@ -415,18 +558,19 @@ const IdeaHeader = styled.div`
 const IdeaTitle = styled.h4`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16px;
-  color: #FFFFFF;
+  color: #ffffff;
   margin: 0;
   flex: 1;
   word-break: break-word;
 `
 
 const DirectionBadge = styled.span<{ bullish: boolean }>`
-  color: ${({ bullish }) => bullish ? '#26D07C' : '#FF284C'};
+  color: ${({ bullish }) => (bullish ? '#26D07C' : '#FF284C')};
   font-size: 12px;
   font-weight: 700;
   font-family: 'Space Grotesk', sans-serif;
-  background: ${({ bullish }) => bullish ? 'rgba(38,208,124,0.1)' : 'rgba(255,40,76,0.1)'};
+  background: ${({ bullish }) =>
+    bullish ? 'rgba(38,208,124,0.1)' : 'rgba(255,40,76,0.1)'};
   padding: 4px 10px;
   border-radius: 4px;
   flex-shrink: 0;
@@ -434,13 +578,15 @@ const DirectionBadge = styled.span<{ bullish: boolean }>`
 `
 
 const IdeaDesc = styled.p<{ expanded?: boolean }>`
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-size: 14px;
   line-height: 1.6;
   margin: 8px 0 12px;
   font-family: 'Space Grotesk', sans-serif;
   word-break: break-word;
-  ${({ expanded }) => !expanded && `
+  ${({ expanded }) =>
+    !expanded &&
+    `
     display: -webkit-box;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
@@ -452,14 +598,16 @@ const IdeaDesc = styled.p<{ expanded?: boolean }>`
 const ReadMoreBtn = styled.button`
   background: transparent;
   border: none;
-  color: #6C38FF;
+  color: #6c38ff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   padding: 0;
   margin-bottom: 12px;
-  &:hover { color: #8B5CF6; }
+  &:hover {
+    color: #8b5cf6;
+  }
 `
 
 const IdeaActions = styled.div`
@@ -467,7 +615,7 @@ const IdeaActions = styled.div`
   align-items: center;
   gap: 4px;
   padding-top: 12px;
-  border-top: 1px solid rgba(42,42,44,0.5);
+  border-top: 1px solid rgba(42, 42, 44, 0.5);
   margin-top: 12px;
 `
 
@@ -478,8 +626,10 @@ const ActionButton = styled.button<{ active?: boolean; activeColor?: string }>`
   padding: 8px 14px;
   border-radius: 8px;
   border: none;
-  background: ${({ active, activeColor }) => active ? `${activeColor || '#6C38FF'}12` : 'transparent'};
-  color: ${({ active, activeColor }) => active ? (activeColor || '#6C38FF') : '#8A8A8E'};
+  background: ${({ active, activeColor }) =>
+    active ? `${activeColor || '#6C38FF'}12` : 'transparent'};
+  color: ${({ active, activeColor }) =>
+    active ? activeColor || '#6C38FF' : '#8A8A8E'};
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   font-weight: 600;
@@ -505,17 +655,17 @@ const TagsRow = styled.div`
 `
 
 const IdeaTag = styled.span`
-  background: #2A2A2C;
+  background: #2a2a2c;
   padding: 2px 8px;
   border-radius: 4px;
   font-size: 11px;
-  color: #8A8A8E;
+  color: #8a8a8e;
   font-family: 'Space Grotesk', sans-serif;
 `
 
 const IdeaDateLabel = styled.span`
   font-size: 12px;
-  color: #47474A;
+  color: #47474a;
   font-family: 'Space Grotesk', sans-serif;
   margin-left: auto;
 `
@@ -523,7 +673,7 @@ const IdeaDateLabel = styled.span`
 const CommentsSection = styled.div`
   margin-top: 16px;
   padding-top: 16px;
-  border-top: 1px solid rgba(42,42,44,0.3);
+  border-top: 1px solid rgba(42, 42, 44, 0.3);
 `
 
 const CommentInputRow = styled.div`
@@ -534,31 +684,40 @@ const CommentInputRow = styled.div`
 
 const CommentInput = styled.input`
   flex: 1;
-  background: #1A1A1A;
-  border: 1px solid #2A2A2C;
+  background: #1a1a1a;
+  border: 1px solid #2a2a2c;
   border-radius: 8px;
   padding: 10px 14px;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
   outline: none;
-  &:focus { border-color: #6C38FF; }
-  &::placeholder { color: #47474A; }
+  &:focus {
+    border-color: #6c38ff;
+  }
+  &::placeholder {
+    color: #47474a;
+  }
 `
 
 const CommentSubmitBtn = styled.button`
   padding: 10px 18px;
   border-radius: 8px;
-  background: #6C38FF;
+  background: #6c38ff;
   border: none;
-  color: #FFFFFF;
+  color: #ffffff;
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
-  &:hover { background: #5228DB; }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
+  &:hover {
+    background: #5228db;
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 `
 
 const CommentItem = styled.div`
@@ -566,7 +725,7 @@ const CommentItem = styled.div`
   gap: 10px;
   padding: 10px 0;
   &:not(:last-child) {
-    border-bottom: 1px solid rgba(42,42,44,0.3);
+    border-bottom: 1px solid rgba(42, 42, 44, 0.3);
   }
 `
 
@@ -574,7 +733,7 @@ const CommentAvatar = styled.div`
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3C1CB7, #6C38FF);
+  background: linear-gradient(135deg, #3c1cb7, #6c38ff);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -593,20 +752,20 @@ const CommentAuthor = styled.span`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 12px;
   font-weight: 700;
-  color: #FFFFFF;
+  color: #ffffff;
 `
 
 const CommentTime = styled.span`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 11px;
-  color: #47474A;
+  color: #47474a;
   margin-left: 8px;
 `
 
 const CommentText = styled.p`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
-  color: #8A8A8E;
+  color: #8a8a8e;
   margin: 4px 0 0;
   line-height: 1.5;
 `
@@ -614,7 +773,7 @@ const CommentText = styled.p`
 const EmptyComments = styled.div`
   text-align: center;
   padding: 20px 0;
-  color: #47474A;
+  color: #47474a;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 13px;
 `
@@ -622,14 +781,20 @@ const EmptyComments = styled.div`
 const EmptyState = styled.div`
   text-align: center;
   padding: 64px 0;
-  color: #47474A;
+  color: #47474a;
   font-family: 'Space Grotesk', sans-serif;
 `
 
 // ── Helpers ──
 
 const getInitials = (name: string): string => {
-  return name.replace(/[^A-Za-z ]/g, '').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+  return name
+    .replace(/[^A-Za-z ]/g, '')
+    .split(' ')
+    .map(w => w[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
 }
 
 const formatRelativeTime = (value: string): string => {
@@ -653,7 +818,11 @@ const formatRelativeTime = (value: string): string => {
 
 const isImageAvatar = (avatar?: string): boolean => {
   if (!avatar) return false
-  return avatar.startsWith('data:image') || avatar.startsWith('http') || avatar.startsWith('/')
+  return (
+    avatar.startsWith('data:image') ||
+    avatar.startsWith('http') ||
+    avatar.startsWith('/')
+  )
 }
 
 const getAvatarContent = (trader: Trader) => {
@@ -673,8 +842,8 @@ const Toast = styled.div`
   position: fixed;
   bottom: 32px;
   right: 32px;
-  background: #26D07C;
-  color: #1A1A1A;
+  background: #26d07c;
+  color: #1a1a1a;
   padding: 12px 24px;
   border-radius: 8px;
   font-family: 'Space Grotesk', sans-serif;
@@ -685,14 +854,25 @@ const Toast = styled.div`
   gap: 8px;
   box-shadow: 0 8px 32px rgba(38, 208, 124, 0.2);
   z-index: 10000;
-  animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1), fadeOut 0.3s 2.7s forwards;
+  animation:
+    slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    fadeOut 0.3s 2.7s forwards;
 
   @keyframes slideIn {
-    from { transform: translateY(100%); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
   @keyframes fadeOut {
-    to { opacity: 0; pointer-events: none; }
+    to {
+      opacity: 0;
+      pointer-events: none;
+    }
   }
 `
 
@@ -707,7 +887,9 @@ const Profile: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { walletAddress, connectWallet, signMessage } = useSDK()
-  const [tab, setTab] = useState<'performance' | 'trades' | 'ideas'>('performance')
+  const [tab, setTab] = useState<'performance' | 'trades' | 'ideas'>(
+    'performance'
+  )
   const [showCopy, setShowCopy] = useState(false)
   const [toastMessage, setToastMessage] = useState('')
   const [isLoading, setIsLoading] = useState(true)
@@ -716,13 +898,23 @@ const Profile: React.FC = () => {
 
   // Idea interactions state
   const [likedIdeas, setLikedIdeas] = useState<Record<string, boolean>>({})
-  const [ideaLikeCounts, setIdeaLikeCounts] = useState<Record<string, number>>({})
-  const [expandedIdeas, setExpandedIdeas] = useState<Record<string, boolean>>({})
+  const [ideaLikeCounts, setIdeaLikeCounts] = useState<Record<string, number>>(
+    {}
+  )
+  const [expandedIdeas, setExpandedIdeas] = useState<Record<string, boolean>>(
+    {}
+  )
   const [openComments, setOpenComments] = useState<Record<string, boolean>>({})
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({})
-  const [ideaComments, setIdeaComments] = useState<Record<string, IdeaComment[]>>({})
-  const [commentLoading, setCommentLoading] = useState<Record<string, boolean>>({})
-  const [commentSubmittingId, setCommentSubmittingId] = useState<string | null>(null)
+  const [ideaComments, setIdeaComments] = useState<
+    Record<string, IdeaComment[]>
+  >({})
+  const [commentLoading, setCommentLoading] = useState<Record<string, boolean>>(
+    {}
+  )
+  const [commentSubmittingId, setCommentSubmittingId] = useState<string | null>(
+    null
+  )
   const [leaderFollowers, setLeaderFollowers] = useState<LeaderFollower[]>([])
 
   useEffect(() => {
@@ -742,8 +934,12 @@ const Profile: React.FC = () => {
 
       try {
         const [nextTrader, nextFollowers] = await Promise.all([
-          socialApi.getLeaderProfile(id, walletAddress ?? undefined),
-          socialApi.getLeaderFollowers(id, 8),
+          socialApi.getLeaderProfile(
+            id,
+            walletAddress ?? undefined,
+            signMessage
+          ),
+          socialApi.getLeaderFollowers(id, 8)
         ])
 
         if (isMounted) {
@@ -812,7 +1008,9 @@ const Profile: React.FC = () => {
         await connectWallet()
         showToast('Wallet connected. Click follow again to continue.')
       } catch (err) {
-        showToast(err instanceof Error ? err.message : 'Failed to connect wallet')
+        showToast(
+          err instanceof Error ? err.message : 'Failed to connect wallet'
+        )
       }
       return
     }
@@ -822,64 +1020,86 @@ const Profile: React.FC = () => {
     try {
       if (trader.isFollowing) {
         const auth = createSignedActionMetadata()
-        const signature = await signMessage(buildUnfollowLeaderMessage({
-          leaderId: id,
-          address: walletAddress,
-          nonce: auth.nonce,
-          timestamp: auth.timestamp,
-        }))
+        const signature = await signMessage(
+          buildUnfollowLeaderMessage({
+            leaderId: id,
+            address: walletAddress,
+            nonce: auth.nonce,
+            timestamp: auth.timestamp
+          })
+        )
 
         await socialApi.unfollowLeader(id, {
           address: walletAddress,
           nonce: auth.nonce,
           timestamp: auth.timestamp,
-          signature,
+          signature
         })
         const followers = await socialApi.getLeaderFollowers(id, 8)
         setTrader({
           ...trader,
           isFollowing: false,
-          followers: Math.max(trader.followers - 1, 0),
+          followers: Math.max(trader.followers - 1, 0)
         })
         setLeaderFollowers(followers)
         showToast(`Stopped following ${trader.name}.`)
       } else {
         const auth = createSignedActionMetadata()
-        const signature = await signMessage(buildFollowLeaderMessage({
-          leaderId: id,
-          address: walletAddress,
-          nonce: auth.nonce,
-          timestamp: auth.timestamp,
-        }))
+        const signature = await signMessage(
+          buildFollowLeaderMessage({
+            leaderId: id,
+            address: walletAddress,
+            nonce: auth.nonce,
+            timestamp: auth.timestamp
+          })
+        )
 
         await socialApi.followLeader(id, {
           address: walletAddress,
           nonce: auth.nonce,
           timestamp: auth.timestamp,
-          signature,
+          signature
         })
         const followers = await socialApi.getLeaderFollowers(id, 8)
         setTrader({
           ...trader,
           isFollowing: true,
-          followers: trader.followers + 1,
+          followers: trader.followers + 1
         })
         setLeaderFollowers(followers)
         showToast(`Now following ${trader.name}.`)
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to update follow state')
+      showToast(
+        err instanceof Error ? err.message : 'Failed to update follow state'
+      )
     } finally {
       setFollowLoading(false)
     }
   }
 
-  if (isLoading && !trader) return <Page><Content><p style={{ color: '#fff' }}>Loading trader...</p></Content></Page>
-  if (!trader) return <Page><Content><p style={{ color: '#fff' }}>Trader not found.</p></Content></Page>
+  if (isLoading && !trader)
+    return (
+      <Page>
+        <Content>
+          <p style={{ color: '#fff' }}>Loading trader...</p>
+        </Content>
+      </Page>
+    )
+  if (!trader)
+    return (
+      <Page>
+        <Content>
+          <p style={{ color: '#fff' }}>Trader not found.</p>
+        </Content>
+      </Page>
+    )
 
   return (
     <Page>
-      <BackBtn onClick={() => navigate('/social')}><ArrowLeftIcon /> Back to Social Trade</BackBtn>
+      <BackBtn onClick={() => navigate('/social')}>
+        <ArrowLeftIcon /> Back to Social Trade
+      </BackBtn>
       <CoverBanner isAI={trader.isAI} />
 
       <ProfileSection>
@@ -890,23 +1110,42 @@ const Profile: React.FC = () => {
             {trader.isVerified && <Badge>Verified</Badge>}
             {trader.isAI && <Badge color="#3C1CB7">AI Agent</Badge>}
           </ProfileName>
-          <ProfileMeta>@{trader.username} · Member since {trader.memberSince} · {trader.fee}% Performance Fee</ProfileMeta>
+          <ProfileMeta>
+            @{trader.username} · Member since {trader.memberSince} ·{' '}
+            {trader.fee}% Performance Fee
+          </ProfileMeta>
           <ProfileBio>{trader.bio}</ProfileBio>
 
-          {!!(trader.socialLinks?.twitterUrl || trader.socialLinks?.telegramUrl || trader.socialLinks?.discordUrl) && (
+          {!!(
+            trader.socialLinks?.twitterUrl ||
+            trader.socialLinks?.telegramUrl ||
+            trader.socialLinks?.discordUrl
+          ) && (
             <SocialLinksRow>
               {trader.socialLinks?.twitterUrl && (
-                <SocialLink href={trader.socialLinks.twitterUrl} target="_blank" rel="noreferrer">
+                <SocialLink
+                  href={trader.socialLinks.twitterUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   <TwitterIcon /> X / Twitter
                 </SocialLink>
               )}
               {trader.socialLinks?.telegramUrl && (
-                <SocialLink href={trader.socialLinks.telegramUrl} target="_blank" rel="noreferrer">
+                <SocialLink
+                  href={trader.socialLinks.telegramUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   <TelegramIcon /> Telegram
                 </SocialLink>
               )}
               {trader.socialLinks?.discordUrl && (
-                <SocialLink href={trader.socialLinks.discordUrl} target="_blank" rel="noreferrer">
+                <SocialLink
+                  href={trader.socialLinks.discordUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   <DiscordIcon /> Discord
                 </SocialLink>
               )}
@@ -914,8 +1153,16 @@ const Profile: React.FC = () => {
           )}
 
           <ProfileStats>
-            <PStat><UsersIcon /><span>{trader.followers.toLocaleString()}</span><small>Followers</small></PStat>
-            <PStat><ChartIcon /><span>{trader.winRate}%</span><small>Win Rate</small></PStat>
+            <PStat>
+              <UsersIcon />
+              <span>{trader.followers.toLocaleString()}</span>
+              <small>Followers</small>
+            </PStat>
+            <PStat>
+              <ChartIcon />
+              <span>{trader.winRate}%</span>
+              <small>Win Rate</small>
+            </PStat>
             <PStat>
               <WalletIcon />
               <span>{trader.aum} USDT</span>
@@ -936,8 +1183,16 @@ const Profile: React.FC = () => {
 
           <ProfileActions>
             <CopyBtn onClick={() => setShowCopy(true)}>Copy Trade</CopyBtn>
-            <SecondaryBtn onClick={handleFollow} disabled={followLoading}>{followLoading ? 'Processing...' : trader.isFollowing ? 'Following' : 'Follow'}</SecondaryBtn>
-            <SecondaryBtn onClick={handleShareProfile}><ShareIcon /> Share</SecondaryBtn>
+            <SecondaryBtn onClick={handleFollow} disabled={followLoading}>
+              {followLoading
+                ? 'Processing...'
+                : trader.isFollowing
+                  ? 'Following'
+                  : 'Follow'}
+            </SecondaryBtn>
+            <SecondaryBtn onClick={handleShareProfile}>
+              <ShareIcon /> Share
+            </SecondaryBtn>
           </ProfileActions>
 
           <FollowersSection>
@@ -946,19 +1201,27 @@ const Profile: React.FC = () => {
               <small>{trader.followers.toLocaleString()} total</small>
             </FollowersHeader>
             <FollowersGrid>
-              {leaderFollowers.length > 0 ? leaderFollowers.map((follower) => (
-                <FollowerChip key={follower.id}>
-                  <FollowerAvatar>{follower.initials}</FollowerAvatar>
-                  <FollowerInfo>
-                    <strong>{follower.name}</strong>
-                    <span>{follower.username ? `@${String(follower.username)}` : formatRelativeTime(follower.followedAt)}</span>
-                  </FollowerInfo>
-                </FollowerChip>
-              )) : (
+              {leaderFollowers.length > 0 ? (
+                leaderFollowers.map(follower => (
+                  <FollowerChip key={follower.id}>
+                    <FollowerAvatar>{follower.initials}</FollowerAvatar>
+                    <FollowerInfo>
+                      <strong>{follower.name}</strong>
+                      <span>
+                        {follower.username
+                          ? `@${String(follower.username)}`
+                          : formatRelativeTime(follower.followedAt)}
+                      </span>
+                    </FollowerInfo>
+                  </FollowerChip>
+                ))
+              ) : (
                 <FollowerChip>
                   <FollowerInfo>
                     <strong>No followers yet</strong>
-                    <span>Follower data will appear here as the vault grows.</span>
+                    <span>
+                      Follower data will appear here as the vault grows.
+                    </span>
                   </FollowerInfo>
                 </FollowerChip>
               )}
@@ -969,9 +1232,18 @@ const Profile: React.FC = () => {
 
       <Content>
         <Tabs>
-          <PTab active={tab === 'performance'} onClick={() => setTab('performance')}><BarChartIcon /> Performance</PTab>
-          <PTab active={tab === 'trades'} onClick={() => setTab('trades')}><ListIcon /> Trade History</PTab>
-          <PTab active={tab === 'ideas'} onClick={() => setTab('ideas')}><IdeaIcon /> Ideas ({trader.ideas.length})</PTab>
+          <PTab
+            active={tab === 'performance'}
+            onClick={() => setTab('performance')}
+          >
+            <BarChartIcon /> Performance
+          </PTab>
+          <PTab active={tab === 'trades'} onClick={() => setTab('trades')}>
+            <ListIcon /> Trade History
+          </PTab>
+          <PTab active={tab === 'ideas'} onClick={() => setTab('ideas')}>
+            <IdeaIcon /> Ideas ({trader.ideas.length})
+          </PTab>
         </Tabs>
 
         {tab === 'performance' && (
@@ -1023,29 +1295,43 @@ const Profile: React.FC = () => {
                 <tr key={i}>
                   <TTd>{t.date}</TTd>
                   <TTd>{t.pair}</TTd>
-                  <TTd color={t.side === 'Buy' ? '#26D07C' : '#FF284C'}>{t.side}</TTd>
+                  <TTd color={t.side === 'Buy' ? '#26D07C' : '#FF284C'}>
+                    {t.side}
+                  </TTd>
                   <TTd>${t.entry.toLocaleString()}</TTd>
                   <TTd>${t.exit.toLocaleString()}</TTd>
-                  <TTd color={t.pnl >= 0 ? '#26D07C' : '#FF284C'}>{t.pnl > 0 ? '+' : ''}{t.pnl}%</TTd>
+                  <TTd color={t.pnl >= 0 ? '#26D07C' : '#FF284C'}>
+                    {t.pnl > 0 ? '+' : ''}
+                    {t.pnl}%
+                  </TTd>
                   <TTd>{t.status}</TTd>
                 </tr>
               ))}
               {trader.trades.length === 0 && (
-                <tr><TTd colSpan={7} style={{ textAlign: 'center', color: '#47474A' }}>No trades yet.</TTd></tr>
+                <tr>
+                  <TTd
+                    colSpan={7}
+                    style={{ textAlign: 'center', color: '#47474A' }}
+                  >
+                    No trades yet.
+                  </TTd>
+                </tr>
               )}
             </tbody>
           </TradesTable>
         )}
 
-        {tab === 'ideas' && (
-          trader.ideas.length > 0 ? (
+        {tab === 'ideas' &&
+          (trader.ideas.length > 0 ? (
             trader.ideas.map(idea => {
               const isLiked = likedIdeas[idea.id] || false
               const currentLikes = ideaLikeCounts[idea.id] ?? idea.likes
               const isExpanded = expandedIdeas[idea.id] || false
               const showCommentSection = openComments[idea.id] || false
               const comments = ideaComments[idea.id] || []
-              const currentCommentsCount = ideaComments[idea.id] ? comments.length : idea.comments
+              const currentCommentsCount = ideaComments[idea.id]
+                ? comments.length
+                : idea.comments
               const commentInput = commentInputs[idea.id] || ''
               const isCommentsLoading = commentLoading[idea.id] || false
 
@@ -1055,7 +1341,11 @@ const Profile: React.FC = () => {
                     await connectWallet()
                     showToast('Wallet connected. Click like again to continue.')
                   } catch (err) {
-                    showToast(err instanceof Error ? err.message : 'Failed to connect wallet')
+                    showToast(
+                      err instanceof Error
+                        ? err.message
+                        : 'Failed to connect wallet'
+                    )
                   }
                   return
                 }
@@ -1064,35 +1354,45 @@ const Profile: React.FC = () => {
                   const auth = createSignedActionMetadata()
                   const result = isLiked
                     ? await socialApi.unlikeIdea(idea.id, {
-                      address: walletAddress,
-                      nonce: auth.nonce,
-                      timestamp: auth.timestamp,
-                      signature: await signMessage(buildUnlikeIdeaMessage({
-                        ideaId: idea.id,
                         address: walletAddress,
                         nonce: auth.nonce,
                         timestamp: auth.timestamp,
-                      })),
-                    })
+                        signature: await signMessage(
+                          buildUnlikeIdeaMessage({
+                            ideaId: idea.id,
+                            address: walletAddress,
+                            nonce: auth.nonce,
+                            timestamp: auth.timestamp
+                          })
+                        )
+                      })
                     : await socialApi.likeIdea(idea.id, {
-                      address: walletAddress,
-                      nonce: auth.nonce,
-                      timestamp: auth.timestamp,
-                      signature: await signMessage(buildLikeIdeaMessage({
-                        ideaId: idea.id,
                         address: walletAddress,
                         nonce: auth.nonce,
                         timestamp: auth.timestamp,
-                      })),
-                    })
+                        signature: await signMessage(
+                          buildLikeIdeaMessage({
+                            ideaId: idea.id,
+                            address: walletAddress,
+                            nonce: auth.nonce,
+                            timestamp: auth.timestamp
+                          })
+                        )
+                      })
 
                   setLikedIdeas(prev => ({ ...prev, [idea.id]: !isLiked }))
                   setIdeaLikeCounts(prev => ({
                     ...prev,
-                    [idea.id]: result.likes ?? (isLiked ? Math.max(currentLikes - 1, 0) : currentLikes + 1),
+                    [idea.id]:
+                      result.likes ??
+                      (isLiked
+                        ? Math.max(currentLikes - 1, 0)
+                        : currentLikes + 1)
                   }))
                 } catch (err) {
-                  showToast(err instanceof Error ? err.message : 'Failed to update like')
+                  showToast(
+                    err instanceof Error ? err.message : 'Failed to update like'
+                  )
                 }
               }
 
@@ -1117,7 +1417,11 @@ const Profile: React.FC = () => {
                     await connectWallet()
                     showToast('Wallet connected. Click post again to continue.')
                   } catch (err) {
-                    showToast(err instanceof Error ? err.message : 'Failed to connect wallet')
+                    showToast(
+                      err instanceof Error
+                        ? err.message
+                        : 'Failed to connect wallet'
+                    )
                   }
                   return
                 }
@@ -1127,29 +1431,35 @@ const Profile: React.FC = () => {
                 try {
                   const auth = createSignedActionMetadata()
                   const content = commentInput.trim()
-                  const signature = await signMessage(buildCommentIdeaMessage({
-                    ideaId: idea.id,
-                    address: walletAddress,
-                    content,
-                    nonce: auth.nonce,
-                    timestamp: auth.timestamp,
-                  }))
+                  const signature = await signMessage(
+                    buildCommentIdeaMessage({
+                      ideaId: idea.id,
+                      address: walletAddress,
+                      content,
+                      nonce: auth.nonce,
+                      timestamp: auth.timestamp
+                    })
+                  )
 
                   const newComment = await socialApi.commentOnIdea(idea.id, {
                     address: walletAddress,
                     content,
                     nonce: auth.nonce,
                     timestamp: auth.timestamp,
-                    signature,
+                    signature
                   })
                   setIdeaComments(prev => ({
                     ...prev,
-                    [idea.id]: [newComment, ...(prev[idea.id] || [])],
+                    [idea.id]: [newComment, ...(prev[idea.id] || [])]
                   }))
                   setCommentInputs(prev => ({ ...prev, [idea.id]: '' }))
                   showToast('Comment posted!')
                 } catch (err) {
-                  showToast(err instanceof Error ? err.message : 'Failed to post comment')
+                  showToast(
+                    err instanceof Error
+                      ? err.message
+                      : 'Failed to post comment'
+                  )
                 } finally {
                   setCommentSubmittingId(null)
                 }
@@ -1157,7 +1467,8 @@ const Profile: React.FC = () => {
 
               const handleShare = () => {
                 const url = `${window.location.origin}/social/idea/${idea.id}`
-                navigator.clipboard.writeText(url)
+                navigator.clipboard
+                  .writeText(url)
                   .then(() => showToast('Link copied!'))
                   .catch(() => showToast('Failed to copy link'))
               }
@@ -1166,11 +1477,15 @@ const Profile: React.FC = () => {
                 <IdeaCard key={idea.id}>
                   <IdeaHeader>
                     <IdeaTitle>{idea.title}</IdeaTitle>
-                    <DirectionBadge bullish={idea.direction === 'Bullish'}>{idea.direction}</DirectionBadge>
+                    <DirectionBadge bullish={idea.direction === 'Bullish'}>
+                      {idea.direction}
+                    </DirectionBadge>
                   </IdeaHeader>
 
                   <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                    {idea.tags.map(t => <IdeaTag key={t}>{t}</IdeaTag>)}
+                    {idea.tags.map(t => (
+                      <IdeaTag key={t}>{t}</IdeaTag>
+                    ))}
                     <IdeaDateLabel>{idea.date}</IdeaDateLabel>
                   </div>
 
@@ -1187,7 +1502,14 @@ const Profile: React.FC = () => {
                       activeColor="#FF284C"
                       onClick={handleLike}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill={isLiked ? '#FF284C' : 'none'} stroke="currentColor" strokeWidth="2">
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill={isLiked ? '#FF284C' : 'none'}
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
                         <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />
                       </svg>
                       {currentLikes}
@@ -1198,16 +1520,33 @@ const Profile: React.FC = () => {
                       activeColor="#3B82F6"
                       onClick={handleToggleComments}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
                         <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                       </svg>
                       {currentCommentsCount}
                     </ActionButton>
 
                     <ActionButton onClick={handleShare}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                      >
+                        <circle cx="18" cy="5" r="3" />
+                        <circle cx="6" cy="12" r="3" />
+                        <circle cx="18" cy="19" r="3" />
+                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
                       </svg>
                       Share
                     </ActionButton>
@@ -1223,14 +1562,26 @@ const Profile: React.FC = () => {
                         <CommentInput
                           placeholder="Write a comment..."
                           value={commentInput}
-                          onChange={e => setCommentInputs(prev => ({ ...prev, [idea.id]: e.target.value }))}
-                          onKeyDown={async e => { if (e.key === 'Enter') await handleCommentSubmit() }}
+                          onChange={e =>
+                            setCommentInputs(prev => ({
+                              ...prev,
+                              [idea.id]: e.target.value
+                            }))
+                          }
+                          onKeyDown={async e => {
+                            if (e.key === 'Enter') await handleCommentSubmit()
+                          }}
                         />
                         <CommentSubmitBtn
-                          disabled={!commentInput.trim() || commentSubmittingId === idea.id}
+                          disabled={
+                            !commentInput.trim() ||
+                            commentSubmittingId === idea.id
+                          }
                           onClick={handleCommentSubmit}
                         >
-                          {commentSubmittingId === idea.id ? 'Posting...' : 'Post'}
+                          {commentSubmittingId === idea.id
+                            ? 'Posting...'
+                            : 'Post'}
                         </CommentSubmitBtn>
                       </CommentInputRow>
 
@@ -1242,13 +1593,17 @@ const Profile: React.FC = () => {
                             <CommentAvatar>{c.initials}</CommentAvatar>
                             <CommentBody>
                               <CommentAuthor>{c.author}</CommentAuthor>
-                              <CommentTime>{formatRelativeTime(c.createdAt)}</CommentTime>
+                              <CommentTime>
+                                {formatRelativeTime(c.createdAt)}
+                              </CommentTime>
                               <CommentText>{c.content}</CommentText>
                             </CommentBody>
                           </CommentItem>
                         ))
                       ) : (
-                        <EmptyComments>No comments yet. Be the first!</EmptyComments>
+                        <EmptyComments>
+                          No comments yet. Be the first!
+                        </EmptyComments>
                       )}
                     </CommentsSection>
                   )}
@@ -1257,17 +1612,18 @@ const Profile: React.FC = () => {
             })
           ) : (
             <EmptyState>No ideas published yet.</EmptyState>
-          )
-        )}
+          ))}
       </Content>
 
       {showCopy && (
         <CopyModal
           trader={trader as any}
           onClose={() => setShowCopy(false)}
-          onConfirm={(amount) => {
+          onConfirm={amount => {
             const token = trader.vault?.collateralToken ?? 'USDT'
-            setToastMessage(`Success! Deposited ${amount} ${token} into ${trader.name}'s Vault.`)
+            setToastMessage(
+              `Success! Deposited ${amount} ${token} into ${trader.name}'s Vault.`
+            )
             setShowCopy(false)
             setTimeout(() => setToastMessage(''), 3000)
           }}
@@ -1276,7 +1632,17 @@ const Profile: React.FC = () => {
 
       {toastMessage && (
         <Toast>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+            <polyline points="22 4 12 14.01 9 11.01" />
+          </svg>
           {toastMessage}
         </Toast>
       )}

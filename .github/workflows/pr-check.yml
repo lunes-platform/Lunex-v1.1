@@ -110,6 +110,66 @@ jobs:
       - run: npx tsc --noEmit
         working-directory: mcp/lunex-agent-mcp
 
+  quality-api:
+    name: Quality spot-api (ESLint/ts-prune/depcheck/Prettier)
+    needs: changes
+    if: needs.changes.outputs.spot_api == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: spot-api
+      - run: npm run quality
+        working-directory: spot-api
+
+  quality-frontend:
+    name: Quality frontend (ESLint/ts-prune/depcheck/Prettier)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: lunes-dex-main
+      - run: npm run quality
+        working-directory: lunes-dex-main
+
+  quality-sdk:
+    name: Quality SDK (ESLint/ts-prune/depcheck/Prettier)
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: sdk
+      - run: npm run quality
+        working-directory: sdk
+
+  quality-mcp:
+    name: Quality MCP (ESLint/ts-prune/depcheck/Prettier)
+    needs: changes
+    if: needs.changes.outputs.mcp == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: mcp/lunex-agent-mcp
+      - run: npm run quality
+        working-directory: mcp/lunex-agent-mcp
+
   validate-subquery:
     name: Validate SubQuery
     needs: changes
@@ -154,6 +214,10 @@ jobs:
       - typecheck-frontend
       - typecheck-sdk
       - typecheck-mcp
+      - quality-api
+      - quality-frontend
+      - quality-sdk
+      - quality-mcp
       - validate-subquery
       - check-contracts
     if: always()
@@ -165,6 +229,10 @@ jobs:
             "${{ needs.typecheck-frontend.result }}"
             "${{ needs.typecheck-sdk.result }}"
             "${{ needs.typecheck-mcp.result }}"
+            "${{ needs.quality-api.result }}"
+            "${{ needs.quality-frontend.result }}"
+            "${{ needs.quality-sdk.result }}"
+            "${{ needs.quality-mcp.result }}"
             "${{ needs.validate-subquery.result }}"
             "${{ needs.check-contracts.result }}"
           )

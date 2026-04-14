@@ -199,11 +199,11 @@ Recent trades for a pair.
 
 ---
 
-### `GET /trades/user/:address`
+### `GET /trades?address=<wallet>&nonce=...&timestamp=...&signature=...` 🔏 Signature
 
 Trades for a specific wallet address.
 
-**Query:** `limit` (default 50, max 200)
+**Query:** `limit` (default 50, max 100), `offset` (default 0)
 
 ---
 
@@ -259,12 +259,14 @@ Simulate the best execution route. **Public — no auth required.**
 **Response `200`:**
 ```json
 {
-  "bestSource": "ORDERBOOK",
+  "bestRoute": "ORDERBOOK",
+  "bestAmountOut": 241.5,
   "routes": [
-    { "source": "ORDERBOOK", "amountOut": "241.5", "priceImpact": "0.12", "isViable": true },
-    { "source": "AMM", "amountOut": "239.1", "priceImpact": "0.82", "isViable": true },
-    { "source": "ASYMMETRIC", "amountOut": null, "isViable": false }
-  ]
+    { "source": "ORDERBOOK", "amountOut": 241.5, "priceImpactPct": 0.12, "viable": true },
+    { "source": "AMM_V1", "amountOut": 239.1, "priceImpactPct": 0.82, "viable": true },
+    { "source": "ASYMMETRIC", "amountOut": 245.2, "priceImpactPct": 0.09, "viable": true }
+  ],
+  "estimatedSlippageBps": 12
 }
 ```
 
@@ -273,6 +275,12 @@ Simulate the best execution route. **Public — no auth required.**
 ### `POST /route/swap` 🔑 Agent Auth
 
 Execute a swap via Smart Router V2. Requires `X-API-Key` with `TRADE_SPOT` permission.
+
+Important:
+
+- `POST /route/swap` is agent-authenticated.
+- If the best route resolves to `ASYMMETRIC`, the response can return `requiresWalletSignature: true`
+  plus a `contractCallIntent` instead of completing execution server-side.
 
 **Body:**
 ```json
@@ -374,11 +382,11 @@ Post a comment on a trade idea.
 
 ### `POST /social/vaults/:leaderId/deposit` 🔏 Signature
 
-Deposit into a copy vault.
+Legacy route. Returns `410 Gone` and points clients to `/copytrade/vaults/:leaderId/deposit`.
 
 ### `POST /social/vaults/:leaderId/withdraw` 🔏 Signature
 
-Withdraw shares from a copy vault.
+Legacy route. Returns `410 Gone` and points clients to `/copytrade/vaults/:leaderId/withdraw`.
 
 ---
 
@@ -388,13 +396,43 @@ Withdraw shares from a copy vault.
 
 List all copy vaults.
 
-### `GET /copytrade/positions?address=<wallet>`
+### `GET /copytrade/vaults/:leaderId`
+
+Get one vault by leader ID.
+
+### `GET /copytrade/positions?address=<wallet>&nonce=...&timestamp=...&signature=...` 🔏 Signature
 
 Get a follower's positions across all vaults.
 
-### `GET /copytrade/activity?address=<wallet>`
+### `GET /copytrade/activity?address=<wallet>&limit=50&nonce=...&timestamp=...&signature=...` 🔏 Signature
 
 Activity history (deposits, withdrawals, PnL).
+
+### `POST /copytrade/vaults/:leaderId/deposit` 🔏 Signature
+
+Deposit into the canonical copytrade vault flow.
+
+Response fields:
+- `depositId`
+- `sharesMinted`
+- `amount`
+- `positionId`
+- `executionMode`: `db-journal` or `on-chain-confirmed`
+- `txHash`: on-chain tx hash when a vault contract is enabled and the relayer confirms the deposit
+
+### `POST /copytrade/vaults/:leaderId/withdraw` 🔏 Signature
+
+Withdraw shares from the canonical copytrade vault flow.
+
+Response fields:
+- `withdrawalId`
+- `grossAmount`
+- `feeAmount`
+- `netAmount`
+- `profitAmount`
+- `remainingShares`
+- `executionMode`: `db-journal` or `on-chain-confirmed`
+- `txHash`: on-chain tx hash when a vault contract is enabled and the relayer confirms the withdrawal
 
 ### `GET /copytrade/leaders/:leaderId/api-key/challenge`
 
@@ -404,9 +442,45 @@ Get a signature challenge for generating a leader API key.
 
 Create a leader API key (used to submit trading signals).
 
-### `POST /copytrade/signals` 🔑 Leader API Key
+### `POST /copytrade/vaults/:leaderId/signals` 🔑 Leader API Key
 
 Submit a copy-trade signal for followers to mirror.
+
+Key fields:
+- `amountIn` and `amountOutMin`
+- `positionEffect`: `AUTO`, `OPEN`, or `CLOSE`
+- `signalMode`: `AUTO`, `JOURNAL`, or `EXECUTE_VAULT`
+
+Notes:
+- `positionEffect` is the canonical lifecycle field.
+- `realizedPnlPct` is legacy and no longer drives close/open behavior.
+- `AUTO` attempts live vault execution when the copy vault is contract-backed and the best server-side route is executable on the backend (`ORDERBOOK` or `AMM_V1`); non-server routes (e.g. `ASYMMETRIC`) fall back to journaling.
+- for `ASYMMETRIC` in `AUTO`, the API now also returns `walletAssistedContinuation` with `contractCallIntent`, so agents can continue execution via user wallet signature.
+- in `AUTO`, runtime live-execution failures also degrade to journaling (logged server-side) to preserve signal continuity.
+- `EXECUTE_VAULT` is stricter and currently fails when live server-side vault execution is unavailable.
+
+### `POST /copytrade/vaults/:leaderId/signals/:signalId/wallet-confirmation` 🔏 Signature
+
+Confirm an `ASYMMETRIC` wallet-assisted signal execution after on-chain completion.
+
+Key fields:
+- `leaderAddress`
+- `txHash`
+- optional `amountOut`
+- optional `executionPrice`
+
+Notes:
+- requires wallet signature action `copytrade.confirm-wallet-signal`;
+- marks pending continuation as confirmed and reconciles signal execution journal.
+
+### `GET /copytrade/vaults/:leaderId/signals/pending-wallet` 🔑 Leader API Key
+
+List pending wallet-assisted continuations for a leader vault.
+
+Notes:
+- requires `x-api-key` for the leader;
+- used by agents to recover/retry `ASYMMETRIC` continuations;
+- stale pending continuations are automatically expired by backend scheduler.
 
 ---
 
@@ -512,19 +586,22 @@ Trigger the weekly payout batch job.
 
 ### `POST /agents/register`
 
-Register an AI trading agent.
+Register an AI trading agent. Requires a wallet-signed payload.
 
 **Body:**
 ```json
 {
   "walletAddress": "5GrwvaEF...",
-  "agentType": "BOT",
+  "agentType": "AI_AGENT",
   "framework": "custom",
-  "strategyDescription": "Grid trading on LUNES/LUSDT"
+  "strategyDescription": "Grid trading on LUNES/LUSDT",
+  "nonce": "1741612800001",
+  "timestamp": 1741612800001,
+  "signature": "0x..."
 }
 ```
 
-**Response `201`:** Agent object with ID and staking tier.
+**Response `201`:** `{ "agent": { ... } }`
 
 ---
 
@@ -532,12 +609,17 @@ Register an AI trading agent.
 
 Generate an API key for an agent (max 5 active keys).
 
+Notes:
+
+- If the caller already has an agent API key, send `X-API-Key`.
+- For the first key bootstrap, send `walletAddress`, `nonce`, `timestamp`, and `signature`.
+
 **Body:**
 ```json
 {
   "walletAddress": "5GrwvaEF...",
   "label": "production-key",
-  "permissions": ["TRADE_SPOT", "READ"],
+  "permissions": ["TRADE_SPOT", "READ_ONLY"],
   "expiresInDays": 90
 }
 ```
@@ -550,13 +632,13 @@ Generate an API key for an agent (max 5 active keys).
 
 Revoke an API key.
 
-### `GET /agents/:id/profile`
+### `GET /agents/me`
 
-Get agent profile, staking tier, and trading limits.
+Get the authenticated agent profile, staking tier, and trading limits.
 
-### `GET /agents/leaderboard`
+### `GET /agents/:id`
 
-Top agents by total volume.
+Get a public agent profile by ID.
 
 ### `POST /agents/:id/stake`
 

@@ -37,24 +37,58 @@ export interface Pool {
 }
 
 // Known token metadata keyed by SS58 address
-const TOKEN_META: Record<string, { symbol: string; name: string; decimals: number; icon: string }> = {
-  [process.env.REACT_APP_TOKEN_WLUNES || '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo']:
-    { symbol: 'WLUNES', name: 'Wrapped Lunes', decimals: 8, icon: '/img/lunes.svg' },
-  [process.env.REACT_APP_TOKEN_LUSDT || '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf']:
-    { symbol: 'LUSDT', name: 'Lunes USD', decimals: 6, icon: '/img/lusdt.svg' },
-  [process.env.REACT_APP_TOKEN_LBTC || '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg']:
-    { symbol: 'LBTC', name: 'Lunes BTC', decimals: 8, icon: '/img/lbtc.svg' },
-  [process.env.REACT_APP_TOKEN_LETH || '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS']:
-    { symbol: 'LETH', name: 'Lunes ETH', decimals: 18, icon: '/img/leth.svg' },
-  [process.env.REACT_APP_TOKEN_GMC || '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ']:
-    { symbol: 'GMC', name: 'GameCoin', decimals: 8, icon: '/img/gmc.svg' },
-  [process.env.REACT_APP_TOKEN_LUP || '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3']:
-    { symbol: 'LUP', name: 'Lunex Protocol', decimals: 8, icon: '/img/lup.svg' },
+const TOKEN_META: Record<
+  string,
+  { symbol: string; name: string; decimals: number; icon: string }
+> = {
+  [process.env.REACT_APP_TOKEN_WLUNES ||
+  '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo']: {
+    symbol: 'WLUNES',
+    name: 'Wrapped Lunes',
+    decimals: 8,
+    icon: '/img/lunes.svg'
+  },
+  [process.env.REACT_APP_TOKEN_LUSDT ||
+  '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf']: {
+    symbol: 'LUSDT',
+    name: 'Lunes USD',
+    decimals: 6,
+    icon: '/img/lusdt.svg'
+  },
+  [process.env.REACT_APP_TOKEN_LBTC ||
+  '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg']: {
+    symbol: 'LBTC',
+    name: 'Lunes BTC',
+    decimals: 8,
+    icon: '/img/lbtc.svg'
+  },
+  [process.env.REACT_APP_TOKEN_LETH ||
+  '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS']: {
+    symbol: 'LETH',
+    name: 'Lunes ETH',
+    decimals: 18,
+    icon: '/img/leth.svg'
+  },
+  [process.env.REACT_APP_TOKEN_GMC ||
+  '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ']: {
+    symbol: 'GMC',
+    name: 'GameCoin',
+    decimals: 8,
+    icon: '/img/gmc.svg'
+  },
+  [process.env.REACT_APP_TOKEN_LUP ||
+  '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3']: {
+    symbol: 'LUP',
+    name: 'Lunex Protocol',
+    decimals: 8,
+    icon: '/img/lup.svg'
+  }
 }
 
 // LUSDT address for TVL calculation (the USD quote token)
 const LUSDT_ADDRESS = (
-  process.env.REACT_APP_TOKEN_LUSDT || '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf'
+  process.env.REACT_APP_TOKEN_LUSDT ||
+  '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf'
 ).toLowerCase()
 const LUSDT_DECIMALS = 6
 
@@ -68,9 +102,10 @@ async function fetchVolume24h(sym0: string, sym1: string): Promise<number> {
     const data = await res.json()
     const pairs: any[] = Array.isArray(data) ? data : (data.pairs ?? [])
     const candidates = [`${sym0}/${sym1}`, `${sym1}/${sym0}`]
-    const pair = pairs.find((p: any) =>
-      candidates.includes(p.symbol) ||
-      candidates.includes(`${String(p.baseAsset)}/${String(p.quoteAsset)}`)
+    const pair = pairs.find(
+      (p: any) =>
+        candidates.includes(p.symbol) ||
+        candidates.includes(`${String(p.baseAsset)}/${String(p.quoteAsset)}`)
     )
     return Number(pair?.volume24h ?? pair?.quoteVolume24h ?? 0)
   } catch {
@@ -79,10 +114,17 @@ async function fetchVolume24h(sym0: string, sym1: string): Promise<number> {
 }
 
 function resolveTokenMeta(address: string) {
-  const key = Object.keys(TOKEN_META).find(k => k.toLowerCase() === address.toLowerCase())
+  const key = Object.keys(TOKEN_META).find(
+    k => k.toLowerCase() === address.toLowerCase()
+  )
   return key
     ? TOKEN_META[key]
-    : { symbol: address.slice(0, 6) + '…', name: 'Unknown Token', decimals: 8, icon: '' }
+    : {
+        symbol: address.slice(0, 6) + '…',
+        name: 'Unknown Token',
+        decimals: 8,
+        icon: ''
+      }
 }
 
 export const usePools = () => {
@@ -98,16 +140,28 @@ export const usePools = () => {
     try {
       // Connect to blockchain if needed
       if (!contractService.getIsConnected()) {
-        const network = (process.env.REACT_APP_NETWORK || 'testnet') as 'testnet' | 'mainnet'
+        const network = (process.env.REACT_APP_NETWORK || 'testnet') as
+          | 'testnet'
+          | 'mainnet'
         const ok = await contractService.connect(network)
         if (!ok) throw new Error('Cannot connect to blockchain')
       }
 
       // Initialise factory so allPairs* methods work
-      const factoryAddr = process.env.REACT_APP_FACTORY_CONTRACT || '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
-      const routerAddr = process.env.REACT_APP_ROUTER_CONTRACT || '5GSR7WUo53S2UpqSW7sMccSYNeP2dmAakfUnoK9BCY3YMb2B'
-      const wnativeAddr = process.env.REACT_APP_WNATIVE_CONTRACT || '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo'
-      contractService.setContracts({ factory: factoryAddr, router: routerAddr, wnative: wnativeAddr })
+      const factoryAddr =
+        process.env.REACT_APP_FACTORY_CONTRACT ||
+        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
+      const routerAddr =
+        process.env.REACT_APP_ROUTER_CONTRACT ||
+        '5GSR7WUo53S2UpqSW7sMccSYNeP2dmAakfUnoK9BCY3YMb2B'
+      const wnativeAddr =
+        process.env.REACT_APP_WNATIVE_CONTRACT ||
+        '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo'
+      contractService.setContracts({
+        factory: factoryAddr,
+        router: routerAddr,
+        wnative: wnativeAddr
+      })
 
       // Step 1 — query factory for number of deployed pairs
       const length = await contractService.allPairsLength()
@@ -119,19 +173,25 @@ export const usePools = () => {
 
       // Step 2 — get all pair addresses
       const pairAddresses = await Promise.all(
-        Array.from({ length }, async (_, i) => await contractService.allPairs(i))
+        Array.from(
+          { length },
+          async (_, i) => await contractService.allPairs(i)
+        )
       )
-      const validAddresses = pairAddresses.filter((a): a is string => a !== null)
+      const validAddresses = pairAddresses.filter(
+        (a): a is string => a !== null
+      )
 
       // Step 3 — fetch on-chain data for each pair
       const results = await Promise.allSettled(
         validAddresses.map(async (pairAddress, idx) => {
-          const [reserves, token0Addr, token1Addr, totalSupplyRaw] = await Promise.all([
-            contractService.getReserves(pairAddress),
-            contractService.getPairToken0(pairAddress),
-            contractService.getPairToken1(pairAddress),
-            contractService.getPairTotalSupply(pairAddress),
-          ])
+          const [reserves, token0Addr, token1Addr, totalSupplyRaw] =
+            await Promise.all([
+              contractService.getReserves(pairAddress),
+              contractService.getPairToken0(pairAddress),
+              contractService.getPairToken1(pairAddress),
+              contractService.getPairTotalSupply(pairAddress)
+            ])
 
           if (!reserves || !token0Addr || !token1Addr) {
             return null
@@ -156,10 +216,12 @@ export const usePools = () => {
           }
           // If neither token is LUSDT, TVL remains 0 (no USD price available)
 
-          const volume24h = await fetchVolume24h(tok0Meta.symbol, tok1Meta.symbol)
+          const volume24h = await fetchVolume24h(
+            tok0Meta.symbol,
+            tok1Meta.symbol
+          )
           const fees24h = volume24h * 0.003
-          const apr = tvl > 0 ? (fees24h * 365 / tvl) * 100 : 0
-
+          const apr = tvl > 0 ? ((fees24h * 365) / tvl) * 100 : 0
 
           const pool: Pool = {
             id: String(idx + 1),
@@ -173,14 +235,17 @@ export const usePools = () => {
             liquidity: tvl,
             volume24h,
             fees24h,
-            apr,
+            apr
           }
           return pool
         })
       )
 
       const fetched = results
-        .filter((r): r is PromiseFulfilledResult<Pool | null> => r.status === 'fulfilled')
+        .filter(
+          (r): r is PromiseFulfilledResult<Pool | null> =>
+            r.status === 'fulfilled'
+        )
         .map(r => r.value)
         .filter((p): p is Pool => p !== null)
 
@@ -194,14 +259,20 @@ export const usePools = () => {
     }
   }, [])
 
-  const getUserLiquidity = useCallback(async (pairAddress: string): Promise<string> => {
-    if (!sdk.walletAddress) return '0'
-    try {
-      return await contractService.getTokenBalance(pairAddress, sdk.walletAddress)
-    } catch {
-      return '0'
-    }
-  }, [sdk.walletAddress])
+  const getUserLiquidity = useCallback(
+    async (pairAddress: string): Promise<string> => {
+      if (!sdk.walletAddress) return '0'
+      try {
+        return await contractService.getTokenBalance(
+          pairAddress,
+          sdk.walletAddress
+        )
+      } catch {
+        return '0'
+      }
+    },
+    [sdk.walletAddress]
+  )
 
   useEffect(() => {
     fetchPools()
@@ -212,7 +283,7 @@ export const usePools = () => {
     isLoading,
     error,
     refreshPools: fetchPools,
-    getUserLiquidity,
+    getUserLiquidity
   }
 }
 

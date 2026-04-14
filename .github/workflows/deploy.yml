@@ -8,11 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Deployment target (prod | dev)'
+        description: 'Deployment target (prod | dev | rollback)'
         required: true
         default: 'prod'
         type: choice
-        options: [prod, dev]
+        options: [prod, dev, rollback]
       skip_tests:
         description: 'Skip tests (emergency deploy only)'
         required: false
@@ -319,10 +319,16 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/lunex
+            export REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
+            export IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+
+            echo "📦 Deploying sandbox images tag: ${IMAGE_TAG}"
 
             echo "📥 Pulling sandbox images..."
             docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
-              --env-file docker/.env.prod --env-file docker/.env.sandbox pull
+              --env-file docker/.env.prod --env-file docker/.env.sandbox \
+              pull sandbox-api sandbox-frontend
 
             echo "🗄️ Running sandbox DB migrations..."
             docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
@@ -379,9 +385,14 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/lunex
+            export REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
+            export IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
+
+            echo "📦 Deploying production images tag: ${IMAGE_TAG}"
 
             echo "📥 Pulling new images..."
-            docker compose -f docker/docker-compose.prod.yml pull
+            docker compose -f docker/docker-compose.prod.yml pull api frontend admin
 
             echo "🗄️ Running DB migrations..."
             docker compose -f docker/docker-compose.prod.yml run --rm api \
@@ -399,7 +410,14 @@ jobs:
               fi
               if [ "$i" -eq 12 ]; then
                 echo "❌ API health check failed — rolling back"
-                docker compose -f docker/docker-compose.prod.yml rollout api previous 2>/dev/null || true
+                PREV_TAG=$(docker images "${REGISTRY}/${IMAGE_PREFIX}/api" --format '{{.Tag}}' | grep -E '^[0-9a-f]{7,}$' | sed -n '2p')
+                if [ -n "${PREV_TAG}" ]; then
+                  export IMAGE_TAG="${PREV_TAG}"
+                  echo "⏪ Rolling back API to tag: ${IMAGE_TAG}"
+                  docker compose -f docker/docker-compose.prod.yml up -d --no-deps api
+                else
+                  echo "⚠️ Could not resolve previous API tag for automatic rollback."
+                fi
                 exit 1
               fi
               sleep 5
@@ -456,15 +474,20 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/lunex
+            export REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
+
             echo "⏪ Rolling back to previous images..."
-            # Pull previous tag (second most recent)
-            PREV_TAG=$(docker images ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api \
-              --format '{{.Tag}}' | grep -v latest | sort -rV | sed -n '2p')
+            PREV_TAG=$(docker images "${REGISTRY}/${IMAGE_PREFIX}/api" \
+              --format '{{.Tag}}' | grep -E '^[0-9a-f]{7,}$' | sed -n '2p')
+            if [ -z "${PREV_TAG}" ]; then
+              echo "❌ No previous immutable tag found for rollback"
+              exit 1
+            fi
             echo "Rolling back to tag: ${PREV_TAG}"
 
-            IMAGE_PREFIX="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}"
-            export API_IMAGE="${IMAGE_PREFIX}/api:${PREV_TAG}"
-            export FRONTEND_IMAGE="${IMAGE_PREFIX}/frontend:${PREV_TAG}"
+            export IMAGE_TAG="${PREV_TAG}"
 
-            docker compose -f docker/docker-compose.prod.yml up -d --no-deps api frontend
+            docker compose -f docker/docker-compose.prod.yml pull api frontend admin || true
+            docker compose -f docker/docker-compose.prod.yml up -d --no-deps api frontend admin
             echo "✅ Rollback complete to ${PREV_TAG}"

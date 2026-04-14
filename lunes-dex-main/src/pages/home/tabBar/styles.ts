@@ -7,7 +7,7 @@ type StyledProps = {
 }
 
 export const Container = styled(Wrapper)<StyledProps>`
-  ${({ ...props }) => css`
+  ${css`
     width: 481px;
     margin: 0 0 20px;
     padding: 0 16px 0 4px;

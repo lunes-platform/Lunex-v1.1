@@ -2,6 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react'
 import styled, { keyframes } from 'styled-components'
 import { useNavigate } from 'react-router-dom'
 import { useSDK } from '../../context/SDKContext'
+import {
+  buildWalletActionMessage,
+  createSignedActionMetadata
+} from '../../utils/signing'
 import * as B from '../../components/bases'
 
 // Types
@@ -19,18 +23,12 @@ interface Proposal {
   fee: string
 }
 
-interface VoteRecord {
-  odescriptionid: number
-  timestamp: number
-}
-
 type ProposalFilter = 'active' | 'approved' | 'rejected' | 'all'
 type VoteType = 'yes' | 'no' | null
 
 // Constants
 const VOTE_COST = 10 // 10 LUNES per vote
 const MIN_VOTES_FOR_APPROVAL = 10000 // 10,000 YES votes to be approved
-const VOTING_PERIOD_DAYS = 14
 const VOTE_COOLDOWN_MS = 60 * 60 * 1000 // 1 hour in milliseconds
 
 // Vote distribution:
@@ -42,7 +40,7 @@ const VOTE_COOLDOWN_MS = 60 * 60 * 1000 // 1 hour in milliseconds
 // Animations
 const Page = styled.div`
   min-height: 100vh;
-  background: #1A1A1A;
+  background: #1a1a1a;
   padding: 80px 24px 48px;
 `
 
@@ -61,7 +59,7 @@ const PageTitle = styled.h1`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 42px;
   font-weight: 800;
-  color: #FFFFFF;
+  color: #ffffff;
   margin: 0 0 12px 0;
   letter-spacing: -1px;
 
@@ -75,7 +73,7 @@ const PageTitle = styled.h1`
 const PageSubtitle = styled.p`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 16px;
-  color: #8A8A8E;
+  color: #8a8a8e;
   margin: 0;
 `
 
@@ -93,8 +91,6 @@ const pulse = keyframes`
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.05); }
 `
-
-
 
 const Header = styled.div`
   text-align: center;
@@ -167,18 +163,20 @@ const FilterTab = styled.button<{ $active: boolean }>`
   padding: 10px 16px;
   border-radius: 12px;
   border: none;
-  background: ${props => props.$active ? '#00ff88' : 'transparent'};
-  color: ${props => props.$active ? '#1A1A1A' : props.theme.colors.themeColors[100]};
+  background: ${props => (props.$active ? '#00ff88' : 'transparent')};
+  color: ${props =>
+    props.$active ? '#1A1A1A' : props.theme.colors.themeColors[100]};
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
-  font-weight: ${props => props.$active ? '700' : '500'};
+  font-weight: ${props => (props.$active ? '700' : '500')};
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
 
   &:hover {
-    background: ${props => props.$active ? '#00ff88' : 'rgba(255,255,255,0.05)'};
-    color: ${props => props.$active ? '#1A1A1A' : '#fff'};
+    background: ${props =>
+      props.$active ? '#00ff88' : 'rgba(255,255,255,0.05)'};
+    color: ${props => (props.$active ? '#1A1A1A' : '#fff')};
   }
 `
 
@@ -216,7 +214,9 @@ const ProposalTitle = styled.h3`
   margin: 0;
 `
 
-const ProposalStatus = styled.span<{ $status: 'active' | 'approved' | 'rejected' | 'pending' }>`
+const ProposalStatus = styled.span<{
+  $status: 'active' | 'approved' | 'rejected' | 'pending'
+}>`
   padding: 6px 14px;
   border-radius: 20px;
   font-size: 12px;
@@ -225,18 +225,26 @@ const ProposalStatus = styled.span<{ $status: 'active' | 'approved' | 'rejected'
   letter-spacing: 0.5px;
   background: ${props => {
     switch (props.$status) {
-      case 'active': return '#00d4ff20'
-      case 'approved': return '#00ff8820'
-      case 'rejected': return '#ff6b6b20'
-      default: return '#ffa50020'
+      case 'active':
+        return '#00d4ff20'
+      case 'approved':
+        return '#00ff8820'
+      case 'rejected':
+        return '#ff6b6b20'
+      default:
+        return '#ffa50020'
     }
   }};
   color: ${props => {
     switch (props.$status) {
-      case 'active': return '#00d4ff'
-      case 'approved': return '#00ff88'
-      case 'rejected': return '#ff6b6b'
-      default: return '#ffa500'
+      case 'active':
+        return '#00d4ff'
+      case 'approved':
+        return '#00ff88'
+      case 'rejected':
+        return '#ff6b6b'
+      default:
+        return '#ffa500'
     }
   }};
 `
@@ -276,11 +284,11 @@ const VoteStats = styled.div`
 `
 
 const VoteStat = styled.div<{ $type: 'yes' | 'no' }>`
-  text-align: ${props => props.$type === 'yes' ? 'left' : 'right'};
+  text-align: ${props => (props.$type === 'yes' ? 'left' : 'right')};
 `
 
 const VoteLabel = styled.div<{ $type: 'yes' | 'no' }>`
-  color: ${props => props.$type === 'yes' ? '#00ff88' : '#ff6b6b'};
+  color: ${props => (props.$type === 'yes' ? '#00ff88' : '#ff6b6b')};
   font-size: 12px;
   font-weight: 600;
   margin-bottom: 4px;
@@ -322,18 +330,18 @@ const VoteButtons = styled.div`
 const VoteButton = styled.button<{ $type: 'yes' | 'no'; $disabled?: boolean }>`
   padding: 14px 20px;
   border-radius: 12px;
-  border: 2px solid ${props => props.$type === 'yes' ? '#00ff88' : '#ff6b6b'};
-  background: ${props => props.$disabled
-    ? '#33333380'
-    : props.$type === 'yes' ? '#00ff8815' : '#ff6b6b15'
-  };
-  color: ${props => props.$disabled
-    ? '#666'
-    : props.$type === 'yes' ? '#00ff88' : '#ff6b6b'
-  };
+  border: 2px solid ${props => (props.$type === 'yes' ? '#00ff88' : '#ff6b6b')};
+  background: ${props =>
+    props.$disabled
+      ? '#33333380'
+      : props.$type === 'yes'
+        ? '#00ff8815'
+        : '#ff6b6b15'};
+  color: ${props =>
+    props.$disabled ? '#666' : props.$type === 'yes' ? '#00ff88' : '#ff6b6b'};
   font-size: 16px;
   font-weight: 700;
-  cursor: ${props => props.$disabled ? 'not-allowed' : 'pointer'};
+  cursor: ${props => (props.$disabled ? 'not-allowed' : 'pointer')};
   transition: all 0.2s;
   display: flex;
   flex-direction: column;
@@ -341,7 +349,9 @@ const VoteButton = styled.button<{ $type: 'yes' | 'no'; $disabled?: boolean }>`
   gap: 4px;
 
   &:hover {
-    ${props => !props.$disabled && `
+    ${props =>
+      !props.$disabled &&
+      `
       background: ${props.$type === 'yes' ? '#00ff8830' : '#ff6b6b30'};
       transform: scale(1.02);
     `}
@@ -389,10 +399,12 @@ const ConnectPrompt = styled.div`
   font-size: 18px;
 `
 
-
-
 const ListingCTA = styled.div`
-  background: linear-gradient(135deg, rgba(0, 255, 136, 0.05) 0%, rgba(0, 212, 255, 0.05) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(0, 255, 136, 0.05) 0%,
+    rgba(0, 212, 255, 0.05) 100%
+  );
   border: 1px solid rgba(0, 255, 136, 0.2);
   border-radius: 16px;
   padding: 32px;
@@ -447,15 +459,21 @@ const ModalIcon = styled.div<{ $type: 'yes' | 'no' | 'success' | 'loading' }>`
   justify-content: center;
   font-size: 32px;
   background: transparent;
-  border: 2px solid ${props => {
-    switch (props.$type) {
-      case 'yes': return '#00ff88'
-      case 'no': return '#E8596F'
-      case 'success': return '#00ff88'
-      default: return '#00d4ff'
-    }
-  }};
-  animation: ${props => props.$type === 'loading' ? `${pulse.getName()} 1s infinite` : 'none'};
+  border: 2px solid
+    ${props => {
+      switch (props.$type) {
+        case 'yes':
+          return '#00ff88'
+        case 'no':
+          return '#E8596F'
+        case 'success':
+          return '#00ff88'
+        default:
+          return '#00d4ff'
+      }
+    }};
+  animation: ${props =>
+    props.$type === 'loading' ? `${pulse.getName()} 1s infinite` : 'none'};
 `
 
 const ModalTitle = styled.h2`
@@ -499,7 +517,7 @@ const InfoValue = styled.span<{ $highlight?: boolean; $type?: 'yes' | 'no' }>`
     return '#fff'
   }};
   font-size: 14px;
-  font-weight: ${props => props.$highlight || props.$type ? '700' : '500'};
+  font-weight: ${props => (props.$highlight || props.$type ? '700' : '500')};
 `
 
 const DistributionBox = styled.div`
@@ -543,18 +561,18 @@ const ModalButton = styled.button<{ $primary?: boolean; $type?: 'yes' | 'no' }>`
   cursor: pointer;
   transition: all 0.2s;
 
-  ${props => props.$primary
-    ? `
+  ${props =>
+    props.$primary
+      ? `
       background: #00ff88;
       border: none;
       color: #1a1a1a;
     `
-    : `
+      : `
       background: transparent;
       border: 1px solid rgba(255, 255, 255, 0.2);
       color: #fff;
-    `
-  }
+    `}
 
   &:hover {
     opacity: 0.9;
@@ -576,7 +594,9 @@ const LoadingSpinner = styled.div`
   margin: 0 auto;
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 `
 
@@ -593,13 +613,37 @@ export const Governance: React.FC = () => {
 
   // Vote modal state
   const [showVoteModal, setShowVoteModal] = useState(false)
-  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null)
+  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(
+    null
+  )
   const [selectedVote, setSelectedVote] = useState<VoteType>(null)
   const [isVoting, setIsVoting] = useState(false)
   const [voteSuccess, setVoteSuccess] = useState(false)
 
   // Vote cooldown tracking (per proposal)
   const [lastVotes, setLastVotes] = useState<Record<number, number>>({})
+
+  const signGovernanceAction = useCallback(
+    async (action: string, fields?: Record<string, string | number>) => {
+      if (!sdk.walletAddress) {
+        throw new Error('Connect your wallet first')
+      }
+
+      const metadata = createSignedActionMetadata()
+      const signature = await sdk.signMessage(
+        buildWalletActionMessage({
+          action,
+          address: sdk.walletAddress,
+          nonce: metadata.nonce,
+          timestamp: metadata.timestamp,
+          fields
+        })
+      )
+
+      return { ...metadata, signature }
+    },
+    [sdk]
+  )
 
   // Load proposals from on-chain contract and check staking status
   useEffect(() => {
@@ -633,8 +677,13 @@ export const Governance: React.FC = () => {
         // Load vote history from server (not localStorage)
         if (sdk.walletAddress) {
           try {
+            const auth = await signGovernanceAction('governance.vote.history')
             const histRes = await fetch(
-              `/api/v1/governance/vote/history?walletAddress=${encodeURIComponent(sdk.walletAddress)}`
+              `/api/v1/governance/vote/history?walletAddress=${encodeURIComponent(
+                sdk.walletAddress
+              )}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${
+                auth.timestamp
+              }&signature=${encodeURIComponent(auth.signature)}`
             )
             if (histRes.ok) {
               const { votes } = await histRes.json()
@@ -662,7 +711,7 @@ export const Governance: React.FC = () => {
     if (sdk.isConnected) {
       loadData()
     }
-  }, [sdk.isConnected])
+  }, [sdk, signGovernanceAction])
 
   // Check if user can vote (1 hour cooldown)
   const canVote = (proposalId: number): boolean => {
@@ -688,17 +737,24 @@ export const Governance: React.FC = () => {
     const isRejected = p.executed && p.votesYes < MIN_VOTES_FOR_APPROVAL
 
     switch (filter) {
-      case 'active': return isActive
-      case 'approved': return isApproved
-      case 'rejected': return isRejected
-      default: return true
+      case 'active':
+        return isActive
+      case 'approved':
+        return isApproved
+      case 'rejected':
+        return isRejected
+      default:
+        return true
     }
   })
 
   // Calculate stats
   const stats = {
-    active: proposals.filter(p => p.active && Date.now() < p.votingDeadline).length,
-    approved: proposals.filter(p => p.executed && p.votesYes >= MIN_VOTES_FOR_APPROVAL).length,
+    active: proposals.filter(p => p.active && Date.now() < p.votingDeadline)
+      .length,
+    approved: proposals.filter(
+      p => p.executed && p.votesYes >= MIN_VOTES_FOR_APPROVAL
+    ).length,
     total: proposals.length
   }
 
@@ -724,7 +780,9 @@ export const Governance: React.FC = () => {
   }
 
   // Get proposal status
-  const getProposalStatus = (proposal: Proposal): 'active' | 'approved' | 'rejected' | 'pending' => {
+  const getProposalStatus = (
+    proposal: Proposal
+  ): 'active' | 'approved' | 'rejected' | 'pending' => {
     if (proposal.active && Date.now() < proposal.votingDeadline) return 'active'
     if (!proposal.executed) return 'pending'
     if (proposal.votesYes >= MIN_VOTES_FOR_APPROVAL) return 'approved'
@@ -752,14 +810,18 @@ export const Governance: React.FC = () => {
         // Reload the proposal to get updated vote counts from chain
         const updatedProposal = await sdk.getProposal(selectedProposal.id)
         if (updatedProposal) {
-          setProposals(prev => prev.map(p =>
-            p.id === selectedProposal.id ? updatedProposal : p
-          ))
+          setProposals(prev =>
+            prev.map(p => (p.id === selectedProposal.id ? updatedProposal : p))
+          )
         }
 
         // Record vote server-side (enforced cooldown in DB, not localStorage)
         const nowMs = Date.now()
         try {
+          const auth = await signGovernanceAction('governance.vote.record', {
+            proposalId: selectedProposal.id,
+            voteType: selectedVote === 'yes' ? 'YES' : 'NO'
+          })
           await fetch('/api/v1/governance/vote/record', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -767,7 +829,8 @@ export const Governance: React.FC = () => {
               walletAddress: sdk.walletAddress,
               proposalId: selectedProposal.id,
               voteType: selectedVote === 'yes' ? 'YES' : 'NO',
-            }),
+              ...auth
+            })
           })
         } catch {
           // Best-effort — cooldown enforced server-side; UI will refresh on next load
@@ -794,23 +857,36 @@ export const Governance: React.FC = () => {
     setVoteSuccess(false)
   }
 
-
   return (
     <Page>
       <PageContainer>
         <HeroBanner>
-          <PageTitle>Project <span>Governance</span></PageTitle>
-          <PageSubtitle>Vote on token listing proposals submitted by the community. Shape the future of Lunex.</PageSubtitle>
+          <PageTitle>
+            Project <span>Governance</span>
+          </PageTitle>
+          <PageSubtitle>
+            Vote on token listing proposals submitted by the community. Shape
+            the future of Lunex.
+          </PageSubtitle>
         </HeroBanner>
         <Header>
           <Title>Project Voting</Title>
-          <Subtitle>Vote on token listing proposals submitted by the community</Subtitle>
+          <Subtitle>
+            Vote on token listing proposals submitted by the community
+          </Subtitle>
         </Header>
 
         {!sdk.isConnected ? (
           <ConnectPrompt>
             <p>Connect your wallet to participate in governance</p>
-            <B.Button onClick={() => sdk.connectWallet()} margin="20px auto 0" width="auto" padding="16px 40px">Connect Wallet</B.Button>
+            <B.Button
+              onClick={() => sdk.connectWallet()}
+              margin="20px auto 0"
+              width="auto"
+              padding="16px 40px"
+            >
+              Connect Wallet
+            </B.Button>
           </ConnectPrompt>
         ) : isLoading ? (
           <ConnectPrompt>Loading proposals...</ConnectPrompt>
@@ -832,16 +908,28 @@ export const Governance: React.FC = () => {
             </StatsRow>
 
             <FilterTabs>
-              <FilterTab $active={filter === 'active'} onClick={() => setFilter('active')}>
+              <FilterTab
+                $active={filter === 'active'}
+                onClick={() => setFilter('active')}
+              >
                 Active ({stats.active})
               </FilterTab>
-              <FilterTab $active={filter === 'approved'} onClick={() => setFilter('approved')}>
+              <FilterTab
+                $active={filter === 'approved'}
+                onClick={() => setFilter('approved')}
+              >
                 Approved
               </FilterTab>
-              <FilterTab $active={filter === 'rejected'} onClick={() => setFilter('rejected')}>
+              <FilterTab
+                $active={filter === 'rejected'}
+                onClick={() => setFilter('rejected')}
+              >
                 Rejected
               </FilterTab>
-              <FilterTab $active={filter === 'all'} onClick={() => setFilter('all')}>
+              <FilterTab
+                $active={filter === 'all'}
+                onClick={() => setFilter('all')}
+              >
                 All
               </FilterTab>
             </FilterTabs>
@@ -849,13 +937,30 @@ export const Governance: React.FC = () => {
             <ProposalsList>
               {filteredProposals.length === 0 ? (
                 <EmptyState>
-                  <div style={{ marginBottom: '16px', opacity: 0.5 }}><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></div>
+                  <div style={{ marginBottom: '16px', opacity: 0.5 }}>
+                    <svg
+                      width="32"
+                      height="32"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                    </svg>
+                  </div>
                   No proposals found for the selected filter
                 </EmptyState>
               ) : (
                 filteredProposals.map(proposal => {
                   const status = getProposalStatus(proposal)
-                  const { yesPercent, noPercent } = getVotePercentages(proposal.votesYes, proposal.votesNo)
+                  const { yesPercent, noPercent } = getVotePercentages(
+                    proposal.votesYes,
+                    proposal.votesNo
+                  )
                   const isActive = status === 'active'
                   const userCanVote = canVote(proposal.id)
                   const timeUntilVote = getTimeUntilNextVote(proposal.id)
@@ -869,7 +974,9 @@ export const Governance: React.FC = () => {
                         </ProposalStatus>
                       </ProposalHeader>
 
-                      <ProposalDescription>{proposal.description}</ProposalDescription>
+                      <ProposalDescription>
+                        {proposal.description}
+                      </ProposalDescription>
 
                       <ProposalMeta>
                         <MetaItem>{proposal.tokenAddress}</MetaItem>
@@ -880,11 +987,15 @@ export const Governance: React.FC = () => {
                         <VoteStats>
                           <VoteStat $type="yes">
                             <VoteLabel $type="yes">✓ YES</VoteLabel>
-                            <VoteCount>{proposal.votesYes.toLocaleString()}</VoteCount>
+                            <VoteCount>
+                              {proposal.votesYes.toLocaleString()}
+                            </VoteCount>
                           </VoteStat>
                           <VoteStat $type="no">
                             <VoteLabel $type="no">✗ NO</VoteLabel>
-                            <VoteCount>{proposal.votesNo.toLocaleString()}</VoteCount>
+                            <VoteCount>
+                              {proposal.votesNo.toLocaleString()}
+                            </VoteCount>
                           </VoteStat>
                         </VoteStats>
 
@@ -905,7 +1016,9 @@ export const Governance: React.FC = () => {
                               <VoteButton
                                 $type="yes"
                                 $disabled={!userCanVote}
-                                onClick={() => userCanVote && openVoteModal(proposal, 'yes')}
+                                onClick={() =>
+                                  userCanVote && openVoteModal(proposal, 'yes')
+                                }
                               >
                                 YES
                                 <span>{VOTE_COST} LUNES</span>
@@ -913,7 +1026,9 @@ export const Governance: React.FC = () => {
                               <VoteButton
                                 $type="no"
                                 $disabled={!userCanVote}
-                                onClick={() => userCanVote && openVoteModal(proposal, 'no')}
+                                onClick={() =>
+                                  userCanVote && openVoteModal(proposal, 'no')
+                                }
                               >
                                 NO
                                 <span>{VOTE_COST} LUNES</span>
@@ -934,10 +1049,16 @@ export const Governance: React.FC = () => {
 
             <ListingCTA>
               <CTAText>
-                Want to list your token on Lunex?<br />
+                Want to list your token on Lunex?
+                <br />
                 Submit a proposal for community voting.
               </CTAText>
-              <B.Button onClick={() => navigate('/listing')} margin="0 auto" width="auto" padding="12px 24px">
+              <B.Button
+                onClick={() => navigate('/listing')}
+                margin="0 auto"
+                width="auto"
+                padding="12px 24px"
+              >
                 List Your Token
               </B.Button>
             </ListingCTA>
@@ -950,17 +1071,28 @@ export const Governance: React.FC = () => {
               {!voteSuccess ? (
                 <>
                   <ModalHeader>
-                    <ModalIcon $type={isVoting ? 'loading' : (selectedVote ?? 'yes')}>
-                      {isVoting ? <LoadingSpinner /> : selectedVote === 'yes' ? 'YES' : 'NO'}
+                    <ModalIcon
+                      $type={isVoting ? 'loading' : (selectedVote ?? 'yes')}
+                    >
+                      {isVoting ? (
+                        <LoadingSpinner />
+                      ) : selectedVote === 'yes' ? (
+                        'YES'
+                      ) : (
+                        'NO'
+                      )}
                     </ModalIcon>
                     <ModalTitle>
-                      {isVoting ? 'Signing Transaction...' : `Vote ${selectedVote ? selectedVote.toUpperCase() : ''}`}
+                      {isVoting
+                        ? 'Signing Transaction...'
+                        : `Vote ${
+                            selectedVote ? selectedVote.toUpperCase() : ''
+                          }`}
                     </ModalTitle>
                     <ModalSubtitle>
                       {isVoting
                         ? 'Please confirm in your wallet'
-                        : `Confirm your vote for ${selectedProposal.name}`
-                      }
+                        : `Confirm your vote for ${selectedProposal.name}`}
                     </ModalSubtitle>
                   </ModalHeader>
 
@@ -971,7 +1103,9 @@ export const Governance: React.FC = () => {
                     </InfoRow>
                     <InfoRow>
                       <InfoLabel>Your Vote</InfoLabel>
-                      <InfoValue $type={selectedVote ?? undefined}>{selectedVote ? selectedVote.toUpperCase() : ''}</InfoValue>
+                      <InfoValue $type={selectedVote ?? undefined}>
+                        {selectedVote ? selectedVote.toUpperCase() : ''}
+                      </InfoValue>
                     </InfoRow>
                     <InfoRow>
                       <InfoLabel>Vote Cost</InfoLabel>
@@ -1034,19 +1168,17 @@ export const Governance: React.FC = () => {
                     </InfoRow>
                     <InfoRow>
                       <InfoLabel>Your Vote</InfoLabel>
-                      <InfoValue $type={selectedVote ?? undefined}>{selectedVote ? selectedVote.toUpperCase() : ''}</InfoValue>
+                      <InfoValue $type={selectedVote ?? undefined}>
+                        {selectedVote ? selectedVote.toUpperCase() : ''}
+                      </InfoValue>
                     </InfoRow>
                     <InfoRow>
                       <InfoLabel>New YES Votes</InfoLabel>
-                      <InfoValue>
-                        Confirmed ✓
-                      </InfoValue>
+                      <InfoValue>Confirmed ✓</InfoValue>
                     </InfoRow>
                     <InfoRow>
                       <InfoLabel>Goal Progress</InfoLabel>
-                      <InfoValue $highlight>
-                        Refreshing from chain...
-                      </InfoValue>
+                      <InfoValue $highlight>Refreshing from chain...</InfoValue>
                     </InfoRow>
                     <InfoRow>
                       <InfoLabel>Next Vote In</InfoLabel>

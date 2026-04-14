@@ -51,7 +51,7 @@ export const Content = styled(Wrapper)`
 `
 
 export const BoxDescriptions = styled(Wrapper)`
-  ${({ ...props }) => css`
+  ${css`
     ${device.mobileL} {
       padding: 0 8px 16px;
     }

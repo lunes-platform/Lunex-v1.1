@@ -71,6 +71,7 @@ enum CopyTradeSource {
 }
 
 enum CopyTradeSignalStatus {
+  PENDING_WALLET_SIGNATURE
   EXECUTED
   TWAP_EXECUTED
   FAILED
@@ -81,6 +82,13 @@ enum CopyTradeExecutionStatus {
   EXECUTED
   FAILED
   CANCELLED
+}
+
+enum CopyTradeWalletContinuationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  EXPIRED
 }
 
 enum LeaderTradeStatus {
@@ -508,11 +516,43 @@ model CopyTradeSignal {
   leader     Leader               @relation(fields: [leaderId], references: [id])
   vault      CopyVault            @relation(fields: [vaultId], references: [id])
   pair       Pair?                @relation(fields: [pairId], references: [id])
+  walletContinuation CopyTradeWalletContinuation?
   executions CopyTradeExecution[]
 
   @@index([leaderId, createdAt])
   @@index([vaultId, createdAt])
   @@index([pairId, createdAt])
+}
+
+model CopyTradeWalletContinuation {
+  id                     String                            @id @default(uuid())
+  signalId               String                            @unique
+  leaderId               String
+  vaultId                String
+  positionEffect         String
+  executedVia            String                            @default("ASYMMETRIC")
+  requiresWalletSignature Boolean                          @default(true)
+  contractAddress        String
+  method                 String                            @default("swap")
+  side                   OrderSide
+  amountIn               Decimal                           @db.Decimal(36, 18)
+  minAmountOut           Decimal                           @db.Decimal(36, 18)
+  makerAddress           String
+  nonce                  String
+  agentId                String?
+  status                 CopyTradeWalletContinuationStatus @default(PENDING)
+  txHash                 String?
+  message                String?                           @db.Text
+  requestedAt            DateTime                          @default(now())
+  confirmedAt            DateTime?
+  expiresAt              DateTime?
+  createdAt              DateTime                          @default(now())
+  updatedAt              DateTime                          @updatedAt
+
+  signal                 CopyTradeSignal                   @relation(fields: [signalId], references: [id])
+
+  @@index([leaderId, status, requestedAt])
+  @@index([vaultId, status, requestedAt])
 }
 
 model CopyTradeExecution {
@@ -1162,7 +1202,11 @@ model Favorite {
 // ─── Weekly Reward Distribution ──────────────────────────────────────────────
 // Tracks weekly fee collection and reward pool distribution cycles.
 // Fee split: 40% LP (AMM), 40% Treasury, 20% Reward Pool.
-// Reward pool split: 60% Copytrade Leaders, 40% Stakers.
+// Reward pool split is config-driven across leaders, traders and stakers and
+// must total 100% (`LEADER_POOL_PCT + TRADER_POOL_PCT + STAKER_POOL_PCT`).
+// `traderPoolAmount` is derived at runtime from `rewardPoolAmount - leaderPoolAmount - stakerPoolAmount`
+// to preserve backward compatibility with the persisted schema.
+// Staker rewards are funded on-chain via the staking contract, not materialized per-wallet here.
 
 model RewardWeek {
   id                 String    @id @default(uuid())
@@ -1187,7 +1231,7 @@ model UserReward {
   rewardWeekId  String
   walletAddress String
   amount        Decimal   @db.Decimal(36, 18)
-  rewardType    String    // LEADER | STAKER
+  rewardType    String    // LEADER | TRADER (staker claims live on-chain)
   rank          Int?
   weight        Decimal?  @db.Decimal(36, 18)
   claimed       Boolean   @default(false)

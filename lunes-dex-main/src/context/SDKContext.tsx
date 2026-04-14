@@ -1,13 +1,15 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback, useMemo } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+  useCallback,
+  useMemo
+} from 'react'
 import { contractService } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
-
-// SDK Types
-interface LunexConfig {
-  baseURL: string
-  wsURL?: string
-}
 
 interface Quote {
   amountOut: string
@@ -89,15 +91,41 @@ interface SDKContextState {
   // Funções de Staking
   stake: (amount: string) => Promise<boolean>
   unstake: (amount: string) => Promise<boolean>
+  claimStakingRewards: () => Promise<boolean>
   claimRewards: () => Promise<boolean>
-  getStakingUserInfo: (accountAddress: string) => Promise<{ totalStaked: string; userStaked: string; pendingRewards: string; apr: string; lockPeriod: number } | null>
+  getStakingUserInfo: (accountAddress: string) => Promise<{
+    totalStaked: string
+    userStaked: string
+    pendingRewards: string
+    apr: string
+    lockPeriod: number
+  } | null>
 
   // Funções de Governança
-  getProposal: (proposalId: number) => Promise<{ id: number; name: string; description: string; tokenAddress: string; proposer: string; votesYes: number; votesNo: number; votingDeadline: number; executed: boolean; active: boolean; fee: string } | null>
+  getProposal: (proposalId: number) => Promise<{
+    id: number
+    name: string
+    description: string
+    tokenAddress: string
+    proposer: string
+    votesYes: number
+    votesNo: number
+    votingDeadline: number
+    executed: boolean
+    active: boolean
+    fee: string
+  } | null>
   voteOnProposal: (proposalId: number, approve: boolean) => Promise<boolean>
-  createProposal: (name: string, description: string, tokenAddress: string) => Promise<string | null>
+  createProposal: (
+    name: string,
+    description: string,
+    tokenAddress: string
+  ) => Promise<string | null>
   getVotingPower: (accountAddress: string) => Promise<string>
-  getListingStats: () => Promise<{ totalProposals: number; approvedProposals: number } | null>
+  getListingStats: () => Promise<{
+    totalProposals: number
+    approvedProposals: number
+  } | null>
 
   // Funções de Token
   getTokenInfo: (address: string) => Promise<TokenInfo | null>
@@ -118,7 +146,7 @@ const CONTRACT_ADDRESSES = {
   router: CONTRACTS.ROUTER,
   wnative: CONTRACTS.WNATIVE,
   staking: CONTRACTS.STAKING,
-  rewards: CONTRACTS.REWARDS,
+  rewards: CONTRACTS.REWARDS
 }
 
 // Network from centralized config
@@ -157,8 +185,10 @@ const parseBlockchainError = (err: unknown): string => {
   }
 
   // Slippage / Balance heuristics
-  if (message.includes('balances.InsufficientBalance')) return 'Insufficient LUNES balance for transaction fees'
-  if (message.includes('contracts.OutOfGas')) return 'Out of Gas error. Transaction reverted.'
+  if (message.includes('balances.InsufficientBalance'))
+    return 'Insufficient LUNES balance for transaction fees'
+  if (message.includes('contracts.OutOfGas'))
+    return 'Out of Gas error. Transaction reverted.'
 
   // Return formatted or slice the huge string
   return message.length > 100 ? `${message.slice(0, 100)}...` : message
@@ -177,7 +207,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   const [error, setError] = useState<string | null>(null)
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [balance, setBalance] = useState('0')
-  const [currentAccount, setCurrentAccount] = useState<InjectedAccountWithMeta | null>(null)
+  const [currentAccount, setCurrentAccount] =
+    useState<InjectedAccountWithMeta | null>(null)
 
   // Initialize blockchain connection
   useEffect(() => {
@@ -186,7 +217,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         const connected = await contractService.connect(NETWORK)
         if (connected) {
           contractService.setContracts(CONTRACT_ADDRESSES)
-          if (process.env.NODE_ENV !== 'production') console.log('Connected to Lunes blockchain')
+          if (process.env.NODE_ENV !== 'production')
+            console.log('Connected to Lunes blockchain')
         }
       } catch (err) {
         console.error('Failed to connect to blockchain:', err)
@@ -205,9 +237,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   useEffect(() => {
     const savedAddress = localStorage.getItem('lunex_last_wallet_address')
     if (savedAddress) {
-      // Just hint the UI — the signer is NOT restored
-      // isConnected remains false until user explicitly re-connects
-      console.info('[SDK] Last wallet:', savedAddress, '— reconnect to resume')
+      // Just hint the UI — the signer is NOT restored.
+      // Avoid logging wallet identifiers to the browser console.
     }
   }, [])
 
@@ -217,10 +248,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
     const updateBalance = async () => {
       try {
-        const nativeBalance = await contractService.getNativeBalance(walletAddress)
+        const nativeBalance =
+          await contractService.getNativeBalance(walletAddress)
         setBalance(nativeBalance)
       } catch (e) {
-        console.error("Error polling balance:", e)
+        console.error('Error polling balance:', e)
       }
     }
 
@@ -236,7 +268,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
     try {
       // Discover all Substrate wallet extensions
-      const { web3Enable, web3Accounts } = await import('@polkadot/extension-dapp')
+      const { web3Enable, web3Accounts } =
+        await import('@polkadot/extension-dapp')
 
       const extensions = await web3Enable('Lunex DEX')
 
@@ -247,13 +280,17 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       const allAccounts = await web3Accounts()
 
       if (allAccounts.length === 0) {
-        throw new Error('No accounts found. Create an account in your wallet extension')
+        throw new Error(
+          'No accounts found. Create an account in your wallet extension'
+        )
       }
 
       // Filter accounts by the selected wallet source, if provided
       let accounts = allAccounts
       if (walletSource) {
-        const filtered = allAccounts.filter(acc => acc.meta.source === walletSource)
+        const filtered = allAccounts.filter(
+          acc => acc.meta.source === walletSource
+        )
         if (filtered.length > 0) {
           accounts = filtered
         }
@@ -265,16 +302,20 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       setWalletAddress(account.address)
       setIsConnected(true)
       localStorage.setItem('lunex_last_wallet_address', account.address)
-      localStorage.setItem('lunex_last_wallet_source', account.meta.source || '')
+      localStorage.setItem(
+        'lunex_last_wallet_source',
+        account.meta.source || ''
+      )
 
       // Fetch real native balance from blockchain
       if (!contractService.getIsConnected()) {
         await contractService.connect(NETWORK)
       }
 
-      const nativeBalance = await contractService.getNativeBalance(account.address)
+      const nativeBalance = await contractService.getNativeBalance(
+        account.address
+      )
       setBalance(nativeBalance)
-
     } catch (err: unknown) {
       setError(parseBlockchainError(err))
       console.error('Error connecting wallet:', err)
@@ -292,264 +333,326 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     localStorage.removeItem('lunex_last_wallet_address')
   }, [])
 
-  const signMessage = useCallback(async (message: string): Promise<string> => {
-    if (!walletAddress) {
-      throw new Error('Connect your wallet first')
-    }
+  const signMessage = useCallback(
+    async (message: string): Promise<string> => {
+      if (!walletAddress) {
+        throw new Error('Connect your wallet first')
+      }
 
-    const { web3Accounts, web3FromSource } = await import('@polkadot/extension-dapp')
-    const account = currentAccount || (await web3Accounts()).find((item) => item.address === walletAddress) || null
+      const { web3Accounts, web3FromSource } =
+        await import('@polkadot/extension-dapp')
+      const account =
+        currentAccount ||
+        (await web3Accounts()).find(item => item.address === walletAddress) ||
+        null
 
-    if (!account) {
-      throw new Error('Reconnect your wallet to enable signing')
-    }
+      if (!account) {
+        throw new Error('Reconnect your wallet to enable signing')
+      }
 
-    if (!currentAccount) {
-      setCurrentAccount(account)
-    }
+      if (!currentAccount) {
+        setCurrentAccount(account)
+      }
 
-    const injector = await web3FromSource(account.meta.source)
-    const signRaw = injector?.signer?.signRaw
+      const injector = await web3FromSource(account.meta.source)
+      const signRaw = injector?.signer?.signRaw
 
-    if (!signRaw) {
-      throw new Error('Signer not available in the connected wallet')
-    }
+      if (!signRaw) {
+        throw new Error('Signer not available in the connected wallet')
+      }
 
-    const { signature } = await signRaw({
-      address: walletAddress,
-      data: message,
-      type: 'bytes'
-    })
+      const { signature } = await signRaw({
+        address: walletAddress,
+        data: message,
+        type: 'bytes'
+      })
 
-    return signature
-  }, [currentAccount, walletAddress])
+      return signature
+    },
+    [currentAccount, walletAddress]
+  )
 
   // Obter Quote para Swap
-  const getQuote = useCallback(async (amountIn: string, path: string[]): Promise<Quote | null> => {
-    setIsLoading(true)
-    setError(null)
+  const getQuote = useCallback(
+    async (amountIn: string, path: string[]): Promise<Quote | null> => {
+      setIsLoading(true)
+      setError(null)
 
-    try {
-      if (!contractService.getIsConnected()) {
-        await contractService.connect(NETWORK)
-      }
-
-      // Fetch amounts and reserves in parallel
-      const [amounts, pairInfo] = await Promise.all([
-        contractService.getAmountsOut(amountIn, path),
-        contractService.getPairInfo(path[0], path[1]),
-      ])
-
-      if (!amounts || amounts.length < 2) {
-        throw new Error('Insufficient liquidity for this trade')
-      }
-
-      const amountOut = amounts[amounts.length - 1]
-      const executionPrice = (Number(amountOut) / Number(amountIn)).toFixed(6)
-
-      // Real price impact = 1 - (amountOut/amountIn) / (reserve_out/reserve_in)
-      // For Uniswap V2 with 0.3% fee:
-      // price_impact ≈ amountIn / (reserve_in + amountIn)  [simplified]
-      let priceImpact = '0'
-      if (pairInfo) {
-        const reserveIn = BigInt(pairInfo.reserve0)
-        const reserveOut = BigInt(pairInfo.reserve1)
-        const aIn = BigInt(amountIn)
-        const aOut = BigInt(amountOut)
-
-        const ZERO = BigInt(0)
-        if (reserveIn > ZERO && reserveOut > ZERO && aIn > ZERO && aOut > ZERO) {
-          // impact = 1 - (aOut * reserveIn) / (aIn * reserveOut)   [in basis points *10000]
-          const BPS = BigInt(10000)
-          const midPriceNum = aOut * reserveIn * BPS
-          const midPriceDen = aIn * reserveOut
-          const impactBps = midPriceDen > midPriceNum
-            ? (midPriceDen - midPriceNum) * BPS / midPriceDen
-            : ZERO
-          priceImpact = (Number(impactBps) / 100).toFixed(2) // e.g. "0.30"
+      try {
+        if (!contractService.getIsConnected()) {
+          await contractService.connect(NETWORK)
         }
-      } else {
-        // Fallback: fee only (0.30%)
-        priceImpact = '0.30'
+
+        // Fetch amounts and reserves in parallel
+        const [amounts, pairInfo] = await Promise.all([
+          contractService.getAmountsOut(amountIn, path),
+          contractService.getPairInfo(path[0], path[1])
+        ])
+
+        if (!amounts || amounts.length < 2) {
+          throw new Error('Insufficient liquidity for this trade')
+        }
+
+        const amountOut = amounts[amounts.length - 1]
+        const executionPrice = (Number(amountOut) / Number(amountIn)).toFixed(6)
+
+        // Real price impact = 1 - (amountOut/amountIn) / (reserve_out/reserve_in)
+        // For Uniswap V2 with 0.3% fee:
+        // price_impact ≈ amountIn / (reserve_in + amountIn)  [simplified]
+        let priceImpact = '0'
+        if (pairInfo) {
+          const reserveIn = BigInt(pairInfo.reserve0)
+          const reserveOut = BigInt(pairInfo.reserve1)
+          const aIn = BigInt(amountIn)
+          const aOut = BigInt(amountOut)
+
+          const ZERO = BigInt(0)
+          if (
+            reserveIn > ZERO &&
+            reserveOut > ZERO &&
+            aIn > ZERO &&
+            aOut > ZERO
+          ) {
+            // impact = 1 - (aOut * reserveIn) / (aIn * reserveOut)   [in basis points *10000]
+            const BPS = BigInt(10000)
+            const midPriceNum = aOut * reserveIn * BPS
+            const midPriceDen = aIn * reserveOut
+            const impactBps =
+              midPriceDen > midPriceNum
+                ? ((midPriceDen - midPriceNum) * BPS) / midPriceDen
+                : ZERO
+            priceImpact = (Number(impactBps) / 100).toFixed(2) // e.g. "0.30"
+          }
+        } else {
+          // Fallback: fee only (0.30%)
+          priceImpact = '0.30'
+        }
+
+        // Minimum received with 0.5% slippage buffer
+        const minimumReceived = (
+          (BigInt(amountOut) * BigInt(995)) /
+          BigInt(1000)
+        ).toString()
+
+        return {
+          amountOut,
+          executionPrice,
+          priceImpact,
+          minimumReceived,
+          route: path
+        }
+      } catch (err: unknown) {
+        setError((err as Error).message || 'Error getting quote')
+        console.error('Error getting quote:', err)
+        return null
+      } finally {
+        setIsLoading(false)
       }
-
-      // Minimum received with 0.5% slippage buffer
-      const minimumReceived = (BigInt(amountOut) * BigInt(995) / BigInt(1000)).toString()
-
-      return {
-        amountOut,
-        executionPrice,
-        priceImpact,
-        minimumReceived,
-        route: path
-      }
-
-    } catch (err: unknown) {
-      setError((err as Error).message || 'Error getting quote')
-      console.error('Error getting quote:', err)
-      return null
-    } finally {
-      setIsLoading(false)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    []
+  )
 
   // Executar Swap
-  const executeSwap = useCallback(async (params: SwapParams): Promise<boolean> => {
-    if (!walletAddress || !currentAccount) {
-      setError('Connect your wallet first')
-      return false
-    }
+  const executeSwap = useCallback(
+    async (params: SwapParams): Promise<boolean> => {
+      if (!walletAddress || !currentAccount) {
+        setError('Connect your wallet first')
+        return false
+      }
 
-    setIsLoading(true)
-    setError(null)
+      setIsLoading(true)
+      setError(null)
 
-    try {
-      // 1. Check Allowance
-      const tokenIn = params.path[0]
-      const routerAddress = CONTRACT_ADDRESSES.router
+      try {
+        // 1. Check Allowance
+        const tokenIn = params.path[0]
+        const routerAddress = CONTRACT_ADDRESSES.router
 
-      const allowance = await contractService.getAllowance(tokenIn, walletAddress, routerAddress)
-      const amountInBN = BigInt(params.amountIn)
-      const allowanceBN = BigInt(allowance)
-
-      if (allowanceBN < amountInBN) {
-        if (process.env.NODE_ENV !== 'production') console.log('Insufficient allowance. Approving...')
-        const approved = await contractService.approveToken(
+        const allowance = await contractService.getAllowance(
           tokenIn,
-          routerAddress,
-          params.amountIn, // Approve exact amount or infinite? Using exact for safety
+          walletAddress,
+          routerAddress
+        )
+        const amountInBN = BigInt(params.amountIn)
+        const allowanceBN = BigInt(allowance)
+
+        if (allowanceBN < amountInBN) {
+          if (process.env.NODE_ENV !== 'production')
+            console.log('Insufficient allowance. Approving...')
+          const approved = await contractService.approveToken(
+            tokenIn,
+            routerAddress,
+            params.amountIn, // Approve exact amount or infinite? Using exact for safety
+            currentAccount
+          )
+          if (!approved) throw new Error('Token approval failed')
+        }
+
+        // 2. Execute Swap
+        const txHash = await contractService.swapExactTokensForTokens(
+          params.amountIn,
+          params.amountOutMin,
+          params.path,
+          params.to,
+          params.deadline,
           currentAccount
         )
-        if (!approved) throw new Error("Token approval failed")
+
+        if (process.env.NODE_ENV !== 'production')
+          console.log('Swap executed! Tx Hash:', txHash)
+
+        // 3. Refresh Balance
+        const newBalance = await contractService.getNativeBalance(walletAddress)
+        setBalance(newBalance)
+
+        return true
+      } catch (err: unknown) {
+        setError((err as Error).message || 'Error executing swap')
+        console.error('Error executing swap:', err)
+        return false
+      } finally {
+        setIsLoading(false)
       }
-
-      // 2. Execute Swap
-      const txHash = await contractService.swapExactTokensForTokens(
-        params.amountIn,
-        params.amountOutMin,
-        params.path,
-        params.to,
-        params.deadline,
-        currentAccount
-      )
-
-      if (process.env.NODE_ENV !== 'production') console.log('Swap executed! Tx Hash:', txHash)
-
-      // 3. Refresh Balance
-      const newBalance = await contractService.getNativeBalance(walletAddress)
-      setBalance(newBalance)
-
-      return true
-
-    } catch (err: unknown) {
-      setError((err as Error).message || 'Error executing swap')
-      console.error('Error executing swap:', err)
-      return false
-    } finally {
-      setIsLoading(false)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletAddress, currentAccount])
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [walletAddress, currentAccount]
+  )
 
   // Adicionar Liquidez
-  const addLiquidity = useCallback(async (params: LiquidityParams): Promise<boolean> => {
-    if (!walletAddress || !currentAccount) {
-      setError('Connect your wallet first')
-      return false
-    }
-
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const routerAddress = CONTRACT_ADDRESSES.router
-
-      // 1. Check/Approve Token A
-      const allowanceA = await contractService.getAllowance(params.tokenA, walletAddress, routerAddress)
-      if (BigInt(allowanceA) < BigInt(params.amountADesired)) {
-        await contractService.approveToken(params.tokenA, routerAddress, params.amountADesired, currentAccount)
+  const addLiquidity = useCallback(
+    async (params: LiquidityParams): Promise<boolean> => {
+      if (!walletAddress || !currentAccount) {
+        setError('Connect your wallet first')
+        return false
       }
 
-      // 2. Check/Approve Token B
-      const allowanceB = await contractService.getAllowance(params.tokenB, walletAddress, routerAddress)
-      if (BigInt(allowanceB) < BigInt(params.amountBDesired)) {
-        await contractService.approveToken(params.tokenB, routerAddress, params.amountBDesired, currentAccount)
+      setIsLoading(true)
+      setError(null)
+
+      try {
+        const routerAddress = CONTRACT_ADDRESSES.router
+
+        // 1. Check/Approve Token A
+        const allowanceA = await contractService.getAllowance(
+          params.tokenA,
+          walletAddress,
+          routerAddress
+        )
+        if (BigInt(allowanceA) < BigInt(params.amountADesired)) {
+          await contractService.approveToken(
+            params.tokenA,
+            routerAddress,
+            params.amountADesired,
+            currentAccount
+          )
+        }
+
+        // 2. Check/Approve Token B
+        const allowanceB = await contractService.getAllowance(
+          params.tokenB,
+          walletAddress,
+          routerAddress
+        )
+        if (BigInt(allowanceB) < BigInt(params.amountBDesired)) {
+          await contractService.approveToken(
+            params.tokenB,
+            routerAddress,
+            params.amountBDesired,
+            currentAccount
+          )
+        }
+
+        // 3. Execute Add Liquidity
+        const txHash = await contractService.addLiquidity(
+          params.tokenA,
+          params.tokenB,
+          params.amountADesired,
+          params.amountBDesired,
+          params.amountAMin,
+          params.amountBMin,
+          params.to,
+          params.deadline,
+          currentAccount
+        )
+
+        if (process.env.NODE_ENV !== 'production')
+          console.log('Liquidity added! Tx Hash:', txHash)
+        return true
+      } catch (err: unknown) {
+        setError((err as Error).message || 'Error adding liquidity')
+        console.error('Error adding liquidity:', err)
+        return false
+      } finally {
+        setIsLoading(false)
       }
-
-      // 3. Execute Add Liquidity
-      const txHash = await contractService.addLiquidity(
-        params.tokenA,
-        params.tokenB,
-        params.amountADesired,
-        params.amountBDesired,
-        params.amountAMin,
-        params.amountBMin,
-        params.to,
-        params.deadline,
-        currentAccount
-      )
-
-      if (process.env.NODE_ENV !== 'production') console.log('Liquidity added! Tx Hash:', txHash)
-      return true
-
-    } catch (err: unknown) {
-      setError((err as Error).message || 'Error adding liquidity')
-      console.error('Error adding liquidity:', err)
-      return false
-    } finally {
-      setIsLoading(false)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletAddress, currentAccount])
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [walletAddress, currentAccount]
+  )
 
   // Remover Liquidez
-  const removeLiquidity = useCallback(async (params: RemoveLiquidityParams): Promise<boolean> => {
-    if (!walletAddress || !currentAccount) {
-      setError('Connect your wallet first')
-      return false
-    }
-
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      // 1. Get Pair Address (LP Token)
-      const pairAddress = await contractService.getPair(params.tokenA, params.tokenB)
-      if (!pairAddress) throw new Error("Pair not found")
-
-      // 2. Approve Router to spend LP Tokens
-      const routerAddress = CONTRACT_ADDRESSES.router
-      const allowance = await contractService.getAllowance(pairAddress, walletAddress, routerAddress)
-
-      if (BigInt(allowance) < BigInt(params.liquidity)) {
-        await contractService.approveToken(pairAddress, routerAddress, params.liquidity, currentAccount)
+  const removeLiquidity = useCallback(
+    async (params: RemoveLiquidityParams): Promise<boolean> => {
+      if (!walletAddress || !currentAccount) {
+        setError('Connect your wallet first')
+        return false
       }
 
-      // 3. Execute Remove
-      const txHash = await contractService.removeLiquidity(
-        params.tokenA,
-        params.tokenB,
-        params.liquidity,
-        params.amountAMin,
-        params.amountBMin,
-        params.to,
-        params.deadline,
-        currentAccount
-      )
+      setIsLoading(true)
+      setError(null)
 
-      if (process.env.NODE_ENV !== 'production') console.log('Liquidity removed! Tx Hash:', txHash)
-      return true
+      try {
+        // 1. Get Pair Address (LP Token)
+        const pairAddress = await contractService.getPair(
+          params.tokenA,
+          params.tokenB
+        )
+        if (!pairAddress) throw new Error('Pair not found')
 
-    } catch (err: unknown) {
-      setError((err as Error).message || 'Error removing liquidity')
-      console.error('Error removing liquidity:', err)
-      return false
-    } finally {
-      setIsLoading(false)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletAddress, currentAccount])
+        // 2. Approve Router to spend LP Tokens
+        const routerAddress = CONTRACT_ADDRESSES.router
+        const allowance = await contractService.getAllowance(
+          pairAddress,
+          walletAddress,
+          routerAddress
+        )
+
+        if (BigInt(allowance) < BigInt(params.liquidity)) {
+          await contractService.approveToken(
+            pairAddress,
+            routerAddress,
+            params.liquidity,
+            currentAccount
+          )
+        }
+
+        // 3. Execute Remove
+        const txHash = await contractService.removeLiquidity(
+          params.tokenA,
+          params.tokenB,
+          params.liquidity,
+          params.amountAMin,
+          params.amountBMin,
+          params.to,
+          params.deadline,
+          currentAccount
+        )
+
+        if (process.env.NODE_ENV !== 'production')
+          console.log('Liquidity removed! Tx Hash:', txHash)
+        return true
+      } catch (err: unknown) {
+        setError((err as Error).message || 'Error removing liquidity')
+        console.error('Error removing liquidity:', err)
+        return false
+      } finally {
+        setIsLoading(false)
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [walletAddress, currentAccount]
+  )
 
   // ========================================
   // Staking Methods
@@ -570,7 +673,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       }
 
       const txHash = await contractService.stake(amount, currentAccount)
-      if (process.env.NODE_ENV !== 'production') console.log('Staked! Tx Hash:', txHash)
+      if (process.env.NODE_ENV !== 'production')
+        console.log('Staked! Tx Hash:', txHash)
       return true
     } catch (err: unknown) {
       setError(parseBlockchainError(err))
@@ -596,7 +700,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       }
 
       const txHash = await contractService.unstake(amount, currentAccount)
-      if (process.env.NODE_ENV !== 'production') console.log('Unstaked! Tx Hash:', txHash)
+      if (process.env.NODE_ENV !== 'production')
+        console.log('Unstaked! Tx Hash:', txHash)
       return true
     } catch (err: unknown) {
       setError(parseBlockchainError(err))
@@ -607,7 +712,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
-  const claimRewards = async (): Promise<boolean> => {
+  const claimStakingRewards = async (): Promise<boolean> => {
     if (!walletAddress || !currentAccount) {
       setError('Connect your wallet first')
       return false
@@ -622,7 +727,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       }
 
       const txHash = await contractService.claimRewards(currentAccount)
-      if (process.env.NODE_ENV !== 'production') console.log('Rewards Claimed! Tx Hash:', txHash)
+      if (process.env.NODE_ENV !== 'production')
+        console.log('Rewards Claimed! Tx Hash:', txHash)
       return true
     } catch (err: unknown) {
       setError(parseBlockchainError(err))
@@ -632,6 +738,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       setIsLoading(false)
     }
   }
+
+  const claimRewards = claimStakingRewards
 
   const getStakingUserInfo = async (accountAddress: string) => {
     try {
@@ -649,7 +757,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
   const getProposal = async (proposalId: number) => {
     try {
-      if (!contractService.getIsConnected()) await contractService.connect(NETWORK)
+      if (!contractService.getIsConnected())
+        await contractService.connect(NETWORK)
       return await contractService.getProposal(proposalId)
     } catch (err) {
       console.error('Error getting proposal:', err)
@@ -657,7 +766,10 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
-  const voteOnProposal = async (proposalId: number, approve: boolean): Promise<boolean> => {
+  const voteOnProposal = async (
+    proposalId: number,
+    approve: boolean
+  ): Promise<boolean> => {
     if (!walletAddress || !currentAccount) {
       setError('Connect your wallet first')
       return false
@@ -665,9 +777,15 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     setIsLoading(true)
     setError(null)
     try {
-      if (!contractService.getIsConnected()) await contractService.connect(NETWORK)
-      const txHash = await contractService.vote(proposalId, approve, currentAccount)
-      if (process.env.NODE_ENV !== 'production') console.log('Vote submitted! Tx Hash:', txHash)
+      if (!contractService.getIsConnected())
+        await contractService.connect(NETWORK)
+      const txHash = await contractService.vote(
+        proposalId,
+        approve,
+        currentAccount
+      )
+      if (process.env.NODE_ENV !== 'production')
+        console.log('Vote submitted! Tx Hash:', txHash)
       return true
     } catch (err: unknown) {
       setError((err as Error).message || 'Error voting')
@@ -678,7 +796,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
-  const createProposal = async (name: string, description: string, tokenAddress: string): Promise<string | null> => {
+  const createProposal = async (
+    name: string,
+    description: string,
+    tokenAddress: string
+  ): Promise<string | null> => {
     if (!walletAddress || !currentAccount) {
       setError('Connect your wallet first')
       return null
@@ -686,9 +808,16 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     setIsLoading(true)
     setError(null)
     try {
-      if (!contractService.getIsConnected()) await contractService.connect(NETWORK)
-      const txHash = await contractService.createProposal(name, description, tokenAddress, currentAccount)
-      if (process.env.NODE_ENV !== 'production') console.log('Proposal created! Tx Hash:', txHash)
+      if (!contractService.getIsConnected())
+        await contractService.connect(NETWORK)
+      const txHash = await contractService.createProposal(
+        name,
+        description,
+        tokenAddress,
+        currentAccount
+      )
+      if (process.env.NODE_ENV !== 'production')
+        console.log('Proposal created! Tx Hash:', txHash)
       return txHash
     } catch (err: unknown) {
       setError((err as Error).message || 'Error creating proposal')
@@ -701,7 +830,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
   const getVotingPower = async (accountAddress: string): Promise<string> => {
     try {
-      if (!contractService.getIsConnected()) await contractService.connect(NETWORK)
+      if (!contractService.getIsConnected())
+        await contractService.connect(NETWORK)
       return await contractService.getVotingPower(accountAddress)
     } catch (err) {
       console.error('Error getting voting power:', err)
@@ -711,7 +841,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
   const getListingStats = async () => {
     try {
-      if (!contractService.getIsConnected()) await contractService.connect(NETWORK)
+      if (!contractService.getIsConnected())
+        await contractService.connect(NETWORK)
       return await contractService.getListingStats()
     } catch (err) {
       console.error('Error getting listing stats:', err)
@@ -720,7 +851,10 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   }
 
   // Obter Info do Par
-  const getPairInfo = async (tokenA: string, tokenB: string): Promise<PairInfo | null> => {
+  const getPairInfo = async (
+    tokenA: string,
+    tokenB: string
+  ): Promise<PairInfo | null> => {
     try {
       if (!contractService.getIsConnected()) {
         await contractService.connect(NETWORK)
@@ -746,7 +880,10 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   }
 
   // Obter Balance do Token
-  const getTokenBalance = async (token: string, account: string): Promise<string> => {
+  const getTokenBalance = async (
+    token: string,
+    account: string
+  ): Promise<string> => {
     try {
       if (!contractService.getIsConnected()) {
         await contractService.connect(NETWORK)
@@ -776,8 +913,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       return `${integerPart}.${trimmedFractional}`
     } catch (e) {
-      console.error("Format error", e)
-      return "0"
+      console.error('Format error', e)
+      return '0'
     }
   }
 
@@ -785,13 +922,15 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     if (!amount) return '0'
     try {
       const [integerPart, fractionalPart = ''] = amount.split('.')
-      const paddedFractional = fractionalPart.padEnd(decimals, '0').slice(0, decimals)
+      const paddedFractional = fractionalPart
+        .padEnd(decimals, '0')
+        .slice(0, decimals)
       const combined = integerPart + paddedFractional
       // Remove leading zeros just in case
       return BigInt(combined).toString()
     } catch (e) {
-      console.error("Parse error", e)
-      return "0"
+      console.error('Parse error', e)
+      return '0'
     }
   }
 
@@ -800,53 +939,58 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     return Math.floor(Date.now() / 1000) + minutes * 60
   }
 
-  const calculateMinAmount = (amount: string, slippagePercent: number): string => {
+  const calculateMinAmount = (
+    amount: string,
+    slippagePercent: number
+  ): string => {
     try {
       const amountBigInt = BigInt(amount)
-      const slippageMultiplier = BigInt(Math.floor((100 - slippagePercent) * 100))
-      return (amountBigInt * slippageMultiplier / BigInt(10000)).toString()
-    } catch (e) {
-      return "0"
+      const slippageMultiplier = BigInt(
+        Math.floor((100 - slippagePercent) * 100)
+      )
+      return ((amountBigInt * slippageMultiplier) / BigInt(10000)).toString()
+    } catch {
+      return '0'
     }
   }
 
-  const value: SDKContextState = useMemo(() => ({
-    isConnected,
-    isLoading,
-    error,
-    walletAddress,
-    balance,
-    connectWallet,
-    disconnectWallet,
-    signMessage,
-    getQuote,
-    executeSwap,
-    addLiquidity,
-    removeLiquidity,
-    getPairInfo,
-    stake,
-    unstake,
-    claimRewards,
-    getStakingUserInfo,
-    getProposal,
-    voteOnProposal,
-    createProposal,
-    getVotingPower,
-    getListingStats,
-    getTokenInfo,
-    getTokenBalance,
-    formatAmount,
-    parseAmount,
-    calculateDeadline,
-    calculateMinAmount,
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [isConnected, isLoading, error, walletAddress, balance, signMessage])
-
-  return (
-    <SDKContext.Provider value={value}>
-      {children}
-    </SDKContext.Provider>
+  const value: SDKContextState = useMemo(
+    () => ({
+      isConnected,
+      isLoading,
+      error,
+      walletAddress,
+      balance,
+      connectWallet,
+      disconnectWallet,
+      signMessage,
+      getQuote,
+      executeSwap,
+      addLiquidity,
+      removeLiquidity,
+      getPairInfo,
+      stake,
+      unstake,
+      claimStakingRewards,
+      claimRewards,
+      getStakingUserInfo,
+      getProposal,
+      voteOnProposal,
+      createProposal,
+      getVotingPower,
+      getListingStats,
+      getTokenInfo,
+      getTokenBalance,
+      formatAmount,
+      parseAmount,
+      calculateDeadline,
+      calculateMinAmount
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }),
+    [isConnected, isLoading, error, walletAddress, balance, signMessage]
   )
+
+  return <SDKContext.Provider value={value}>{children}</SDKContext.Provider>
 }
 
 // Hook para usar o SDK
@@ -859,5 +1003,3 @@ export const useSDK = (): SDKContextState => {
 
   return context
 }
-
-export default SDKContext

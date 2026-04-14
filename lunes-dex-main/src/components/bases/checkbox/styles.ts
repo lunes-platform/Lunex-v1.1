@@ -26,8 +26,8 @@ export const Wrapper = styled.div<Partial<CheckboxProps>>`
       ${props.border
         ? props.theme.colors.themeColors[800]
         : props.isError
-        ? props.theme.colors.critical[400]
-        : props.theme.colors.themeColors[300]};
+          ? props.theme.colors.critical[400]
+          : props.theme.colors.themeColors[300]};
   `}
 `
 

@@ -1,55 +1,56 @@
-import { config } from '../config'
-import { log } from '../utils/logger'
-import { socialAnalyticsService } from './socialAnalyticsService'
-import { socialIndexerService } from './socialIndexerService'
+import { config } from '../config';
+import { log } from '../utils/logger';
+import { socialAnalyticsService } from './socialAnalyticsService';
+import { socialIndexerService } from './socialIndexerService';
 
 class SocialAnalyticsPipeline {
-  private timer: NodeJS.Timeout | null = null
-  private running = false
+  private timer: NodeJS.Timeout | null = null;
+  private running = false;
 
   isEnabled() {
-    return config.socialAnalytics.enabled
+    return config.socialAnalytics.enabled;
   }
 
   async runOnce() {
     if (!this.isEnabled() || this.running) {
-      return null
+      return null;
     }
 
-    this.running = true
+    this.running = true;
 
     try {
-      const indexerResult = await socialIndexerService.syncOnce()
-      const analyticsResult = await socialAnalyticsService.recomputeLeaderSnapshots()
-      return { indexerResult, analyticsResult }
+      const indexerResult = await socialIndexerService.syncOnce();
+      const analyticsResult =
+        await socialAnalyticsService.recomputeLeaderSnapshots();
+      return { indexerResult, analyticsResult };
     } catch (error) {
-      log.error({ err: error }, '[SocialAnalyticsPipeline] Run failed')
-      return null
+      log.error({ err: error }, '[SocialAnalyticsPipeline] Run failed');
+      return null;
     } finally {
-      this.running = false
+      this.running = false;
     }
   }
 
   async start() {
     if (!this.isEnabled() || this.timer) {
-      return
+      return;
     }
 
-    await this.runOnce()
+    await this.runOnce();
 
     this.timer = setInterval(() => {
-      void this.runOnce()
-    }, config.socialAnalytics.pollIntervalMs)
+      void this.runOnce();
+    }, config.socialAnalytics.pollIntervalMs);
 
-    log.info('[SocialAnalyticsPipeline] Started')
+    log.info('[SocialAnalyticsPipeline] Started');
   }
 
   stop() {
     if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = null
+      clearInterval(this.timer);
+      this.timer = null;
     }
   }
 }
 
-export const socialAnalyticsPipeline = new SocialAnalyticsPipeline()
+export const socialAnalyticsPipeline = new SocialAnalyticsPipeline();

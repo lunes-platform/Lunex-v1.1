@@ -16,8 +16,9 @@ groups:
 
       - alert: APIHighErrorRate
         expr: |
-          rate(http_requests_total{job="lunex_api",status=~"5.."}[5m])
-          / rate(http_requests_total{job="lunex_api"}[5m]) > 0.05
+          sum(rate(lunex_http_request_duration_seconds_count{job="lunex_api",status_code=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(lunex_http_request_duration_seconds_count{job="lunex_api"}[5m])), 1) > 0.05
         for: 5m
         labels:
           severity: warning
@@ -29,7 +30,7 @@ groups:
       - alert: APIHighLatency
         expr: |
           histogram_quantile(0.95,
-            rate(http_request_duration_seconds_bucket{job="lunex_api"}[5m])
+            sum by (le) (rate(lunex_http_request_duration_seconds_bucket{job="lunex_api"}[5m]))
           ) > 2
         for: 5m
         labels:
@@ -41,7 +42,7 @@ groups:
 
       - alert: APIRateLimitHigh
         expr: |
-          rate(http_requests_total{job="lunex_api",status="429"}[5m]) > 10
+          sum(rate(lunex_http_request_duration_seconds_count{job="lunex_api",status_code="429"}[5m])) > 10
         for: 5m
         labels:
           severity: warning
@@ -51,7 +52,7 @@ groups:
           description: "More than 10 rate-limited requests per second — possible DDoS or abuse."
 
       - alert: WebSocketConnectionsDrop
-        expr: lunex_ws_connections < 0
+        expr: count(lunex_ws_connections) > 0 and max(lunex_ws_connections) == 0
         for: 2m
         labels:
           severity: warning
@@ -138,7 +139,7 @@ groups:
     interval: 60s
     rules:
       - alert: PostgreSQLDown
-        expr: up{job="postgres"} == 0
+        expr: lunex_db_healthy == 0
         for: 1m
         labels:
           severity: critical
@@ -148,7 +149,7 @@ groups:
           description: "Database unreachable for >1 minute. All API operations will fail."
 
       - alert: DatabaseBackupFailed
-        expr: lunex_last_backup_age_seconds > 86400 * 1.5
+        expr: count(lunex_last_backup_age_seconds) > 0 and max(lunex_last_backup_age_seconds) > 86400 * 1.5
         for: 0m
         labels:
           severity: warning
@@ -158,7 +159,7 @@ groups:
           description: "Last successful backup was {{ $value | humanizeDuration }} ago."
 
       - alert: DatabaseConnectionPoolExhausted
-        expr: lunex_db_connections_waiting > 20
+        expr: count(lunex_db_connections_waiting) > 0 and max(lunex_db_connections_waiting) > 20
         for: 2m
         labels:
           severity: warning
@@ -172,7 +173,7 @@ groups:
     interval: 30s
     rules:
       - alert: RedisDown
-        expr: up{job="redis"} == 0
+        expr: lunex_redis_healthy == 0
         for: 1m
         labels:
           severity: critical
@@ -182,7 +183,11 @@ groups:
           description: "Redis unavailable — nonce management and rate limiting are disabled."
 
       - alert: RedisHighMemory
-        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        expr: |
+          count(redis_memory_used_bytes{job="redis_exporter"}) > 0
+          and count(redis_memory_max_bytes{job="redis_exporter"}) > 0
+          and max(redis_memory_used_bytes{job="redis_exporter"})
+            / clamp_min(max(redis_memory_max_bytes{job="redis_exporter"}), 1) > 0.85
         for: 5m
         labels:
           severity: warning
@@ -197,7 +202,7 @@ groups:
     rules:
       - alert: SuspiciousOrderVolume
         expr: |
-          rate(lunex_orders_total[1m]) > 100
+          sum(rate(lunex_http_request_duration_seconds_count{job="lunex_api",method="POST",route=~"/api/v1/orders.*"}[1m])) > 100
         for: 2m
         labels:
           severity: warning
@@ -208,7 +213,7 @@ groups:
 
       - alert: MultipleFailedAuthAttempts
         expr: |
-          rate(lunex_auth_failures_total[5m]) > 5
+          sum(rate(lunex_http_request_duration_seconds_count{job="lunex_api",status_code=~"401|403"}[5m])) > 5
         for: 2m
         labels:
           severity: warning

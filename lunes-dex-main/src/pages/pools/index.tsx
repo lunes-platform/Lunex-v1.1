@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import styled from 'styled-components'
 import { useNavigate } from 'react-router-dom'
 import PageLayout from '../../components/layout'
-import { usePools, Pool } from '../../hooks/usePools'
+import { usePools } from '../../hooks/usePools'
 import TokenIcon from '../../components/TokenIcon'
 
 type PoolFilter = 'all' | 'stable' | 'volatile' | 'my_pools'
@@ -69,9 +69,11 @@ const FilterTabs = styled.div`
 const FilterTab = styled.button<{ $active: boolean }>`
   padding: 8px 16px;
   border-radius: 8px;
-  border: 1px solid ${props => props.$active ? '#6c38fe' : 'transparent'};
-  background: ${props => props.$active ? '#6c38fe20' : props.theme.colors.themeColors[400]};
-  color: ${props => props.$active ? '#fff' : props.theme.colors.themeColors[100]};
+  border: 1px solid ${props => (props.$active ? '#6c38fe' : 'transparent')};
+  background: ${props =>
+    props.$active ? '#6c38fe20' : props.theme.colors.themeColors[400]};
+  color: ${props =>
+    props.$active ? '#fff' : props.theme.colors.themeColors[100]};
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -177,7 +179,7 @@ const PoolInfo = styled.div`
 const PoolIcons = styled.div`
   display: flex;
   align-items: center;
-  
+
   & > *:last-child {
     margin-left: -10px;
     border: 2px solid ${({ theme }) => theme.colors.themeColors[500]};
@@ -199,7 +201,7 @@ const PoolFee = styled.div`
 `
 
 const APRValue = styled.span<{ $positive?: boolean }>`
-  color: ${props => props.$positive ? '#00ff88' : '#fff'};
+  color: ${props => (props.$positive ? '#00ff88' : '#fff')};
   font-weight: 600;
 `
 
@@ -212,8 +214,13 @@ const ActionButtons = styled.div`
 const ActionButton = styled.button<{ $variant?: 'primary' | 'secondary' }>`
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1px solid ${props => props.$variant === 'primary' ? '#6c38fe' : props.theme.colors.themeColors[300]};
-  background: ${props => props.$variant === 'primary' ? '#6c38fe' : 'transparent'};
+  border: 1px solid
+    ${props =>
+      props.$variant === 'primary'
+        ? '#6c38fe'
+        : props.theme.colors.themeColors[300]};
+  background: ${props =>
+    props.$variant === 'primary' ? '#6c38fe' : 'transparent'};
   color: #fff;
   font-size: 12px;
   font-weight: 500;
@@ -231,8 +238,6 @@ const EmptyState = styled.div`
   color: ${({ theme }) => theme.colors.themeColors[100]};
 `
 
-
-
 // Helper functions
 const formatCurrency = (value: number): string => {
   if (value >= 1000000) {
@@ -246,7 +251,7 @@ const formatCurrency = (value: number): string => {
 
 export const Pools: React.FC = () => {
   const navigate = useNavigate()
-  const { pools, isLoading, refreshPools } = usePools()
+  const { pools, isLoading } = usePools()
   const [filter, setFilter] = useState<PoolFilter>('all')
   const [search, setSearch] = useState('')
 
@@ -299,16 +304,28 @@ export const Pools: React.FC = () => {
 
       <FiltersRow>
         <FilterTabs>
-          <FilterTab $active={filter === 'all'} onClick={() => setFilter('all')}>
+          <FilterTab
+            $active={filter === 'all'}
+            onClick={() => setFilter('all')}
+          >
             All
           </FilterTab>
-          <FilterTab $active={filter === 'stable'} onClick={() => setFilter('stable')}>
+          <FilterTab
+            $active={filter === 'stable'}
+            onClick={() => setFilter('stable')}
+          >
             Stable
           </FilterTab>
-          <FilterTab $active={filter === 'volatile'} onClick={() => setFilter('volatile')}>
+          <FilterTab
+            $active={filter === 'volatile'}
+            onClick={() => setFilter('volatile')}
+          >
             Volatile
           </FilterTab>
-          <FilterTab $active={filter === 'my_pools'} onClick={() => setFilter('my_pools')}>
+          <FilterTab
+            $active={filter === 'my_pools'}
+            onClick={() => setFilter('my_pools')}
+          >
             My Pools
           </FilterTab>
         </FilterTabs>
@@ -348,27 +365,48 @@ export const Pools: React.FC = () => {
                   <TableCell>
                     <PoolInfo>
                       <PoolIcons>
-                        <TokenIcon address={pool.token0.address || ''} symbol={pool.token0.symbol} size={28} />
-                        <TokenIcon address={pool.token1.address || ''} symbol={pool.token1.symbol} size={28} />
+                        <TokenIcon
+                          address={pool.token0.address || ''}
+                          symbol={pool.token0.symbol}
+                          size={28}
+                        />
+                        <TokenIcon
+                          address={pool.token1.address || ''}
+                          symbol={pool.token1.symbol}
+                          size={28}
+                        />
                       </PoolIcons>
                       <PoolName>
-                        <PoolPair>{pool.token0.symbol}-{pool.token1.symbol}</PoolPair>
+                        <PoolPair>
+                          {pool.token0.symbol}-{pool.token1.symbol}
+                        </PoolPair>
                         <PoolFee>{pool.fee}</PoolFee>
                       </PoolName>
                     </PoolInfo>
                   </TableCell>
-                  <TableCell $align="right">{formatCurrency(pool.liquidity)}</TableCell>
-                  <TableCell $align="right">{formatCurrency(pool.volume24h)}</TableCell>
-                  <TableCell $align="right">{formatCurrency(pool.fees24h)}</TableCell>
                   <TableCell $align="right">
-                    <APRValue $positive={pool.apr > 0}>{pool.apr.toFixed(2)}%</APRValue>
+                    {formatCurrency(pool.liquidity)}
+                  </TableCell>
+                  <TableCell $align="right">
+                    {formatCurrency(pool.volume24h)}
+                  </TableCell>
+                  <TableCell $align="right">
+                    {formatCurrency(pool.fees24h)}
+                  </TableCell>
+                  <TableCell $align="right">
+                    <APRValue $positive={pool.apr > 0}>
+                      {pool.apr.toFixed(2)}%
+                    </APRValue>
                   </TableCell>
                   <TableCell $align="right">
                     <ActionButtons>
                       <ActionButton onClick={() => navigate('/')}>
                         Swap
                       </ActionButton>
-                      <ActionButton $variant="primary" onClick={() => navigate('/pool')}>
+                      <ActionButton
+                        $variant="primary"
+                        onClick={() => navigate('/pool')}
+                      >
                         Deposit
                       </ActionButton>
                     </ActionButtons>

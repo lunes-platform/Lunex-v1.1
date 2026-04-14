@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 //Styles
 import * as S from './styles'
 import * as B from 'components/bases'
@@ -68,7 +68,15 @@ const ChooseToken = ({ close, onSelect, tokens }: ChooseTokenProps) => {
               }}
             >
               <B.Paragraph colors={100} weight={700}>
-                {item.icon ? <img src={item.icon} /> : <TokenIcon address={item.address} symbol={item.acronym} size={24} />}
+                {item.icon ? (
+                  <img src={item.icon} />
+                ) : (
+                  <TokenIcon
+                    address={item.address}
+                    symbol={item.acronym}
+                    size={24}
+                  />
+                )}
                 {item.acronym}
                 <B.Span margin="0 0 0 8px" size="14px">
                   {item.token}

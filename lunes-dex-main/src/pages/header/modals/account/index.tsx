@@ -102,7 +102,12 @@ const Account = ({ ...props }: AccountProps) => {
               props.close()
               navigate('/social/settings')
             }}
-            style={{ color: '#AD87FF', border: '1px solid #AD87FF', padding: '4px 12px', borderRadius: '6px' }}
+            style={{
+              color: '#AD87FF',
+              border: '1px solid #AD87FF',
+              padding: '4px 12px',
+              borderRadius: '6px'
+            }}
           >
             My Social Profile
           </B.Span>

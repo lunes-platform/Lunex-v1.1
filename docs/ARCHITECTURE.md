@@ -121,11 +121,11 @@ orders.ts route
 
 ```
 Leader (via Copy Trade API Key)
-  │  POST /api/v1/copytrade/signals
+  │  POST /api/v1/copytrade/vaults/:leaderId/signals
   │
   ▼
 copytrade.ts route (leader auth)
-  └─ copytradeService.processSignal()
+  └─ copytradeService.createSignal()
        ├─ Find all active followers of this leader
        ├─ For each follower:
        │   ├─ Calculate proportional position size (by share balance)

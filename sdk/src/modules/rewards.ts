@@ -1,145 +1,135 @@
 import { HttpClient } from '../http-client';
 import {
-    TradingPosition,
-    TransactionResult,
-    RewardsStats,
-    LeaderboardEntry,
-    EpochInfo,
+  DistributedRewardWeek,
+  PendingRewardsSummary,
+  RewardClaimResult,
+  RewardHistoryEntry,
+  RewardRankingsResponse,
+  RewardsPoolInfo,
 } from '../types';
 
+type SignedWalletProof = {
+  address: string;
+  nonce: string;
+  timestamp: number;
+  signature: string;
+};
+
+export type RewardsPendingInput = SignedWalletProof;
+
+export type RewardsHistoryInput = SignedWalletProof & {
+  limit?: number;
+};
+
+export type RewardsRankingsInput = {
+  limit?: number;
+  segment?: 'all' | 'traders' | 'bots';
+  week?: 'current' | 'previous';
+};
+
 export class RewardsModule {
-    constructor(private http: HttpClient) { }
+  constructor(private http: HttpClient) {}
 
-    /**
-     * Get trading position for an address
-     * @param address - Trader address
-     * @returns Trading position with volume and tier info
-     */
-    async getPosition(address: string): Promise<TradingPosition> {
-        return this.http.get(`/rewards/position/${address}`);
-    }
+  /**
+   * Get the current reward pool state for the active week.
+   */
+  async getPool(): Promise<RewardsPoolInfo> {
+    const response = await this.http.get<{ pool: RewardsPoolInfo }>(
+      '/api/v1/rewards/pool',
+    );
+    return response.pool;
+  }
 
-    /**
-     * Claim trading rewards
-     * @param gasLimit - Optional gas limit
-     * @returns Transaction result with rewards amount
-     */
-    async claimRewards(gasLimit?: string): Promise<
-        TransactionResult & {
-            amount: string;
-        }
-    > {
-        return this.http.post('/rewards/claim', {
-            gasLimit: gasLimit || '200000000000',
-        });
-    }
+  /**
+   * Get DB-backed pending rewards for leaders/traders.
+   * Staker rewards are funded and claimed on-chain, so this call reports
+   * `stakerClaimMode: "on-chain"` instead of returning per-user staker rows.
+   */
+  async getPending(input: RewardsPendingInput): Promise<PendingRewardsSummary> {
+    const response = await this.http.get<{ pending: PendingRewardsSummary }>(
+      '/api/v1/rewards/pending',
+      input,
+    );
+    return response.pending;
+  }
 
-    /**
-     * Get trading rewards statistics
-     * @returns Global rewards statistics
-     */
-    async getStats(): Promise<RewardsStats> {
-        return this.http.get('/rewards/stats');
-    }
+  /**
+   * Get DB-backed reward history for leader/trader rewards.
+   * Staker rewards live in the staking contract and are not materialized here.
+   */
+  async getHistory(input: RewardsHistoryInput): Promise<RewardHistoryEntry[]> {
+    const response = await this.http.get<{ history: RewardHistoryEntry[] }>(
+      '/api/v1/rewards/history',
+      input,
+    );
+    return response.history;
+  }
 
-    /**
-     * Get trading leaderboard
-     * @param params - Period and limit parameters
-     * @returns Leaderboard entries
-     */
-    async getLeaderboard(params?: {
-        period?: 'daily' | 'weekly' | 'monthly' | 'all-time';
-        limit?: number;
-    }): Promise<{
-        period: string;
-        leaderboard: LeaderboardEntry[];
-    }> {
-        return this.http.get('/rewards/leaderboard', params);
-    }
+  /**
+   * Get recently distributed reward weeks.
+   */
+  async getWeeks(limit = 10): Promise<DistributedRewardWeek[]> {
+    const response = await this.http.get<{ weeks: DistributedRewardWeek[] }>(
+      '/api/v1/rewards/weeks',
+      { limit },
+    );
+    return response.weeks;
+  }
 
-    /**
-     * Get current epoch information
-     * @returns Current epoch details
-     */
-    async getCurrentEpoch(): Promise<EpochInfo> {
-        return this.http.get('/rewards/epoch/current');
-    }
+  /**
+   * Get public leader/trader rankings from the canonical reward engine.
+   */
+  async getRankings(
+    input: RewardsRankingsInput = {},
+  ): Promise<RewardRankingsResponse> {
+    const response = await this.http.get<{ rankings: RewardRankingsResponse }>(
+      '/api/v1/rewards/rankings',
+      input,
+    );
+    return response.rankings;
+  }
 
-    /**
-     * Get rewards for a specific epoch
-     * @param epochId - Epoch ID
-     * @param trader - Trader address
-     * @returns Rewards amount for the epoch
-     */
-    async getEpochRewards(epochId: number, trader: string): Promise<{
-        epochId: number;
-        rewards: string;
-    }> {
-        return this.http.get(`/rewards/epoch/${epochId}/trader/${trader}`);
-    }
+  /**
+   * Claim DB-backed leader/trader rewards.
+   * Staker rewards must be claimed via the staking contract.
+   */
+  async claimRewards(input: SignedWalletProof): Promise<RewardClaimResult> {
+    const response = await this.http.post<{ result: RewardClaimResult }>(
+      '/api/v1/rewards/claim',
+      input,
+    );
+    return response.result;
+  }
 
-    /**
-     * Claim rewards from a specific epoch
-     * @param epochId - Epoch ID
-     * @param gasLimit - Optional gas limit
-     * @returns Transaction result with rewards amount
-     */
-    async claimEpochRewards(
-        epochId: number,
-        gasLimit?: string
-    ): Promise<
-        TransactionResult & {
-            amount: string;
-        }
-    > {
-        return this.http.post(`/rewards/epoch/${epochId}/claim`, {
-            gasLimit: gasLimit || '200000000000',
-        });
-    }
+  /**
+   * Calculate staking tier from the user's staked volume.
+   */
+  calculateTier(
+    stakedAmount: string,
+  ): 'Bronze' | 'Silver' | 'Gold' | 'Platinum' {
+    const amount = BigInt(stakedAmount);
+    const decimals = BigInt(100_000_000); // 8 decimals
 
-    /**
-     * Get anti-fraud parameters
-     * @returns Current anti-fraud configuration
-     */
-    async getAntifraudParameters(): Promise<{
-        minTradeVolume: string;
-        tradeCooldown: number;
-        maxDailyVolume: string;
-    }> {
-        return this.http.get('/rewards/antifraud/parameters');
-    }
+    const silverThreshold = BigInt(10_000) * decimals;
+    const goldThreshold = BigInt(50_000) * decimals;
+    const platinumThreshold = BigInt(200_000) * decimals;
 
-    /**
-     * Calculate tier from volume
-     * @param monthlyVolume - Monthly trading volume
-     * @returns Tier name
-     */
-    calculateTier(monthlyVolume: string): 'Bronze' | 'Silver' | 'Gold' | 'Platinum' {
-        const volume = BigInt(monthlyVolume);
-        const DECIMALS = BigInt(100_000_000); // 8 decimals
+    if (amount >= platinumThreshold) return 'Platinum';
+    if (amount >= goldThreshold) return 'Gold';
+    if (amount >= silverThreshold) return 'Silver';
+    return 'Bronze';
+  }
 
-        const SILVER_THRESHOLD = BigInt(10_000) * DECIMALS;
-        const GOLD_THRESHOLD = BigInt(50_000) * DECIMALS;
-        const PLATINUM_THRESHOLD = BigInt(200_000) * DECIMALS;
-
-        if (volume >= PLATINUM_THRESHOLD) return 'Platinum';
-        if (volume >= GOLD_THRESHOLD) return 'Gold';
-        if (volume >= SILVER_THRESHOLD) return 'Silver';
-        return 'Bronze';
-    }
-
-    /**
-     * Get tier multiplier
-     * @param tier - Trading tier
-     * @returns Multiplier value
-     */
-    getTierMultiplier(tier: 'Bronze' | 'Silver' | 'Gold' | 'Platinum'): number {
-        const multipliers = {
-            Bronze: 1.0,
-            Silver: 1.2,
-            Gold: 1.5,
-            Platinum: 2.0,
-        };
-        return multipliers[tier];
-    }
+  /**
+   * Get staking reward multiplier by tier.
+   */
+  getTierMultiplier(tier: 'Bronze' | 'Silver' | 'Gold' | 'Platinum'): number {
+    const multipliers = {
+      Bronze: 1.0,
+      Silver: 1.5,
+      Gold: 2.0,
+      Platinum: 3.0,
+    };
+    return multipliers[tier];
+  }
 }

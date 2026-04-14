@@ -15,7 +15,14 @@ export type TransactionSettingProps = {
 }
 
 const InfoIcon = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
     <circle cx="12" cy="12" r="10" />
     <line x1="12" y1="16" x2="12" y2="12" />
     <line x1="12" y1="8" x2="12.01" y2="8" />
@@ -34,9 +41,10 @@ const TransactionSetting = ({
   })
   const [deadline, setDeadline] = useState(currentDeadline)
 
-  const selectedOption = slippageTolerance.find(s => s.id === selectedId) || slippageTolerance[3]
+  const selectedOption =
+    slippageTolerance.find(s => s.id === selectedId) || slippageTolerance[3]
 
-  const handleSelectSlippage = (item: typeof slippageTolerance[0]) => {
+  const handleSelectSlippage = (item: (typeof slippageTolerance)[0]) => {
     setSelectedId(item.id)
     setDeadline(item.deadlineMinutes)
   }
@@ -62,8 +70,9 @@ const TransactionSetting = ({
         <S.InfoWrapper>
           <InfoIcon />
           <S.TooltipText>
-            Your transaction will revert if the price changes unfavorably by more than this percentage.
-            Higher slippage = more likely to succeed, but less price protection.
+            Your transaction will revert if the price changes unfavorably by
+            more than this percentage. Higher slippage = more likely to succeed,
+            but less price protection.
           </S.TooltipText>
         </S.InfoWrapper>
       </S.LabelRow>
@@ -89,8 +98,9 @@ const TransactionSetting = ({
         <S.InfoWrapper>
           <InfoIcon />
           <S.TooltipText>
-            Maximum time (in minutes) your transaction can remain pending before it is automatically cancelled.
-            Auto-synced when you select a slippage preset.
+            Maximum time (in minutes) your transaction can remain pending before
+            it is automatically cancelled. Auto-synced when you select a
+            slippage preset.
           </S.TooltipText>
         </S.InfoWrapper>
       </S.LabelRow>

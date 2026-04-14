@@ -11,7 +11,13 @@
  *   toast.error('Transaction failed')
  *   toast.info('Waiting for signature...')
  */
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react'
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useRef
+} from 'react'
 import styled, { keyframes } from 'styled-components'
 import { fadeInUp, timing, easing } from '../../styles/motion'
 
@@ -23,32 +29,35 @@ const slideOut = keyframes`
 type ToastVariant = 'success' | 'error' | 'info' | 'warning'
 
 interface ToastItem {
-    id: number
-    message: string
-    variant: ToastVariant
-    exiting?: boolean
+  id: number
+  message: string
+  variant: ToastVariant
+  exiting?: boolean
 }
 
 interface ToastContextType {
-    success: (message: string) => void
-    error: (message: string) => void
-    info: (message: string) => void
-    warning: (message: string) => void
+  success: (message: string) => void
+  error: (message: string) => void
+  info: (message: string) => void
+  warning: (message: string) => void
 }
 
 const ToastContext = createContext<ToastContextType | null>(null)
 
 export const useToast = (): ToastContextType => {
-    const ctx = useContext(ToastContext)
-    if (!ctx) throw new Error('useToast must be used within ToastProvider')
-    return ctx
+  const ctx = useContext(ToastContext)
+  if (!ctx) throw new Error('useToast must be used within ToastProvider')
+  return ctx
 }
 
-const variantConfig: Record<ToastVariant, { bg: string; border: string; icon: string }> = {
-    success: { bg: '#26D07C', border: '#26D07C44', icon: '✓' },
-    error: { bg: '#FF284C', border: '#FF284C44', icon: '✗' },
-    info: { bg: '#6C38FF', border: '#6C38FF44', icon: 'i' },
-    warning: { bg: '#FE5F00', border: '#FE5F0044', icon: '!' },
+const variantConfig: Record<
+  ToastVariant,
+  { bg: string; border: string; icon: string }
+> = {
+  success: { bg: '#26D07C', border: '#26D07C44', icon: '✓' },
+  error: { bg: '#FF284C', border: '#FF284C44', icon: '✗' },
+  info: { bg: '#6C38FF', border: '#6C38FF44', icon: 'i' },
+  warning: { bg: '#FE5F00', border: '#FE5F0044', icon: '!' }
 }
 
 const Container = styled.div`
@@ -75,7 +84,7 @@ const ToastCard = styled.div<{ variant: ToastVariant; exiting?: boolean }>`
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
   font-weight: 600;
-  color: #FFFFFF;
+  color: #ffffff;
   pointer-events: auto;
   cursor: pointer;
   animation: ${({ exiting }) => (exiting ? slideOut : fadeInUp)}
@@ -97,48 +106,59 @@ const Icon = styled.span`
   flex-shrink: 0;
 `
 
-export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [toasts, setToasts] = useState<ToastItem[]>([])
-    const nextId = useRef(0)
+export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
+  children
+}) => {
+  const [toasts, setToasts] = useState<ToastItem[]>([])
+  const nextId = useRef(0)
 
-    const addToast = useCallback((message: string, variant: ToastVariant) => {
-        const id = nextId.current++
-        setToasts((prev) => [...prev.slice(-4), { id, message, variant }])
+  const addToast = useCallback((message: string, variant: ToastVariant) => {
+    const id = nextId.current++
+    setToasts(prev => [...prev.slice(-4), { id, message, variant }])
 
-        setTimeout(() => {
-            setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)))
-            setTimeout(() => {
-                setToasts((prev) => prev.filter((t) => t.id !== id))
-            }, 200)
-        }, 4000)
-    }, [])
+    setTimeout(() => {
+      setToasts(prev =>
+        prev.map(t => (t.id === id ? { ...t, exiting: true } : t))
+      )
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id))
+      }, 200)
+    }, 4000)
+  }, [])
 
-    const dismiss = useCallback((id: number) => {
-        setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, exiting: true } : t)))
-        setTimeout(() => {
-            setToasts((prev) => prev.filter((t) => t.id !== id))
-        }, 200)
-    }, [])
-
-    const api: ToastContextType = {
-        success: useCallback((m: string) => addToast(m, 'success'), [addToast]),
-        error: useCallback((m: string) => addToast(m, 'error'), [addToast]),
-        info: useCallback((m: string) => addToast(m, 'info'), [addToast]),
-        warning: useCallback((m: string) => addToast(m, 'warning'), [addToast]),
-    }
-
-    return (
-        <ToastContext.Provider value={api}>
-            {children}
-            <Container>
-                {toasts.map((t) => (
-                    <ToastCard key={t.id} variant={t.variant} exiting={t.exiting} onClick={() => dismiss(t.id)}>
-                        <Indicator variant={t.variant} />
-                        <Icon>{variantConfig[t.variant].icon}</Icon>
-                        {t.message}
-                    </ToastCard>
-                ))}
-            </Container>
-        </ToastContext.Provider>
+  const dismiss = useCallback((id: number) => {
+    setToasts(prev =>
+      prev.map(t => (t.id === id ? { ...t, exiting: true } : t))
     )
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id))
+    }, 200)
+  }, [])
+
+  const api: ToastContextType = {
+    success: useCallback((m: string) => addToast(m, 'success'), [addToast]),
+    error: useCallback((m: string) => addToast(m, 'error'), [addToast]),
+    info: useCallback((m: string) => addToast(m, 'info'), [addToast]),
+    warning: useCallback((m: string) => addToast(m, 'warning'), [addToast])
+  }
+
+  return (
+    <ToastContext.Provider value={api}>
+      {children}
+      <Container>
+        {toasts.map(t => (
+          <ToastCard
+            key={t.id}
+            variant={t.variant}
+            exiting={t.exiting}
+            onClick={() => dismiss(t.id)}
+          >
+            <Indicator variant={t.variant} />
+            <Icon>{variantConfig[t.variant].icon}</Icon>
+            {t.message}
+          </ToastCard>
+        ))}
+      </Container>
+    </ToastContext.Provider>
+  )
 }

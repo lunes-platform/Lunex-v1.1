@@ -20,17 +20,29 @@ function abbreviateBalance(value: string | number): string {
   const abs = Math.abs(num)
   const sign = num < 0 ? '-' : ''
 
-  if (abs >= 1_000_000_000_000) return `${sign}${(abs / 1_000_000_000_000).toFixed(abs % 1_000_000_000_000 === 0 ? 0 : 1)}T`
-  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(abs % 1_000_000_000 === 0 ? 0 : 1)}B`
-  if (abs >= 1_000_000) return `${sign}${(abs / 1_000_000).toFixed(abs % 1_000_000 === 0 ? 0 : 1)}M`
-  if (abs >= 10_000) return `${sign}${(abs / 1_000).toFixed(abs % 1_000 === 0 ? 0 : 1)}K`
-  if (abs >= 1_000) return `${sign}${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  if (abs >= 1_000_000_000_000)
+    return `${sign}${(abs / 1_000_000_000_000).toFixed(abs % 1_000_000_000_000 === 0 ? 0 : 1)}T`
+  if (abs >= 1_000_000_000)
+    return `${sign}${(abs / 1_000_000_000).toFixed(abs % 1_000_000_000 === 0 ? 0 : 1)}B`
+  if (abs >= 1_000_000)
+    return `${sign}${(abs / 1_000_000).toFixed(abs % 1_000_000 === 0 ? 0 : 1)}M`
+  if (abs >= 10_000)
+    return `${sign}${(abs / 1_000).toFixed(abs % 1_000 === 0 ? 0 : 1)}K`
+  if (abs >= 1_000)
+    return `${sign}${num.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 
   return `${sign}${abs.toFixed(2)}`
 }
 
 const ConnectWallet: React.FC = () => {
-  const { isConnected, walletAddress, balance, connectWallet, disconnectWallet, isLoading } = useSDK()
+  const {
+    isConnected,
+    walletAddress,
+    balance,
+    connectWallet,
+    disconnectWallet,
+    isLoading
+  } = useSDK()
   const [showModal, setShowModal] = useState(false)
   const [copied, setCopied] = useState(false)
 
@@ -45,14 +57,21 @@ const ConnectWallet: React.FC = () => {
     }
   }
 
-  const fullBalance = Number(balance).toLocaleString(undefined, { maximumFractionDigits: 2 })
+  const fullBalance = Number(balance).toLocaleString(undefined, {
+    maximumFractionDigits: 2
+  })
 
   if (isConnected && walletAddress) {
     return (
       <>
         <WalletContainer>
           <BalanceDisplay onClick={() => setShowModal(true)}>
-            <img src="/img/lunes-green.svg" alt="LUNES" width={16} height={16} />
+            <img
+              src="/img/lunes-green.svg"
+              alt="LUNES"
+              width={16}
+              height={16}
+            />
             <span>{abbreviateBalance(balance)}</span>
             <ChevronDown size={12} />
           </BalanceDisplay>
@@ -67,7 +86,7 @@ const ConnectWallet: React.FC = () => {
         {/* Wallet Balances Modal */}
         {showModal && (
           <Overlay onClick={() => setShowModal(false)}>
-            <Modal onClick={(e) => e.stopPropagation()}>
+            <Modal onClick={e => e.stopPropagation()}>
               <ModalHeader>
                 <h3>Wallet</h3>
                 <CloseBtn onClick={() => setShowModal(false)}>
@@ -107,7 +126,12 @@ const ConnectWallet: React.FC = () => {
                   </TokenInfo>
                   <TokenAmount>
                     <span className="amount">{fullBalance}</span>
-                    <span className="usd">≈ ${(Number(balance) * 0.045).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                    <span className="usd">
+                      ≈ $
+                      {(Number(balance) * 0.045).toLocaleString(undefined, {
+                        maximumFractionDigits: 2
+                      })}
+                    </span>
                   </TokenAmount>
                 </BalanceRow>
 
@@ -128,7 +152,12 @@ const ConnectWallet: React.FC = () => {
 
               {/* Actions */}
               <ModalActions>
-                <DisconnectBtn onClick={() => { disconnectWallet(); setShowModal(false) }}>
+                <DisconnectBtn
+                  onClick={() => {
+                    disconnectWallet()
+                    setShowModal(false)
+                  }}
+                >
                   Disconnect Wallet
                 </DisconnectBtn>
               </ModalActions>
@@ -159,16 +188,16 @@ const BalanceDisplay = styled.button`
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 20px;
   padding: 7px 12px;
   cursor: pointer;
   transition: all 0.2s;
 
   &:hover {
-    background: rgba(255,255,255,0.08);
-    border-color: rgba(0,229,160,0.2);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(0, 229, 160, 0.2);
   }
 
   img {
@@ -179,12 +208,12 @@ const BalanceDisplay = styled.button`
     font-family: 'Space Grotesk', 'Inter', sans-serif;
     font-weight: 600;
     font-size: 13px;
-    color: rgba(255,255,255,0.9);
+    color: rgba(255, 255, 255, 0.9);
     white-space: nowrap;
   }
 
   svg {
-    color: rgba(255,255,255,0.4);
+    color: rgba(255, 255, 255, 0.4);
     flex-shrink: 0;
   }
 `
@@ -193,7 +222,7 @@ const WalletButton = styled.button`
   display: flex;
   align-items: center;
   gap: 6px;
-  background: linear-gradient(135deg, #7C3AED, #6D28D9);
+  background: linear-gradient(135deg, #7c3aed, #6d28d9);
   border: none;
   border-radius: 20px;
   padding: 7px 14px;
@@ -231,7 +260,7 @@ const slideUp = keyframes`
 const Overlay = styled.div`
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: flex-start;
@@ -245,11 +274,11 @@ const Modal = styled.div`
   width: 360px;
   max-width: 95vw;
   background: #1a1a2e;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
   overflow: hidden;
   animation: ${slideUp} 0.2s ease;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 `
 
 const ModalHeader = styled.div`
@@ -257,7 +286,7 @@ const ModalHeader = styled.div`
   align-items: center;
   justify-content: space-between;
   padding: 18px 20px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 
   h3 {
     font-family: 'Space Grotesk', sans-serif;
@@ -271,7 +300,7 @@ const ModalHeader = styled.div`
 const CloseBtn = styled.button`
   background: none;
   border: none;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255, 255, 255, 0.4);
   cursor: pointer;
   padding: 4px;
   border-radius: 8px;
@@ -279,7 +308,7 @@ const CloseBtn = styled.button`
   transition: all 0.2s;
 
   &:hover {
-    background: rgba(255,255,255,0.08);
+    background: rgba(255, 255, 255, 0.08);
     color: #fff;
   }
 `
@@ -289,14 +318,14 @@ const AddressRow = styled.div`
   align-items: center;
   justify-content: space-between;
   padding: 14px 20px;
-  background: rgba(255,255,255,0.02);
+  background: rgba(255, 255, 255, 0.02);
 `
 
 const AddressText = styled.span`
   font-family: 'Space Grotesk', monospace;
   font-size: 14px;
   font-weight: 500;
-  color: rgba(255,255,255,0.7);
+  color: rgba(255, 255, 255, 0.7);
 `
 
 const AddressActions = styled.div`
@@ -305,12 +334,12 @@ const AddressActions = styled.div`
 `
 
 const ActionBtn = styled.button`
-  background: rgba(255,255,255,0.06);
+  background: rgba(255, 255, 255, 0.06);
   border: none;
   border-radius: 8px;
   padding: 6px;
   cursor: pointer;
-  color: rgba(255,255,255,0.5);
+  color: rgba(255, 255, 255, 0.5);
   display: flex;
   align-items: center;
   position: relative;
@@ -318,8 +347,8 @@ const ActionBtn = styled.button`
   text-decoration: none;
 
   &:hover {
-    background: rgba(255,255,255,0.12);
-    color: #00E5A0;
+    background: rgba(255, 255, 255, 0.12);
+    color: #00e5a0;
   }
 `
 
@@ -328,7 +357,7 @@ const CopiedTooltip = styled.span`
   top: -28px;
   left: 50%;
   transform: translateX(-50%);
-  background: #00E5A0;
+  background: #00e5a0;
   color: #000;
   font-size: 10px;
   font-weight: 700;
@@ -350,7 +379,7 @@ const BalanceRow = styled.div`
   transition: background 0.15s;
 
   &:hover {
-    background: rgba(255,255,255,0.03);
+    background: rgba(255, 255, 255, 0.03);
   }
 `
 
@@ -364,7 +393,7 @@ const TokenIcon = styled.img`
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: rgba(255,255,255,0.05);
+  background: rgba(255, 255, 255, 0.05);
   padding: 2px;
 `
 
@@ -377,7 +406,7 @@ const TokenName = styled.div`
 
 const TokenSub = styled.div`
   font-size: 11px;
-  color: rgba(255,255,255,0.35);
+  color: rgba(255, 255, 255, 0.35);
   margin-top: 1px;
 `
 
@@ -395,21 +424,21 @@ const TokenAmount = styled.div`
   .usd {
     display: block;
     font-size: 11px;
-    color: rgba(255,255,255,0.35);
+    color: rgba(255, 255, 255, 0.35);
     margin-top: 1px;
   }
 `
 
 const ModalActions = styled.div`
   padding: 12px 20px 18px;
-  border-top: 1px solid rgba(255,255,255,0.06);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 `
 
 const DisconnectBtn = styled.button`
   width: 100%;
   padding: 10px;
-  background: rgba(255,60,60,0.08);
-  border: 1px solid rgba(255,60,60,0.15);
+  background: rgba(255, 60, 60, 0.08);
+  border: 1px solid rgba(255, 60, 60, 0.15);
   border-radius: 10px;
   color: #ff5c5c;
   font-family: 'Space Grotesk', sans-serif;
@@ -419,8 +448,8 @@ const DisconnectBtn = styled.button`
   transition: all 0.2s;
 
   &:hover {
-    background: rgba(255,60,60,0.15);
-    border-color: rgba(255,60,60,0.3);
+    background: rgba(255, 60, 60, 0.15);
+    border-color: rgba(255, 60, 60, 0.3);
   }
 `
 
@@ -428,7 +457,7 @@ const ConnectButton = styled.button`
   display: flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(135deg, #00E5A0, #00C88A);
+  background: linear-gradient(135deg, #00e5a0, #00c88a);
   border: none;
   border-radius: 20px;
   padding: 8px 18px;
