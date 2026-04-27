@@ -259,8 +259,12 @@ async function main() {
 
   const reserves = await query(api, alice, pair, 'getReserves', [])
   log(`Reserves: ${JSON.stringify(reserves)}`)
-  const lpBalance = await query(api, alice, pair, 'balanceOf', [alice.address])
-  log(`Alice LP:  ${lpBalance}`)
+  if ((pair.query as any)['balanceOf']) {
+    const lpBalance = await query(api, alice, pair, 'balanceOf', [alice.address])
+    log(`Alice LP:  ${lpBalance}`)
+  } else {
+    log('Alice LP:  unavailable in local pair metadata')
+  }
 
   // ── Update .env and deployed-addresses.json ───────────────────────────────
   section('8. Updating .env and deployed-addresses.json')

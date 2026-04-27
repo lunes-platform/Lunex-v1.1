@@ -536,21 +536,6 @@ async function maybeExecuteVaultSignal(params: {
     };
   }
 
-  if (
-    routedExecution.executedVia !== 'ORDERBOOK' &&
-    routedExecution.executedVia !== 'AMM_V1'
-  ) {
-    if (requestedMode === 'EXECUTE_VAULT') {
-      throw new Error(
-        `Live vault execution route ${routedExecution.executedVia} is not supported for server execution`,
-      );
-    }
-    return {
-      liveExecution: null,
-      walletAssistedContinuation: null,
-    };
-  }
-
   const order = 'order' in routedExecution ? routedExecution.order : null;
   if (!order?.id) {
     throw new Error(

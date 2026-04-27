@@ -1,18 +1,10 @@
 {
-  "wnative": "5CMSAfdkraKWzbKGqUbpxQcQKKmVBzMxTc2dH4ddenrjzvJu",
-  "pairCodeHash": "0xe03a74087741619e92f516c782a97abd574d75735933b98e74d4052fa924392f",
-  "factory": "5Ge6qbcKfZPr7Pmya9b31YGUDfp9CwTpFho6JzmVuVtaRAnh",
-  "router": "5Hq7ZXNduvz1h63XruKffqUpD7vdyjmB9Ynrm69XvyFAXJQW",
-  "staking": "5C7dzTgBroUUr1PsmA52rBQUX9yEZVVDx8PqBXqVkwpTEA1N",
-  "rewards": "5HfXu3xgEXE2Avfr3SKKMQ9P1kZnLBTCc2gLzsXhZkE92uux",
-  "lusdt": "5E1arpt8rCE1ADnkmeJDxDih8FX3zHHPodFCKYEg4YSymZAX",
-  "pairWlunesLusdt": "5CNge7Tz7hthy9F6zbChBnyzgGqFWTLcewNGsNLkna1RuEuR",
-  "lbtc": "5EGm5D33t8akoBCZ4DftAwEpnPmnYpPpDKuW9WeHEYANpDCG",
-  "pairLBTCLusdt": "5DUfhH1X2r2YMe5rvGeZdpao4VZGaSPGeNjxFnaSNemJQrh4",
-  "leth": "5GtjNXpVwEYbvaPvdTS8PrwceaqJ3rkwxsoATxA1tPRaJefY",
-  "pairLETHLusdt": "5FYZiE3kavSpgeFsYSkSjGxms5ZnZ8vppGpWR9JNCDR5zsov",
-  "gmc": "5CQ5muoN7dDBtRxQfRJRFgVPBh1sXqSwYb4y9jmNdhgnWz5o",
-  "pairGMCLusdt": "5HBjECoHsYxxFB4jz1zgUr4VWw5aJ9JoCMVgV7HUoAyNLDyg",
-  "lup": "5Hk5TP2DViYizfxX7aT1tjL2rgNRPQVDpxxpTDAS7NRCzo92",
-  "pairLUPLusdt": "5DwCVJPrEt4mLR1CdqAVrUpSjJ3nnXmyDaiSwTKqyEaQ7iJH"
+  "wnative": "5ENbijMcYRpDyEgZGvxKFr1LdgFWRgBHpwkgtNFSNGdhBVrr",
+  "pairCodeHash": "0x3332d792b03aa27f9cf5fcd4ab8a8808ce08648900369139e877151050814f04",
+  "factory": "5FMAT1WRDU8EvR7hGAHX54R2Sf4RbbuXyJhRLja9hYo6XaXn",
+  "router": "5Fg7nfkswgcMqFCWzZAacLtAYdppEXsou8n4V4pj5Q7cXsLv",
+  "staking": "5DwgeRkL2dsyu2LbrXezsiWGsSmv8GbdCqwbVbFYYSFCkjNw",
+  "rewards": "5GSPjzusYvQNYk1hdkzmjQZKvPpXFrsCKkLeiDQQpLeLPDGZ",
+  "lusdt": "5DMMWm4veSnmwN4dKpq8Jtp6NUf9yqp9BdVp6V4kQDpCjSeu",
+  "pairWlunesLusdt": "5GfNq91eJ7CPSZyb2Vyw3bcT3dPipKE2N4gYpBgnVxVHyR3R"
 }

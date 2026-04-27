@@ -22,22 +22,34 @@ jest.mock('../../utils/redis', () => {
   };
 });
 
+jest.mock('../../services/walletRiskService', () => ({
+  walletRiskService: {
+    assertWalletCanAct: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
 import { signatureVerify } from '@polkadot/util-crypto';
 import { verifyWalletActionSignature } from '../../middleware/auth';
 import * as redisModule from '../../utils/redis';
+import { walletRiskService } from '../../services/walletRiskService';
 
 const signatureVerifyMock = signatureVerify as jest.MockedFunction<
   typeof signatureVerify
 >;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockRedis = (redisModule as any).__mockRedis as {
+  set: jest.Mock;
   _clear: () => void;
 };
+const walletRiskServiceMock = walletRiskService as jest.Mocked<
+  typeof walletRiskService
+>;
 
 describe('verifyWalletActionSignature security', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRedis._clear();
+    walletRiskServiceMock.assertWalletCanAct.mockResolvedValue(undefined);
   });
 
   it('rejects invalid signatures', async () => {
@@ -107,5 +119,31 @@ describe('verifyWalletActionSignature security', () => {
       error: 'Signature nonce already used',
     });
     expect(signatureVerifyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects banned wallets after signature validation and before nonce consumption', async () => {
+    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<
+      typeof signatureVerify
+    >);
+    walletRiskServiceMock.assertWalletCanAct.mockRejectedValueOnce(
+      new Error('Wallet is banned: market abuse'),
+    );
+
+    const result = await verifyWalletActionSignature({
+      action: 'margin.deposit',
+      address: '5BannedAddress111111111111111111111111111111111',
+      nonce: 'nonce-banned-wallet',
+      timestamp: Date.now(),
+      signature: 'signed-payload',
+      fields: {
+        amount: '100',
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Wallet is banned: market abuse',
+    });
+    expect(mockRedis.set).not.toHaveBeenCalled();
   });
 });

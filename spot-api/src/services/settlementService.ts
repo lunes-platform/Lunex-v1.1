@@ -6,7 +6,6 @@ import { cryptoWaitReady } from '@polkadot/util-crypto';
 import { hexToU8a, isHex } from '@polkadot/util';
 import { config } from '../config';
 import { log } from '../utils/logger';
-import prisma from '../db';
 import {
   buildSpotOrderMessage,
   verifyAddressSignature,
@@ -32,6 +31,7 @@ type OrderSettlementSnapshot = {
   filledAmount: string;
   nonce: string;
   signature: string;
+  signatureTimestamp?: Date | null;
   expiresAt: Date | null;
 };
 
@@ -52,6 +52,28 @@ export type SettlementResult = {
 };
 
 type ContractMethodKind = 'tx' | 'query';
+
+export function buildSettlementOrderSignatureMessage(
+  pair: Pick<PairSettlementSnapshot, 'symbol'>,
+  order: OrderSettlementSnapshot,
+) {
+  if (!order.signatureTimestamp) {
+    throw new Error(
+      `Missing order signature timestamp for ${order.makerAddress}`,
+    );
+  }
+
+  return buildSpotOrderMessage({
+    pairSymbol: pair.symbol,
+    side: order.side as 'BUY' | 'SELL',
+    type: order.type as 'LIMIT' | 'MARKET' | 'STOP' | 'STOP_LIMIT',
+    price: order.price,
+    stopPrice: order.stopPrice || undefined,
+    amount: order.amount,
+    nonce: order.nonce,
+    timestamp: order.signatureTimestamp.getTime(),
+  });
+}
 
 function normalizeMethodKey(key: string) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -98,19 +120,12 @@ function decimalToUnits(value: string, decimals: number) {
  * Convert an order signature string to a 64-byte Uint8Array suitable for
  * the on-chain `SignedOrder.signature: [u8; 64]` field.
  *
- * Three cases:
- *   1. Real sr25519 hex signature ("0x…" or bare hex, 128 hex chars = 64 bytes)
- *      → decode directly.
- *   2. Agent-delegated order ("agent:<id>")
- *      → the agent's orders are pre-validated off-chain via the agent registry;
- *        we encode a non-zero sentinel so the contract's blank-signature guard
- *        does not reject it. The first byte is 0x01 (agent marker), remaining
- *        bytes are the UTF-8 of the agent id (up to 63 bytes), zero-padded.
- *   3. Any other unexpected format
- *      → throws, preventing an invalid settlement from reaching the chain.
+ * Only real sr25519 hex signatures are valid on the on-chain settlement path.
+ * Synthetic `agent:` and `manual:` signatures are off-chain markers and must
+ * not be encoded into contract payloads until contract-level delegated auth
+ * exists.
  */
-function signatureToBytes(sig: string): number[] {
-  // Case 1 — real sr25519 signature
+export function signatureToBytes(sig: string): number[] {
   if (isHex(sig) || /^[0-9a-fA-F]{128}$/.test(sig)) {
     const hex = sig.startsWith('0x') ? sig : `0x${sig}`;
     const bytes = hexToU8a(hex);
@@ -123,22 +138,18 @@ function signatureToBytes(sig: string): number[] {
     return Array.from(bytes);
   }
 
-  // Case 2 — agent-delegated order: off-chain verification already passed via
-  // assertOrderTrustedSource. Encode as non-zero sentinel for contract storage.
-  if (sig.startsWith('agent:')) {
-    const idBytes = Buffer.from(sig.slice('agent:'.length), 'utf-8').subarray(
-      0,
-      63,
+  if (sig.startsWith('agent:') || sig.startsWith('manual:')) {
+    throw new Error(
+      `Synthetic agent/manual signatures cannot be used for on-chain settlement: ${sig.slice(
+        0,
+        20,
+      )}...`,
     );
-    const out = new Uint8Array(64);
-    out[0] = 0x01; // agent marker — non-zero so the blank-sig guard doesn't fire
-    out.set(idBytes, 1);
-    return Array.from(out);
   }
 
   throw new Error(
-    `Unrecognised signature format for settlement: ${sig.slice(0, 20)}…. ` +
-      `Expected a 64-byte sr25519 hex signature or "agent:<id>".`,
+    `Unrecognised signature format for settlement: ${sig.slice(0, 20)}... ` +
+      `Expected a 64-byte sr25519 hex signature.`,
   );
 }
 
@@ -406,21 +417,6 @@ class SpotSettlementService {
     };
   }
 
-  private buildOrderSignatureMessage(
-    pair: PairSettlementSnapshot,
-    order: OrderSettlementSnapshot,
-  ) {
-    return buildSpotOrderMessage({
-      pairSymbol: pair.symbol,
-      side: order.side as 'BUY' | 'SELL',
-      type: order.type as 'LIMIT' | 'MARKET' | 'STOP' | 'STOP_LIMIT',
-      price: order.price,
-      stopPrice: order.stopPrice || undefined,
-      amount: order.amount,
-      nonce: order.nonce,
-    });
-  }
-
   private async assertOrderTrustedSource(
     pair: PairSettlementSnapshot,
     order: OrderSettlementSnapshot,
@@ -430,33 +426,9 @@ class SpotSettlementService {
     }
 
     if (order.signature.startsWith('agent:')) {
-      const agentId = order.signature.slice('agent:'.length);
-      if (!agentId) {
-        throw new Error(`Malformed agent signature for ${order.makerAddress}`);
-      }
-
-      const agent = await prisma.agent.findUnique({
-        where: { id: agentId },
-        select: {
-          id: true,
-          walletAddress: true,
-          isActive: true,
-          isBanned: true,
-        },
-      });
-
-      if (
-        !agent ||
-        agent.walletAddress !== order.makerAddress ||
-        !agent.isActive ||
-        agent.isBanned
-      ) {
-        throw new Error(
-          `Untrusted agent order origin for ${order.makerAddress}`,
-        );
-      }
-
-      return;
+      throw new Error(
+        `Synthetic agent signatures cannot be used for on-chain settlement for ${order.makerAddress}`,
+      );
     }
 
     if (order.signature.startsWith('manual:')) {
@@ -466,7 +438,7 @@ class SpotSettlementService {
     }
 
     const isValid = await verifyAddressSignature(
-      this.buildOrderSignatureMessage(pair, order),
+      buildSettlementOrderSignatureMessage(pair, order),
       order.signature,
       order.makerAddress,
     );

@@ -38,8 +38,7 @@ export const CreateOrderSchema = z.object({
   expiresAt: z.string().datetime().optional(),
 });
 
-export const CancelOrderSchema = z.object({
-  signature: z.string().min(1),
+export const CancelOrderSchema = SignedWalletActionSchema.extend({
   makerAddress: z.string().min(1),
 });
 

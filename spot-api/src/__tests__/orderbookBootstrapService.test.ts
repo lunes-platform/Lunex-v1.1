@@ -7,6 +7,7 @@ const mockPrisma = {
 };
 
 const mockBook = {
+  clear: jest.fn(),
   restoreLimitOrder: jest.fn(),
 };
 
@@ -25,7 +26,10 @@ jest.mock('../utils/orderbook', () => ({
   orderbookManager: mockOrderbookManager,
 }));
 
-import { rehydrateOrderbooks } from '../services/orderbookBootstrapService';
+import {
+  rehydrateOrderbookForPair,
+  rehydrateOrderbooks,
+} from '../services/orderbookBootstrapService';
 
 describe('rehydrateOrderbooks', () => {
   beforeEach(() => {
@@ -90,5 +94,42 @@ describe('rehydrateOrderbooks', () => {
       createdAt.getTime(),
     );
     expect(result).toEqual({ restoredOrders: 1, restoredBooks: 1 });
+  });
+
+  it('rehydrates one pair book from persisted resting orders', async () => {
+    const createdAt = new Date('2026-01-01T00:00:00Z');
+    mockPrisma.order.findMany.mockResolvedValue([
+      {
+        id: 'order-1',
+        side: 'SELL',
+        price: new Decimal('101'),
+        amount: new Decimal('4'),
+        remainingAmount: new Decimal('2.25'),
+        makerAddress: 'maker-1',
+        createdAt,
+      },
+    ]);
+
+    const result = await rehydrateOrderbookForPair('pair-1', 'LUNES/USDT');
+
+    expect(mockBook.clear).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.order.findMany).toHaveBeenCalledWith({
+      where: {
+        pairId: 'pair-1',
+        type: { in: ['LIMIT', 'STOP_LIMIT'] },
+        status: { in: ['OPEN', 'PARTIAL'] },
+      },
+      orderBy: [{ createdAt: 'asc' }],
+    });
+    expect(mockBook.restoreLimitOrder).toHaveBeenCalledWith(
+      'order-1',
+      'SELL',
+      101,
+      4,
+      2.25,
+      'maker-1',
+      createdAt.getTime(),
+    );
+    expect(result).toEqual({ restoredOrders: 1, pairSymbol: 'LUNES/USDT' });
   });
 });

@@ -30,6 +30,21 @@ O sistema é híbrido:
 
 ## Contratos Entre Camadas
 
+### Fronteiras de responsabilidade
+
+Cada mudança deve declarar a camada que possui a regra e a camada que apenas consome o contrato.
+
+| Camada | Pode conter | Não pode conter |
+|---|---|---|
+| `lunes-dex-main/` | UI, estado visual, composição de páginas, chamadas à API/SDK, preparação de assinatura do usuário, validação leve de formulário | Fonte de verdade para regra financeira, autorização, matching, settlement, rewards, comissões, risco, liquidação ou pricing crítico |
+| `spot-api/` | Validação de payload, autorização, regras off-chain, matching, settlement orchestration, persistência, rate limit, métricas e integração com chain/indexadores | UI, decisão visual, cópia divergente de regra on-chain |
+| `Lunex/contracts/` | Invariantes on-chain, custody, liquidez, settlement final, permissões verificáveis pela rede | Estado efêmero de UI, lógica operacional que depende de banco off-chain |
+| `sdk/` | Tipos públicos, clientes HTTP/WebSocket, helpers de assinatura e adaptação de contratos publicados | Nova regra de negócio divergente da API ou dos contratos |
+| `mcp/` | Ferramentas de agente sobre contratos públicos do `spot-api`, assinatura externa, chaves e escopos | Bypass de autorização, assinatura custodial não especificada, regra financeira própria |
+| `lunex-admin/` | Operação interna, revisão, ativação, auditoria e dashboards administrativos | Duplicação silenciosa de schema ou regra crítica sem tarefa de sincronização com `spot-api` |
+
+Regra central: o frontend pode calcular valores para exibição e feedback imediato, mas a decisão autoritativa deve ser repetida ou validada no backend e/ou nos contratos.
+
 ### Frontend e API
 
 - REST para operações síncronas e consultas.
@@ -47,11 +62,18 @@ O sistema é híbrido:
 - PostgreSQL é a fonte de verdade off-chain.
 - Redis cobre nonce, rate limit, cache operacional e estado efêmero.
 - Indexadores e reconciliadores devem tratar divergência entre banco e chain explicitamente.
+- `spot-api/prisma/schema.prisma` é a fonte principal do schema operacional da API. Se `lunex-admin/prisma/schema.prisma` precisar duplicar modelos, a feature deve incluir uma tarefa explícita de sincronização, diff e validação.
 
 ### SDK e APIs públicas
 
 - O SDK deve refletir contratos estáveis do backend.
 - Mudanças breaking exigem atualização de SPEC, docs públicas e plano de rollout.
+
+### Admin como fronteira operacional
+
+- `lunex-admin/` é um subprojeto separado e pode ter ciclo de versionamento próprio.
+- Mudanças no admin que dependem do banco compartilhado devem apontar para a SPEC da feature correspondente.
+- Nenhuma migration ou alteração de schema deve ser feita apenas no admin sem coordenação com `spot-api/prisma/schema.prisma`.
 
 ## Invariantes Técnicos
 
@@ -60,6 +82,8 @@ O sistema é híbrido:
 3. Interfaces públicas não devem nascer apenas no código; precisam de SPEC ou atualização explícita da SPEC principal.
 4. Features que alteram fluxo financeiro, assinatura, custody, settlement ou listing exigem plano de teste e análise de falha.
 5. Documentação de arquitetura deve apontar para os módulos reais do repositório, não para abstrações genéricas.
+6. O frontend não é fonte de verdade para regras de negócio críticas. Qualquer cálculo sensível feito na UI deve ser validado por backend e/ou contrato.
+7. Tarefas devem preservar isolamento por pasta e comportamento. Refactors transversais precisam de SPEC, plano e tarefas próprias.
 
 ## Segurança e Autorização
 
@@ -94,6 +118,7 @@ Specs novas devem declarar claramente:
 - [`../API_SPECIFICATION.md`](../API_SPECIFICATION.md)
 - [`../PUBLIC_API_SPECIFICATION.md`](../PUBLIC_API_SPECIFICATION.md)
 - [`../api/openapi.json`](../api/openapi.json)
+- [`./LOCAL_PROJECT_BOOTSTRAP_SPEC.md`](./LOCAL_PROJECT_BOOTSTRAP_SPEC.md)
 
 ## Como esta SPEC se relaciona ao SDD
 

@@ -1,4 +1,8 @@
 const TOKEN_ADDRESSES = {
+  WLUNES:
+    process.env.REACT_APP_TOKEN_WLUNES ||
+    process.env.REACT_APP_WNATIVE_CONTRACT ||
+    '',
   LUSDT: process.env.REACT_APP_TOKEN_LUSDT || '',
   LBTC: process.env.REACT_APP_TOKEN_LBTC || '',
   LETH: process.env.REACT_APP_TOKEN_LETH || '',
@@ -21,12 +25,12 @@ const tokens: Token[] = [
   {
     id: 0,
     icon: '/img/lunes-green.svg',
-    acronym: 'LUNES',
-    token: 'Lunes',
+    acronym: 'WLUNES',
+    token: 'Wrapped Lunes',
     tokenPrice: '$ 0.00',
-    address: 'native',
+    address: TOKEN_ADDRESSES.WLUNES,
     decimals: 8,
-    isNative: true
+    isNative: false
   },
   {
     id: 1,

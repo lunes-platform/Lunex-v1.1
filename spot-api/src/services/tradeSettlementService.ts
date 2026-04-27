@@ -13,11 +13,19 @@ type SerializedTradeSettlementInput = Omit<
   TradeSettlementInput,
   'makerOrder' | 'takerOrder'
 > & {
-  makerOrder: Omit<TradeSettlementInput['makerOrder'], 'expiresAt'> & {
+  makerOrder: Omit<
+    TradeSettlementInput['makerOrder'],
+    'expiresAt' | 'signatureTimestamp'
+  > & {
     expiresAt: string | null;
+    signatureTimestamp: string | null;
   };
-  takerOrder: Omit<TradeSettlementInput['takerOrder'], 'expiresAt'> & {
+  takerOrder: Omit<
+    TradeSettlementInput['takerOrder'],
+    'expiresAt' | 'signatureTimestamp'
+  > & {
     expiresAt: string | null;
+    signatureTimestamp: string | null;
   };
 };
 
@@ -31,11 +39,17 @@ export function serializeSettlementInput(
       expiresAt: input.makerOrder.expiresAt
         ? input.makerOrder.expiresAt.toISOString()
         : null,
+      signatureTimestamp: input.makerOrder.signatureTimestamp
+        ? input.makerOrder.signatureTimestamp.toISOString()
+        : null,
     },
     takerOrder: {
       ...input.takerOrder,
       expiresAt: input.takerOrder.expiresAt
         ? input.takerOrder.expiresAt.toISOString()
+        : null,
+      signatureTimestamp: input.takerOrder.signatureTimestamp
+        ? input.takerOrder.signatureTimestamp.toISOString()
         : null,
     },
   };
@@ -51,11 +65,17 @@ export function deserializeSettlementInput(
       expiresAt: payload.makerOrder.expiresAt
         ? new Date(payload.makerOrder.expiresAt)
         : null,
+      signatureTimestamp: payload.makerOrder.signatureTimestamp
+        ? new Date(payload.makerOrder.signatureTimestamp)
+        : null,
     },
     takerOrder: {
       ...payload.takerOrder,
       expiresAt: payload.takerOrder.expiresAt
         ? new Date(payload.takerOrder.expiresAt)
+        : null,
+      signatureTimestamp: payload.takerOrder.signatureTimestamp
+        ? new Date(payload.takerOrder.signatureTimestamp)
         : null,
     },
   };

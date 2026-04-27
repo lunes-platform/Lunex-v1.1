@@ -26,6 +26,7 @@
 
 #[ink::contract]
 pub mod spot_settlement {
+    use ink::env::hash::{Blake2x256, HashOutput};
     use ink::prelude::vec::Vec;
     use ink::storage::Mapping;
 
@@ -109,6 +110,8 @@ pub mod spot_settlement {
         RelayerLimitReached,
         /// Caller is not the order maker
         NotOrderMaker,
+        /// Immutable order fields changed for a nonce already partially filled
+        OrderMismatch,
     }
 
     // ========================================
@@ -136,7 +139,8 @@ pub mod spot_settlement {
         pub price: Balance,
         /// Total amount of base token in smallest units
         pub amount: Balance,
-        /// Amount already filled (not part of the signed message — set by relayer per fill)
+        /// Amount already filled reported by the relayer. This field is not trusted for
+        /// settlement accounting; the contract tracks cumulative fills by maker nonce.
         pub filled_amount: Balance,
         /// Unique nonce for replay protection
         pub nonce: u64,
@@ -230,6 +234,10 @@ pub mod spot_settlement {
         balances: Mapping<(AccountId, AccountId), Balance>,
         /// Nonces that have been used (for replay protection)
         used_nonces: Mapping<(AccountId, u64), bool>,
+        /// Cumulative amount filled per maker nonce.
+        filled_amounts: Mapping<(AccountId, u64), Balance>,
+        /// Canonical immutable order hash per maker nonce.
+        order_hashes: Mapping<(AccountId, u64), [u8; 32]>,
         /// Cancelled order nonces
         cancelled_nonces: Mapping<(AccountId, u64), bool>,
         /// Authorized relayers that can call settle_trade
@@ -260,6 +268,8 @@ pub mod spot_settlement {
                 paused: false,
                 balances: Mapping::default(),
                 used_nonces: Mapping::default(),
+                filled_amounts: Mapping::default(),
+                order_hashes: Mapping::default(),
                 cancelled_nonces: Mapping::default(),
                 relayers: Mapping::default(),
                 relayer_count: 0,
@@ -303,9 +313,7 @@ pub mod spot_settlement {
 
             let native_id = Self::native_token_id();
             let current = self.balances.get((caller, native_id)).unwrap_or(0);
-            let new_balance = current
-                .checked_add(amount)
-                .ok_or(SpotError::Overflow)?;
+            let new_balance = current.checked_add(amount).ok_or(SpotError::Overflow)?;
             self.balances.insert((caller, native_id), &new_balance);
 
             self.env().emit_event(DepositNative {
@@ -337,6 +345,8 @@ pub mod spot_settlement {
             }
 
             let caller = self.env().caller();
+            let current = self.balances.get((caller, token)).unwrap_or(0);
+            let new_balance = current.checked_add(amount).ok_or(SpotError::Overflow)?;
 
             // Cross-contract call to PSP22 transferFrom
             // In production, this calls token.transfer_from(caller, self, amount)
@@ -364,10 +374,6 @@ pub mod spot_settlement {
                 _ => return Err(SpotError::PSP22TransferFailed),
             }
 
-            let current = self.balances.get((caller, token)).unwrap_or(0);
-            let new_balance = current
-                .checked_add(amount)
-                .ok_or(SpotError::Overflow)?;
             self.balances.insert((caller, token), &new_balance);
 
             self.env().emit_event(DepositPSP22 {
@@ -400,9 +406,7 @@ pub mod spot_settlement {
                 return Err(SpotError::WithdrawExceedsBalance);
             }
 
-            let new_balance = current
-                .checked_sub(amount)
-                .ok_or(SpotError::Overflow)?;
+            let new_balance = current.checked_sub(amount).ok_or(SpotError::Overflow)?;
             self.balances.insert((caller, native_id), &new_balance);
 
             // Transfer native tokens back to caller
@@ -443,9 +447,7 @@ pub mod spot_settlement {
                 return Err(SpotError::WithdrawExceedsBalance);
             }
 
-            let new_balance = current
-                .checked_sub(amount)
-                .ok_or(SpotError::Overflow)?;
+            let new_balance = current.checked_sub(amount).ok_or(SpotError::Overflow)?;
             self.balances.insert((caller, token), &new_balance);
 
             // Cross-contract call to PSP22 transfer
@@ -530,17 +532,16 @@ pub mod spot_settlement {
                 return Err(SpotError::SideMismatch);
             }
 
-            // Price validation: taker buy price >= maker sell price (or vice versa)
-            if maker_order.side == SIDE_SELL {
-                // Maker sells, taker buys: taker price must be >= maker price
-                if fill_price < maker_order.price {
-                    return Err(SpotError::PriceMismatch);
-                }
+            // Price validation: seller gets at least their limit, buyer pays at
+            // most their limit. A relayer cannot choose an arbitrary better fee
+            // for one side if it violates the other side's signed limit.
+            let (buyer_limit_price, seller_limit_price) = if maker_order.side == SIDE_BUY {
+                (maker_order.price, taker_order.price)
             } else {
-                // Maker buys, taker sells: maker price must be >= taker price
-                if fill_price < taker_order.price {
-                    return Err(SpotError::PriceMismatch);
-                }
+                (taker_order.price, maker_order.price)
+            };
+            if fill_price < seller_limit_price || fill_price > buyer_limit_price {
+                return Err(SpotError::PriceMismatch);
             }
 
             // Check nonces not used
@@ -584,17 +585,44 @@ pub mod spot_settlement {
                 return Err(SpotError::OrderExpired);
             }
 
-            // Check fill doesn't exceed remaining
+            let maker_order_hash = Self::build_order_hash(&maker_order);
+            self.ensure_order_hash_matches(&maker_order, &maker_order_hash)?;
+            let taker_order_hash = Self::build_order_hash(&taker_order);
+            self.ensure_order_hash_matches(&taker_order, &taker_order_hash)?;
+
+            // Check fill doesn't exceed the on-chain remaining amount. The
+            // relayer-supplied filled_amount is not trusted because it is not
+            // part of the signed order message.
+            let maker_filled = self
+                .filled_amounts
+                .get((maker_order.maker, maker_order.nonce))
+                .unwrap_or(0);
+            let taker_filled = self
+                .filled_amounts
+                .get((taker_order.maker, taker_order.nonce))
+                .unwrap_or(0);
+
             let maker_remaining = maker_order
                 .amount
-                .checked_sub(maker_order.filled_amount)
-                .ok_or(SpotError::Overflow)?;
+                .checked_sub(maker_filled)
+                .ok_or(SpotError::FillExceedsRemaining)?;
             let taker_remaining = taker_order
                 .amount
-                .checked_sub(taker_order.filled_amount)
-                .ok_or(SpotError::Overflow)?;
+                .checked_sub(taker_filled)
+                .ok_or(SpotError::FillExceedsRemaining)?;
 
             if fill_amount > maker_remaining || fill_amount > taker_remaining {
+                return Err(SpotError::FillExceedsRemaining);
+            }
+
+            let new_maker_filled = maker_filled
+                .checked_add(fill_amount)
+                .ok_or(SpotError::Overflow)?;
+            let new_taker_filled = taker_filled
+                .checked_add(fill_amount)
+                .ok_or(SpotError::Overflow)?;
+
+            if new_maker_filled > maker_order.amount || new_taker_filled > taker_order.amount {
                 return Err(SpotError::FillExceedsRemaining);
             }
 
@@ -647,62 +675,39 @@ pub mod spot_settlement {
                 .checked_add(buyer_fee)
                 .ok_or(SpotError::Overflow)?;
 
-            let buyer_quote_balance = self
-                .balances
-                .get((buyer, quote_token))
-                .unwrap_or(0);
+            let buyer_quote_balance = self.balances.get((buyer, quote_token)).unwrap_or(0);
             if buyer_quote_balance < buyer_quote_needed {
                 return Err(SpotError::InsufficientBalance);
             }
 
             // Seller must have fill_amount of base token
-            let seller_base_balance = self
-                .balances
-                .get((seller, base_token))
-                .unwrap_or(0);
+            let seller_base_balance = self.balances.get((seller, base_token)).unwrap_or(0);
             if seller_base_balance < fill_amount {
                 return Err(SpotError::InsufficientBalance);
             }
 
-            // --- Execute atomic transfer ---
-            // 1. Deduct quote from buyer, add to seller (minus seller fee)
+            // --- Calculate all post-trade state before mutating storage ---
             let new_buyer_quote = buyer_quote_balance
                 .checked_sub(buyer_quote_needed)
                 .ok_or(SpotError::Overflow)?;
-            self.balances
-                .insert((buyer, quote_token), &new_buyer_quote);
 
-            let seller_quote_balance = self
-                .balances
-                .get((seller, quote_token))
-                .unwrap_or(0);
+            let seller_quote_balance = self.balances.get((seller, quote_token)).unwrap_or(0);
             let seller_receives_quote = quote_amount
                 .checked_sub(seller_fee)
                 .ok_or(SpotError::Overflow)?;
             let new_seller_quote = seller_quote_balance
                 .checked_add(seller_receives_quote)
                 .ok_or(SpotError::Overflow)?;
-            self.balances
-                .insert((seller, quote_token), &new_seller_quote);
 
-            // 2. Deduct base from seller, add to buyer
             let new_seller_base = seller_base_balance
                 .checked_sub(fill_amount)
                 .ok_or(SpotError::Overflow)?;
-            self.balances
-                .insert((seller, base_token), &new_seller_base);
 
-            let buyer_base_balance = self
-                .balances
-                .get((buyer, base_token))
-                .unwrap_or(0);
+            let buyer_base_balance = self.balances.get((buyer, base_token)).unwrap_or(0);
             let new_buyer_base = buyer_base_balance
                 .checked_add(fill_amount)
                 .ok_or(SpotError::Overflow)?;
-            self.balances
-                .insert((buyer, base_token), &new_buyer_base);
 
-            // 3. Accumulate fees
             let total_fee = maker_fee
                 .checked_add(taker_fee)
                 .ok_or(SpotError::Overflow)?;
@@ -710,14 +715,29 @@ pub mod spot_settlement {
             let new_fees = current_fees
                 .checked_add(total_fee)
                 .ok_or(SpotError::Overflow)?;
+
+            // --- Execute atomic transfer ---
+            self.balances.insert((buyer, quote_token), &new_buyer_quote);
+            self.balances
+                .insert((seller, quote_token), &new_seller_quote);
+            self.balances.insert((seller, base_token), &new_seller_base);
+            self.balances.insert((buyer, base_token), &new_buyer_base);
             self.collected_fees.insert(quote_token, &new_fees);
+            self.filled_amounts
+                .insert((maker_order.maker, maker_order.nonce), &new_maker_filled);
+            self.filled_amounts
+                .insert((taker_order.maker, taker_order.nonce), &new_taker_filled);
+            self.order_hashes
+                .insert((maker_order.maker, maker_order.nonce), &maker_order_hash);
+            self.order_hashes
+                .insert((taker_order.maker, taker_order.nonce), &taker_order_hash);
 
             // --- Mark nonces as used (if fully filled) ---
-            if fill_amount == maker_remaining {
+            if new_maker_filled == maker_order.amount {
                 self.used_nonces
                     .insert((maker_order.maker, maker_order.nonce), &true);
             }
-            if fill_amount == taker_remaining {
+            if new_taker_filled == taker_order.amount {
                 self.used_nonces
                     .insert((taker_order.maker, taker_order.nonce), &true);
             }
@@ -748,19 +768,11 @@ pub mod spot_settlement {
 
             let caller = self.env().caller();
 
-            if self
-                .used_nonces
-                .get((caller, nonce))
-                .unwrap_or(false)
-            {
+            if self.used_nonces.get((caller, nonce)).unwrap_or(false) {
                 return Err(SpotError::OrderAlreadyFilled);
             }
 
-            if self
-                .cancelled_nonces
-                .get((caller, nonce))
-                .unwrap_or(false)
-            {
+            if self.cancelled_nonces.get((caller, nonce)).unwrap_or(false) {
                 return Err(SpotError::OrderAlreadyCancelled);
             }
 
@@ -779,28 +791,17 @@ pub mod spot_settlement {
             self.ensure_not_paused()?;
             self.ensure_relayer_or_owner()?;
 
-            if self
-                .used_nonces
-                .get((maker, nonce))
-                .unwrap_or(false)
-            {
+            if self.used_nonces.get((maker, nonce)).unwrap_or(false) {
                 return Err(SpotError::OrderAlreadyFilled);
             }
 
-            if self
-                .cancelled_nonces
-                .get((maker, nonce))
-                .unwrap_or(false)
-            {
+            if self.cancelled_nonces.get((maker, nonce)).unwrap_or(false) {
                 return Err(SpotError::OrderAlreadyCancelled);
             }
 
             self.cancelled_nonces.insert((maker, nonce), &true);
 
-            self.env().emit_event(OrderCancelled {
-                maker,
-                nonce,
-            });
+            self.env().emit_event(OrderCancelled { maker, nonce });
 
             Ok(())
         }
@@ -826,6 +827,12 @@ pub mod spot_settlement {
         #[ink(message)]
         pub fn is_nonce_cancelled(&self, user: AccountId, nonce: u64) -> bool {
             self.cancelled_nonces.get((user, nonce)).unwrap_or(false)
+        }
+
+        /// Get the cumulative filled amount recorded on-chain for a maker nonce.
+        #[ink(message)]
+        pub fn get_filled_amount(&self, user: AccountId, nonce: u64) -> Balance {
+            self.filled_amounts.get((user, nonce)).unwrap_or(0)
         }
 
         /// Get the accumulated fees for a token
@@ -951,16 +958,13 @@ pub mod spot_settlement {
                 return Err(SpotError::ZeroAmount);
             }
 
-            self.collected_fees.insert(token, &0);
-
             // Credit fees to treasury's vault balance
-            let treasury_balance = self
-                .balances
-                .get((self.treasury, token))
-                .unwrap_or(0);
+            let treasury_balance = self.balances.get((self.treasury, token)).unwrap_or(0);
             let new_treasury_balance = treasury_balance
                 .checked_add(fees)
                 .ok_or(SpotError::Overflow)?;
+
+            self.collected_fees.insert(token, &0);
             self.balances
                 .insert((self.treasury, token), &new_treasury_balance);
 
@@ -973,8 +977,8 @@ pub mod spot_settlement {
 
         /// Build the canonical byte message that the order maker must sign.
         ///
-        /// Only the **immutable** order fields are included (i.e. not `filled_amount`,
-        /// which changes with each partial fill and is set by the relayer).
+        /// Only the **immutable** order fields are included. `filled_amount` is
+        /// excluded because the contract stores cumulative fills by maker nonce.
         ///
         /// Layout (little-endian integers):
         ///   b"lunex:v1:spot-order\n"  (20 bytes, domain separator)
@@ -998,10 +1002,30 @@ pub mod spot_settlement {
             msg.push(order.side);
             msg.extend_from_slice(&order.price.to_le_bytes());
             msg.extend_from_slice(&order.amount.to_le_bytes());
-            // filled_amount intentionally excluded — it varies per partial fill
+            // filled_amount intentionally excluded — on-chain storage is canonical.
             msg.extend_from_slice(&order.nonce.to_le_bytes());
             msg.extend_from_slice(&order.expiry.to_le_bytes());
             msg
+        }
+
+        fn build_order_hash(order: &SignedOrder) -> [u8; 32] {
+            let msg = Self::build_order_message(order);
+            let mut output = <Blake2x256 as HashOutput>::Type::default();
+            ink::env::hash_bytes::<Blake2x256>(&msg, &mut output);
+            output
+        }
+
+        fn ensure_order_hash_matches(
+            &self,
+            order: &SignedOrder,
+            order_hash: &[u8; 32],
+        ) -> Result<(), SpotError> {
+            if let Some(existing_hash) = self.order_hashes.get((order.maker, order.nonce)) {
+                if existing_hash != *order_hash {
+                    return Err(SpotError::OrderMismatch);
+                }
+            }
+            Ok(())
         }
 
         /// Validate the sr25519 signature stored in a `SignedOrder`.
@@ -1026,9 +1050,8 @@ pub mod spot_settlement {
         ///   When Lunes ships pallet-contracts with `seal_sr25519_verify` support,
         ///   replace the body below with the commented snippet in the source.
         fn verify_order_signature(&self, order: &SignedOrder) -> Result<(), SpotError> {
-            // Reject an all-zero signature outside of tests — it is a sign of a
-            // relayer bug where the signature field was never populated.
-            #[cfg(not(test))]
+            // Reject an all-zero signature — it is a sign of a relayer bug
+            // where the signature field was never populated.
             if order.signature == [0u8; 64] {
                 return Err(SpotError::InvalidSignature);
             }
@@ -1089,18 +1112,18 @@ pub mod spot_settlement {
             AccountId::from([0x09; 32])
         }
 
-        fn token_usdt() -> AccountId {
-            AccountId::from([0xAA; 32])
-        }
-
         fn native_token() -> AccountId {
             AccountId::from(constants::ZERO_ADDRESS)
         }
 
+        fn valid_order_signature() -> [u8; 64] {
+            let mut signature = [0u8; 64];
+            signature[0] = 1;
+            signature
+        }
+
         fn set_account_balance(account: AccountId, balance: Balance) {
-            ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(
-                account, balance,
-            );
+            ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(account, balance);
         }
 
         fn get_contract_id() -> AccountId {
@@ -1186,6 +1209,22 @@ pub mod spot_settlement {
 
             set_value(100); // Less than MIN_DEPOSIT
             assert_eq!(contract.deposit_native(), Err(SpotError::DepositTooSmall));
+        }
+
+        #[ink::test]
+        fn test_deposit_psp22_overflow_rejects_before_transfer() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+            set_caller(accounts.bob);
+
+            let token = AccountId::from([0xCC; 32]);
+            contract.balances.insert((accounts.bob, token), &u128::MAX);
+
+            assert_eq!(
+                contract.deposit_psp22(token, constants::MIN_DEPOSIT),
+                Err(SpotError::Overflow)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, token), u128::MAX);
         }
 
         // ─── Withdraw Native Tests ───
@@ -1411,7 +1450,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0, // no expiry
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker_order = SignedOrder {
@@ -1424,18 +1463,13 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let fill_amount = 1_000_000_000; // 10.0 base
             let fill_price = 200_000_000; // 2.0
 
-            let result = contract.settle_trade(
-                maker_order,
-                taker_order,
-                fill_amount,
-                fill_price,
-            );
+            let result = contract.settle_trade(maker_order, taker_order, fill_amount, fill_price);
             assert!(result.is_ok());
 
             // quote_amount = 1_000_000_000 * 200_000_000 / 100_000_000 = 2_000_000_000
@@ -1443,25 +1477,13 @@ pub mod spot_settlement {
             // taker_fee (seller) = 2_000_000_000 * 25 / 10_000 = 5_000_000
 
             // Bob (buyer): had 10B quote, spent 2B + 2M fee = 7_998_000_000 remaining
-            assert_eq!(
-                contract.get_balance(accounts.bob, quote),
-                7_998_000_000
-            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 7_998_000_000);
             // Bob (buyer): received 1B base
-            assert_eq!(
-                contract.get_balance(accounts.bob, base),
-                1_000_000_000
-            );
+            assert_eq!(contract.get_balance(accounts.bob, base), 1_000_000_000);
             // Charlie (seller): had 5B base, spent 1B = 4B remaining
-            assert_eq!(
-                contract.get_balance(accounts.charlie, base),
-                4_000_000_000
-            );
+            assert_eq!(contract.get_balance(accounts.charlie, base), 4_000_000_000);
             // Charlie (seller): received 2B - 5M fee = 1_995_000_000
-            assert_eq!(
-                contract.get_balance(accounts.charlie, quote),
-                1_995_000_000
-            );
+            assert_eq!(contract.get_balance(accounts.charlie, quote), 1_995_000_000);
 
             // Fees collected
             assert_eq!(
@@ -1489,7 +1511,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let order2 = SignedOrder {
@@ -1502,7 +1524,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 2,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert_eq!(
@@ -1530,7 +1552,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let order2 = SignedOrder {
@@ -1543,7 +1565,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert_eq!(
@@ -1568,7 +1590,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let order2 = SignedOrder {
@@ -1581,7 +1603,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert_eq!(
@@ -1614,7 +1636,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1627,7 +1649,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert_eq!(
@@ -1669,7 +1691,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1682,7 +1704,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 2,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert_eq!(
@@ -1724,7 +1746,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1737,7 +1759,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert!(contract
@@ -1767,7 +1789,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1780,7 +1802,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert_eq!(
@@ -1815,7 +1837,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1828,7 +1850,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             // Try to fill 10.0 base but maker only has 5.0 remaining
@@ -1865,7 +1887,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1878,7 +1900,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             // Fill price 200M < seller's ask 300M
@@ -1886,6 +1908,166 @@ pub mod spot_settlement {
                 contract.settle_trade(maker, taker, 1_000_000_000, 200_000_000),
                 Err(SpotError::PriceMismatch)
             );
+        }
+
+        #[ink::test]
+        fn test_settle_trade_rejects_fill_above_buyer_limit_price() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+
+            let maker = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            let taker = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 100_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            assert_eq!(
+                contract.settle_trade(maker, taker, 1_000_000_000, 300_000_000),
+                Err(SpotError::PriceMismatch)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 10_000_000_000);
+            assert_eq!(contract.get_balance(accounts.bob, base), 0);
+            assert_eq!(contract.get_balance(accounts.charlie, base), 5_000_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, quote), 0);
+        }
+
+        #[ink::test]
+        fn test_settle_trade_rejects_blank_order_signature() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+
+            let maker = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: [0u8; 64],
+            };
+
+            let taker = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 100_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            assert_eq!(
+                contract.settle_trade(maker, taker, 1_000_000_000, 200_000_000),
+                Err(SpotError::InvalidSignature)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 10_000_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, base), 5_000_000_000);
+            assert!(!contract.is_nonce_used(accounts.bob, 1));
+            assert!(!contract.is_nonce_used(accounts.charlie, 1));
+        }
+
+        #[ink::test]
+        fn test_failed_settlement_overflow_does_not_partially_mutate_balances() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+
+            contract.balances.insert((accounts.bob, quote), &2_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &1_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, quote), &u128::MAX);
+
+            let maker = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 100_000_000,
+                amount: 1_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            let taker = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 100_000_000,
+                amount: 1_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            assert_eq!(
+                contract.settle_trade(maker, taker, 1_000_000, 100_000_000),
+                Err(SpotError::Overflow)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 2_000_000);
+            assert_eq!(contract.get_balance(accounts.bob, base), 0);
+            assert_eq!(contract.get_balance(accounts.charlie, base), 1_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, quote), u128::MAX);
+            assert_eq!(contract.get_collected_fees(quote), 0);
+            assert!(!contract.is_nonce_used(accounts.bob, 1));
+            assert!(!contract.is_nonce_used(accounts.charlie, 1));
         }
 
         #[ink::test]
@@ -1915,7 +2097,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1928,16 +2110,11 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             // Fill only 500M out of 2B (partial)
-            let result = contract.settle_trade(
-                maker,
-                taker,
-                500_000_000,
-                100_000_000,
-            );
+            let result = contract.settle_trade(maker, taker, 500_000_000, 100_000_000);
             assert!(result.is_ok());
 
             // quote_amount = 500M * 100M / 100M = 500M
@@ -1945,18 +2122,177 @@ pub mod spot_settlement {
             // taker_fee = 500M * 25 / 10000 = 1_250_000
 
             // Bob: 10B - 500M - 500K = 9_499_500_000
-            assert_eq!(
-                contract.get_balance(accounts.bob, quote),
-                9_499_500_000
-            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 9_499_500_000);
             // Bob received 500M base
-            assert_eq!(
-                contract.get_balance(accounts.bob, base),
-                500_000_000
-            );
+            assert_eq!(contract.get_balance(accounts.bob, base), 500_000_000);
             // Nonces should NOT be marked used (partial fill)
             assert!(!contract.is_nonce_used(accounts.bob, 1));
             assert!(!contract.is_nonce_used(accounts.charlie, 1));
+            assert_eq!(contract.get_filled_amount(accounts.bob, 1), 500_000_000);
+            assert_eq!(contract.get_filled_amount(accounts.charlie, 1), 500_000_000);
+        }
+
+        #[ink::test]
+        fn test_repeated_partial_fill_cannot_exceed_order_amount() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+
+            let maker = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 100_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            let taker = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 100_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            assert_eq!(
+                contract.settle_trade(maker.clone(), taker.clone(), 600_000_000, 100_000_000),
+                Ok(())
+            );
+
+            let buyer_quote_after_first = contract.get_balance(accounts.bob, quote);
+            let buyer_base_after_first = contract.get_balance(accounts.bob, base);
+            let seller_base_after_first = contract.get_balance(accounts.charlie, base);
+            let seller_quote_after_first = contract.get_balance(accounts.charlie, quote);
+            let fees_after_first = contract.get_collected_fees(quote);
+
+            assert_eq!(
+                contract.settle_trade(maker, taker, 600_000_000, 100_000_000),
+                Err(SpotError::FillExceedsRemaining)
+            );
+
+            assert_eq!(
+                contract.get_balance(accounts.bob, quote),
+                buyer_quote_after_first
+            );
+            assert_eq!(
+                contract.get_balance(accounts.bob, base),
+                buyer_base_after_first
+            );
+            assert_eq!(
+                contract.get_balance(accounts.charlie, base),
+                seller_base_after_first
+            );
+            assert_eq!(
+                contract.get_balance(accounts.charlie, quote),
+                seller_quote_after_first
+            );
+            assert_eq!(contract.get_collected_fees(quote), fees_after_first);
+            assert!(!contract.is_nonce_used(accounts.bob, 1));
+            assert!(!contract.is_nonce_used(accounts.charlie, 1));
+        }
+
+        #[ink::test]
+        fn test_partial_fill_rejects_changed_order_fields_for_same_nonce() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+
+            contract
+                .balances
+                .insert((accounts.bob, quote), &20_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &20_000_000_000);
+
+            let maker = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 100_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            let taker = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 100_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+            };
+
+            assert_eq!(
+                contract.settle_trade(maker.clone(), taker.clone(), 600_000_000, 100_000_000),
+                Ok(())
+            );
+
+            let mut changed_maker = maker;
+            changed_maker.amount = 10_000_000_000;
+            let mut changed_taker = taker;
+            changed_taker.amount = 10_000_000_000;
+
+            let buyer_quote_after_first = contract.get_balance(accounts.bob, quote);
+            let buyer_base_after_first = contract.get_balance(accounts.bob, base);
+            let seller_base_after_first = contract.get_balance(accounts.charlie, base);
+            let seller_quote_after_first = contract.get_balance(accounts.charlie, quote);
+            let fees_after_first = contract.get_collected_fees(quote);
+
+            assert_eq!(
+                contract.settle_trade(changed_maker, changed_taker, 9_000_000_000, 100_000_000),
+                Err(SpotError::OrderMismatch)
+            );
+
+            assert_eq!(
+                contract.get_balance(accounts.bob, quote),
+                buyer_quote_after_first
+            );
+            assert_eq!(
+                contract.get_balance(accounts.bob, base),
+                buyer_base_after_first
+            );
+            assert_eq!(
+                contract.get_balance(accounts.charlie, base),
+                seller_base_after_first
+            );
+            assert_eq!(
+                contract.get_balance(accounts.charlie, quote),
+                seller_quote_after_first
+            );
+            assert_eq!(contract.get_collected_fees(quote), fees_after_first);
+            assert_eq!(contract.get_filled_amount(accounts.bob, 1), 600_000_000);
+            assert_eq!(contract.get_filled_amount(accounts.charlie, 1), 600_000_000);
         }
 
         #[ink::test]
@@ -1986,7 +2322,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -1999,7 +2335,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             contract
@@ -2013,6 +2349,21 @@ pub mod spot_settlement {
             contract.withdraw_fees(quote).unwrap();
             assert_eq!(contract.get_collected_fees(quote), 0);
             assert_eq!(contract.get_balance(treasury_id(), quote), fees);
+        }
+
+        #[ink::test]
+        fn test_failed_withdraw_fees_overflow_does_not_clear_fees() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            let token = AccountId::from([0xCC; 32]);
+            contract.collected_fees.insert(token, &10);
+            contract.balances.insert((treasury_id(), token), &u128::MAX);
+
+            assert_eq!(contract.withdraw_fees(token), Err(SpotError::Overflow));
+            assert_eq!(contract.get_collected_fees(token), 10);
+            assert_eq!(contract.get_balance(treasury_id(), token), u128::MAX);
         }
 
         #[ink::test]
@@ -2048,7 +2399,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             let taker = SignedOrder {
@@ -2061,7 +2412,7 @@ pub mod spot_settlement {
                 filled_amount: 0,
                 nonce: 1,
                 expiry: 0,
-                signature: [0u8; 64],
+                signature: valid_order_signature(),
             };
 
             assert_eq!(
@@ -2095,10 +2446,7 @@ pub mod spot_settlement {
                 contract.get_balance(accounts.bob, native_token()),
                 2_000_000_000
             );
-            assert_eq!(
-                contract.get_balance(accounts.charlie, native_token()),
-                0
-            );
+            assert_eq!(contract.get_balance(accounts.charlie, native_token()), 0);
         }
     }
 }

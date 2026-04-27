@@ -30,6 +30,9 @@ import { computeOrderHash, decimalToNumber } from '../utils/helpers';
 import { tradeService } from './tradeService';
 import { Decimal } from '@prisma/client/runtime/library';
 import { settlementService } from './settlementService';
+import { walletRiskService } from './walletRiskService';
+import { withMatchingLock } from './matchingLockService';
+import { rehydrateOrderbookForPair } from './orderbookBootstrapService';
 import type { Prisma, OrderStatus } from '@prisma/client';
 import { ApiError } from '../middleware/errors';
 
@@ -87,6 +90,14 @@ function isStopTriggered(
     : referencePrice <= stopPrice;
 }
 
+function sanitizeOrderForUserRead<T extends Record<string, unknown>>(order: T) {
+  const { signature, nonce, orderHash, ...safeOrder } = order;
+  void signature;
+  void nonce;
+  void orderHash;
+  return safeOrder;
+}
+
 async function finalizeMarketLikeOrder(orderId: string) {
   const currentOrder = await prisma.order.findUnique({
     where: { id: orderId },
@@ -121,27 +132,33 @@ async function executeOrderOnBook(
   }
 
   const book = orderbookManager.getOrCreate(pairSymbol);
+  const checkpoint = book.createCheckpoint();
   let matches: MatchResult[];
 
-  if (order.type === 'MARKET' || order.type === 'STOP') {
-    matches = book.addMarketOrder(
-      order.id,
-      order.side as 'BUY' | 'SELL',
-      executableAmount,
-      order.makerAddress,
-    );
-  } else {
-    matches = book.addLimitOrder(
-      order.id,
-      order.side as 'BUY' | 'SELL',
-      decimalToNumber(order.price),
-      executableAmount,
-      order.makerAddress,
-    );
-  }
+  try {
+    if (order.type === 'MARKET' || order.type === 'STOP') {
+      matches = book.addMarketOrder(
+        order.id,
+        order.side as 'BUY' | 'SELL',
+        executableAmount,
+        order.makerAddress,
+      );
+    } else {
+      matches = book.addLimitOrder(
+        order.id,
+        order.side as 'BUY' | 'SELL',
+        decimalToNumber(order.price),
+        executableAmount,
+        order.makerAddress,
+      );
+    }
 
-  if (matches.length > 0) {
-    await tradeService.processMatches(pairId, matches);
+    if (matches.length > 0) {
+      await tradeService.processMatches(pairId, matches);
+    }
+  } catch (err) {
+    book.restoreCheckpoint(checkpoint);
+    throw err;
   }
 
   if (order.type === 'MARKET' || order.type === 'STOP') {
@@ -375,6 +392,8 @@ export const orderService = {
     if (!pair.isActive)
       throw ApiError.badRequest(`Pair ${input.pairSymbol} is not active`);
 
+    await walletRiskService.assertWalletCanAct(input.makerAddress);
+
     // 2. Validate price for executable order types
     const price = input.price || '0';
     if (
@@ -413,40 +432,44 @@ export const orderService = {
     });
     if (existing) throw ApiError.conflict('Nonce already used');
 
-    await assertValidOnChainState(pair, input);
+    return withMatchingLock(pair.symbol, async () => {
+      await rehydrateOrderbookForPair(pair.id, pair.symbol);
+      await assertValidOnChainState(pair, input);
 
-    // 5. Create order in DB
-    const order = await prisma.order.create({
-      data: {
-        pairId: pair.id,
-        makerAddress: input.makerAddress,
-        side: input.side,
-        type: input.type,
-        price: new Decimal(price),
-        stopPrice: input.stopPrice ? new Decimal(input.stopPrice) : null,
-        amount: new Decimal(input.amount),
-        remainingAmount: new Decimal(input.amount),
-        filledAmount: new Decimal('0'),
-        status:
-          input.type === 'STOP' || input.type === 'STOP_LIMIT'
-            ? STOP_PENDING_STATUS
-            : 'OPEN',
-        signature: input.signature,
-        nonce: input.nonce,
-        orderHash,
-        timeInForce: input.timeInForce,
-        expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
-      },
+      // 5. Create order in DB
+      const order = await prisma.order.create({
+        data: {
+          pairId: pair.id,
+          makerAddress: input.makerAddress,
+          side: input.side,
+          type: input.type,
+          price: new Decimal(price),
+          stopPrice: input.stopPrice ? new Decimal(input.stopPrice) : null,
+          amount: new Decimal(input.amount),
+          remainingAmount: new Decimal(input.amount),
+          filledAmount: new Decimal('0'),
+          status:
+            input.type === 'STOP' || input.type === 'STOP_LIMIT'
+              ? STOP_PENDING_STATUS
+              : 'OPEN',
+          signature: input.signature,
+          signatureTimestamp: new Date(input.timestamp),
+          nonce: input.nonce,
+          orderHash,
+          timeInForce: input.timeInForce,
+          expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+        },
+      });
+
+      // 6. Add active orders to the in-memory book and attempt matching
+      if (input.type === 'LIMIT' || input.type === 'MARKET') {
+        await executeOrderOnBook(pair.id, pair.symbol, order);
+      }
+
+      await processTriggeredOrders(pair.id, pair.symbol);
+
+      return prisma.order.findUnique({ where: { id: order.id } });
     });
-
-    // 6. Add active orders to the in-memory book and attempt matching
-    if (input.type === 'LIMIT' || input.type === 'MARKET') {
-      await executeOrderOnBook(pair.id, pair.symbol, order);
-    }
-
-    await processTriggeredOrders(pair.id, pair.symbol);
-
-    return prisma.order.findUnique({ where: { id: order.id } });
   },
 
   /**
@@ -462,22 +485,43 @@ export const orderService = {
     if (order.status === 'CANCELLED')
       throw ApiError.conflict('Order already cancelled');
 
-    // Remove from in-memory orderbook
     const pair = await prisma.pair.findUnique({ where: { id: order.pairId } });
-    if (pair) {
+    if (!pair) throw ApiError.notFound('Pair not found');
+
+    return withMatchingLock(pair.symbol, async () => {
+      await rehydrateOrderbookForPair(pair.id, pair.symbol);
+
+      const lockedOrder = await prisma.order.findUnique({
+        where: { id: orderId },
+      });
+      if (!lockedOrder) throw ApiError.notFound('Order not found');
+      if (lockedOrder.makerAddress !== makerAddress)
+        throw ApiError.forbidden('Not order owner');
+      if (lockedOrder.status === 'FILLED')
+        throw ApiError.conflict('Order already filled');
+      if (lockedOrder.status === 'CANCELLED')
+        throw ApiError.conflict('Order already cancelled');
+
+      const cancelTxHash = await settlementService.cancelOrderFor(
+        makerAddress,
+        lockedOrder.nonce,
+      );
+      if (settlementService.isEnabled() && cancelTxHash === null) {
+        throw new Error('On-chain cancellation unavailable');
+      }
+
+      // Update DB first. The in-memory book is derived state and can be
+      // rehydrated from the canonical DB state on the next locked mutation.
+      const updated = await prisma.order.update({
+        where: { id: orderId },
+        data: { status: 'CANCELLED' },
+      });
+
       const book = orderbookManager.get(pair.symbol);
       if (book) book.cancelOrder(orderId);
-    }
 
-    await settlementService.cancelOrderFor(makerAddress, order.nonce);
-
-    // Update DB
-    const updated = await prisma.order.update({
-      where: { id: orderId },
-      data: { status: 'CANCELLED' },
+      return updated;
     });
-
-    return updated;
   },
 
   /**
@@ -492,13 +536,15 @@ export const orderService = {
     const where: Prisma.OrderWhereInput = { makerAddress };
     if (status) where.status = status as OrderStatus;
 
-    return prisma.order.findMany({
+    const orders = await prisma.order.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       take: limit,
       skip: offset,
       include: { pair: { select: { symbol: true } } },
     });
+
+    return orders.map((order) => sanitizeOrderForUserRead(order));
   },
 
   /**

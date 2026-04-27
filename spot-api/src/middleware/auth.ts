@@ -2,11 +2,16 @@ import { cryptoWaitReady, signatureVerify } from '@polkadot/util-crypto';
 import { getRedis } from '../utils/redis';
 import { config } from '../config';
 import { log } from '../utils/logger';
+import { walletRiskService } from '../services/walletRiskService';
 
 const SIGNED_ACTION_TTL_MS = 5 * 60 * 1000;
 
 // ─── Redis-backed nonce store (with in-memory fallback) ──────────
 const fallbackNonces = new Map<string, number>();
+type NonceState = 'used' | 'unused' | 'unavailable';
+type ConsumeNonceResult =
+  | { ok: true }
+  | { ok: false; error: 'replay' | 'unavailable' };
 
 function pruneSignedActionNoncesFallback(now: number) {
   for (const [key, expiresAt] of fallbackNonces.entries()) {
@@ -15,25 +20,63 @@ function pruneSignedActionNoncesFallback(now: number) {
 }
 
 async function isNonceUsed(key: string): Promise<boolean> {
+  return (await getNonceState(key)) === 'used';
+}
+
+async function getNonceState(key: string): Promise<NonceState> {
   // Always check in-memory fallback first — covers nonces written during a Redis
   // outage. Without this, a nonce stored in the fallback while Redis was down
   // would be invisible once Redis recovers, enabling replay attacks.
-  if (fallbackNonces.has(key)) return true;
+  if (fallbackNonces.has(key)) return 'used';
   try {
     const result = await getRedis().get(key);
-    return result !== null;
+    return result !== null ? 'used' : 'unused';
   } catch {
-    return false;
+    return config.isProd ? 'unavailable' : 'unused';
   }
 }
 
 async function markNonceUsed(key: string): Promise<void> {
+  const result = await consumeNonce(key);
+  if (!result.ok) {
+    throw new Error(
+      result.error === 'replay'
+        ? 'Nonce already used'
+        : 'Nonce store unavailable',
+    );
+  }
+}
+
+async function consumeNonce(key: string): Promise<ConsumeNonceResult> {
+  if (fallbackNonces.has(key)) {
+    return { ok: false, error: 'replay' };
+  }
+
   try {
-    await getRedis().set(key, '1', 'EX', config.redis.nonceTtlSeconds);
+    const result = await getRedis().set(
+      key,
+      '1',
+      'EX',
+      config.redis.nonceTtlSeconds,
+      'NX',
+    );
+    return result === 'OK' ? { ok: true } : { ok: false, error: 'replay' };
   } catch {
-    // Redis unavailable — fall back to in-memory
+    if (config.isProd) {
+      log.error(
+        { nonceKey: key },
+        '[SECURITY] Redis nonce store unavailable in production',
+      );
+      return { ok: false, error: 'unavailable' };
+    }
+
+    // Redis unavailable outside production — fall back to in-memory.
     pruneSignedActionNoncesFallback(Date.now());
+    if (fallbackNonces.has(key)) {
+      return { ok: false, error: 'replay' };
+    }
     fallbackNonces.set(key, Date.now() + SIGNED_ACTION_TTL_MS);
+    return { ok: true };
   }
 }
 
@@ -56,7 +99,7 @@ export function buildSpotOrderMessage(input: SpotOrderMessageInput) {
   return input.timestamp !== undefined ? `${base}:${input.timestamp}` : base;
 }
 
-export { isNonceUsed, markNonceUsed };
+export { consumeNonce, isNonceUsed, markNonceUsed };
 
 export function buildSpotCancelMessage(orderId: string) {
   return `lunex-cancel:${orderId}`;
@@ -154,7 +197,19 @@ export async function verifyWalletActionSignature(input: {
   }
 
   const replayKey = `nonce:${input.action}:${input.address}:${input.nonce}`;
-  if (await isNonceUsed(replayKey)) {
+  const nonceState = await getNonceState(replayKey);
+  if (nonceState === 'unavailable') {
+    log.error(
+      {
+        address: input.address,
+        action: input.action,
+        nonce: input.nonce,
+      },
+      '[SECURITY] Wallet signature rejected — nonce store unavailable',
+    );
+    return { ok: false as const, error: 'Nonce store unavailable' };
+  }
+  if (nonceState === 'used') {
     log.warn(
       {
         address: input.address,
@@ -192,7 +247,39 @@ export async function verifyWalletActionSignature(input: {
     return { ok: false as const, error: 'Invalid signature' };
   }
 
-  await markNonceUsed(replayKey);
+  try {
+    await walletRiskService.assertWalletCanAct(input.address);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Wallet is not allowed';
+    log.warn(
+      {
+        address: input.address,
+        action: input.action,
+        reason: 'wallet_blocked',
+      },
+      '[SECURITY] Wallet signature rejected — wallet blocked',
+    );
+    return { ok: false as const, error: message };
+  }
+
+  const consumeResult = await consumeNonce(replayKey);
+  if (!consumeResult.ok) {
+    const error =
+      consumeResult.error === 'replay'
+        ? 'Signature nonce already used'
+        : 'Nonce store unavailable';
+    log.warn(
+      {
+        address: input.address,
+        action: input.action,
+        nonce: input.nonce,
+        reason: consumeResult.error,
+      },
+      '[SECURITY] Wallet signature rejected — nonce consume failed',
+    );
+    return { ok: false as const, error };
+  }
   return { ok: true as const, message };
 }
 
@@ -234,6 +321,32 @@ export async function verifyWalletReadSignature(input: {
     return { ok: false as const, error: 'Expired signature' };
   }
 
+  const replayKey = `nonce:read:${input.action}:${input.address}:${input.nonce}`;
+  const nonceState = await getNonceState(replayKey);
+  if (nonceState === 'unavailable') {
+    log.error(
+      {
+        address: input.address,
+        action: input.action,
+        nonce: input.nonce,
+      },
+      '[SECURITY] Wallet read signature rejected — nonce store unavailable',
+    );
+    return { ok: false as const, error: 'Nonce store unavailable' };
+  }
+  if (nonceState === 'used') {
+    log.warn(
+      {
+        address: input.address,
+        action: input.action,
+        nonce: input.nonce,
+        reason: 'replay',
+      },
+      '[SECURITY] Wallet read signature rejected — nonce replay detected',
+    );
+    return { ok: false as const, error: 'Signature nonce already used' };
+  }
+
   const message = buildWalletActionMessage({
     action: input.action,
     address: input.address,
@@ -259,5 +372,22 @@ export async function verifyWalletReadSignature(input: {
     return { ok: false as const, error: 'Invalid signature' };
   }
 
+  const consumeResult = await consumeNonce(replayKey);
+  if (!consumeResult.ok) {
+    const error =
+      consumeResult.error === 'replay'
+        ? 'Signature nonce already used'
+        : 'Nonce store unavailable';
+    log.warn(
+      {
+        address: input.address,
+        action: input.action,
+        nonce: input.nonce,
+        reason: consumeResult.error,
+      },
+      '[SECURITY] Wallet read signature rejected — nonce consume failed',
+    );
+    return { ok: false as const, error };
+  }
   return { ok: true as const, message };
 }

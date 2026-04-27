@@ -44,12 +44,36 @@ jest.mock('../../services/settlementService', () => ({
 jest.mock('../../middleware/auth', () => ({
   ...jest.requireActual('../../middleware/auth'),
   verifyAddressSignature: jest.fn().mockResolvedValue(true),
+  verifyWalletActionSignature: jest
+    .fn()
+    .mockResolvedValue({ ok: true, message: 'signed-action-message' }),
   verifyWalletReadSignature: jest
     .fn()
     .mockResolvedValue({ ok: true, message: 'signed-read-message' }),
 }));
 
+import prisma from '../../db';
+import { verifyWalletActionSignature } from '../../middleware/auth';
+
+const prismaMock = prisma as unknown as {
+  order: {
+    update: jest.Mock;
+  };
+};
+const verifyWalletActionSignatureMock =
+  verifyWalletActionSignature as jest.MockedFunction<
+    typeof verifyWalletActionSignature
+  >;
+
 describe('Orders API E2E', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    verifyWalletActionSignatureMock.mockResolvedValue({
+      ok: true,
+      message: 'signed-action-message',
+    });
+  });
+
   describe('POST /api/v1/orders', () => {
     it('should return 400 on invalid payload', async () => {
       const res = await request(app).post('/api/v1/orders').send({});
@@ -92,6 +116,38 @@ describe('Orders API E2E', () => {
 
       expect(res.status).toBe(400);
       expect(res.body).toHaveProperty('error', 'Validation failed');
+    });
+
+    it('should return 400 when signed cancel nonce and timestamp are missing', async () => {
+      const res = await request(app)
+        .delete('/api/v1/orders/some-order-id')
+        .send({
+          makerAddress: 'test-maker-123',
+          signature: 'signed-payload',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toHaveProperty('error', 'Validation failed');
+    });
+
+    it('rejects cancel replay before mutating order state', async () => {
+      verifyWalletActionSignatureMock.mockResolvedValueOnce({
+        ok: false,
+        error: 'Signature nonce already used',
+      });
+
+      const res = await request(app)
+        .delete('/api/v1/orders/some-order-id')
+        .send({
+          makerAddress: 'test-maker-123',
+          nonce: 'cancel-nonce-123',
+          timestamp: Date.now(),
+          signature: 'signed-payload',
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body).toHaveProperty('error', 'Signature nonce already used');
+      expect(prismaMock.order.update).not.toHaveBeenCalled();
     });
   });
 

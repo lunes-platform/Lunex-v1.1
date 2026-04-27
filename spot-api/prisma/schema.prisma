@@ -116,19 +116,19 @@ enum IndexedEventKind {
   TRADE_CLOSE
   VAULT_DEPOSIT
   VAULT_WITHDRAW
-  ASYMMETRIC_SWAP  // Emitted by AsymmetricPair ink! contract
+  ASYMMETRIC_SWAP // Emitted by AsymmetricPair ink! contract
   UNKNOWN
 }
 
 // ─── AI Trading Network ─────────────────────────────────────────
 
 enum StrategyType {
-  COPYTRADE     // Mirrors a human/bot leader via CopyVault
-  MARKET_MAKER  // Asymmetric liquidity provision
-  ARBITRAGE     // Cross-pair / cross-venue arbitrage
-  MOMENTUM      // Trend-following
-  HEDGE         // Delta-neutral / risk reduction
-  CUSTOM        // User-defined
+  COPYTRADE // Mirrors a human/bot leader via CopyVault
+  MARKET_MAKER // Asymmetric liquidity provision
+  ARBITRAGE // Cross-pair / cross-venue arbitrage
+  MOMENTUM // Trend-following
+  HEDGE // Delta-neutral / risk reduction
+  CUSTOM // User-defined
 }
 
 enum StrategyRiskLevel {
@@ -154,7 +154,7 @@ enum AgentType {
 }
 
 enum AgentStakeStatus {
-  PENDING_VERIFICATION  // txHash submitted but not yet verified on-chain
+  PENDING_VERIFICATION // txHash submitted but not yet verified on-chain
   STAKED
   UNSTAKING
   UNSTAKED
@@ -167,88 +167,89 @@ enum AgentApiKeyPermission {
   SOCIAL_POST
   COPYTRADE_SIGNAL
   READ_ONLY
-  MANAGE_ASYMMETRIC  // Manager scope for AsymmetricPair contracts — curve params only, never funds
+  MANAGE_ASYMMETRIC // Manager scope for AsymmetricPair contracts — curve params only, never funds
 }
 
 model Pair {
-  id             String   @id @default(uuid())
-  symbol         String   @unique
-  baseToken      String
-  quoteToken     String
-  pairAddress    String?  // LP Pair contract address on-chain (returned by Factory.get_pair)
-  baseName       String
-  quoteName      String
-  baseDecimals   Int      @default(8)
-  quoteDecimals  Int      @default(8)
-  isNativeBase   Boolean  @default(false)
-  isNativeQuote  Boolean  @default(false)
-  isActive       Boolean  @default(true)
-  makerFeeBps    Int      @default(10)
-  takerFeeBps    Int      @default(25)
-  createdAt      DateTime @default(now())
+  id            String   @id @default(uuid())
+  symbol        String   @unique
+  baseToken     String
+  quoteToken    String
+  pairAddress   String? // LP Pair contract address on-chain (returned by Factory.get_pair)
+  baseName      String
+  quoteName     String
+  baseDecimals  Int      @default(8)
+  quoteDecimals Int      @default(8)
+  isNativeBase  Boolean  @default(false)
+  isNativeQuote Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  makerFeeBps   Int      @default(10)
+  takerFeeBps   Int      @default(25)
+  createdAt     DateTime @default(now())
 
-  orders  Order[]
-  trades  Trade[]
-  candles Candle[]
-  marginPositions MarginPosition[]
-  copyTradeSignals CopyTradeSignal[]
+  orders              Order[]
+  trades              Trade[]
+  candles             Candle[]
+  marginPositions     MarginPosition[]
+  copyTradeSignals    CopyTradeSignal[]
   copyTradeExecutions CopyTradeExecution[]
-  leaderTrades LeaderTrade[]
-  socialIdeas SocialIdea[]
+  leaderTrades        LeaderTrade[]
+  socialIdeas         SocialIdea[]
 }
 
 model Order {
-  id              String    @id @default(uuid())
-  pairId          String
-  makerAddress    String
-  side            OrderSide
-  type            OrderType
-  price           Decimal   @db.Decimal(36, 18)
-  stopPrice       Decimal?  @db.Decimal(36, 18)
-  amount          Decimal   @db.Decimal(36, 18)
-  filledAmount    Decimal   @default(0) @db.Decimal(36, 18)
-  remainingAmount Decimal   @db.Decimal(36, 18)
-  status          OrderStatus @default(OPEN)
-  signature       String
-  nonce           String
-  orderHash       String    @unique
-  timeInForce     TimeInForce @default(GTC)
-  expiresAt       DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                 String      @id @default(uuid())
+  pairId             String
+  makerAddress       String
+  side               OrderSide
+  type               OrderType
+  price              Decimal     @db.Decimal(36, 18)
+  stopPrice          Decimal?    @db.Decimal(36, 18)
+  amount             Decimal     @db.Decimal(36, 18)
+  filledAmount       Decimal     @default(0) @db.Decimal(36, 18)
+  remainingAmount    Decimal     @db.Decimal(36, 18)
+  status             OrderStatus @default(OPEN)
+  signature          String
+  signatureTimestamp DateTime?
+  nonce              String
+  orderHash          String      @unique
+  timeInForce        TimeInForce @default(GTC)
+  expiresAt          DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 
   pair        Pair    @relation(fields: [pairId], references: [id])
   makerTrades Trade[] @relation("MakerTrades")
   takerTrades Trade[] @relation("TakerTrades")
 
+  @@unique([makerAddress, nonce])
   @@index([pairId, side, status, price])
   @@index([makerAddress, status])
-  @@unique([makerAddress, nonce])
   @@index([orderHash])
 }
 
 model Trade {
-  id           String    @id @default(uuid())
-  pairId       String
-  makerOrderId String
-  takerOrderId String
-  makerAddress String
-  takerAddress String
-  side         OrderSide
-  price        Decimal   @db.Decimal(36, 18)
-  amount       Decimal   @db.Decimal(36, 18)
-  quoteAmount  Decimal   @db.Decimal(36, 18)
-  makerFee     Decimal   @db.Decimal(36, 18)
-  takerFee     Decimal   @db.Decimal(36, 18)
+  id                      String                @id @default(uuid())
+  pairId                  String
+  makerOrderId            String
+  takerOrderId            String
+  makerAddress            String
+  takerAddress            String
+  side                    OrderSide
+  price                   Decimal               @db.Decimal(36, 18)
+  amount                  Decimal               @db.Decimal(36, 18)
+  quoteAmount             Decimal               @db.Decimal(36, 18)
+  makerFee                Decimal               @db.Decimal(36, 18)
+  takerFee                Decimal               @db.Decimal(36, 18)
   settlementStatus        TradeSettlementStatus @default(PENDING)
-  settlementAttempts      Int      @default(0)
+  settlementAttempts      Int                   @default(0)
   settlementPayload       Json?
   settlementError         String?
   lastSettlementAttemptAt DateTime?
   nextSettlementRetryAt   DateTime?
-  txHash       String?   @unique
-  settledAt    DateTime?
-  createdAt    DateTime  @default(now())
+  txHash                  String?               @unique
+  settledAt               DateTime?
+  createdAt               DateTime              @default(now())
 
   pair       Pair  @relation(fields: [pairId], references: [id])
   makerOrder Order @relation("MakerTrades", fields: [makerOrderId], references: [id])
@@ -292,17 +293,17 @@ model UserBalance {
 }
 
 model MarginAccount {
-  id                  String                     @id @default(uuid())
-  address             String                     @unique
-  collateralToken     String                     @default("USDT")
-  collateralAvailable Decimal                    @default(0) @db.Decimal(36, 18)
-  collateralLocked    Decimal                    @default(0) @db.Decimal(36, 18)
-  totalRealizedPnl    Decimal                    @default(0) @db.Decimal(36, 18)
-  createdAt           DateTime                   @default(now())
-  updatedAt           DateTime                   @updatedAt
+  id                  String   @id @default(uuid())
+  address             String   @unique
+  collateralToken     String   @default("USDT")
+  collateralAvailable Decimal  @default(0) @db.Decimal(36, 18)
+  collateralLocked    Decimal  @default(0) @db.Decimal(36, 18)
+  totalRealizedPnl    Decimal  @default(0) @db.Decimal(36, 18)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
-  positions           MarginPosition[]
-  transfers           MarginCollateralTransfer[]
+  positions MarginPosition[]
+  transfers MarginCollateralTransfer[]
 
   @@index([address])
 }
@@ -329,9 +330,9 @@ model MarginPosition {
   closedAt          DateTime?
   updatedAt         DateTime             @updatedAt
 
-  account           MarginAccount        @relation(fields: [accountId], references: [id])
-  pair              Pair                 @relation(fields: [pairId], references: [id])
-  liquidations      MarginLiquidation[]
+  account      MarginAccount       @relation(fields: [accountId], references: [id])
+  pair         Pair                @relation(fields: [pairId], references: [id])
+  liquidations MarginLiquidation[]
 
   @@index([accountId, status])
   @@index([accountId, pairId, status])
@@ -339,67 +340,67 @@ model MarginPosition {
 }
 
 model MarginCollateralTransfer {
-  id          String        @id @default(uuid())
-  accountId   String
-  direction   MarginTransferDirection
-  status      TransferStatus @default(CONFIRMED)
-  token       String
-  amount      Decimal       @db.Decimal(36, 18)
-  signature   String
-  txHash      String?
-  createdAt   DateTime      @default(now())
+  id        String                  @id @default(uuid())
+  accountId String
+  direction MarginTransferDirection
+  status    TransferStatus          @default(CONFIRMED)
+  token     String
+  amount    Decimal                 @db.Decimal(36, 18)
+  signature String
+  txHash    String?
+  createdAt DateTime                @default(now())
 
-  account     MarginAccount @relation(fields: [accountId], references: [id])
+  account MarginAccount @relation(fields: [accountId], references: [id])
 
   @@index([accountId, createdAt])
   @@index([accountId, status, createdAt])
 }
 
 model MarginLiquidation {
-  id                 String         @id @default(uuid())
+  id                 String   @id @default(uuid())
   positionId         String
   liquidatorAddress  String
-  markPrice          Decimal        @db.Decimal(36, 18)
-  equityBefore       Decimal        @db.Decimal(36, 18)
-  penaltyAmount      Decimal        @db.Decimal(36, 18)
-  releasedCollateral Decimal        @db.Decimal(36, 18)
-  createdAt          DateTime       @default(now())
+  markPrice          Decimal  @db.Decimal(36, 18)
+  equityBefore       Decimal  @db.Decimal(36, 18)
+  penaltyAmount      Decimal  @db.Decimal(36, 18)
+  releasedCollateral Decimal  @db.Decimal(36, 18)
+  createdAt          DateTime @default(now())
 
-  position           MarginPosition @relation(fields: [positionId], references: [id])
+  position MarginPosition @relation(fields: [positionId], references: [id])
 
   @@index([positionId, createdAt])
   @@index([liquidatorAddress, createdAt])
 }
 
 model Leader {
-  id                         String    @id @default(uuid())
+  id                         String   @id @default(uuid())
   name                       String
-  username                   String    @unique
-  address                    String    @unique
-  avatar                     String    @default("")
+  username                   String   @unique
+  address                    String   @unique
+  avatar                     String   @default("")
   twitterUrl                 String?
   telegramUrl                String?
   discordUrl                 String?
-  isAi                       Boolean   @default(false)
-  isVerified                 Boolean   @default(false)
-  bio                        String    @db.Text
-  memberSince                DateTime  @default(now())
-  performanceFeeBps          Int       @default(1500)
-  roi30d                     Decimal   @default(0) @db.Decimal(20, 8)
-  roi90d                     Decimal   @default(0) @db.Decimal(20, 8)
-  totalAum                   Decimal   @default(0) @db.Decimal(36, 18)
-  drawdown                   Decimal   @default(0) @db.Decimal(20, 8)
-  followersCount             Int       @default(0)
-  winRate                    Decimal   @default(0) @db.Decimal(20, 8)
-  avgProfit                  Decimal   @default(0) @db.Decimal(20, 8)
-  sharpe                     Decimal   @default(0) @db.Decimal(20, 8)
-  totalPerformanceFeesEarned Decimal   @default(0) @db.Decimal(36, 18)
-  allowApiTrading            Boolean   @default(false)
-  apiKeyHash                 String?   @unique
-  pnlHistory                 Float[]   @default([])
-  tags                       String[]  @default([])
-  createdAt                  DateTime  @default(now())
-  updatedAt                  DateTime  @updatedAt
+  isAi                       Boolean  @default(false)
+  isVerified                 Boolean  @default(false)
+  bio                        String   @db.Text
+  memberSince                DateTime @default(now())
+  performanceFeeBps          Int      @default(1500)
+  roi30d                     Decimal  @default(0) @db.Decimal(20, 8)
+  roi90d                     Decimal  @default(0) @db.Decimal(20, 8)
+  totalAum                   Decimal  @default(0) @db.Decimal(36, 18)
+  drawdown                   Decimal  @default(0) @db.Decimal(20, 8)
+  followersCount             Int      @default(0)
+  winRate                    Decimal  @default(0) @db.Decimal(20, 8)
+  avgProfit                  Decimal  @default(0) @db.Decimal(20, 8)
+  sharpe                     Decimal  @default(0) @db.Decimal(20, 8)
+  totalPerformanceFeesEarned Decimal  @default(0) @db.Decimal(36, 18)
+  allowApiTrading            Boolean  @default(false)
+  apiKeyHash                 String?  @unique
+  pnlHistory                 Float[]  @default([])
+  tags                       String[] @default([])
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
 
   vault              CopyVault?
   trades             LeaderTrade[]
@@ -415,23 +416,23 @@ model Leader {
 }
 
 model CopyVault {
-  id               String    @id @default(uuid())
-  leaderId         String    @unique
+  id               String          @id @default(uuid())
+  leaderId         String          @unique
   name             String
-  collateralToken  String    @default("USDT")
+  collateralToken  String          @default("USDT")
   status           CopyVaultStatus @default(ACTIVE)
-  totalEquity      Decimal   @default(0) @db.Decimal(36, 18)
-  totalShares      Decimal   @default(0) @db.Decimal(36, 18)
-  totalDeposits    Decimal   @default(0) @db.Decimal(36, 18)
-  totalWithdrawals Decimal   @default(0) @db.Decimal(36, 18)
-  minDeposit       Decimal   @default(10) @db.Decimal(36, 18)
-  twapThreshold    Decimal   @default(50000) @db.Decimal(36, 18)
-  maxSlippageBps   Int       @default(100)
-  contractAddress  String?   // On-chain CopyVault ink! contract address
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  totalEquity      Decimal         @default(0) @db.Decimal(36, 18)
+  totalShares      Decimal         @default(0) @db.Decimal(36, 18)
+  totalDeposits    Decimal         @default(0) @db.Decimal(36, 18)
+  totalWithdrawals Decimal         @default(0) @db.Decimal(36, 18)
+  minDeposit       Decimal         @default(10) @db.Decimal(36, 18)
+  twapThreshold    Decimal         @default(50000) @db.Decimal(36, 18)
+  maxSlippageBps   Int             @default(100)
+  contractAddress  String? // On-chain CopyVault ink! contract address
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
-  leader      Leader               @relation(fields: [leaderId], references: [id])
+  leader      Leader                @relation(fields: [leaderId], references: [id])
   positions   CopyVaultPosition[]
   deposits    CopyVaultDeposit[]
   withdrawals CopyVaultWithdrawal[]
@@ -442,17 +443,17 @@ model CopyVault {
 }
 
 model CopyVaultPosition {
-  id                String    @id @default(uuid())
-  vaultId           String
-  followerAddress   String
-  shareBalance      Decimal   @default(0) @db.Decimal(36, 18)
-  netDeposited      Decimal   @default(0) @db.Decimal(36, 18)
-  totalWithdrawn    Decimal   @default(0) @db.Decimal(36, 18)
+  id                 String   @id @default(uuid())
+  vaultId            String
+  followerAddress    String
+  shareBalance       Decimal  @default(0) @db.Decimal(36, 18)
+  netDeposited       Decimal  @default(0) @db.Decimal(36, 18)
+  totalWithdrawn     Decimal  @default(0) @db.Decimal(36, 18)
   highWaterMarkValue Decimal  @default(0) @db.Decimal(36, 18)
-  feePaid           Decimal   @default(0) @db.Decimal(36, 18)
-  realizedPnl       Decimal   @default(0) @db.Decimal(36, 18)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  feePaid            Decimal  @default(0) @db.Decimal(36, 18)
+  realizedPnl        Decimal  @default(0) @db.Decimal(36, 18)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   vault CopyVault @relation(fields: [vaultId], references: [id])
 
@@ -461,14 +462,14 @@ model CopyVaultPosition {
 }
 
 model CopyVaultDeposit {
-  id              String    @id @default(uuid())
+  id              String   @id @default(uuid())
   vaultId         String
   followerAddress String
   token           String
-  amount          Decimal   @db.Decimal(36, 18)
-  sharesMinted    Decimal   @db.Decimal(36, 18)
+  amount          Decimal  @db.Decimal(36, 18)
+  sharesMinted    Decimal  @db.Decimal(36, 18)
   txHash          String?
-  createdAt       DateTime  @default(now())
+  createdAt       DateTime @default(now())
 
   vault CopyVault @relation(fields: [vaultId], references: [id])
 
@@ -477,17 +478,17 @@ model CopyVaultDeposit {
 }
 
 model CopyVaultWithdrawal {
-  id              String    @id @default(uuid())
+  id              String   @id @default(uuid())
   vaultId         String
   followerAddress String
   token           String
-  sharesBurned    Decimal   @db.Decimal(36, 18)
-  grossAmount     Decimal   @db.Decimal(36, 18)
-  feeAmount       Decimal   @db.Decimal(36, 18)
-  netAmount       Decimal   @db.Decimal(36, 18)
-  profitAmount    Decimal   @db.Decimal(36, 18)
+  sharesBurned    Decimal  @db.Decimal(36, 18)
+  grossAmount     Decimal  @db.Decimal(36, 18)
+  feeAmount       Decimal  @db.Decimal(36, 18)
+  netAmount       Decimal  @db.Decimal(36, 18)
+  profitAmount    Decimal  @db.Decimal(36, 18)
   txHash          String?
-  createdAt       DateTime  @default(now())
+  createdAt       DateTime @default(now())
 
   vault CopyVault @relation(fields: [vaultId], references: [id])
 
@@ -496,28 +497,28 @@ model CopyVaultWithdrawal {
 }
 
 model CopyTradeSignal {
-  id             String    @id @default(uuid())
+  id             String                @id @default(uuid())
   leaderId       String
   vaultId        String
   pairId         String?
   pairSymbol     String
   side           OrderSide
-  source         CopyTradeSource @default(API)
+  source         CopyTradeSource       @default(API)
   strategyTag    String?
-  amountIn       Decimal   @db.Decimal(36, 18)
-  amountOutMin   Decimal   @db.Decimal(36, 18)
-  executionPrice Decimal?  @db.Decimal(36, 18)
-  realizedPnlPct Decimal?  @db.Decimal(20, 8)
-  route          String[]  @default([])
-  maxSlippageBps Int       @default(100)
+  amountIn       Decimal               @db.Decimal(36, 18)
+  amountOutMin   Decimal               @db.Decimal(36, 18)
+  executionPrice Decimal?              @db.Decimal(36, 18)
+  realizedPnlPct Decimal?              @db.Decimal(20, 8)
+  route          String[]              @default([])
+  maxSlippageBps Int                   @default(100)
   status         CopyTradeSignalStatus @default(EXECUTED)
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime              @default(now())
 
-  leader     Leader               @relation(fields: [leaderId], references: [id])
-  vault      CopyVault            @relation(fields: [vaultId], references: [id])
-  pair       Pair?                @relation(fields: [pairId], references: [id])
+  leader             Leader                       @relation(fields: [leaderId], references: [id])
+  vault              CopyVault                    @relation(fields: [vaultId], references: [id])
+  pair               Pair?                        @relation(fields: [pairId], references: [id])
   walletContinuation CopyTradeWalletContinuation?
-  executions CopyTradeExecution[]
+  executions         CopyTradeExecution[]
 
   @@index([leaderId, createdAt])
   @@index([vaultId, createdAt])
@@ -525,38 +526,38 @@ model CopyTradeSignal {
 }
 
 model CopyTradeWalletContinuation {
-  id                     String                            @id @default(uuid())
-  signalId               String                            @unique
-  leaderId               String
-  vaultId                String
-  positionEffect         String
-  executedVia            String                            @default("ASYMMETRIC")
-  requiresWalletSignature Boolean                          @default(true)
-  contractAddress        String
-  method                 String                            @default("swap")
-  side                   OrderSide
-  amountIn               Decimal                           @db.Decimal(36, 18)
-  minAmountOut           Decimal                           @db.Decimal(36, 18)
-  makerAddress           String
-  nonce                  String
-  agentId                String?
-  status                 CopyTradeWalletContinuationStatus @default(PENDING)
-  txHash                 String?
-  message                String?                           @db.Text
-  requestedAt            DateTime                          @default(now())
-  confirmedAt            DateTime?
-  expiresAt              DateTime?
-  createdAt              DateTime                          @default(now())
-  updatedAt              DateTime                          @updatedAt
+  id                      String                            @id @default(uuid())
+  signalId                String                            @unique
+  leaderId                String
+  vaultId                 String
+  positionEffect          String
+  executedVia             String                            @default("ASYMMETRIC")
+  requiresWalletSignature Boolean                           @default(true)
+  contractAddress         String
+  method                  String                            @default("swap")
+  side                    OrderSide
+  amountIn                Decimal                           @db.Decimal(36, 18)
+  minAmountOut            Decimal                           @db.Decimal(36, 18)
+  makerAddress            String
+  nonce                   String
+  agentId                 String?
+  status                  CopyTradeWalletContinuationStatus @default(PENDING)
+  txHash                  String?
+  message                 String?                           @db.Text
+  requestedAt             DateTime                          @default(now())
+  confirmedAt             DateTime?
+  expiresAt               DateTime?
+  createdAt               DateTime                          @default(now())
+  updatedAt               DateTime                          @updatedAt
 
-  signal                 CopyTradeSignal                   @relation(fields: [signalId], references: [id])
+  signal CopyTradeSignal @relation(fields: [signalId], references: [id])
 
   @@index([leaderId, status, requestedAt])
   @@index([vaultId, status, requestedAt])
 }
 
 model CopyTradeExecution {
-  id             String    @id @default(uuid())
+  id             String                   @id @default(uuid())
   vaultId        String
   signalId       String
   pairId         String?
@@ -564,13 +565,13 @@ model CopyTradeExecution {
   side           OrderSide
   sliceIndex     Int
   totalSlices    Int
-  amountIn       Decimal   @db.Decimal(36, 18)
-  amountOut      Decimal?  @db.Decimal(36, 18)
-  executionPrice Decimal?  @db.Decimal(36, 18)
+  amountIn       Decimal                  @db.Decimal(36, 18)
+  amountOut      Decimal?                 @db.Decimal(36, 18)
+  executionPrice Decimal?                 @db.Decimal(36, 18)
   slippageBps    Int?
-  realizedPnl    Decimal   @default(0) @db.Decimal(36, 18)
+  realizedPnl    Decimal                  @default(0) @db.Decimal(36, 18)
   status         CopyTradeExecutionStatus @default(EXECUTED)
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime                 @default(now())
 
   vault  CopyVault       @relation(fields: [vaultId], references: [id])
   signal CopyTradeSignal @relation(fields: [signalId], references: [id])
@@ -582,16 +583,16 @@ model CopyTradeExecution {
 }
 
 model LeaderTrade {
-  id         String    @id @default(uuid())
+  id         String            @id @default(uuid())
   leaderId   String
   pairId     String?
   pairSymbol String
   side       OrderSide
-  entryPrice Decimal   @db.Decimal(36, 18)
-  exitPrice  Decimal?  @db.Decimal(36, 18)
-  pnlPct     Decimal   @default(0) @db.Decimal(20, 8)
+  entryPrice Decimal           @db.Decimal(36, 18)
+  exitPrice  Decimal?          @db.Decimal(36, 18)
+  pnlPct     Decimal           @default(0) @db.Decimal(20, 8)
   status     LeaderTradeStatus @default(OPEN)
-  openedAt   DateTime  @default(now())
+  openedAt   DateTime          @default(now())
   closedAt   DateTime?
 
   leader Leader @relation(fields: [leaderId], references: [id])
@@ -626,10 +627,10 @@ model SocialIdea {
 }
 
 model SocialIdeaLike {
-  id        String    @id @default(uuid())
-  ideaId     String
+  id        String   @id @default(uuid())
+  ideaId    String
   address   String
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   idea SocialIdea @relation(fields: [ideaId], references: [id])
 
@@ -638,11 +639,11 @@ model SocialIdeaLike {
 }
 
 model SocialIdeaComment {
-  id        String    @id @default(uuid())
-  ideaId     String
+  id        String   @id @default(uuid())
+  ideaId    String
   address   String
-  content   String    @db.Text
-  createdAt DateTime  @default(now())
+  content   String   @db.Text
+  createdAt DateTime @default(now())
 
   idea SocialIdea @relation(fields: [ideaId], references: [id])
 
@@ -651,10 +652,10 @@ model SocialIdeaComment {
 }
 
 model LeaderFollow {
-  id              String    @id @default(uuid())
+  id              String   @id @default(uuid())
   leaderId        String
   followerAddress String
-  createdAt       DateTime  @default(now())
+  createdAt       DateTime @default(now())
 
   leader Leader @relation(fields: [leaderId], references: [id])
 
@@ -663,15 +664,15 @@ model LeaderFollow {
 }
 
 model SocialAnalyticsCursor {
-  id                 String                 @id @default(uuid())
-  chain              String                 @unique
-  lastProcessedBlock Int                    @default(0)
+  id                 String                  @id @default(uuid())
+  chain              String                  @unique
+  lastProcessedBlock Int                     @default(0)
   lastProcessedHash  String?
   status             AnalyticsPipelineStatus @default(IDLE)
   lastProcessedAt    DateTime?
-  lastError          String?                @db.Text
-  createdAt          DateTime               @default(now())
-  updatedAt          DateTime               @updatedAt
+  lastError          String?                 @db.Text
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
 }
 
 model SocialIndexedEvent {
@@ -703,32 +704,32 @@ model SocialIndexedEvent {
 }
 
 model LeaderAnalyticsSnapshot {
-  id             String   @id @default(uuid())
-  leaderId       String
-  sourceChain    String
-  sourceMode     String   @default("INDEXER")
-  asOfBlock      Int      @default(0)
-  asOfTime       DateTime
-  initialEquity  Decimal  @default(0) @db.Decimal(36, 18)
-  currentEquity  Decimal  @default(0) @db.Decimal(36, 18)
-  realizedPnl    Decimal  @default(0) @db.Decimal(36, 18)
-  unrealizedPnl  Decimal  @default(0) @db.Decimal(36, 18)
-  tradedVolume   Decimal  @default(0) @db.Decimal(36, 18)
-  grossProfit    Decimal  @default(0) @db.Decimal(36, 18)
-  grossLoss      Decimal  @default(0) @db.Decimal(36, 18)
-  roi30d         Decimal  @default(0) @db.Decimal(20, 8)
-  roi90d         Decimal  @default(0) @db.Decimal(20, 8)
-  maxDrawdown    Decimal  @default(0) @db.Decimal(20, 8)
-  winRate        Decimal  @default(0) @db.Decimal(20, 8)
-  avgProfit      Decimal  @default(0) @db.Decimal(20, 8)
-  sharpe         Decimal  @default(0) @db.Decimal(20, 8)
-  totalTrades    Int      @default(0)
-  winningTrades  Int      @default(0)
-  losingTrades   Int      @default(0)
-  pnlHistory     Float[]  @default([])
-  lastEventAt    DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String    @id @default(uuid())
+  leaderId      String
+  sourceChain   String
+  sourceMode    String    @default("INDEXER")
+  asOfBlock     Int       @default(0)
+  asOfTime      DateTime
+  initialEquity Decimal   @default(0) @db.Decimal(36, 18)
+  currentEquity Decimal   @default(0) @db.Decimal(36, 18)
+  realizedPnl   Decimal   @default(0) @db.Decimal(36, 18)
+  unrealizedPnl Decimal   @default(0) @db.Decimal(36, 18)
+  tradedVolume  Decimal   @default(0) @db.Decimal(36, 18)
+  grossProfit   Decimal   @default(0) @db.Decimal(36, 18)
+  grossLoss     Decimal   @default(0) @db.Decimal(36, 18)
+  roi30d        Decimal   @default(0) @db.Decimal(20, 8)
+  roi90d        Decimal   @default(0) @db.Decimal(20, 8)
+  maxDrawdown   Decimal   @default(0) @db.Decimal(20, 8)
+  winRate       Decimal   @default(0) @db.Decimal(20, 8)
+  avgProfit     Decimal   @default(0) @db.Decimal(20, 8)
+  sharpe        Decimal   @default(0) @db.Decimal(20, 8)
+  totalTrades   Int       @default(0)
+  winningTrades Int       @default(0)
+  losingTrades  Int       @default(0)
+  pnlHistory    Float[]   @default([])
+  lastEventAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   leader Leader @relation(fields: [leaderId], references: [id])
 
@@ -800,38 +801,46 @@ model AffiliatePayoutBatch {
   @@index([status])
 }
 
+model BannedWallet {
+  id        String   @id @default(cuid())
+  address   String   @unique
+  reason    String?
+  bannedBy  String
+  createdAt DateTime @default(now())
+}
+
 // ─── Agent Ecosystem ────────────────────────────────────────────
 
 model Agent {
-  id                   String      @id @default(uuid())
-  leaderId             String?     @unique
-  walletAddress        String      @unique
-  agentType            AgentType   @default(HUMAN)
-  framework            String?
-  strategyDescription  String?     @db.Text
-  isActive             Boolean     @default(true)
-  isBanned             Boolean     @default(false)
-  banReason            String?
+  id                  String    @id @default(uuid())
+  leaderId            String?   @unique
+  walletAddress       String    @unique
+  agentType           AgentType @default(HUMAN)
+  framework           String?
+  strategyDescription String?   @db.Text
+  isActive            Boolean   @default(true)
+  isBanned            Boolean   @default(false)
+  banReason           String?
 
   // Trading limits (determined by staking tier)
-  dailyTradeLimit      Int         @default(10)
-  maxPositionSize      Decimal     @default(100) @db.Decimal(36, 18)
-  maxOpenOrders        Int         @default(5)
+  dailyTradeLimit Int     @default(10)
+  maxPositionSize Decimal @default(100) @db.Decimal(36, 18)
+  maxOpenOrders   Int     @default(5)
 
   // Staking
-  stakedAmount         Decimal     @default(0) @db.Decimal(36, 18)
-  stakingTier          Int         @default(0)
+  stakedAmount Decimal @default(0) @db.Decimal(36, 18)
+  stakingTier  Int     @default(0)
 
   // Activity
-  totalTrades          Int         @default(0)
-  totalVolume          Decimal     @default(0) @db.Decimal(36, 18)
-  lastActiveAt         DateTime?
+  totalTrades     Int       @default(0)
+  totalVolume     Decimal   @default(0) @db.Decimal(36, 18)
+  lastActiveAt    DateTime?
   /// Reputation score computed from strategy performance (0-100)
-  reputationScore      Decimal     @default(0) @db.Decimal(10, 4)
-  createdAt            DateTime    @default(now())
-  updatedAt            DateTime    @updatedAt
+  reputationScore Decimal   @default(0) @db.Decimal(10, 4)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  leader               Leader?     @relation(fields: [leaderId], references: [id])
+  leader               Leader?              @relation(fields: [leaderId], references: [id])
   apiKeys              AgentApiKey[]
   stakes               AgentStake[]
   asymmetricStrategies AsymmetricStrategy[]
@@ -844,17 +853,17 @@ model Agent {
 }
 
 model AgentApiKey {
-  id          String                 @id @default(uuid())
+  id          String                  @id @default(uuid())
   agentId     String
-  label       String                 @default("default")
+  label       String                  @default("default")
   keyPrefix   String
-  keyHash     String                 @unique
+  keyHash     String                  @unique
   permissions AgentApiKeyPermission[]
   expiresAt   DateTime
   revokedAt   DateTime?
   lastUsedAt  DateTime?
   lastUsedIp  String?
-  createdAt   DateTime               @default(now())
+  createdAt   DateTime                @default(now())
 
   agent Agent @relation(fields: [agentId], references: [id])
 
@@ -863,17 +872,17 @@ model AgentApiKey {
 }
 
 model AgentStake {
-  id                   String           @id @default(uuid())
-  agentId              String
-  amount               Decimal          @db.Decimal(36, 18)
-  token                String           @default("LUNES")
-  status               AgentStakeStatus @default(STAKED)
-  txHash               String?
-  stakedAt             DateTime         @default(now())
-  unstakeRequestedAt   DateTime?
-  unstakeCompletedAt   DateTime?
-  slashedAt            DateTime?
-  slashReason          String?
+  id                 String           @id @default(uuid())
+  agentId            String
+  amount             Decimal          @db.Decimal(36, 18)
+  token              String           @default("LUNES")
+  status             AgentStakeStatus @default(STAKED)
+  txHash             String?
+  stakedAt           DateTime         @default(now())
+  unstakeRequestedAt DateTime?
+  unstakeCompletedAt DateTime?
+  slashedAt          DateTime?
+  slashReason        String?
 
   agent Agent @relation(fields: [agentId], references: [id])
 
@@ -884,9 +893,9 @@ model AgentStake {
 // ─── Token Listing System ────────────────────────────────────────
 
 enum ListingTier {
-  BASIC     // Tier 1: 1 000 LUNES fee, 2 000 LUNES liq, 90 days
-  VERIFIED  // Tier 2: 5 000 LUNES fee, 10 000 LUNES liq, 120 days
-  FEATURED  // Tier 3: 20 000 LUNES fee, 50 000 LUNES liq, 180 days
+  BASIC // Tier 1: 1 000 LUNES fee, 2 000 LUNES liq, 90 days
+  VERIFIED // Tier 2: 5 000 LUNES fee, 10 000 LUNES liq, 120 days
+  FEATURED // Tier 3: 20 000 LUNES fee, 50 000 LUNES liq, 180 days
 }
 
 enum ListingStatus {
@@ -930,23 +939,23 @@ model TokenListing {
 }
 
 model LiquidityLock {
-  id              String      @id @default(uuid())
-  listingId       String      @unique
-  ownerAddress    String
-  pairAddress     String
-  lpTokenAddress  String
-  lpAmount        Decimal     @db.Decimal(36, 18)
-  lunesLocked     Decimal     @db.Decimal(36, 18)
-  tokenLocked     Decimal     @db.Decimal(36, 18)
-  tier            ListingTier
-  status          LockStatus  @default(LOCKED)
-  unlockAt        DateTime
-  onChainLockId   Int?
-  txHashLock      String?
-  txHashUnlock    String?
-  withdrawnAt     DateTime?
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id             String      @id @default(uuid())
+  listingId      String      @unique
+  ownerAddress   String
+  pairAddress    String
+  lpTokenAddress String
+  lpAmount       Decimal     @db.Decimal(36, 18)
+  lunesLocked    Decimal     @db.Decimal(36, 18)
+  tokenLocked    Decimal     @db.Decimal(36, 18)
+  tier           ListingTier
+  status         LockStatus  @default(LOCKED)
+  unlockAt       DateTime
+  onChainLockId  Int?
+  txHashLock     String?
+  txHashUnlock   String?
+  withdrawnAt    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
 
   listing TokenListing @relation(fields: [listingId], references: [id])
 
@@ -991,10 +1000,10 @@ enum AsymmetricCurveSide {
 }
 
 model AsymmetricStrategy {
-  id               String                   @id @default(uuid())
-  userAddress      String                   // LP wallet address (sr25519)
-  pairAddress      String                   // AsymmetricPair ink! contract address
-  agentId          String?                  // null = backend Sentinel; set = AI agent (OpenClaw)
+  id          String  @id @default(uuid())
+  userAddress String // LP wallet address (sr25519)
+  pairAddress String // AsymmetricPair ink! contract address
+  agentId     String? // null = backend Sentinel; set = AI agent (OpenClaw)
 
   // Automation control
   isAutoRebalance  Boolean                  @default(true)
@@ -1003,19 +1012,19 @@ model AsymmetricStrategy {
   pendingAmount    Decimal                  @default(0) @db.Decimal(36, 18)
 
   // Buy curve parameters
-  buyK             Decimal                  @db.Decimal(36, 18) // base liquidity
-  buyGamma         Int                                          // curvature 1-5
-  buyMaxCapacity   Decimal                  @db.Decimal(36, 18)
-  buyFeeTargetBps  Int                      @default(30)
+  buyK            Decimal @db.Decimal(36, 18) // base liquidity
+  buyGamma        Int // curvature 1-5
+  buyMaxCapacity  Decimal @db.Decimal(36, 18)
+  buyFeeTargetBps Int     @default(30)
 
   // Sell curve parameters
   sellGamma           Int
-  sellMaxCapacity     Decimal               @db.Decimal(36, 18)
-  sellFeeTargetBps    Int                   @default(30)
-  sellProfitTargetBps Int                   @default(500)  // 5% profit target
+  sellMaxCapacity     Decimal @db.Decimal(36, 18)
+  sellFeeTargetBps    Int     @default(30)
+  sellProfitTargetBps Int     @default(500) // 5% profit target
 
   // Leverage integration (links to MarginAccount)
-  leverageL  Decimal @default(0)   @db.Decimal(36, 18)
+  leverageL   Decimal @default(0) @db.Decimal(36, 18)
   allocationC Decimal @default(0.5) @db.Decimal(10, 4)
 
   // Sentinel retry tracking
@@ -1025,7 +1034,7 @@ model AsymmetricStrategy {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  agent         Agent?                  @relation(fields: [agentId], references: [id])
+  agent         Agent?                   @relation(fields: [agentId], references: [id])
   rebalanceLogs AsymmetricRebalanceLog[]
 
   @@index([userAddress, status])
@@ -1038,7 +1047,7 @@ model AsymmetricRebalanceLog {
   id             String              @id @default(uuid())
   strategyId     String
   side           AsymmetricCurveSide
-  trigger        String              // AUTO_REBALANCER | AI_AGENT | MANUAL
+  trigger        String // AUTO_REBALANCER | AI_AGENT | MANUAL
   acquiredAmount Decimal             @db.Decimal(36, 18)
   newCapacity    Decimal             @db.Decimal(36, 18)
   txHash         String?
@@ -1055,20 +1064,20 @@ model AsymmetricRebalanceLog {
 // ─── AI Trading Network: Execution Layer ────────────────────────────────────
 
 enum ExecutionStatus {
-  PENDING   // Submitted to orderbook, awaiting fill
-  EXECUTED  // Fully or partially filled
-  REJECTED  // Blocked by risk/validation controls
-  FAILED    // Technical failure (timeout, rpc error)
+  PENDING // Submitted to orderbook, awaiting fill
+  EXECUTED // Fully or partially filled
+  REJECTED // Blocked by risk/validation controls
+  FAILED // Technical failure (timeout, rpc error)
 }
 
 model ExecutionLog {
   id               String          @id @default(uuid())
   agentId          String
-  strategyId       String?         // Optional: linked Strategy
-  orderId          String?         // Filled once the Order record exists
+  strategyId       String? // Optional: linked Strategy
+  orderId          String? // Filled once the Order record exists
   pairSymbol       String
   side             OrderSide
-  orderType        String          // MARKET | LIMIT | STOP | STOP_LIMIT
+  orderType        String // MARKET | LIMIT | STOP | STOP_LIMIT
   requestedAmount  Decimal         @db.Decimal(36, 18)
   executedAmount   Decimal?        @db.Decimal(36, 18)
   price            Decimal?        @db.Decimal(36, 18)
@@ -1077,7 +1086,7 @@ model ExecutionLog {
   rejectionReason  String?         @db.Text
   /// JSON map: { check_name: { passed, value, limit } }
   validationChecks Json?
-  source           String          @default("API")  // API | WEB3 | COPYTRADE | STRATEGY
+  source           String          @default("API") // API | WEB3 | COPYTRADE | STRATEGY
 
   createdAt DateTime @default(now())
 
@@ -1093,35 +1102,35 @@ model ExecutionLog {
 // ─── AI Trading Network: Strategy Layer ────────────────────────────────────
 
 model Strategy {
-  id                  String            @id @default(uuid())
-  agentId             String
-  leaderId            String?           // Optional: mirrors a Leader's performance
-  vaultAddress        String?           // Optional: on-chain CopyVault contract address
-  name                String
-  description         String?           @db.Text
-  strategyType        StrategyType      @default(CUSTOM)
-  riskLevel           StrategyRiskLevel @default(MEDIUM)
-  status              StrategyStatus    @default(ACTIVE)
-  isPublic            Boolean           @default(true)
+  id           String            @id @default(uuid())
+  agentId      String
+  leaderId     String? // Optional: mirrors a Leader's performance
+  vaultAddress String? // Optional: on-chain CopyVault contract address
+  name         String
+  description  String?           @db.Text
+  strategyType StrategyType      @default(CUSTOM)
+  riskLevel    StrategyRiskLevel @default(MEDIUM)
+  status       StrategyStatus    @default(ACTIVE)
+  isPublic     Boolean           @default(true)
 
   // Performance metrics — synced by reputation engine from LeaderAnalyticsSnapshot
-  roi30d              Decimal           @default(0) @db.Decimal(20, 8)
-  roi7d               Decimal           @default(0) @db.Decimal(20, 8)
-  roi1d               Decimal           @default(0) @db.Decimal(20, 8)
-  sharpeRatio         Decimal           @default(0) @db.Decimal(20, 8)
-  maxDrawdown         Decimal           @default(0) @db.Decimal(20, 8)
-  winRate             Decimal           @default(0) @db.Decimal(10, 4)
-  totalTrades         Int               @default(0)
-  followersCount      Int               @default(0)
-  totalVolume         Decimal           @default(0) @db.Decimal(36, 18)
-  vaultEquity         Decimal           @default(0) @db.Decimal(36, 18)
+  roi30d         Decimal @default(0) @db.Decimal(20, 8)
+  roi7d          Decimal @default(0) @db.Decimal(20, 8)
+  roi1d          Decimal @default(0) @db.Decimal(20, 8)
+  sharpeRatio    Decimal @default(0) @db.Decimal(20, 8)
+  maxDrawdown    Decimal @default(0) @db.Decimal(20, 8)
+  winRate        Decimal @default(0) @db.Decimal(10, 4)
+  totalTrades    Int     @default(0)
+  followersCount Int     @default(0)
+  totalVolume    Decimal @default(0) @db.Decimal(36, 18)
+  vaultEquity    Decimal @default(0) @db.Decimal(36, 18)
 
   performanceSyncedAt DateTime?
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
-  agent       Agent               @relation(fields: [agentId], references: [id])
-  leader      Leader?             @relation(fields: [leaderId], references: [id])
+  agent       Agent                 @relation(fields: [agentId], references: [id])
+  leader      Leader?               @relation(fields: [leaderId], references: [id])
   followers   StrategyFollow[]
   performance StrategyPerformance[]
   executions  ExecutionLog[]
@@ -1134,13 +1143,13 @@ model Strategy {
 }
 
 model StrategyFollow {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   strategyId       String
   followerAddress  String
   /// LUNES or vault shares allocated to this strategy
-  allocatedCapital Decimal  @default(0) @db.Decimal(36, 18)
-  isActive         Boolean  @default(true)
-  followedAt       DateTime @default(now())
+  allocatedCapital Decimal   @default(0) @db.Decimal(36, 18)
+  isActive         Boolean   @default(true)
+  followedAt       DateTime  @default(now())
   unfollowedAt     DateTime?
 
   strategy Strategy @relation(fields: [strategyId], references: [id])
@@ -1173,12 +1182,12 @@ model StrategyPerformance {
 // Used for server-side cooldown enforcement (1h minimum between votes).
 
 model GovernanceVote {
-  id           String   @id @default(uuid())
+  id            String   @id @default(uuid())
   walletAddress String
-  proposalId   Int
-  voteType     String   // YES | NO
-  txHash       String?
-  votedAt      DateTime @default(now())
+  proposalId    Int
+  voteType      String // YES | NO
+  txHash        String?
+  votedAt       DateTime @default(now())
 
   @@unique([walletAddress, proposalId, voteType])
   @@index([walletAddress, proposalId])
@@ -1231,12 +1240,12 @@ model UserReward {
   rewardWeekId  String
   walletAddress String
   amount        Decimal   @db.Decimal(36, 18)
-  rewardType    String    // LEADER | TRADER (staker claims live on-chain)
+  rewardType    String // LEADER | TRADER (staker claims live on-chain)
   rank          Int?
   weight        Decimal?  @db.Decimal(36, 18)
   claimed       Boolean   @default(false)
   claimedAt     DateTime?
-  txHash        String?   // On-chain payout tx hash
+  txHash        String? // On-chain payout tx hash
   payoutStatus  String    @default("PENDING") // PENDING | SUBMITTED | CONFIRMED | FAILED
   payoutError   String?
   createdAt     DateTime  @default(now())

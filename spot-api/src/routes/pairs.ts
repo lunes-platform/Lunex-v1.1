@@ -150,6 +150,12 @@ router.post(
         }
         log.info({ pairAddress }, '[Pairs] On-chain validation passed');
       } else {
+        if (config.isProd) {
+          return res.status(503).json({
+            error:
+              'FACTORY_CONTRACT_ADDRESS not configured. Refusing to register pair without on-chain validation.',
+          });
+        }
         log.warn(
           '[Pairs] FACTORY_CONTRACT_ADDRESS not set — skipping on-chain validation',
         );
@@ -214,6 +220,69 @@ router.patch(
         data: { pairAddress },
       });
       res.json({ pair: updated });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  '/id/:id/status',
+  requireAdmin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+
+      if (typeof isActive !== 'boolean') {
+        return res.status(400).json({ error: 'isActive boolean is required' });
+      }
+
+      const pair = await prisma.pair.findUnique({ where: { id } });
+      if (!pair) return res.status(404).json({ error: 'Pair not found' });
+
+      const updated = await prisma.pair.update({
+        where: { id },
+        data: { isActive },
+      });
+
+      res.json({ pair: updated });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  '/id/:id',
+  requireAdmin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { id } = req.params;
+      const pair = await prisma.pair.findUnique({ where: { id } });
+      if (!pair) return res.status(404).json({ error: 'Pair not found' });
+
+      const [tradeCount, openOrderCount] = await Promise.all([
+        prisma.trade.count({ where: { pairId: id } }),
+        prisma.order.count({
+          where: { pairId: id, status: { in: ['OPEN', 'PARTIAL'] } },
+        }),
+      ]);
+
+      if (tradeCount > 0) {
+        return res.status(409).json({
+          error: `Cannot delete pair with ${tradeCount} existing trades. Deactivate it instead.`,
+        });
+      }
+
+      if (openOrderCount > 0) {
+        return res.status(409).json({
+          error: `Cannot delete pair with ${openOrderCount} open orders. Deactivate it instead.`,
+        });
+      }
+
+      await prisma.pair.delete({ where: { id } });
+      res.json({ deleted: true, pair });
     } catch (err) {
       next(err);
     }

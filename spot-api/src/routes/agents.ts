@@ -85,6 +85,14 @@ function ensureAgentScope(req: Request, res: Response) {
   return true;
 }
 
+function hasPermissionSubset(
+  requested: z.infer<typeof CreateApiKeySchema>['permissions'],
+  granted: NonNullable<Request['agent']>['permissions'],
+) {
+  const grantedPermissions = new Set(granted);
+  return requested.every((permission) => grantedPermissions.has(permission));
+}
+
 // ─── Public Routes ───────────────────────────────────────────────
 
 router.post(
@@ -204,6 +212,14 @@ router.post(
           return res
             .status(400)
             .json({ error: 'Validation failed', details: parsed.error.issues });
+        }
+        if (
+          !hasPermissionSubset(parsed.data.permissions, req.agent.permissions)
+        ) {
+          return res.status(403).json({
+            error:
+              'Cannot create API key with permissions outside authenticated key scope',
+          });
         }
         parsedData = parsed.data;
       } else {

@@ -43,7 +43,11 @@ pub struct FactoryRef;
 
 impl FactoryRef {
     /// Obtém o endereço do par para dois tokens
-    pub fn get_pair(factory: AccountId, token_a: AccountId, token_b: AccountId) -> Result<AccountId, ink::env::Error> {
+    pub fn get_pair(
+        factory: AccountId,
+        token_a: AccountId,
+        token_b: AccountId,
+    ) -> Result<AccountId, ink::env::Error> {
         build_call::<DefaultEnvironment>()
             .call(factory)
             .gas_limit(0)
@@ -71,9 +75,9 @@ impl PairRef {
             .call(pair)
             .gas_limit(0)
             .transferred_value(0)
-            .exec_input(
-                ExecutionInput::new(Selector::new(ink::selector_bytes!("get_reserves"))),
-            )
+            .exec_input(ExecutionInput::new(Selector::new(ink::selector_bytes!(
+                "get_reserves"
+            ))))
             .returns::<(Balance, Balance, u64)>()
             .try_invoke()
             .map_err(|_| ink::env::Error::CalleeTrapped)?
@@ -87,8 +91,7 @@ impl PairRef {
             .gas_limit(0)
             .transferred_value(0)
             .exec_input(
-                ExecutionInput::new(Selector::new(ink::selector_bytes!("mint")))
-                    .push_arg(to),
+                ExecutionInput::new(Selector::new(ink::selector_bytes!("mint"))).push_arg(to),
             )
             .returns::<Balance>()
             .try_invoke()
@@ -103,8 +106,7 @@ impl PairRef {
             .gas_limit(0)
             .transferred_value(0)
             .exec_input(
-                ExecutionInput::new(Selector::new(ink::selector_bytes!("burn")))
-                    .push_arg(to),
+                ExecutionInput::new(Selector::new(ink::selector_bytes!("burn"))).push_arg(to),
             )
             .returns::<(Balance, Balance)>()
             .try_invoke()
@@ -141,9 +143,9 @@ impl PairRef {
             .call(pair)
             .gas_limit(0)
             .transferred_value(0)
-            .exec_input(
-                ExecutionInput::new(Selector::new(ink::selector_bytes!("token_0"))),
-            )
+            .exec_input(ExecutionInput::new(Selector::new(ink::selector_bytes!(
+                "token_0"
+            ))))
             .returns::<AccountId>()
             .try_invoke()
             .map_err(|_| ink::env::Error::CalleeTrapped)?
@@ -156,9 +158,9 @@ impl PairRef {
             .call(pair)
             .gas_limit(0)
             .transferred_value(0)
-            .exec_input(
-                ExecutionInput::new(Selector::new(ink::selector_bytes!("token_1"))),
-            )
+            .exec_input(ExecutionInput::new(Selector::new(ink::selector_bytes!(
+                "token_1"
+            ))))
             .returns::<AccountId>()
             .try_invoke()
             .map_err(|_| ink::env::Error::CalleeTrapped)?
@@ -231,9 +233,9 @@ impl WNativeRef {
             .call(wnative)
             .gas_limit(0)
             .transferred_value(amount)
-            .exec_input(
-                ExecutionInput::new(Selector::new(ink::selector_bytes!("deposit"))),
-            )
+            .exec_input(ExecutionInput::new(Selector::new(ink::selector_bytes!(
+                "deposit"
+            ))))
             .returns::<Result<(), ()>>()
             .try_invoke()
             .map_err(|_| ink::env::Error::CalleeTrapped)?
@@ -259,7 +261,11 @@ impl WNativeRef {
     }
 
     /// Transfere WNative tokens
-    pub fn transfer(wnative: AccountId, to: AccountId, amount: Balance) -> Result<(), ink::env::Error> {
+    pub fn transfer(
+        wnative: AccountId,
+        to: AccountId,
+        amount: Balance,
+    ) -> Result<(), ink::env::Error> {
         build_call::<DefaultEnvironment>()
             .call(wnative)
             .gas_limit(0)
@@ -279,7 +285,7 @@ impl WNativeRef {
 
 #[ink::contract]
 pub mod router_contract {
-    use super::{PSP22Error, PSP22Ref, FactoryRef, PairRef, WNativeRef};
+    use super::{FactoryRef, PSP22Error, PSP22Ref, PairRef, WNativeRef};
     use ink::prelude::vec;
     use ink::prelude::vec::Vec;
 
@@ -450,8 +456,8 @@ pub mod router_contract {
         /// Construtor do Router Contract
         #[ink(constructor)]
         pub fn new(factory: AccountId, wnative: AccountId) -> Self {
-            Self { 
-                factory, 
+            Self {
+                factory,
                 wnative,
                 unlocked: true,
                 paused: false,
@@ -499,7 +505,9 @@ pub mod router_contract {
         pub fn pause(&mut self) -> Result<(), RouterError> {
             self.ensure_admin()?;
             self.paused = true;
-            self.env().emit_event(RouterPaused { by: self.env().caller() });
+            self.env().emit_event(RouterPaused {
+                by: self.env().caller(),
+            });
             Ok(())
         }
 
@@ -508,7 +516,9 @@ pub mod router_contract {
         pub fn unpause(&mut self) -> Result<(), RouterError> {
             self.ensure_admin()?;
             self.paused = false;
-            self.env().emit_event(RouterUnpaused { by: self.env().caller() });
+            self.env().emit_event(RouterUnpaused {
+                by: self.env().caller(),
+            });
             Ok(())
         }
 
@@ -593,8 +603,14 @@ pub mod router_contract {
             self.ensure_not_paused()?;
             self.lock()?;
             let result = self.add_liquidity_internal(
-                token_a, token_b, amount_a_desired, amount_b_desired,
-                amount_a_min, amount_b_min, to, deadline
+                token_a,
+                token_b,
+                amount_a_desired,
+                amount_b_desired,
+                amount_a_min,
+                amount_b_min,
+                to,
+                deadline,
             );
             self.unlock();
             result
@@ -615,6 +631,12 @@ pub mod router_contract {
             // Validações iniciais
             self.ensure_deadline(deadline)?;
             self.validate_addresses(token_a, token_b)?;
+            if amount_a_desired == 0 || amount_a_desired < amount_a_min {
+                return Err(RouterError::InsufficientAAmount);
+            }
+            if amount_b_desired == 0 || amount_b_desired < amount_b_min {
+                return Err(RouterError::InsufficientBAmount);
+            }
 
             // Ordenar tokens (Factory usa ordem canônica)
             let (token_0, token_1) = self.sort_tokens(token_a, token_b);
@@ -634,8 +656,8 @@ pub mod router_contract {
                 .map_err(|_| RouterError::PairNotExists)?;
 
             // Obter reserves atuais
-            let (reserve_0, reserve_1, _) = PairRef::get_reserves(pair)
-                .map_err(|_| RouterError::PairNotExists)?;
+            let (reserve_0, reserve_1, _) =
+                PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
 
             // Calcular amounts ótimos
             let (amount_0, amount_1) = if reserve_0 == 0 && reserve_1 == 0 {
@@ -643,8 +665,9 @@ pub mod router_contract {
                 (amount_0_desired, amount_1_desired)
             } else {
                 // Calcular amount_1 ótimo baseado em amount_0_desired
-                let amount_1_optimal = self.quote_internal(amount_0_desired, reserve_0, reserve_1)?;
-                
+                let amount_1_optimal =
+                    self.quote_internal(amount_0_desired, reserve_0, reserve_1)?;
+
                 if amount_1_optimal <= amount_1_desired {
                     // amount_1_optimal é viável
                     if amount_1_optimal < amount_1_min {
@@ -653,8 +676,9 @@ pub mod router_contract {
                     (amount_0_desired, amount_1_optimal)
                 } else {
                     // Calcular amount_0 ótimo baseado em amount_1_desired
-                    let amount_0_optimal = self.quote_internal(amount_1_desired, reserve_1, reserve_0)?;
-                    
+                    let amount_0_optimal =
+                        self.quote_internal(amount_1_desired, reserve_1, reserve_0)?;
+
                     if amount_0_optimal > amount_0_desired {
                         return Err(RouterError::InsufficientAAmount);
                     }
@@ -680,8 +704,8 @@ pub mod router_contract {
                 .map_err(|_| RouterError::InsufficientBAmount)?;
 
             // Chamar mint no par para obter LP tokens
-            let liquidity = PairRef::mint(pair, to)
-                .map_err(|_| RouterError::InsufficientLiquidity)?;
+            let liquidity =
+                PairRef::mint(pair, to).map_err(|_| RouterError::InsufficientLiquidity)?;
 
             // Emitir evento
             self.env().emit_event(LiquidityAdded {
@@ -720,7 +744,13 @@ pub mod router_contract {
             self.ensure_not_paused()?;
             self.lock()?;
             let result = self.remove_liquidity_internal(
-                token_a, token_b, liquidity, amount_a_min, amount_b_min, to, deadline
+                token_a,
+                token_b,
+                liquidity,
+                amount_a_min,
+                amount_b_min,
+                to,
+                deadline,
             );
             self.unlock();
             result
@@ -758,8 +788,8 @@ pub mod router_contract {
                 .map_err(|_| RouterError::InsufficientLiquidity)?;
 
             // Chamar burn no par
-            let (amount_0, amount_1) = PairRef::burn(pair, to)
-                .map_err(|_| RouterError::InsufficientLiquidity)?;
+            let (amount_0, amount_1) =
+                PairRef::burn(pair, to).map_err(|_| RouterError::InsufficientLiquidity)?;
 
             // Converter para token_a/token_b order
             let (amount_a, amount_b) = if token_a == token_0 {
@@ -815,7 +845,8 @@ pub mod router_contract {
         ) -> Result<Vec<Balance>, RouterError> {
             self.ensure_not_paused()?;
             self.lock()?;
-            let result = self.swap_exact_tokens_internal(amount_in, amount_out_min, path, to, deadline);
+            let result =
+                self.swap_exact_tokens_internal(amount_in, amount_out_min, path, to, deadline);
             self.unlock();
             result
         }
@@ -850,7 +881,7 @@ pub mod router_contract {
             let caller = self.env().caller();
             let pair = FactoryRef::get_pair(self.factory, path[0], path[1])
                 .map_err(|_| RouterError::PairNotExists)?;
-            
+
             PSP22Ref::transfer_from(path[0], caller, pair, amounts[0])
                 .map_err(|_| RouterError::InsufficientOutputAmount)?;
 
@@ -891,7 +922,8 @@ pub mod router_contract {
         ) -> Result<Vec<Balance>, RouterError> {
             self.ensure_not_paused()?;
             self.lock()?;
-            let result = self.swap_tokens_for_exact_internal(amount_out, amount_in_max, path, to, deadline);
+            let result =
+                self.swap_tokens_for_exact_internal(amount_out, amount_in_max, path, to, deadline);
             self.unlock();
             result
         }
@@ -912,6 +944,9 @@ pub mod router_contract {
             if amount_out == 0 {
                 return Err(RouterError::InsufficientOutputAmount);
             }
+            if amount_in_max == 0 {
+                return Err(RouterError::ExcessiveInputAmount);
+            }
 
             // Calcular amounts necessários (reverso)
             let amounts = self.get_amounts_in(amount_out, &path)?;
@@ -925,7 +960,7 @@ pub mod router_contract {
             let caller = self.env().caller();
             let pair = FactoryRef::get_pair(self.factory, path[0], path[1])
                 .map_err(|_| RouterError::PairNotExists)?;
-            
+
             PSP22Ref::transfer_from(path[0], caller, pair, amounts[0])
                 .map_err(|_| RouterError::ExcessiveInputAmount)?;
 
@@ -945,7 +980,7 @@ pub mod router_contract {
 
             Ok(amounts)
         }
-        
+
         /// Executa swaps sequenciais através do path
         fn execute_swaps(
             &self,
@@ -957,14 +992,14 @@ pub mod router_contract {
                 let (input, output) = (path[i], path[i + 1]);
                 let (token_0, _) = self.sort_tokens(input, output);
                 let amount_out = amounts[i + 1];
-                
+
                 // Determinar direction do swap
                 let (amount_0_out, amount_1_out) = if input == token_0 {
                     (0, amount_out)
                 } else {
                     (amount_out, 0)
                 };
-                
+
                 // Destino: próximo par ou destinatário final
                 let to = if i < path.len() - 2 {
                     FactoryRef::get_pair(self.factory, output, path[i + 2])
@@ -972,15 +1007,15 @@ pub mod router_contract {
                 } else {
                     final_to
                 };
-                
+
                 // Executar swap no par
                 let pair = FactoryRef::get_pair(self.factory, input, output)
                     .map_err(|_| RouterError::PairNotExists)?;
-                    
+
                 PairRef::swap(pair, amount_0_out, amount_1_out, to)
                     .map_err(|_| RouterError::InsufficientOutputAmount)?;
             }
-            
+
             Ok(())
         }
 
@@ -1005,7 +1040,12 @@ pub mod router_contract {
             self.ensure_not_paused()?;
             self.lock()?;
             let result = self.add_liquidity_native_internal(
-                token, amount_token_desired, amount_token_min, amount_native_min, to, deadline
+                token,
+                amount_token_desired,
+                amount_token_min,
+                amount_native_min,
+                to,
+                deadline,
             );
             self.unlock();
             result
@@ -1021,10 +1061,17 @@ pub mod router_contract {
             deadline: u64,
         ) -> Result<(Balance, Balance, Balance), RouterError> {
             self.ensure_deadline(deadline)?;
-            
+
             let amount_native = self.env().transferred_value();
             if amount_native == 0 {
                 return Err(RouterError::InsufficientAAmount);
+            }
+            self.validate_addresses(token, self.wnative)?;
+            if amount_token_desired == 0 || amount_token_desired < amount_token_min {
+                return Err(RouterError::InsufficientAAmount);
+            }
+            if amount_native < amount_native_min {
+                return Err(RouterError::InsufficientBAmount);
             }
 
             // Wrap native token para WNATIVE
@@ -1066,7 +1113,12 @@ pub mod router_contract {
             self.ensure_not_paused()?;
             self.lock()?;
             let result = self.remove_liquidity_native_internal(
-                token, liquidity, amount_token_min, amount_native_min, to, deadline
+                token,
+                liquidity,
+                amount_token_min,
+                amount_native_min,
+                to,
+                deadline,
             );
             self.unlock();
             result
@@ -1102,7 +1154,7 @@ pub mod router_contract {
             // Unwrap WNATIVE e enviar native para destinatário
             WNativeRef::withdraw(self.wnative, amount_native)
                 .map_err(|_| RouterError::InsufficientBAmount)?;
-            
+
             self.env()
                 .transfer(to, amount_native)
                 .map_err(|_| RouterError::InsufficientBAmount)?;
@@ -1122,9 +1174,8 @@ pub mod router_contract {
         ) -> Result<Vec<Balance>, RouterError> {
             self.ensure_not_paused()?;
             self.lock()?;
-            let result = self.swap_exact_native_for_tokens_internal(
-                amount_out_min, path, to, deadline
-            );
+            let result =
+                self.swap_exact_native_for_tokens_internal(amount_out_min, path, to, deadline);
             self.unlock();
             result
         }
@@ -1137,7 +1188,7 @@ pub mod router_contract {
             deadline: u64,
         ) -> Result<Vec<Balance>, RouterError> {
             self.ensure_deadline(deadline)?;
-            
+
             // Primeiro token no path deve ser WNATIVE
             if path.is_empty() || path[0] != self.wnative {
                 return Err(RouterError::InvalidPath);
@@ -1147,6 +1198,7 @@ pub mod router_contract {
             if amount_in == 0 {
                 return Err(RouterError::InsufficientOutputAmount);
             }
+            self.validate_path(&path)?;
 
             // Wrap native para WNATIVE
             WNativeRef::deposit(self.wnative, amount_in)
@@ -1155,7 +1207,7 @@ pub mod router_contract {
             // Executar swap (com verificação de price impact)
             let amounts = self.get_amounts_out_checked(amount_in, &path)?;
             let final_amount = *amounts.last().ok_or(RouterError::InvalidPath)?;
-            
+
             if final_amount < amount_out_min {
                 return Err(RouterError::InsufficientOutputAmount);
             }
@@ -1163,7 +1215,7 @@ pub mod router_contract {
             // Transferir WNATIVE para o primeiro par
             let pair = FactoryRef::get_pair(self.factory, path[0], path[1])
                 .map_err(|_| RouterError::PairNotExists)?;
-            
+
             WNativeRef::transfer(self.wnative, pair, amounts[0])
                 .map_err(|_| RouterError::InsufficientOutputAmount)?;
 
@@ -1194,7 +1246,11 @@ pub mod router_contract {
             self.ensure_not_paused()?;
             self.lock()?;
             let result = self.swap_exact_tokens_for_native_internal(
-                amount_in, amount_out_min, path, to, deadline
+                amount_in,
+                amount_out_min,
+                path,
+                to,
+                deadline,
             );
             self.unlock();
             result
@@ -1210,17 +1266,20 @@ pub mod router_contract {
         ) -> Result<Vec<Balance>, RouterError> {
             self.ensure_deadline(deadline)?;
             self.validate_path(&path)?;
-            
+
             // Último token no path deve ser WNATIVE
             let last_token = *path.last().ok_or(RouterError::InvalidPath)?;
             if last_token != self.wnative {
                 return Err(RouterError::InvalidPath);
             }
+            if amount_in == 0 {
+                return Err(RouterError::InsufficientOutputAmount);
+            }
 
             // Calcular amounts
             let amounts = self.get_amounts_out(amount_in, &path)?;
             let final_amount = *amounts.last().ok_or(RouterError::InvalidPath)?;
-            
+
             if final_amount < amount_out_min {
                 return Err(RouterError::InsufficientOutputAmount);
             }
@@ -1229,7 +1288,7 @@ pub mod router_contract {
             let caller = self.env().caller();
             let pair = FactoryRef::get_pair(self.factory, path[0], path[1])
                 .map_err(|_| RouterError::PairNotExists)?;
-            
+
             PSP22Ref::transfer_from(path[0], caller, pair, amounts[0])
                 .map_err(|_| RouterError::InsufficientOutputAmount)?;
 
@@ -1240,7 +1299,7 @@ pub mod router_contract {
             // Unwrap WNATIVE e enviar native para destinatário
             WNativeRef::withdraw(self.wnative, final_amount)
                 .map_err(|_| RouterError::InsufficientOutputAmount)?;
-            
+
             self.env()
                 .transfer(to, final_amount)
                 .map_err(|_| RouterError::InsufficientOutputAmount)?;
@@ -1376,7 +1435,7 @@ pub mod router_contract {
             if reserve_a == 0 || reserve_b == 0 {
                 return Err(RouterError::InsufficientLiquidity);
             }
-            
+
             amount_a
                 .checked_mul(reserve_b)
                 .ok_or(RouterError::InsufficientLiquidity)?
@@ -1398,21 +1457,21 @@ pub mod router_contract {
             if reserve_in == 0 || reserve_out == 0 {
                 return Err(RouterError::InsufficientLiquidity);
             }
-            
+
             let amount_in_with_fee = amount_in
                 .checked_mul(constants::FEE_NUMERATOR)
                 .ok_or(RouterError::InsufficientOutputAmount)?;
-            
+
             let numerator = amount_in_with_fee
                 .checked_mul(reserve_out)
                 .ok_or(RouterError::InsufficientOutputAmount)?;
-            
+
             let denominator = reserve_in
                 .checked_mul(constants::FEE_DENOMINATOR)
                 .ok_or(RouterError::InsufficientOutputAmount)?
                 .checked_add(amount_in_with_fee)
                 .ok_or(RouterError::InsufficientOutputAmount)?;
-            
+
             numerator
                 .checked_div(denominator)
                 .ok_or(RouterError::InsufficientOutputAmount)
@@ -1435,19 +1494,19 @@ pub mod router_contract {
             if amount_out >= reserve_out {
                 return Err(RouterError::InsufficientLiquidity);
             }
-            
+
             let numerator = reserve_in
                 .checked_mul(amount_out)
                 .ok_or(RouterError::ExcessiveInputAmount)?
                 .checked_mul(constants::FEE_DENOMINATOR)
                 .ok_or(RouterError::ExcessiveInputAmount)?;
-            
+
             let denominator = reserve_out
                 .checked_sub(amount_out)
                 .ok_or(RouterError::InsufficientLiquidity)?
                 .checked_mul(constants::FEE_NUMERATOR)
                 .ok_or(RouterError::ExcessiveInputAmount)?;
-            
+
             numerator
                 .checked_div(denominator)
                 .ok_or(RouterError::ExcessiveInputAmount)?
@@ -1464,27 +1523,28 @@ pub mod router_contract {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);
             }
-            
+
             let mut amounts = vec![amount_in];
-            
+
             for i in 0..(path.len() - 1) {
                 let pair = FactoryRef::get_pair(self.factory, path[i], path[i + 1])
                     .map_err(|_| RouterError::PairNotExists)?;
-                
-                let (reserve_0, reserve_1, _) = PairRef::get_reserves(pair)
-                    .map_err(|_| RouterError::PairNotExists)?;
-                
+
+                let (reserve_0, reserve_1, _) =
+                    PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
+
                 let (token_0, _) = self.sort_tokens(path[i], path[i + 1]);
                 let (reserve_in, reserve_out) = if path[i] == token_0 {
                     (reserve_0, reserve_1)
                 } else {
                     (reserve_1, reserve_0)
                 };
-                
-                let amount_out = self.get_amount_out_internal(amounts[i], reserve_in, reserve_out)?;
+
+                let amount_out =
+                    self.get_amount_out_internal(amounts[i], reserve_in, reserve_out)?;
                 amounts.push(amount_out);
             }
-            
+
             Ok(amounts)
         }
 
@@ -1498,16 +1558,16 @@ pub mod router_contract {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);
             }
-            
+
             let mut amounts = vec![amount_in];
-            
+
             for i in 0..(path.len() - 1) {
                 let pair = FactoryRef::get_pair(self.factory, path[i], path[i + 1])
                     .map_err(|_| RouterError::PairNotExists)?;
-                
-                let (reserve_0, reserve_1, _) = PairRef::get_reserves(pair)
-                    .map_err(|_| RouterError::PairNotExists)?;
-                
+
+                let (reserve_0, reserve_1, _) =
+                    PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
+
                 let (token_0, _) = self.sort_tokens(path[i], path[i + 1]);
                 let (reserve_in, reserve_out) = if path[i] == token_0 {
                     (reserve_0, reserve_1)
@@ -1530,11 +1590,12 @@ pub mod router_contract {
                         return Err(RouterError::PriceImpactTooHigh);
                     }
                 }
-                
-                let amount_out = self.get_amount_out_internal(amounts[i], reserve_in, reserve_out)?;
+
+                let amount_out =
+                    self.get_amount_out_internal(amounts[i], reserve_in, reserve_out)?;
                 amounts.push(amount_out);
             }
-            
+
             Ok(amounts)
         }
 
@@ -1547,27 +1608,28 @@ pub mod router_contract {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);
             }
-            
+
             let mut amounts = vec![0; path.len()];
             amounts[path.len() - 1] = amount_out;
-            
+
             for i in (1..path.len()).rev() {
                 let pair = FactoryRef::get_pair(self.factory, path[i - 1], path[i])
                     .map_err(|_| RouterError::PairNotExists)?;
-                
-                let (reserve_0, reserve_1, _) = PairRef::get_reserves(pair)
-                    .map_err(|_| RouterError::PairNotExists)?;
-                
+
+                let (reserve_0, reserve_1, _) =
+                    PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
+
                 let (token_0, _) = self.sort_tokens(path[i - 1], path[i]);
                 let (reserve_in, reserve_out) = if path[i - 1] == token_0 {
                     (reserve_0, reserve_1)
                 } else {
                     (reserve_1, reserve_0)
                 };
-                
-                amounts[i - 1] = self.get_amount_in_internal(amounts[i], reserve_in, reserve_out)?;
+
+                amounts[i - 1] =
+                    self.get_amount_in_internal(amounts[i], reserve_in, reserve_out)?;
             }
-            
+
             Ok(amounts)
         }
     }
@@ -1591,6 +1653,10 @@ pub mod router_contract {
 
         fn set_timestamp(timestamp: u64) {
             ink::env::test::set_block_timestamp::<DefaultEnvironment>(timestamp);
+        }
+
+        fn set_value_transferred(value: Balance) {
+            ink::env::test::set_value_transferred::<DefaultEnvironment>(value);
         }
 
         // ========================================
@@ -1715,6 +1781,86 @@ pub mod router_contract {
 
             assert!(result.is_err());
             assert_eq!(result.unwrap_err(), RouterError::IdenticalAddresses);
+        }
+
+        #[ink::test]
+        fn test_add_liquidity_rejects_zero_a_desired_before_pair_lookup() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+
+            let mut router = RouterContract::new(accounts.bob, accounts.charlie);
+
+            let result = router.add_liquidity(
+                accounts.django,
+                accounts.eve,
+                0,
+                200,
+                0,
+                180,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::InsufficientAAmount));
+        }
+
+        #[ink::test]
+        fn test_add_liquidity_rejects_desired_below_min_before_pair_lookup() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+
+            let mut router = RouterContract::new(accounts.bob, accounts.charlie);
+
+            let result = router.add_liquidity(
+                accounts.django,
+                accounts.eve,
+                100,
+                200,
+                150,
+                180,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::InsufficientAAmount));
+        }
+
+        #[ink::test]
+        fn test_add_liquidity_rejects_native_below_min_before_wrap() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+            set_value_transferred(80);
+
+            let mut router = RouterContract::new(accounts.bob, accounts.charlie);
+
+            let result =
+                router.add_liquidity_native(accounts.django, 100, 90, 90, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::InsufficientBAmount));
+        }
+
+        #[ink::test]
+        fn test_add_liquidity_native_rejects_wnative_pair_before_wrap() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+            set_value_transferred(100);
+
+            let mut router = RouterContract::new(accounts.bob, accounts.charlie);
+
+            let result = router.add_liquidity_native(
+                accounts.charlie, // token equals WNATIVE
+                100,
+                90,
+                90,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::IdenticalAddresses));
         }
 
         // ========================================
@@ -1897,6 +2043,35 @@ pub mod router_contract {
             assert_eq!(result.unwrap_err(), RouterError::InvalidPath);
         }
 
+        #[ink::test]
+        fn test_swap_exact_native_rejects_short_path_before_wrap() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+            set_value_transferred(100);
+
+            let mut router = RouterContract::new(accounts.bob, accounts.charlie);
+            let path = vec![accounts.charlie]; // WNATIVE only, no output token
+
+            let result = router.swap_exact_native_for_tokens(90, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::InvalidPath));
+        }
+
+        #[ink::test]
+        fn test_swap_exact_tokens_for_native_rejects_zero_input_before_pair_lookup() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+
+            let mut router = RouterContract::new(accounts.bob, accounts.charlie);
+            let path = vec![accounts.django, accounts.charlie];
+
+            let result = router.swap_exact_tokens_for_native(0, 90, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::InsufficientOutputAmount));
+        }
+
         // ========================================
         // TESTES DE SWAP TOKENS FOR EXACT TOKENS
         // (Testes com cross-contract calls ignorados - requerem testes on-chain)
@@ -1950,6 +2125,20 @@ pub mod router_contract {
 
             assert!(result.is_err());
             assert_eq!(result.unwrap_err(), RouterError::InsufficientOutputAmount);
+        }
+
+        #[ink::test]
+        fn test_swap_tokens_for_exact_rejects_zero_max_input_before_pair_lookup() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+
+            let mut router = RouterContract::new(accounts.bob, accounts.charlie);
+            let path = vec![accounts.django, accounts.eve];
+
+            let result = router.swap_tokens_for_exact_tokens(100, 0, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::ExcessiveInputAmount));
         }
 
         #[ink::test]
@@ -2115,16 +2304,16 @@ pub mod router_contract {
 
             // Swap 100 USDC por WETH
             let amount_in: u128 = 100_000_000; // 100 USDC (6 decimais)
-            
+
             let result = router.get_amount_out(amount_in, reserve_usdc, reserve_weth);
             assert!(result.is_ok());
-            
+
             let amount_out = result.unwrap();
             // Esperado: ~0.033 WETH (100/3000 * 1 WETH, menos fee)
             // Em raw: ~33_000_000_000_000_000 (18 decimais)
             assert!(amount_out > 0);
             assert!(amount_out < reserve_weth); // Não pode exceder reserve
-            
+
             // Validar que o cálculo está na ordem de magnitude correta
             // 100 USDC deveria dar aproximadamente 0.033 WETH
             let expected_min: u128 = 30_000_000_000_000_000; // 0.03 WETH
@@ -2146,14 +2335,14 @@ pub mod router_contract {
 
             // Swap 500 LUNES por WETH
             let amount_in: u128 = 50_000_000_000; // 500 LUNES (8 decimais)
-            
+
             let result = router.get_amount_out(amount_in, reserve_lunes, reserve_weth);
             assert!(result.is_ok());
-            
+
             let amount_out = result.unwrap();
             // Esperado: ~0.05 WETH (500/10000 * 1 WETH, menos fee)
             assert!(amount_out > 0);
-            
+
             // Validar ordem de magnitude
             let expected_min: u128 = 45_000_000_000_000_000; // 0.045 WETH
             let expected_max: u128 = 50_000_000_000_000_000; // 0.05 WETH
@@ -2174,7 +2363,7 @@ pub mod router_contract {
 
             let result = router.quote(amount_usdc, reserve_usdc, reserve_weth);
             assert!(result.is_ok());
-            
+
             let amount_weth = result.unwrap();
             // 100 USDC / 3000 USDC * 1 WETH = 0.0333... WETH
             let expected: u128 = 33_333_333_333_333_333; // ~0.0333 WETH
@@ -2193,10 +2382,10 @@ pub mod router_contract {
 
             // Swap 1 NEO por ETH
             let amount_in: u128 = 1; // 1 NEO
-            
+
             let result = router.get_amount_out(amount_in, reserve_neo, reserve_eth);
             assert!(result.is_ok());
-            
+
             let amount_out = result.unwrap();
             // 1 NEO deveria dar ~0.1 ETH (menos fee)
             // ~0.099 ETH = 99_000_000_000_000_000
@@ -2216,10 +2405,10 @@ pub mod router_contract {
 
             // Swap 1 SOL por USDC
             let amount_in: u128 = 1_000_000_000; // 1 SOL (9 decimais)
-            
+
             let result = router.get_amount_out(amount_in, reserve_sol, reserve_usdc);
             assert!(result.is_ok());
-            
+
             let amount_out = result.unwrap();
             // 1 SOL deveria dar ~150 USDC (menos fee)
             // ~149 USDC = 149_000_000 (6 decimais)
@@ -2239,10 +2428,10 @@ pub mod router_contract {
 
             // Swap 0.01 BTC por USDT
             let amount_in: u128 = 1_000_000; // 0.01 BTC (8 decimais)
-            
+
             let result = router.get_amount_out(amount_in, reserve_btc, reserve_usdt);
             assert!(result.is_ok());
-            
+
             let amount_out = result.unwrap();
             // 0.01 BTC deveria dar ~1000 USDT (menos fee)
             // ~995 USDT = 995_000_000 (6 decimais)
@@ -2262,10 +2451,10 @@ pub mod router_contract {
 
             // Swap 1 token A
             let amount_in: u128 = 1;
-            
+
             let result = router.get_amount_out(amount_in, reserve_a, reserve_b);
             assert!(result.is_ok());
-            
+
             let amount_out = result.unwrap();
             // Deve retornar aproximadamente 1 token B (menos fee 0.5%)
             // ~0.995 tokens B = 995_000_000_000_000_000
@@ -2286,7 +2475,7 @@ pub mod router_contract {
 
             let result = router.get_amount_in(amount_out, reserve_usdc, reserve_weth);
             assert!(result.is_ok());
-            
+
             let amount_in = result.unwrap();
             // Para receber 0.01 WETH (1% do pool), preciso ~30 USDC + fee
             // ~30.15 USDC = 30_150_000 (6 decimais)

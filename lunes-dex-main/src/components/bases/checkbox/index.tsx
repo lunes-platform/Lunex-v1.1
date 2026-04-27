@@ -1,4 +1,8 @@
-import { type HtmlHTMLAttributes, type MouseEventHandler, type ReactNode } from 'react'
+import {
+  type HtmlHTMLAttributes,
+  type MouseEventHandler,
+  type ReactNode
+} from 'react'
 import * as S from './styles'
 import Paragraph from '../paragraph'
 

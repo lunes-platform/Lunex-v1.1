@@ -475,7 +475,8 @@ const defaultSell: CurveParams = {
 }
 
 const ASYMMETRIC_API_BASE = (() => {
-  const base = process.env.REACT_APP_SPOT_API_URL || process.env.REACT_APP_API_URL
+  const base =
+    process.env.REACT_APP_SPOT_API_URL || process.env.REACT_APP_API_URL
   if (!base) return '/api/v1/asymmetric'
   return `${base.replace(/\/$/, '')}/api/v1/asymmetric`
 })()
@@ -598,8 +599,17 @@ const AsymmetricPool: React.FC = () => {
         ])
 
         const [status, logs] = await Promise.all([
-          asymmetricClient.getStrategyStatus(strategyId, walletAddress, statusAuth),
-          asymmetricClient.getRebalanceLogs(strategyId, walletAddress, logsAuth, 10)
+          asymmetricClient.getStrategyStatus(
+            strategyId,
+            walletAddress,
+            statusAuth
+          ),
+          asymmetricClient.getRebalanceLogs(
+            strategyId,
+            walletAddress,
+            logsAuth,
+            10
+          )
         ])
 
         setSelectedStrategyStatus(status)
@@ -675,13 +685,12 @@ const AsymmetricPool: React.FC = () => {
   const liveState = selectedStrategyStatus?.liveState
   const persistedConfig =
     selectedStrategyStatus?.persistedConfig || selectedStrategyStatus
-  const delegation =
-    selectedStrategyStatus?.delegation || {
-      agentManaged: selectedStrategyStatus?.agentManaged ?? false,
-      delegatedToRelayer: liveState?.delegatedToRelayer ?? false,
-      managerAddress: liveState?.managerAddress ?? null,
-      relayerAddress: liveState?.relayerAddress ?? null
-    }
+  const delegation = selectedStrategyStatus?.delegation || {
+    agentManaged: selectedStrategyStatus?.agentManaged ?? false,
+    delegatedToRelayer: liveState?.delegatedToRelayer ?? false,
+    managerAddress: liveState?.managerAddress ?? null,
+    relayerAddress: liveState?.relayerAddress ?? null
+  }
 
   return (
     <PageLayout maxWidth="680px">
@@ -776,7 +785,9 @@ const AsymmetricPool: React.FC = () => {
               </StatusValue>
             )}
 
-            {isConnected && statusError && <StatusValue>{statusError}</StatusValue>}
+            {isConnected && statusError && (
+              <StatusValue>{statusError}</StatusValue>
+            )}
 
             {isConnected && !statusError && strategies.length === 0 && (
               <StatusValue>
@@ -827,7 +838,9 @@ const AsymmetricPool: React.FC = () => {
                       <StatusCell>
                         <StatusKey>Auto Rebalance</StatusKey>
                         <StatusValue>
-                          {persistedConfig?.isAutoRebalance ? 'Enabled' : 'Disabled'}
+                          {persistedConfig?.isAutoRebalance
+                            ? 'Enabled'
+                            : 'Disabled'}
                         </StatusValue>
                       </StatusCell>
                       <StatusCell>
@@ -838,11 +851,15 @@ const AsymmetricPool: React.FC = () => {
                       </StatusCell>
                       <StatusCell>
                         <StatusKey>Retry Count</StatusKey>
-                        <StatusValue>{persistedConfig?.retryCount ?? 0}</StatusValue>
+                        <StatusValue>
+                          {persistedConfig?.retryCount ?? 0}
+                        </StatusValue>
                       </StatusCell>
                       <StatusCell>
                         <StatusKey>Agent Managed</StatusKey>
-                        <StatusValue>{delegation.agentManaged ? 'Yes' : 'No'}</StatusValue>
+                        <StatusValue>
+                          {delegation.agentManaged ? 'Yes' : 'No'}
+                        </StatusValue>
                       </StatusCell>
                       <StatusCell>
                         <StatusKey>Delegated To Relayer</StatusKey>
@@ -884,13 +901,16 @@ const AsymmetricPool: React.FC = () => {
                       Recent Audit Logs
                     </SectionTitle>
                     {strategyLogs.length === 0 ? (
-                      <StatusValue>No logs available yet for this strategy.</StatusValue>
+                      <StatusValue>
+                        No logs available yet for this strategy.
+                      </StatusValue>
                     ) : (
                       <LogsContainer>
                         {strategyLogs.map(logEntry => (
                           <LogLine key={logEntry.id}>
                             <LogLineTitle>
-                              {logEntry.trigger} • {logEntry.status} • {logEntry.side}
+                              {logEntry.trigger} • {logEntry.status} •{' '}
+                              {logEntry.side}
                             </LogLineTitle>
                             <LogLineMeta>
                               acquired={logEntry.acquiredAmount} newCapacity=

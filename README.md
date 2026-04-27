@@ -7,7 +7,7 @@
 [![ink!](https://img.shields.io/badge/ink!-4.2.1-purple)](https://use.ink)
 [![License](https://img.shields.io/badge/License-Proprietary-red)](./LICENSE.md)
 
-> Documentação canônica: [Docs Map](docs/README.md) | [Project PRD](docs/prd/PROJECT_PRD.md) | [Project Spec](docs/specs/PROJECT_SPEC.md) | [SDD Workflow](docs/sdd/README.md)
+> Documentação canônica: [Docs Map](docs/README.md) | [Project PRD](docs/prd/PROJECT_PRD.md) | [Project Spec](docs/specs/PROJECT_SPEC.md) | [Local Bootstrap Spec](docs/specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md) | [Production Readiness](docs/features/production-readiness-v1/SPEC.md) | [SDD Workflow](docs/sdd/README.md)
 
 ---
 
@@ -314,6 +314,77 @@ Instale **ao menos uma** destas extensões no Chrome/Firefox:
 ## 5. Setup Local — Passo a Passo
 
 > **Tempo estimado:** ~30 minutos na primeira vez.
+> **Spec operacional:** [`docs/specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md`](docs/specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md)
+
+### Caminho rápido validado — nó Lunes + contratos + QA
+
+Este é o fluxo recomendado para subir o projeto com runtime Lunes real, contratos ink!, tokens locais e teste de swap.
+
+```bash
+# Terminal 1: compilar e subir o nó Lunes local
+cd /Users/lucas/Documents/Projetos_DEV
+test -d lunes-nightly || git clone https://github.com/lunes-platform/lunes-nightly.git lunes-nightly
+cd lunes-nightly
+rustup toolchain install nightly-2023-01-01
+rustup target add wasm32-unknown-unknown --toolchain nightly-2023-01-01
+PROTOC="$(which protoc)" rustup run nightly-2023-01-01 cargo build --release
+./target/release/lunes-node --dev --tmp --ws-port 9944 --rpc-port 9933 -lruntime::contracts=debug
+```
+
+```bash
+# Terminal 2: preparar banco, deployar contratos e validar liquidez
+cd /Users/lucas/Documents/Projetos_DEV/Lunex
+npm install
+npm --prefix spot-api install
+npm --prefix lunes-dex-main install
+test -f spot-api/.env || cp spot-api/.env.example spot-api/.env
+test -f lunes-dex-main/.env || cp lunes-dex-main/.env.example lunes-dex-main/.env
+
+# Antes de continuar, ajuste spot-api/.env:
+# DATABASE_URL="postgresql://postgres:@localhost:5432/lunex_spot?schema=public"
+# LUNES_WS_URL="ws://127.0.0.1:9944"
+# REDIS_URL="redis://127.0.0.1:6379"
+# ADMIN_SECRET="dev-secret-troque-em-producao"
+# RELAYER_SEED="//Alice"
+
+brew services start postgresql@16
+brew services start redis
+createuser -s postgres 2>/dev/null || true
+createdb -U postgres lunex_spot 2>/dev/null || true
+
+cd spot-api
+npx prisma db push
+npx prisma generate
+npx prisma db seed
+npx ts-node scripts/deploy-contracts.ts
+npx ts-node scripts/setup-local-tokens.ts
+npx ts-node scripts/check-contracts-qa.ts
+npx ts-node scripts/test-liquidity-pool.ts
+```
+
+```bash
+# Terminal 3: API
+cd /Users/lucas/Documents/Projetos_DEV/Lunex/spot-api
+npm run dev
+```
+
+```bash
+# Terminal 4: frontend
+cd /Users/lucas/Documents/Projetos_DEV/Lunex/lunes-dex-main
+npm run dev -- --host 127.0.0.1 --port 3000
+```
+
+Endpoints locais:
+
+| Serviço | URL |
+|---|---|
+| Lunes WS | `ws://127.0.0.1:9944` |
+| Lunes HTTP RPC | `http://127.0.0.1:9933` |
+| spot-api | `http://localhost:4000` |
+| spot-api WebSocket | `ws://localhost:4001` |
+| Frontend | `http://127.0.0.1:3000` |
+
+> O nó em `--tmp` apaga estado a cada restart. Se reiniciar o nó, rode novamente `deploy-contracts.ts`, `setup-local-tokens.ts` e os checks de QA.
 
 ### Etapa 1 — Clonar o repositório
 
@@ -342,7 +413,30 @@ cd lunex-admin && npm install && cd ..
 
 O Lunex usa a **Lunes Network**, uma chain Substrate. Para desenvolvimento local, você precisa de um nó local.
 
-#### Opção A — Pop CLI (Recomendado para contratos)
+#### Opção A — Lunes Nightly (validado para Lunex)
+
+Use esta opção quando o objetivo for testar os contratos Lunex contra o runtime Lunes.
+
+```bash
+cd /Users/lucas/Documents/Projetos_DEV
+test -d lunes-nightly || git clone https://github.com/lunes-platform/lunes-nightly.git lunes-nightly
+cd lunes-nightly
+rustup toolchain install nightly-2023-01-01
+rustup target add wasm32-unknown-unknown --toolchain nightly-2023-01-01
+
+# Se `which protoc` não retornar caminho, instale com: brew install protobuf
+PROTOC="$(which protoc)" rustup run nightly-2023-01-01 cargo build --release
+
+./target/release/lunes-node --dev --tmp --ws-port 9944 --rpc-port 9933 -lruntime::contracts=debug
+```
+
+O runtime validado contém `pallet_contracts`, `pallet_assets`, `ContractsApi` e chain extension de assets. O nó ficará disponível em:
+
+- WS: `ws://127.0.0.1:9944`
+- RPC: `http://127.0.0.1:9933`
+- Explorer: `https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944`
+
+#### Opção B — Pop CLI (alternativo genérico para contratos)
 
 ```bash
 # Instala e sobe um nó Substrate local com suporte a ink!
@@ -354,7 +448,7 @@ pop up node --version v1.0.0
 # - Explorer: https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944
 ```
 
-#### Opção B — substrate-contracts-node (alternativo)
+#### Opção C — substrate-contracts-node (alternativo)
 
 ```bash
 # Baixar o binário pré-compilado
@@ -390,14 +484,14 @@ psql -U postgres -d lunex_spot -c "SELECT version();"
 
 ```bash
 # Backend
-cp spot-api/.env.example spot-api/.env
+test -f spot-api/.env || cp spot-api/.env.example spot-api/.env
 ```
 
 Edite `spot-api/.env` com os valores mínimos para desenvolvimento local:
 
 ```dotenv
 # Banco de dados
-DATABASE_URL="postgresql://postgres:@localhost:5432/lunex_spot"
+DATABASE_URL="postgresql://postgres:@localhost:5432/lunex_spot?schema=public"
 
 # Blockchain
 LUNES_WS_URL="ws://127.0.0.1:9944"
@@ -411,7 +505,7 @@ ADMIN_SECRET="dev-secret-troque-em-producao"
 
 # Relayer — conta que assina settlements on-chain
 # Para dev, use Alice (//Alice):
-RELAYER_SEED="bottom drive obey lake curtain smoke basket hold race lonely fit walk"
+RELAYER_SEED="//Alice"
 
 # Contratos deployed (preencher após deploy dos contratos — ver Etapa 7)
 FACTORY_CONTRACT_ADDRESS=""
@@ -437,7 +531,7 @@ ORDER_RATE_LIMIT_MAX=20
 
 ```bash
 # Frontend
-cp lunes-dex-main/.env.example lunes-dex-main/.env
+test -f lunes-dex-main/.env || cp lunes-dex-main/.env.example lunes-dex-main/.env
 ```
 
 Edite `lunes-dex-main/.env`:
@@ -495,20 +589,21 @@ cd ..
 #### 7.1 Compilar todos os contratos
 
 ```bash
-# No diretório raiz, compila todos os contratos do workspace
-# Atenção: isso pode demorar 5-10 minutos na primeira vez
+# No diretório raiz do projeto:
+cd /Users/lucas/Documents/Projetos_DEV/Lunex
 
-# Contrato por contrato (recomendado para debug):
-cd Lunex/contracts/wnative    && cargo contract build --release && cd ../..
-cd Lunex/contracts/pair       && cargo contract build --release && cd ../..
-cd Lunex/contracts/factory    && cargo contract build --release && cd ../..
-cd Lunex/contracts/router     && cargo contract build --release && cd ../..
-cd Lunex/contracts/staking    && cargo contract build --release && cd ../..
-cd Lunex/contracts/rewards    && cargo contract build --release && cd ../..
+# Build unitário rápido do contrato pair, útil após mexer em TWAP/reservas:
+cargo test --manifest-path Lunex/contracts/pair/Cargo.toml
 
-# Os arquivos .contract (bundle wasm + metadata) ficam em:
-# Lunex/contracts/<nome>/target/ink/<nome>.contract
+# Build manual de um contrato quando o código dele mudar:
+cargo contract build --release --manifest-path Lunex/contracts/wnative/Cargo.toml
+cargo contract build --release --manifest-path Lunex/contracts/factory/Cargo.toml
+cargo contract build --release --manifest-path Lunex/contracts/router/Cargo.toml
+cargo contract build --release --manifest-path Lunex/contracts/staking/Cargo.toml
+cargo contract build --release --manifest-path Lunex/contracts/rewards/Cargo.toml
 ```
+
+Os scripts de deploy consomem os artefatos em `target/ink/*`. O `pair_contract` tem requisitos de WASM mais restritos no runtime Lunes local; se precisar reconstruí-lo do zero, siga a seção de falhas conhecidas da [`Local Bootstrap Spec`](docs/specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md).
 
 #### 7.2 Deployar os contratos na rede local
 
@@ -528,19 +623,19 @@ npx ts-node scripts/deploy-contracts.ts
 # ✅ rewards:  5EiX7yUa...
 ```
 
-Copie os endereços para `spot-api/.env` e `lunes-dex-main/.env`.
+O script salva os endereços em `spot-api/deployed-addresses.json` e atualiza o `.env` do frontend quando aplicável.
 
-#### 7.3 Deployar tokens PSP22 de teste
+#### 7.3 Criar tokens, liquidez e validar QA
 
 ```bash
-# Deploy LUSDT (stablecoin de teste)
-npx ts-node scripts/deploy-tokens.ts
+# Cria LUSDT local, par WLUNES/LUSDT e liquidez inicial
+npx ts-node scripts/setup-local-tokens.ts
 
-# Deploy tokens adicionais (LBTC, LETH, GMC, LUP) + pares AMM
-npx ts-node scripts/deploy-additional-tokens.ts
+# Verifica se todos os endereços locais têm código on-chain
+npx ts-node scripts/check-contracts-qa.ts
 
-# Verificar deployment
-npx ts-node scripts/verify-deployment.ts
+# Executa E2E de deploy temporário, add liquidity e swap
+npx ts-node scripts/test-liquidity-pool.ts
 ```
 
 ### Etapa 8 — Iniciar o backend (spot-api)

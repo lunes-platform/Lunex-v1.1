@@ -3,6 +3,7 @@ import { ListingTier, ListingStatus } from '@prisma/client';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import {
   getAllTierConfigs,
   createListing,
@@ -21,7 +22,10 @@ import {
   TierKey,
 } from '../services/listingService';
 import { requireAdmin } from '../middleware/adminGuard';
-import { verifyWalletActionSignature } from '../middleware/auth';
+import {
+  verifyWalletActionSignature,
+  verifyWalletReadSignature,
+} from '../middleware/auth';
 import { z } from 'zod';
 
 const router = Router();
@@ -30,7 +34,7 @@ const router = Router();
 const TOKENS_DIR = path.join(__dirname, '..', '..', 'public', 'tokens');
 fs.mkdirSync(TOKENS_DIR, { recursive: true });
 
-const ALLOWED_MIMES = ['image/svg+xml', 'image/png', 'image/webp'];
+const ALLOWED_MIMES = ['image/png', 'image/webp'];
 const MAX_LOGO_SIZE = 200 * 1024; // 200 KB
 
 const logoStorage = multer.diskStorage({
@@ -42,13 +46,9 @@ const logoStorage = multer.diskStorage({
         : 'unknown';
     const addr =
       rawAddress.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'token';
-    const ext =
-      file.mimetype === 'image/svg+xml'
-        ? '.svg'
-        : file.mimetype === 'image/webp'
-          ? '.webp'
-          : '.png';
-    cb(null, `${addr}${ext}`);
+    const ext = file.mimetype === 'image/webp' ? '.webp' : '.png';
+    const unique = crypto.randomBytes(8).toString('hex');
+    cb(null, `${addr}-${Date.now()}-${unique}${ext}`);
   },
 });
 
@@ -57,11 +57,42 @@ const logoUpload = multer({
   limits: { fileSize: MAX_LOGO_SIZE },
   fileFilter: (_req, file, cb) => {
     if (!ALLOWED_MIMES.includes(file.mimetype)) {
-      return cb(new Error('Invalid file type. Accepted: SVG, PNG, WebP'));
+      return cb(new Error('Invalid file type. Accepted: PNG, WebP'));
     }
     cb(null, true);
   },
 });
+
+function isValidLogoMagic(file: Express.Multer.File) {
+  let buffer: Buffer;
+  try {
+    buffer = fs.readFileSync(file.path);
+  } catch {
+    return false;
+  }
+  const isPng =
+    file.mimetype === 'image/png' &&
+    buffer.length >= 8 &&
+    buffer
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isWebp =
+    file.mimetype === 'image/webp' &&
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
+    buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+
+  return isPng || isWebp;
+}
+
+function removeUploadedLogo(file?: Express.Multer.File) {
+  if (!file) return;
+  try {
+    fs.unlinkSync(file.path);
+  } catch {
+    // Best-effort cleanup only.
+  }
+}
 
 // ─── Validation schemas ────────────────────────────────────────────
 
@@ -92,6 +123,10 @@ const WithdrawLockSchema = z
     txHash: z.string().max(128).optional(),
   })
   .merge(SignedActionSchema);
+
+const SignedOwnerReadSchema = SignedActionSchema.extend({
+  address: z.string().min(8).max(128),
+});
 
 // ── GET /api/v1/listing/tiers ─────────────────────────────────────
 // Public: returns all tier configs with fee distribution breakdown
@@ -156,6 +191,24 @@ router.get(
   '/owner/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const parsed = SignedOwnerReadSchema.safeParse({
+        ...req.query,
+        address: req.params.address,
+      });
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+      const auth = await verifyWalletReadSignature({
+        action: 'listing.owner',
+        address: parsed.data.address,
+        nonce: parsed.data.nonce,
+        timestamp: parsed.data.timestamp,
+        signature: parsed.data.signature,
+      });
+      if (!auth.ok) return res.status(401).json({ error: auth.error });
+
       const listings = await getOwnerListings(req.params.address);
       res.json({ listings });
     } catch (err) {
@@ -184,9 +237,15 @@ router.post(
     try {
       const parsed = CreateListingSchema.safeParse(req.body);
       if (!parsed.success) {
+        removeUploadedLogo(req.file);
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+
+      if (req.file && !isValidLogoMagic(req.file)) {
+        removeUploadedLogo(req.file);
+        return res.status(400).json({ error: 'Invalid logo file content' });
       }
 
       const auth = await verifyWalletActionSignature({
@@ -205,12 +264,14 @@ router.post(
         },
       });
       if (!auth.ok) {
+        removeUploadedLogo(req.file);
         return res.status(401).json({ error: auth.error });
       }
 
       const { tier, ...rest } = parsed.data;
       const tierKey = tier.toUpperCase() as TierKey;
       if (!TIER_CONFIG[tierKey]) {
+        removeUploadedLogo(req.file);
         return res.status(400).json({
           error: `Invalid tier. Valid values: BASIC, VERIFIED, FEATURED`,
         });
@@ -235,11 +296,14 @@ router.post(
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       if (msg.includes('already listed') || msg.includes('Insufficient')) {
+        removeUploadedLogo(req.file);
         return res.status(400).json({ error: msg });
       }
       if (msg.includes('Invalid file type') || msg.includes('File too large')) {
+        removeUploadedLogo(req.file);
         return res.status(400).json({ error: msg });
       }
+      removeUploadedLogo(req.file);
       next(err);
     }
   },

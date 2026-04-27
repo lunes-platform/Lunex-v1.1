@@ -329,4 +329,65 @@ describe('Auth attack simulation E2E', () => {
     );
     expect(agentServiceMock.getApiKeys).not.toHaveBeenCalled();
   });
+
+  it('blocks authenticated API keys from creating keys with escalated permissions', async () => {
+    agentServiceMock.verifyApiKey.mockResolvedValueOnce({
+      agent: {
+        id: 'agent-1',
+        walletAddress: 'agent-wallet-123',
+        agentType: 'AI_AGENT',
+        stakingTier: 0,
+        dailyTradeLimit: 10,
+        maxPositionSize: 1000,
+        maxOpenOrders: 5,
+      },
+      permissions: ['READ_ONLY'],
+      keyId: 'key-readonly',
+    } as unknown as Awaited<ReturnType<typeof agentService.verifyApiKey>>);
+
+    const res = await request(app)
+      .post('/api/v1/agents/agent-1/api-keys')
+      .set('X-API-Key', 'readonly-key')
+      .send({
+        label: 'escalated',
+        permissions: ['READ_ONLY', 'TRADE_SPOT'],
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toHaveProperty(
+      'error',
+      'Cannot create API key with permissions outside authenticated key scope',
+    );
+    expect(agentServiceMock.createApiKey).not.toHaveBeenCalled();
+  });
+
+  it('allows authenticated API keys to create a key with a subset of their permissions', async () => {
+    agentServiceMock.verifyApiKey.mockResolvedValueOnce({
+      agent: {
+        id: 'agent-1',
+        walletAddress: 'agent-wallet-123',
+        agentType: 'AI_AGENT',
+        stakingTier: 0,
+        dailyTradeLimit: 10,
+        maxPositionSize: 1000,
+        maxOpenOrders: 5,
+      },
+      permissions: ['READ_ONLY', 'TRADE_SPOT'],
+      keyId: 'key-trade',
+    } as unknown as Awaited<ReturnType<typeof agentService.verifyApiKey>>);
+
+    const res = await request(app)
+      .post('/api/v1/agents/agent-1/api-keys')
+      .set('X-API-Key', 'trade-key')
+      .send({
+        label: 'readonly-child',
+        permissions: ['READ_ONLY'],
+      });
+
+    expect(res.status).toBe(201);
+    expect(agentServiceMock.createApiKey).toHaveBeenCalledWith('agent-1', {
+      label: 'readonly-child',
+      permissions: ['READ_ONLY'],
+    });
+  });
 });

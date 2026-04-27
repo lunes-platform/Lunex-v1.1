@@ -31,6 +31,19 @@ export const config = {
     ),
   },
 
+  websocket: {
+    allowedOrigins: parseCsv(
+      process.env.ALLOWED_WS_ORIGINS,
+      process.env.NODE_ENV === 'production'
+        ? []
+        : [
+            'http://localhost:3000',
+            'http://localhost:5173',
+            'http://127.0.0.1:3000',
+          ],
+    ),
+  },
+
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
@@ -131,6 +144,12 @@ export const config = {
   redis: {
     url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
     nonceTtlSeconds: parseInt(process.env.NONCE_TTL_SECONDS || '300', 10),
+  },
+
+  matching: {
+    lockTtlMs: parseInt(process.env.MATCHING_LOCK_TTL_MS || '30000', 10),
+    lockWaitMs: parseInt(process.env.MATCHING_LOCK_WAIT_MS || '2000', 10),
+    lockRetryMs: parseInt(process.env.MATCHING_LOCK_RETRY_MS || '50', 10),
   },
 
   reconciliation: {

@@ -17,6 +17,12 @@ export interface OrderbookSnapshot {
   asks: Array<{ price: number; amount: number; total: number }>;
 }
 
+export interface OrderbookCheckpoint {
+  bids: OrderbookEntry[];
+  asks: OrderbookEntry[];
+  lastUpdatedAt: number | null;
+}
+
 export interface MatchResult {
   makerOrderId: string;
   takerOrderId: string;
@@ -68,6 +74,20 @@ export class Orderbook {
     this.bids = [];
     this.asks = [];
     this.lastUpdatedAt = null;
+  }
+
+  createCheckpoint(): OrderbookCheckpoint {
+    return {
+      bids: this.bids.map((entry) => ({ ...entry })),
+      asks: this.asks.map((entry) => ({ ...entry })),
+      lastUpdatedAt: this.lastUpdatedAt,
+    };
+  }
+
+  restoreCheckpoint(checkpoint: OrderbookCheckpoint) {
+    this.bids = checkpoint.bids.map((entry) => ({ ...entry }));
+    this.asks = checkpoint.asks.map((entry) => ({ ...entry }));
+    this.lastUpdatedAt = checkpoint.lastUpdatedAt;
   }
 
   /**

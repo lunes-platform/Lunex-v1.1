@@ -31,6 +31,9 @@ Exemplo real já criado no projeto:
 - [`docs/features/social-copytrade-v1/PRD.md`](./social-copytrade-v1/PRD.md)
 - [`docs/features/social-copytrade-v1/SPEC.md`](./social-copytrade-v1/SPEC.md)
 - [`docs/features/social-copytrade-v1/TASKS.md`](./social-copytrade-v1/TASKS.md)
+- [`docs/features/production-readiness-v1/PRD.md`](./production-readiness-v1/PRD.md)
+- [`docs/features/production-readiness-v1/SPEC.md`](./production-readiness-v1/SPEC.md)
+- [`docs/features/production-readiness-v1/TASKS.md`](./production-readiness-v1/TASKS.md)
 
 ## Regras
 

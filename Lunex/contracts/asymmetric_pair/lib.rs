@@ -2,7 +2,7 @@
 //!
 //! Implements the parametric curve equation:
 //!
-//! ```
+//! ```text
 //! y = (k + c·L) · (1 - x/x₀)^γ - t·x - r·L
 //! ```
 //!
@@ -23,7 +23,6 @@
 
 #[ink::contract]
 mod asymmetric_pair {
-    use ink::prelude::string::String;
     use scale::{Decode, Encode};
 
     // ─── Constants ───────────────────────────────────────────────
@@ -94,7 +93,11 @@ mod asymmetric_pair {
 
     impl Default for Guardrails {
         fn default() -> Self {
-            Self { gamma_min: 1, gamma_max: 5, can_change_capacity: false }
+            Self {
+                gamma_min: 1,
+                gamma_max: 5,
+                can_change_capacity: false,
+            }
         }
     }
 
@@ -166,18 +169,12 @@ mod asymmetric_pair {
 
         // base_frac = FRAC_SCALE * (x0 - x) / x0  (i.e. (1 - x/x0) * FRAC_SCALE)
         let numerator = x0.saturating_sub(x);
-        let base_frac = (numerator as u128)
-            .checked_mul(FRAC_SCALE)
-            .unwrap_or(0)
-            / x0;
+        let base_frac = (numerator as u128).checked_mul(FRAC_SCALE).unwrap_or(0) / x0;
 
         // Iterated multiply: result = base_frac^gamma / FRAC_SCALE^(gamma-1)
         let mut result = base_frac;
         for _ in 1..gamma {
-            result = result
-                .checked_mul(base_frac)
-                .unwrap_or(0)
-                / FRAC_SCALE;
+            result = result.checked_mul(base_frac).unwrap_or(0) / FRAC_SCALE;
         }
         result
     }
@@ -192,16 +189,10 @@ mod asymmetric_pair {
         let exhaustion_frac = pow_fraction(x, curve.max_capacity_x0, curve.gamma);
 
         // gross = base * exhaustion_frac / FRAC_SCALE
-        let gross = base
-            .checked_mul(exhaustion_frac)
-            .unwrap_or(0)
-            / FRAC_SCALE;
+        let gross = base.checked_mul(exhaustion_frac).unwrap_or(0) / FRAC_SCALE;
 
         // fee_discount = x * fee_bps / 10_000
-        let fee_discount = x
-            .checked_mul(curve.fee_bps as u128)
-            .unwrap_or(0)
-            / 10_000;
+        let fee_discount = x.checked_mul(curve.fee_bps as u128).unwrap_or(0) / 10_000;
 
         gross.saturating_sub(fee_discount)
     }
@@ -221,8 +212,14 @@ mod asymmetric_pair {
             sell_max_capacity: u128,
             sell_fee_bps: u16,
         ) -> Self {
-            assert!(buy_gamma >= 1 && buy_gamma <= MAX_GAMMA, "Invalid buy gamma");
-            assert!(sell_gamma >= 1 && sell_gamma <= MAX_GAMMA, "Invalid sell gamma");
+            assert!(
+                buy_gamma >= 1 && buy_gamma <= MAX_GAMMA,
+                "Invalid buy gamma"
+            );
+            assert!(
+                sell_gamma >= 1 && sell_gamma <= MAX_GAMMA,
+                "Invalid sell gamma"
+            );
             assert!(buy_fee_bps <= MAX_FEE_BPS, "Buy fee too high");
             assert!(sell_fee_bps <= MAX_FEE_BPS, "Sell fee too high");
 
@@ -270,7 +267,9 @@ mod asymmetric_pair {
         #[ink(message)]
         pub fn withdraw(&mut self, amount: u128) -> Result<()> {
             self.only_owner()?;
-            if amount == 0 { return Err(Error::ZeroAmount); }
+            if amount == 0 {
+                return Err(Error::ZeroAmount);
+            }
 
             // Reduce buy_curve.k (simplified: full accounting done by PSP22 transfer off-chain)
             self.buy_curve.k = self.buy_curve.k.saturating_sub(amount);
@@ -286,7 +285,8 @@ mod asymmetric_pair {
         ) -> Result<()> {
             self.only_owner()?;
 
-            if guardrails.gamma_min < 1 || guardrails.gamma_max > MAX_GAMMA
+            if guardrails.gamma_min < 1
+                || guardrails.gamma_max > MAX_GAMMA
                 || guardrails.gamma_min > guardrails.gamma_max
             {
                 return Err(Error::InvalidGamma);
@@ -318,23 +318,27 @@ mod asymmetric_pair {
                 return Err(Error::Unauthorized);
             }
 
-            let curve = if is_buy { &mut self.buy_curve } else { &mut self.sell_curve };
+            let current_curve = if is_buy {
+                &self.buy_curve
+            } else {
+                &self.sell_curve
+            };
+            let mut next_gamma = current_curve.gamma;
+            let mut next_capacity = current_curve.max_capacity_x0;
+            let mut next_fee_bps = current_curve.fee_bps;
 
-            // Validate and apply gamma
             if let Some(g) = new_gamma {
                 if g < 1 || g > MAX_GAMMA {
                     return Err(Error::InvalidGamma);
                 }
-                // Managers must obey guardrails
                 if !is_owner {
                     if g < self.guardrails.gamma_min || g > self.guardrails.gamma_max {
                         return Err(Error::GuardrailViolation);
                     }
                 }
-                curve.gamma = g;
+                next_gamma = g;
             }
 
-            // Validate and apply max capacity
             if let Some(cap) = new_max_capacity {
                 if cap == 0 {
                     return Err(Error::InvalidCapacity);
@@ -342,28 +346,31 @@ mod asymmetric_pair {
                 if !is_owner && !self.guardrails.can_change_capacity {
                     return Err(Error::GuardrailViolation);
                 }
-                curve.max_capacity_x0 = cap;
+                next_capacity = cap;
             }
 
-            // Validate and apply fee
             if let Some(fee) = new_fee_bps {
                 if fee > MAX_FEE_BPS {
                     return Err(Error::InvalidFee);
                 }
-                curve.fee_bps = fee;
+                next_fee_bps = fee;
             }
 
-            // Read values before dropping the mutable borrow
-            let gamma = curve.gamma;
-            let capacity = curve.max_capacity_x0;
-            let fee = curve.fee_bps;
+            let curve = if is_buy {
+                &mut self.buy_curve
+            } else {
+                &mut self.sell_curve
+            };
+            curve.gamma = next_gamma;
+            curve.max_capacity_x0 = next_capacity;
+            curve.fee_bps = next_fee_bps;
 
             self.env().emit_event(CurveParametersUpdated {
                 updated_by: caller,
                 is_buy,
-                new_gamma: gamma,
-                new_capacity: capacity,
-                new_fee_bps: fee,
+                new_gamma: next_gamma,
+                new_capacity: next_capacity,
+                new_fee_bps: next_fee_bps,
             });
 
             Ok(())
@@ -379,9 +386,15 @@ mod asymmetric_pair {
         /// Returns the amount of liquidity available (output) for `amount_in`.
         #[ink(message)]
         pub fn asymmetric_swap(&mut self, amount_in: u128, is_buy: bool) -> Result<u128> {
-            if amount_in == 0 { return Err(Error::ZeroAmount); }
+            if amount_in == 0 {
+                return Err(Error::ZeroAmount);
+            }
 
-            let curve = if is_buy { &mut self.buy_curve } else { &mut self.sell_curve };
+            let curve = if is_buy {
+                &mut self.buy_curve
+            } else {
+                &mut self.sell_curve
+            };
 
             // Compute available liquidity at current volume
             let available = compute_liquidity(curve.current_volume, curve);
@@ -390,7 +403,9 @@ mod asymmetric_pair {
             }
 
             // Check we won't exceed max capacity with this volume
-            let new_volume = curve.current_volume.checked_add(amount_in)
+            let new_volume = curve
+                .current_volume
+                .checked_add(amount_in)
                 .ok_or(Error::ArithmeticOverflow)?;
             if new_volume > curve.max_capacity_x0 {
                 return Err(Error::ExceedsCapacity);
@@ -418,12 +433,14 @@ mod asymmetric_pair {
         /// Query the available liquidity for a given input amount without executing.
         #[ink(message)]
         pub fn get_quote(&self, amount_in: u128, is_buy: bool) -> u128 {
-            let curve = if is_buy { &self.buy_curve } else { &self.sell_curve };
+            let curve = if is_buy {
+                &self.buy_curve
+            } else {
+                &self.sell_curve
+            };
             let liq_before = compute_liquidity(curve.current_volume, curve);
-            let liq_after = compute_liquidity(
-                curve.current_volume.saturating_add(amount_in),
-                curve,
-            );
+            let liq_after =
+                compute_liquidity(curve.current_volume.saturating_add(amount_in), curve);
             liq_before.saturating_sub(liq_after)
         }
 
@@ -507,13 +524,20 @@ mod asymmetric_pair {
             c.deploy_liquidity(1_000 * PLANCK, 500 * PLANCK).unwrap();
 
             // Set manager with restricted guardrails
-            let guardrails = Guardrails { gamma_min: 2, gamma_max: 4, can_change_capacity: false };
+            let guardrails = Guardrails {
+                gamma_min: 2,
+                gamma_max: 4,
+                can_change_capacity: false,
+            };
             c.set_manager(Some(accounts.bob), guardrails).unwrap();
 
             // Simulate manager call
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
             let result = c.update_curve_parameters(true, Some(3), None, None);
-            assert!(result.is_ok(), "Manager should be able to set gamma=3 within {{2,4}}");
+            assert!(
+                result.is_ok(),
+                "Manager should be able to set gamma=3 within {{2,4}}"
+            );
         }
 
         #[ink::test]
@@ -522,7 +546,11 @@ mod asymmetric_pair {
             let mut c = default_contract();
             c.deploy_liquidity(1_000 * PLANCK, 500 * PLANCK).unwrap();
 
-            let guardrails = Guardrails { gamma_min: 2, gamma_max: 3, can_change_capacity: false };
+            let guardrails = Guardrails {
+                gamma_min: 2,
+                gamma_max: 3,
+                can_change_capacity: false,
+            };
             c.set_manager(Some(accounts.bob), guardrails).unwrap();
 
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
@@ -531,11 +559,27 @@ mod asymmetric_pair {
         }
 
         #[ink::test]
+        fn failed_curve_update_does_not_partially_apply_prior_fields() {
+            let mut c = default_contract();
+            let before = c.get_buy_curve();
+
+            let result = c.update_curve_parameters(true, Some(4), None, Some(MAX_FEE_BPS + 1));
+
+            assert_eq!(result, Err(Error::InvalidFee));
+            let after = c.get_buy_curve();
+            assert_eq!(after.gamma, before.gamma);
+            assert_eq!(after.max_capacity_x0, before.max_capacity_x0);
+            assert_eq!(after.fee_bps, before.fee_bps);
+            assert_eq!(after.current_volume, before.current_volume);
+        }
+
+        #[ink::test]
         fn manager_cannot_withdraw() {
             let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
             let mut c = default_contract();
             c.deploy_liquidity(1_000 * PLANCK, 500 * PLANCK).unwrap();
-            c.set_manager(Some(accounts.bob), Guardrails::default()).unwrap();
+            c.set_manager(Some(accounts.bob), Guardrails::default())
+                .unwrap();
 
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
             let result = c.withdraw(1 * PLANCK);
@@ -546,7 +590,10 @@ mod asymmetric_pair {
         fn pow_fraction_sanity() {
             // (1 - 10/500)^2 = 0.98^2 = 0.9604 → FRAC_SCALE * 0.9604 ≈ 960_400
             let result = pow_fraction(10, 500, 2);
-            assert!(result > 950_000 && result < 970_000, "Expected ~960400, got {result}");
+            assert!(
+                result > 950_000 && result < 970_000,
+                "Expected ~960400, got {result}"
+            );
         }
     }
 }

@@ -955,7 +955,7 @@ class ContractService {
 
   /**
    * Get user staking info
-   * Uses StakingStub.json ABI
+   * ABI labels: get_stake → JS: getStake, get_stats → JS: getStats
    */
   async getStakingUserInfo(accountAddress: string): Promise<{
     totalStaked: string
@@ -966,23 +966,37 @@ class ContractService {
   } | null> {
     if (!this.api || !this.stakingContract) return null
     try {
-      const { result, output } = await this.stakingContract.query.getUserInfo(
-        accountAddress,
-        { gasLimit: this.makeDryGas() },
-        accountAddress
-      )
+      const [stakeResult, statsResult] = await Promise.all([
+        this.stakingContract.query.getStake(
+          accountAddress,
+          { gasLimit: this.makeDryGas() },
+          accountAddress
+        ),
+        this.stakingContract.query.getStats(accountAddress, {
+          gasLimit: this.makeDryGas()
+        })
+      ])
 
-      if (result.isOk && output) {
-        // Process output if the ABI matches
-        const json = output.toJSON() as any
-        const obj = json?.ok ?? json
-        if (obj && typeof obj === 'object') {
+      let totalStaked = '0'
+      const statsJson = statsResult.output?.toJSON() as any
+      const stats = statsJson?.ok ?? statsJson
+      if (statsResult.result.isOk && Array.isArray(stats)) {
+        totalStaked = String(stats[0] ?? '0').replace(/,/g, '')
+      }
+
+      if (stakeResult.result.isOk && stakeResult.output) {
+        const json = stakeResult.output.toJSON() as any
+        const maybeOption = json?.ok ?? json
+        const obj = maybeOption?.some ?? maybeOption?.Some ?? maybeOption
+        if (obj && typeof obj === 'object' && !('none' in obj)) {
           return {
-            totalStaked: String(obj.totalStaked ?? '1000000000000000'),
-            userStaked: String(obj.userStaked ?? '0'),
-            pendingRewards: String(obj.pendingRewards ?? '0'),
-            apr: String(obj.apr ?? '120'),
-            lockPeriod: Number(obj.lockPeriod ?? 7)
+            totalStaked,
+            userStaked: String(obj.amount ?? '0').replace(/,/g, ''),
+            pendingRewards: String(
+              obj.pendingRewards ?? obj.pending_rewards ?? '0'
+            ).replace(/,/g, ''),
+            apr: String(obj.apr ?? '0'),
+            lockPeriod: Number(obj.duration ?? 0)
           }
         }
       }

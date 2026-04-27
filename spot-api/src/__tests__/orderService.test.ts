@@ -20,6 +20,8 @@ const mockBook = {
   addMarketOrder: jest.fn(),
   addLimitOrder: jest.fn(),
   cancelOrder: jest.fn(),
+  createCheckpoint: jest.fn(),
+  restoreCheckpoint: jest.fn(),
   getBestBid: jest.fn(),
   getBestAsk: jest.fn(),
 };
@@ -41,6 +43,20 @@ const mockSettlementService = {
   cancelOrderFor: jest.fn(),
 };
 
+const mockWalletRiskService = {
+  assertWalletCanAct: jest.fn(),
+};
+
+const mockMatchingLockService = {
+  withMatchingLock: jest.fn(async (_pairSymbol: string, callback: any) =>
+    callback(),
+  ),
+};
+
+const mockOrderbookBootstrapService = {
+  rehydrateOrderbookForPair: jest.fn(),
+};
+
 jest.mock('../db', () => ({
   __esModule: true,
   default: mockPrisma,
@@ -57,6 +73,17 @@ jest.mock('../services/tradeService', () => ({
 jest.mock('../services/settlementService', () => ({
   settlementService: mockSettlementService,
 }));
+
+jest.mock('../services/walletRiskService', () => ({
+  walletRiskService: mockWalletRiskService,
+}));
+
+jest.mock('../services/matchingLockService', () => mockMatchingLockService);
+
+jest.mock(
+  '../services/orderbookBootstrapService',
+  () => mockOrderbookBootstrapService,
+);
 
 import { orderService } from '../services/orderService';
 
@@ -110,12 +137,17 @@ describe('orderService stop orders', () => {
     mockPrisma.order.create.mockReset();
     mockPrisma.order.update.mockReset();
     mockPrisma.order.findMany.mockReset();
+    mockPrisma.order.findMany.mockResolvedValue([]);
     mockPrisma.trade.findFirst.mockReset();
     mockBook.addMarketOrder.mockReset();
     mockBook.addLimitOrder.mockReset();
     mockBook.cancelOrder.mockReset();
+    mockBook.createCheckpoint.mockReset();
+    mockBook.restoreCheckpoint.mockReset();
     mockBook.getBestBid.mockReset();
     mockBook.getBestAsk.mockReset();
+    mockBook.getBestBid.mockReturnValue(null);
+    mockBook.getBestAsk.mockReturnValue(null);
     mockTradeService.processMatches.mockReset();
     mockSettlementService.isEnabled.mockReturnValue(true);
     mockSettlementService.isNonceUsed.mockResolvedValue(false);
@@ -124,8 +156,41 @@ describe('orderService stop orders', () => {
       10_000_000_000_000n,
     );
     mockSettlementService.cancelOrderFor.mockResolvedValue(null);
+    mockWalletRiskService.assertWalletCanAct.mockResolvedValue(undefined);
+    mockMatchingLockService.withMatchingLock.mockClear();
+    mockMatchingLockService.withMatchingLock.mockImplementation(
+      async (_pairSymbol: string, callback: any) => callback(),
+    );
+    mockOrderbookBootstrapService.rehydrateOrderbookForPair.mockReset();
+    mockOrderbookBootstrapService.rehydrateOrderbookForPair.mockResolvedValue({
+      restoredOrders: 0,
+      pairSymbol: pair.symbol,
+    });
     mockOrderbookManager.getOrCreate.mockReturnValue(mockBook);
     mockOrderbookManager.get.mockReturnValue(mockBook);
+    mockBook.createCheckpoint.mockReturnValue({ bids: [], asks: [] });
+  });
+
+  it('redacts signatures, nonces and order hashes from user order reads', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([
+      {
+        ...makeOrder(),
+        pair: { symbol: pair.symbol },
+      },
+    ]);
+
+    const result = await orderService.getUserOrders('maker-1');
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 'order-1',
+        makerAddress: 'maker-1',
+        pair: { symbol: pair.symbol },
+      }),
+    ]);
+    expect(result[0]).not.toHaveProperty('signature');
+    expect(result[0]).not.toHaveProperty('nonce');
+    expect(result[0]).not.toHaveProperty('orderHash');
   });
 
   it('keeps a STOP order in PENDING_TRIGGER when the trigger price has not been reached', async () => {
@@ -305,5 +370,171 @@ describe('orderService stop orders', () => {
         timeInForce: 'GTC',
       }),
     ).rejects.toThrow('On-chain nonce validation unavailable');
+  });
+
+  it('rejects banned wallets before persisting a new order', async () => {
+    mockWalletRiskService.assertWalletCanAct.mockRejectedValueOnce(
+      new Error('Wallet is banned: market abuse'),
+    );
+
+    await expect(
+      orderService.createOrder({
+        pairSymbol: pair.symbol,
+        side: 'BUY',
+        type: 'LIMIT',
+        price: '100',
+        amount: '1',
+        nonce: '1700000000005',
+        timestamp: Date.now(),
+        signature: 'sig',
+        makerAddress: 'maker-1',
+        timeInForce: 'GTC',
+      }),
+    ).rejects.toThrow('Wallet is banned: market abuse');
+
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it('restores the in-memory book when match persistence fails', async () => {
+    const createdOrder = makeOrder({
+      id: 'market-order-1',
+      type: 'MARKET',
+      side: 'BUY',
+      status: 'OPEN',
+      stopPrice: null,
+    });
+    const checkpoint = { bids: ['before'], asks: ['before'] };
+    const matches = [
+      {
+        makerOrderId: 'maker-order-1',
+        takerOrderId: createdOrder.id,
+        fillAmount: 1,
+        fillPrice: 100,
+        makerAddress: 'maker-2',
+        takerAddress: createdOrder.makerAddress,
+      },
+    ];
+
+    mockPrisma.order.findFirst.mockResolvedValueOnce(null);
+    mockPrisma.order.create.mockResolvedValue(createdOrder);
+    mockBook.createCheckpoint.mockReturnValue(checkpoint);
+    mockBook.getBestAsk.mockReturnValue(100);
+    mockBook.addMarketOrder.mockReturnValue(matches);
+    mockTradeService.processMatches.mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+
+    await expect(
+      orderService.createOrder({
+        pairSymbol: pair.symbol,
+        side: 'BUY',
+        type: 'MARKET',
+        amount: '1',
+        nonce: '1700000000006',
+        timestamp: Date.now(),
+        signature: 'sig',
+        makerAddress: 'maker-1',
+        timeInForce: 'IOC',
+      }),
+    ).rejects.toThrow('database unavailable');
+
+    expect(mockBook.restoreCheckpoint).toHaveBeenCalledWith(checkpoint);
+  });
+
+  it('serializes matching with a pair lock and rehydrates the pair book before mutation', async () => {
+    const createdOrder = makeOrder({
+      id: 'limit-order-1',
+      type: 'LIMIT',
+      side: 'SELL',
+      price: new Decimal('100'),
+      stopPrice: null,
+      status: 'OPEN',
+    });
+
+    mockPrisma.order.findFirst.mockResolvedValueOnce(null);
+    mockPrisma.order.create.mockResolvedValue(createdOrder);
+    mockPrisma.order.findUnique.mockResolvedValue(createdOrder);
+    mockBook.addLimitOrder.mockReturnValue([]);
+
+    await orderService.createOrder({
+      pairSymbol: pair.symbol,
+      side: 'SELL',
+      type: 'LIMIT',
+      price: '100',
+      amount: '1',
+      nonce: '1700000000007',
+      timestamp: Date.now(),
+      signature: 'sig',
+      makerAddress: 'maker-1',
+      timeInForce: 'GTC',
+    });
+
+    expect(mockMatchingLockService.withMatchingLock).toHaveBeenCalledWith(
+      pair.symbol,
+      expect.any(Function),
+    );
+    expect(
+      mockOrderbookBootstrapService.rehydrateOrderbookForPair,
+    ).toHaveBeenCalledWith(pair.id, pair.symbol);
+    expect(mockBook.addLimitOrder).toHaveBeenCalledWith(
+      createdOrder.id,
+      'SELL',
+      100,
+      1,
+      'maker-1',
+    );
+  });
+
+  it('does not mutate DB or book when on-chain cancellation fails', async () => {
+    const openOrder = makeOrder({
+      id: 'order-cancel-1',
+      type: 'LIMIT',
+      side: 'SELL',
+      price: new Decimal('100'),
+      stopPrice: null,
+      status: 'OPEN',
+      nonce: 'cancel-nonce-1',
+    });
+
+    mockPrisma.order.findUnique.mockResolvedValue(openOrder);
+    mockSettlementService.cancelOrderFor.mockRejectedValueOnce(
+      new Error('chain unavailable'),
+    );
+
+    await expect(
+      orderService.cancelOrder(openOrder.id, openOrder.makerAddress),
+    ).rejects.toThrow('chain unavailable');
+
+    expect(mockMatchingLockService.withMatchingLock).toHaveBeenCalledWith(
+      pair.symbol,
+      expect.any(Function),
+    );
+    expect(
+      mockOrderbookBootstrapService.rehydrateOrderbookForPair,
+    ).toHaveBeenCalledWith(pair.id, pair.symbol);
+    expect(mockBook.cancelOrder).not.toHaveBeenCalled();
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when settlement is enabled but on-chain cancellation is unavailable', async () => {
+    const openOrder = makeOrder({
+      id: 'order-cancel-2',
+      type: 'LIMIT',
+      side: 'SELL',
+      price: new Decimal('100'),
+      stopPrice: null,
+      status: 'OPEN',
+      nonce: 'cancel-nonce-2',
+    });
+
+    mockPrisma.order.findUnique.mockResolvedValue(openOrder);
+    mockSettlementService.cancelOrderFor.mockResolvedValueOnce(null);
+
+    await expect(
+      orderService.cancelOrder(openOrder.id, openOrder.makerAddress),
+    ).rejects.toThrow('On-chain cancellation unavailable');
+
+    expect(mockBook.cancelOrder).not.toHaveBeenCalled();
+    expect(mockPrisma.order.update).not.toHaveBeenCalled();
   });
 });

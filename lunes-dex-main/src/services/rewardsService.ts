@@ -5,17 +5,6 @@ import {
 
 const REWARDS_API_URL =
   process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
-const READ_SIGNATURE_TTL_MS = 4 * 60 * 1000
-
-const readSignatureCache = new Map<
-  string,
-  {
-    nonce: string
-    timestamp: number
-    signature: string
-    expiresAt: number
-  }
->()
 
 export interface TradingRewardEntry {
   id: string
@@ -133,19 +122,8 @@ async function signRewardsAction(
   fields?: Record<
     string,
     string | number | boolean | Array<string | number> | undefined | null
-  >,
-  allowCache = false
+  >
 ) {
-  const cacheKey = `${action}:${address}:${JSON.stringify(fields ?? {})}`
-  const cached = readSignatureCache.get(cacheKey)
-  if (allowCache && cached && cached.expiresAt > Date.now()) {
-    return {
-      nonce: cached.nonce,
-      timestamp: cached.timestamp,
-      signature: cached.signature
-    }
-  }
-
   const metadata = createSignedActionMetadata()
   const signature = await signMessage(
     buildWalletActionMessage({
@@ -157,20 +135,11 @@ async function signRewardsAction(
     })
   )
 
-  const auth = {
+  return {
     nonce: metadata.nonce,
     timestamp: metadata.timestamp,
     signature
   }
-
-  if (allowCache) {
-    readSignatureCache.set(cacheKey, {
-      ...auth,
-      expiresAt: Date.now() + READ_SIGNATURE_TTL_MS
-    })
-  }
-
-  return auth
 }
 
 const rewardsApi = {
@@ -181,9 +150,7 @@ const rewardsApi = {
     const auth = await signRewardsAction(
       'rewards.pending',
       address,
-      signMessage,
-      undefined,
-      true
+      signMessage
     )
     const query = toQueryString({
       address,

@@ -8,6 +8,8 @@ Este diretório agora tem uma camada canônica para produto, especificação e p
 |---|---|---|
 | PRD principal | [`docs/prd/PROJECT_PRD.md`](./prd/PROJECT_PRD.md) | Define visão, escopo de produto, personas e prioridades do projeto |
 | Spec principal | [`docs/specs/PROJECT_SPEC.md`](./specs/PROJECT_SPEC.md) | Define a arquitetura guarda-chuva, limites do sistema e contratos entre módulos |
+| Bootstrap local | [`docs/specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md`](./specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md) | Define como subir nó local, contratos, tokens, API, frontend e QA mínimo |
+| Gate produção | [`docs/features/production-readiness-v1/`](./features/production-readiness-v1/) | Lista P0/P1/P2, critérios NO-GO e evidência TDD para liberação comercial |
 | Processo | [`docs/sdd/README.md`](./sdd/README.md) | Define como aplicar SDD no desenvolvimento do projeto |
 | Novas features | [`docs/features/README.md`](./features/README.md) | Define onde cada feature nova deve viver e como nomear os artefatos |
 | Exemplo real | [`docs/features/asymmetric-liquidity-v1/`](./features/asymmetric-liquidity-v1/) | Primeiro pacote SDD aplicado a uma feature já existente no código |
@@ -44,6 +46,8 @@ Este diretório agora tem uma camada canônica para produto, especificação e p
 - [`docs/API_SPECIFICATION.md`](./API_SPECIFICATION.md): spec da API geral.
 - [`docs/PUBLIC_API_SPECIFICATION.md`](./PUBLIC_API_SPECIFICATION.md): spec da API pública e de automação.
 - [`docs/api/openapi.json`](./api/openapi.json): contrato OpenAPI.
+- [`docs/specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md`](./specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md): spec operacional para subir o projeto localmente.
+- [`docs/features/production-readiness-v1/SPEC.md`](./features/production-readiness-v1/SPEC.md): gate técnico para produção comercial.
 
 ## Regras de Uso
 

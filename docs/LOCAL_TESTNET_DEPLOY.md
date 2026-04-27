@@ -2,6 +2,109 @@
 
 Este documento descreve tudo que foi necessário para realizar um deploy bem-sucedido dos contratos ink! na testnet local da Lunes e conectar o frontend.
 
+> **Status atual:** este guia mantém notas históricas e troubleshooting detalhado. O caminho canônico para subir o projeto localmente está em [`docs/specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md`](./specs/LOCAL_PROJECT_BOOTSTRAP_SPEC.md) e o resumo operacional está no [`README.md`](../README.md#5-setup-local--passo-a-passo).
+
+---
+
+## Caminho Validado Atual
+
+Use este fluxo para subir a stack local com runtime Lunes real, contratos, tokens de teste e QA mínimo.
+
+### 1. Nó Lunes local
+
+```bash
+cd /Users/lucas/Documents/Projetos_DEV
+test -d lunes-nightly || git clone https://github.com/lunes-platform/lunes-nightly.git lunes-nightly
+cd lunes-nightly
+rustup toolchain install nightly-2023-01-01
+rustup target add wasm32-unknown-unknown --toolchain nightly-2023-01-01
+
+# Se protoc não existir: brew install protobuf
+PROTOC="$(which protoc)" rustup run nightly-2023-01-01 cargo build --release
+
+./target/release/lunes-node --dev --tmp --ws-port 9944 --rpc-port 9933 -lruntime::contracts=debug
+```
+
+Endpoints:
+
+- WS: `ws://127.0.0.1:9944`
+- RPC HTTP: `http://127.0.0.1:9933`
+- Explorer: `https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944`
+
+O runtime validado contém `pallet_contracts`, `pallet_assets`, `ContractsApi` e chain extension de assets.
+
+### 2. Banco, cache e `.env`
+
+```bash
+cd /Users/lucas/Documents/Projetos_DEV/Lunex
+npm install
+npm --prefix spot-api install
+npm --prefix lunes-dex-main install
+test -f spot-api/.env || cp spot-api/.env.example spot-api/.env
+test -f lunes-dex-main/.env || cp lunes-dex-main/.env.example lunes-dex-main/.env
+
+brew services start postgresql@16
+brew services start redis
+createuser -s postgres 2>/dev/null || true
+createdb -U postgres lunex_spot 2>/dev/null || true
+```
+
+Valores mínimos para `spot-api/.env`:
+
+```dotenv
+DATABASE_URL="postgresql://postgres:@localhost:5432/lunex_spot?schema=public"
+LUNES_WS_URL="ws://127.0.0.1:9944"
+REDIS_URL="redis://127.0.0.1:6379"
+ADMIN_SECRET="dev-secret-troque-em-producao"
+RELAYER_SEED="//Alice"
+PORT=4000
+WS_PORT=4001
+```
+
+Valores mínimos para `lunes-dex-main/.env`:
+
+```dotenv
+REACT_APP_NETWORK=testnet
+REACT_APP_RPC_TESTNET=ws://127.0.0.1:9944
+REACT_APP_SPOT_API_URL=http://localhost:4000
+REACT_APP_WS_URL=ws://localhost:4001
+REACT_APP_DEV_MODE=false
+```
+
+### 3. Schema, deploy e QA
+
+```bash
+cd /Users/lucas/Documents/Projetos_DEV/Lunex/spot-api
+npx prisma db push
+npx prisma generate
+npx prisma db seed
+
+npx ts-node scripts/deploy-contracts.ts
+npx ts-node scripts/setup-local-tokens.ts
+npx ts-node scripts/check-contracts-qa.ts
+npx ts-node scripts/test-liquidity-pool.ts
+```
+
+O deploy atualiza `spot-api/deployed-addresses.json`. Como o nó roda com `--tmp`, esses endereços são válidos apenas enquanto o processo do nó atual permanecer vivo.
+
+### 4. API e frontend
+
+```bash
+cd /Users/lucas/Documents/Projetos_DEV/Lunex/spot-api
+npm run dev
+```
+
+```bash
+cd /Users/lucas/Documents/Projetos_DEV/Lunex/lunes-dex-main
+npm run dev -- --host 127.0.0.1 --port 3000
+```
+
+---
+
+## Notas Históricas e Troubleshooting
+
+As seções abaixo registram problemas e correções encontrados durante a primeira integração ink!/Lunes. Use-as para diagnóstico, mas prefira o fluxo acima para uma subida nova.
+
 ---
 
 ## Pré-requisitos
@@ -203,7 +306,7 @@ O script faz na ordem:
 7. Salva endereços em `spot-api/deployed-addresses.json`
 8. Atualiza `lunes-dex-main/.env`
 
-**Endereços deployados (sessão de março 2026):**
+**Exemplo histórico de endereços deployados (sessão de março 2026):**
 ```
 wnative:  5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo
 factory:  5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2
@@ -213,7 +316,7 @@ rewards:  5EiX7yUapZmL8LRSb2kbpmohig1rYqyG973ENR9mgdV7Ry6r
 pairCodeHash: 0xe03a74087741619e92f516c782a97abd574d75735933b98e74d4052fa924392f
 ```
 
-> **Atenção:** O nó de desenvolvimento reseta ao reiniciar. Redeployar sempre que o nó for reiniciado.
+> **Atenção:** não use esses endereços como estado atual. Consulte `spot-api/deployed-addresses.json` depois do deploy local. O nó de desenvolvimento reseta ao reiniciar; redeploye sempre que o nó for reiniciado.
 
 ---
 

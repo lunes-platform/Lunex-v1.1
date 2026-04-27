@@ -11,7 +11,8 @@
     "format:write": "prettier --write \"src/**/*.{ts,tsx}\"",
     "deadcode:exports": "node ./scripts/check-ts-prune.cjs",
     "deadcode:deps": "node ./scripts/check-depcheck.cjs",
-    "quality": "npm run lint && npm run deadcode:exports && npm run deadcode:deps && npm run format:check",
+    "contract:check": "node ./scripts/check-contract-abi-alignment.cjs",
+    "quality": "npm run contract:check && npm run lint && npm run deadcode:exports && npm run deadcode:deps && npm run format:check",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

@@ -5,12 +5,18 @@
  * connection is required to run these tests.
  */
 
+jest.mock('@polkadot/util-crypto', () => ({
+  cryptoWaitReady: jest.fn().mockResolvedValue(undefined),
+  signatureVerify: jest.fn(),
+}));
+
 jest.mock('../utils/redis', () => {
   const store = new Map<string, string>();
 
   const mockRedis = {
     get: jest.fn(async (key: string) => store.get(key) ?? null),
-    set: jest.fn(async (key: string, value: string) => {
+    set: jest.fn(async (key: string, value: string, ...args: string[]) => {
+      if (args.includes('NX') && store.has(key)) return null;
       store.set(key, value);
       return 'OK';
     }),
@@ -31,6 +37,7 @@ jest.mock('../utils/redis', () => {
 
 jest.mock('../config', () => ({
   config: {
+    isProd: false,
     redis: {
       url: 'redis://127.0.0.1:6379',
       nonceTtlSeconds: 300,
@@ -38,9 +45,18 @@ jest.mock('../config', () => ({
   },
 }));
 
+jest.mock('../services/walletRiskService', () => ({
+  walletRiskService: {
+    assertWalletCanAct: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
+import { signatureVerify } from '@polkadot/util-crypto';
+import { config } from '../config';
 import {
   buildWalletActionMessage,
   verifyWalletActionSignature,
+  verifyWalletReadSignature,
 } from '../middleware/auth';
 import * as redisModule from '../utils/redis';
 
@@ -53,6 +69,9 @@ const mockRedis = (redisModule as any)._mockRedis as {
   _store: Map<string, string>;
   _clear: () => void;
 };
+const signatureVerifyMock = signatureVerify as jest.MockedFunction<
+  typeof signatureVerify
+>;
 
 describe('buildWalletActionMessage', () => {
   it('builds a deterministic canonical message', () => {
@@ -106,14 +125,87 @@ describe('verifyWalletActionSignature — replay protection', () => {
   beforeEach(() => {
     mockRedis._clear();
     jest.clearAllMocks();
+    config.isProd = false;
+    signatureVerifyMock.mockReturnValue({ isValid: false } as ReturnType<
+      typeof signatureVerify
+    >);
     // Restore get/set to default implementations after each test
     mockRedis.get.mockImplementation(
       async (key: string) => mockRedis._store.get(key) ?? null,
     );
-    mockRedis.set.mockImplementation(async (key: string, value: string) => {
-      mockRedis._store.set(key, value);
-      return 'OK';
+    mockRedis.set.mockImplementation(
+      async (key: string, value: string, ...args: string[]) => {
+        if (args.includes('NX') && mockRedis._store.has(key)) return null;
+        mockRedis._store.set(key, value);
+        return 'OK';
+      },
+    );
+  });
+
+  it('uses atomic Redis SET NX after a valid action signature', async () => {
+    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<
+      typeof signatureVerify
+    >);
+
+    const result = await verifyWalletActionSignature({
+      action: 'trade',
+      address: 'addr',
+      nonce: 'fresh-atomic-nonce',
+      timestamp: Date.now(),
+      signature: 'signed-payload',
     });
+
+    expect(result.ok).toBe(true);
+    expect(mockRedis.set).toHaveBeenCalledWith(
+      'nonce:trade:addr:fresh-atomic-nonce',
+      '1',
+      'EX',
+      config.redis.nonceTtlSeconds,
+      'NX',
+    );
+  });
+
+  it('allows at most one concurrent request to consume the same valid nonce', async () => {
+    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<
+      typeof signatureVerify
+    >);
+    const input = {
+      action: 'trade',
+      address: 'addr',
+      nonce: 'same-concurrent-nonce',
+      timestamp: Date.now(),
+      signature: 'signed-payload',
+    };
+
+    const results = await Promise.all([
+      verifyWalletActionSignature(input),
+      verifyWalletActionSignature(input),
+    ]);
+
+    expect(results.filter((result) => result.ok).length).toBe(1);
+    expect(results.filter((result) => !result.ok)[0]?.error).toMatch(
+      /nonce already used/i,
+    );
+  });
+
+  it('fails closed in production when Redis cannot atomically consume a nonce', async () => {
+    config.isProd = true;
+    signatureVerifyMock.mockReturnValue({ isValid: true } as ReturnType<
+      typeof signatureVerify
+    >);
+    mockRedis.get.mockRejectedValue(new Error('Redis down'));
+    mockRedis.set.mockRejectedValue(new Error('Redis down'));
+
+    const result = await verifyWalletActionSignature({
+      action: 'trade',
+      address: 'addr',
+      nonce: 'nonce-store-down',
+      timestamp: Date.now(),
+      signature: 'signed-payload',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/nonce store unavailable/i);
   });
 
   it('rejects an expired timestamp', async () => {
@@ -196,5 +288,42 @@ describe('verifyWalletActionSignature — replay protection', () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe('verifyWalletReadSignature — replay protection', () => {
+  beforeEach(() => {
+    mockRedis._clear();
+    jest.clearAllMocks();
+    config.isProd = false;
+    signatureVerifyMock.mockReturnValue({ isValid: false } as ReturnType<
+      typeof signatureVerify
+    >);
+    mockRedis.get.mockImplementation(
+      async (key: string) => mockRedis._store.get(key) ?? null,
+    );
+    mockRedis.set.mockImplementation(
+      async (key: string, value: string, ...args: string[]) => {
+        if (args.includes('NX') && mockRedis._store.has(key)) return null;
+        mockRedis._store.set(key, value);
+        return 'OK';
+      },
+    );
+  });
+
+  it('rejects a replayed signed-read nonce before signature verification', async () => {
+    const replayKey = 'nonce:read:orders.list:addr:read-nonce-used';
+    mockRedis._store.set(replayKey, '1');
+
+    const result = await verifyWalletReadSignature({
+      action: 'orders.list',
+      address: 'addr',
+      nonce: 'read-nonce-used',
+      timestamp: Date.now(),
+      signature: '0x00',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/nonce already used/i);
   });
 });

@@ -7,11 +7,6 @@ import {
 } from '../utils/signing'
 
 const STORAGE_KEY = 'spot_favorites'
-const READ_SIGNATURE_TTL_MS = 4 * 60 * 1000
-const readSignatureCache = new Map<
-  string,
-  { nonce: string; timestamp: number; signature: string; expiresAt: number }
->()
 
 function readFromStorage(): string[] {
   try {
@@ -39,23 +34,9 @@ export function useFavorites(walletAddress: string | null) {
   const [favorites, setFavorites] = useState<string[]>(readFromStorage)
 
   const signFavoriteAction = useCallback(
-    async (
-      action: string,
-      fields?: Record<string, string>,
-      allowCache = false
-    ) => {
+    async (action: string, fields?: Record<string, string>) => {
       if (!walletAddress) {
         throw new Error('Wallet address required')
-      }
-
-      const cacheKey = `${action}:${walletAddress}:${JSON.stringify(fields ?? {})}`
-      const cached = readSignatureCache.get(cacheKey)
-      if (allowCache && cached && cached.expiresAt > Date.now()) {
-        return {
-          nonce: cached.nonce,
-          timestamp: cached.timestamp,
-          signature: cached.signature
-        }
       }
 
       const metadata = createSignedActionMetadata()
@@ -69,14 +50,7 @@ export function useFavorites(walletAddress: string | null) {
         })
       )
 
-      const auth = { ...metadata, signature }
-      if (allowCache) {
-        readSignatureCache.set(cacheKey, {
-          ...auth,
-          expiresAt: Date.now() + READ_SIGNATURE_TTL_MS
-        })
-      }
-      return auth
+      return { ...metadata, signature }
     },
     [signMessage, walletAddress]
   )
@@ -89,7 +63,7 @@ export function useFavorites(walletAddress: string | null) {
 
     const sync = async () => {
       try {
-        const auth = await signFavoriteAction('favorites.list', undefined, true)
+        const auth = await signFavoriteAction('favorites.list')
         const remote = await spotApi.getFavorites(walletAddress, auth)
         if (cancelled) return
 

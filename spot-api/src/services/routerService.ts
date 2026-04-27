@@ -214,6 +214,60 @@ function quoteOrderbookDepth(params: {
   };
 }
 
+function assertFreshOrderbookExecution(params: {
+  pairSymbol: string;
+  side: 'BUY' | 'SELL';
+  amountIn: number;
+  amountOutMin: number;
+  slippageProtectedMinAmountOut: number;
+  maxSlippageBps: number;
+}) {
+  const book = orderbookManager.get(params.pairSymbol);
+  if (!book) {
+    throw new Error(
+      `Current orderbook liquidity unavailable for ${params.pairSymbol}`,
+    );
+  }
+
+  const depthQuote = quoteOrderbookDepth({
+    book,
+    side: params.side,
+    amountIn: params.amountIn,
+  });
+
+  if (
+    params.amountOutMin > 0 &&
+    depthQuote.amountOut + 1e-9 < params.amountOutMin
+  ) {
+    throw new Error(
+      `Current orderbook output ${depthQuote.amountOut} is below amountOutMin ${params.amountOutMin}`,
+    );
+  }
+
+  if (
+    params.slippageProtectedMinAmountOut > 0 &&
+    depthQuote.amountOut + 1e-9 < params.slippageProtectedMinAmountOut
+  ) {
+    throw new Error(
+      `Current orderbook output ${depthQuote.amountOut} is below slippage-protected minimum ${params.slippageProtectedMinAmountOut}`,
+    );
+  }
+
+  if (!depthQuote.available) {
+    throw new Error(
+      `Current orderbook liquidity unavailable: ${depthQuote.unavailableReason ?? 'INSUFFICIENT_DEPTH'}`,
+    );
+  }
+
+  if (depthQuote.priceImpactBps > params.maxSlippageBps) {
+    throw new Error(
+      `Current orderbook price impact ${depthQuote.priceImpactBps} bps exceeds maxSlippageBps ${params.maxSlippageBps}`,
+    );
+  }
+
+  return depthQuote;
+}
+
 // ─── Router Service ───────────────────────────────────────────────
 
 export const routerService = {
@@ -440,14 +494,31 @@ export const routerService = {
     const minAmountOut = quote.bestAmountOut * (1 - maxSlippageBps / 10_000);
 
     // Route to the appropriate execution handler
-    if (quote.bestRoute === 'AMM_V1' || quote.bestRoute === 'ORDERBOOK') {
+    if (quote.bestRoute === 'AMM_V1') {
+      throw new Error(
+        'AMM_V1 execution is not implemented by the backend router',
+      );
+    }
+
+    if (quote.bestRoute === 'ORDERBOOK') {
+      const freshOrderbookQuote = assertFreshOrderbookExecution({
+        pairSymbol,
+        side,
+        amountIn,
+        amountOutMin,
+        slippageProtectedMinAmountOut: minAmountOut,
+        maxSlippageBps,
+      });
+      const orderAmount =
+        side === 'BUY' ? freshOrderbookQuote.amountOut : amountIn;
+
       // Delegate to existing orderService (MARKET order)
       const { orderService } = await import('./orderService');
       const order = await orderService.createOrder({
         pairSymbol,
         side,
         type: 'MARKET',
-        amount: amountIn.toString(),
+        amount: orderAmount.toString(),
         makerAddress,
         nonce,
         timestamp: Date.now(),

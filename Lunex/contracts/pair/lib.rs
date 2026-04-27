@@ -305,8 +305,9 @@ pub mod pair_contract {
         /// Valor de produção conforme Uniswap V2
         pub const MINIMUM_LIQUIDITY: u128 = 1000;
 
-        /// Precisão para cálculos de preço cumulativo (2^112)
-        pub const UQ112: u128 = 2_u128.pow(112);
+        /// Precisão decimal para preços cumulativos.
+        /// UQ112 exige largura maior que u128 quando multiplicado por saldos reais.
+        pub const PRICE_PRECISION: u128 = 1_000_000_000_000;
 
         /// Nova estrutura de fees (0.5% total = 995/1000)
         pub const FEE_DENOMINATOR: u128 = 1000;
@@ -457,7 +458,9 @@ pub mod pair_contract {
                 return Err(PairError::Unauthorized);
             }
             self.paused = true;
-            self.env().emit_event(PairPaused { by: self.env().caller() });
+            self.env().emit_event(PairPaused {
+                by: self.env().caller(),
+            });
             Ok(())
         }
 
@@ -468,7 +471,9 @@ pub mod pair_contract {
                 return Err(PairError::Unauthorized);
             }
             self.paused = false;
-            self.env().emit_event(PairUnpaused { by: self.env().caller() });
+            self.env().emit_event(PairUnpaused {
+                by: self.env().caller(),
+            });
             Ok(())
         }
 
@@ -486,19 +491,19 @@ pub mod pair_contract {
 
         /// Update reserves and cumulative prices
         fn update(&mut self, balance_0: Balance, balance_1: Balance) -> Result<(), PairError> {
-            let block_timestamp = self.env().block_timestamp();
+            let block_timestamp = self.env().block_timestamp() / 1000;
             let time_elapsed = block_timestamp.saturating_sub(self.block_timestamp_last);
 
             if time_elapsed > 0 && self.reserve_0 != 0 && self.reserve_1 != 0 {
                 // Overflow protection for price calculation
                 let price_0 = self
                     .reserve_1
-                    .checked_mul(constants::UQ112)
+                    .checked_mul(constants::PRICE_PRECISION)
                     .and_then(|p| p.checked_div(self.reserve_0))
                     .ok_or(PairError::Overflow)?;
                 let price_1 = self
                     .reserve_0
-                    .checked_mul(constants::UQ112)
+                    .checked_mul(constants::PRICE_PRECISION)
                     .and_then(|p| p.checked_div(self.reserve_1))
                     .ok_or(PairError::Overflow)?;
 
@@ -625,10 +630,16 @@ pub mod pair_contract {
             // ========================================
             // OBTER SALDOS REAIS DOS TOKENS (CROSS-CONTRACT)
             // ========================================
-            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
-            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
+            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
+            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
 
             // ========================================
             // CALCULAR AMOUNTS DEPOSITADOS
@@ -701,7 +712,9 @@ pub mod pair_contract {
                 .checked_add(liquidity)
                 .ok_or(PairError::Overflow)?;
             let user_balance = self.balances.get(to).unwrap_or(0);
-            let new_user_balance = user_balance.checked_add(liquidity).ok_or(PairError::Overflow)?;
+            let new_user_balance = user_balance
+                .checked_add(liquidity)
+                .ok_or(PairError::Overflow)?;
             self.balances.insert(to, &new_user_balance);
 
             // ========================================
@@ -753,10 +766,16 @@ pub mod pair_contract {
             // ========================================
             // OBTER SALDOS REAIS DOS TOKENS (CROSS-CONTRACT)
             // ========================================
-            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
-            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
+            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
+            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
 
             // ========================================
             // OBTER LP TOKENS A QUEIMAR
@@ -800,10 +819,16 @@ pub mod pair_contract {
             // ========================================
             // TRANSFERIR TOKENS PARA O DESTINATÁRIO (CROSS-CONTRACT)
             // ========================================
-            PSP22Ref::transfer(self.token_0, to, amount_0)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer token_0 failed"))))?;
-            PSP22Ref::transfer(self.token_1, to, amount_1)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer token_1 failed"))))?;
+            PSP22Ref::transfer(self.token_0, to, amount_0).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "transfer token_0 failed",
+                )))
+            })?;
+            PSP22Ref::transfer(self.token_1, to, amount_1).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "transfer token_1 failed",
+                )))
+            })?;
 
             // ========================================
             // ATUALIZAR RESERVES
@@ -892,21 +917,33 @@ pub mod pair_contract {
             // ========================================
             // Optimistic transfer: transfere antes de verificar invariant
             if amount_0_out > 0 {
-                PSP22Ref::transfer(self.token_0, to, amount_0_out)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer token_0 failed"))))?;
+                PSP22Ref::transfer(self.token_0, to, amount_0_out).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer token_0 failed",
+                    )))
+                })?;
             }
             if amount_1_out > 0 {
-                PSP22Ref::transfer(self.token_1, to, amount_1_out)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer token_1 failed"))))?;
+                PSP22Ref::transfer(self.token_1, to, amount_1_out).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer token_1 failed",
+                    )))
+                })?;
             }
 
             // ========================================
             // OBTER SALDOS ATUAIS (CROSS-CONTRACT)
             // ========================================
-            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
-            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
+            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
+            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
 
             // ========================================
             // CALCULAR AMOUNTS DE ENTRADA
@@ -976,7 +1013,7 @@ pub mod pair_contract {
             // Fee total: 0.5% (5/1000)
             // - 60% para LPs (fica no pool automaticamente)
             // - 40% para Protocol + Rewards (0.2% total)
-            // 
+            //
             // fee_for_distribution = amount_in * 0.5% * 40% = amount_in * 0.2%
             // fee_for_distribution = amount_in * 2 / 1000
             // Use ok_or instead of unwrap_or(0) so that overflow is surfaced as an
@@ -992,7 +1029,7 @@ pub mod pair_contract {
                 .ok_or(PairError::Overflow)?
                 .checked_div(1000)
                 .ok_or(PairError::Overflow)?;
-            
+
             // Acumular fees se houver destino configurado
             if fee_0_for_distribution > 0 || fee_1_for_distribution > 0 {
                 self.accumulate_fees(fee_0_for_distribution, fee_1_for_distribution);
@@ -1032,10 +1069,16 @@ pub mod pair_contract {
             let contract_address = self.env().account_id();
 
             // Obter saldos reais dos tokens (cross-contract)
-            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
-            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
+            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
+            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
 
             let result = self.update(balance_0, balance_1);
             self.unlock();
@@ -1063,10 +1106,16 @@ pub mod pair_contract {
             let contract_address = self.env().account_id();
 
             // Obter saldos reais
-            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
-            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address)
-                .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("balance_of failed"))))?;
+            let balance_0 = PSP22Ref::balance_of(self.token_0, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
+            let balance_1 = PSP22Ref::balance_of(self.token_1, contract_address).map_err(|_| {
+                PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                    "balance_of failed",
+                )))
+            })?;
 
             // Calcular excesso (balance - reserve)
             let excess_0 = balance_0.saturating_sub(self.reserve_0);
@@ -1074,12 +1123,18 @@ pub mod pair_contract {
 
             // Transferir excesso para destinatário
             if excess_0 > 0 {
-                PSP22Ref::transfer(self.token_0, to, excess_0)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer failed"))))?;
+                PSP22Ref::transfer(self.token_0, to, excess_0).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer failed",
+                    )))
+                })?;
             }
             if excess_1 > 0 {
-                PSP22Ref::transfer(self.token_1, to, excess_1)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer failed"))))?;
+                PSP22Ref::transfer(self.token_1, to, excess_1).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer failed",
+                    )))
+                })?;
             }
 
             Ok(())
@@ -1103,7 +1158,12 @@ pub mod pair_contract {
 
         /// Transfere LP tokens para outra conta (selector PSP22::transfer)
         #[ink(message, selector = 0xdb20f9f5)]
-        pub fn transfer(&mut self, to: AccountId, amount: Balance, _data: ink::prelude::vec::Vec<u8>) -> Result<(), PairError> {
+        pub fn transfer(
+            &mut self,
+            to: AccountId,
+            amount: Balance,
+            _data: ink::prelude::vec::Vec<u8>,
+        ) -> Result<(), PairError> {
             let caller = self.env().caller();
             self.transfer_internal(caller, to, amount)
         }
@@ -1112,14 +1172,14 @@ pub mod pair_contract {
         #[ink(message, selector = 0xb20f1bbd)]
         pub fn approve(&mut self, spender: AccountId, amount: Balance) -> Result<(), PairError> {
             let caller = self.env().caller();
-            
+
             // Validar que spender não é zero address
             if spender == AccountId::from([0u8; 32]) {
                 return Err(PairError::Unauthorized);
             }
 
             self.allowances.insert((caller, spender), &amount);
-            
+
             // Emitir evento de Approval
             self.env().emit_event(Approval {
                 owner: caller,
@@ -1146,21 +1206,21 @@ pub mod pair_contract {
             _data: ink::prelude::vec::Vec<u8>,
         ) -> Result<(), PairError> {
             let caller = self.env().caller();
-            
+
             // Verificar allowance
             let current_allowance = self.allowances.get((from, caller)).unwrap_or(0);
             if current_allowance < amount {
                 return Err(PairError::InsufficientLiquidity);
             }
 
-            // Atualizar allowance
+            self.transfer_internal(from, to, amount)?;
+
             let new_allowance = current_allowance
                 .checked_sub(amount)
                 .ok_or(PairError::Overflow)?;
             self.allowances.insert((from, caller), &new_allowance);
 
-            // Executar transferência
-            self.transfer_internal(from, to, amount)
+            Ok(())
         }
 
         /// Aumenta o allowance de um spender (helper function)
@@ -1174,7 +1234,7 @@ pub mod pair_contract {
             let current = self.allowances.get((caller, spender)).unwrap_or(0);
             let new_allowance = current.checked_add(delta).ok_or(PairError::Overflow)?;
             self.allowances.insert((caller, spender), &new_allowance);
-            
+
             self.env().emit_event(Approval {
                 owner: caller,
                 spender,
@@ -1195,7 +1255,7 @@ pub mod pair_contract {
             let current = self.allowances.get((caller, spender)).unwrap_or(0);
             let new_allowance = current.checked_sub(delta).ok_or(PairError::Overflow)?;
             self.allowances.insert((caller, spender), &new_allowance);
-            
+
             self.env().emit_event(Approval {
                 owner: caller,
                 spender,
@@ -1260,7 +1320,10 @@ pub mod pair_contract {
         /// Define o contrato de trading rewards
         /// Só pode ser chamado pelo factory
         #[ink(message)]
-        pub fn set_trading_rewards_contract(&mut self, rewards_contract: AccountId) -> Result<(), PairError> {
+        pub fn set_trading_rewards_contract(
+            &mut self,
+            rewards_contract: AccountId,
+        ) -> Result<(), PairError> {
             if self.env().caller() != self.factory {
                 return Err(PairError::Unauthorized);
             }
@@ -1285,7 +1348,7 @@ pub mod pair_contract {
         // ========================================
         // Sistema de fees: 0.5% total
         // - 60% para LPs (0.30%)
-        // - 20% para Protocol (0.10%) 
+        // - 20% para Protocol (0.10%)
         // - 20% para Trading Rewards (0.10%)
 
         /// Retorna as fees acumuladas para o protocolo
@@ -1310,7 +1373,9 @@ pub mod pair_contract {
         /// Apenas o factory ou o próprio protocol_fee_to pode acionar a coleta.
         #[ink(message)]
         pub fn collect_protocol_fees(&mut self) -> Result<(Balance, Balance), PairError> {
-            let fee_to = self.protocol_fee_to.get()
+            let fee_to = self
+                .protocol_fee_to
+                .get()
                 .unwrap_or(None)
                 .ok_or(PairError::Unauthorized)?;
 
@@ -1335,12 +1400,18 @@ pub mod pair_contract {
 
             // Transferir fees
             if fees_0 > 0 {
-                PSP22Ref::transfer(self.token_0, fee_to, fees_0)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer failed"))))?;
+                PSP22Ref::transfer(self.token_0, fee_to, fees_0).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer failed",
+                    )))
+                })?;
             }
             if fees_1 > 0 {
-                PSP22Ref::transfer(self.token_1, fee_to, fees_1)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer failed"))))?;
+                PSP22Ref::transfer(self.token_1, fee_to, fees_1).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer failed",
+                    )))
+                })?;
             }
 
             Ok((fees_0, fees_1))
@@ -1350,7 +1421,9 @@ pub mod pair_contract {
         /// Apenas o factory ou o próprio rewards contract pode acionar a coleta.
         #[ink(message)]
         pub fn collect_rewards_fees(&mut self) -> Result<(Balance, Balance), PairError> {
-            let rewards_contract = self.trading_rewards_contract.get()
+            let rewards_contract = self
+                .trading_rewards_contract
+                .get()
                 .unwrap_or(None)
                 .ok_or(PairError::Unauthorized)?;
 
@@ -1372,12 +1445,18 @@ pub mod pair_contract {
 
             // Transferir fees
             if fees_0 > 0 {
-                PSP22Ref::transfer(self.token_0, rewards_contract, fees_0)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer failed"))))?;
+                PSP22Ref::transfer(self.token_0, rewards_contract, fees_0).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer failed",
+                    )))
+                })?;
             }
             if fees_1 > 0 {
-                PSP22Ref::transfer(self.token_1, rewards_contract, fees_1)
-                    .map_err(|_| PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from("transfer failed"))))?;
+                PSP22Ref::transfer(self.token_1, rewards_contract, fees_1).map_err(|_| {
+                    PairError::PSP22(PSP22Error::Custom(ink::prelude::string::String::from(
+                        "transfer failed",
+                    )))
+                })?;
             }
 
             Ok((fees_0, fees_1))
@@ -1389,7 +1468,7 @@ pub mod pair_contract {
             // Distribuição: 60% LP (já fica no pool), 20% Protocol, 20% Rewards
             // fee_amount é os 40% que não vão para LPs (0.20% do swap)
             // Dividir igualmente entre Protocol e Rewards
-            
+
             let protocol_fee_0 = fee_amount_0 / 2;
             let protocol_fee_1 = fee_amount_1 / 2;
             let rewards_fee_0 = fee_amount_0.saturating_sub(protocol_fee_0);
@@ -1398,21 +1477,25 @@ pub mod pair_contract {
             // Acumular protocol fees
             if protocol_fee_0 > 0 {
                 let current = self.accumulated_protocol_fees_0.get().unwrap_or(0);
-                self.accumulated_protocol_fees_0.set(&current.saturating_add(protocol_fee_0));
+                self.accumulated_protocol_fees_0
+                    .set(&current.saturating_add(protocol_fee_0));
             }
             if protocol_fee_1 > 0 {
                 let current = self.accumulated_protocol_fees_1.get().unwrap_or(0);
-                self.accumulated_protocol_fees_1.set(&current.saturating_add(protocol_fee_1));
+                self.accumulated_protocol_fees_1
+                    .set(&current.saturating_add(protocol_fee_1));
             }
 
             // Acumular rewards fees
             if rewards_fee_0 > 0 {
                 let current = self.accumulated_rewards_fees_0.get().unwrap_or(0);
-                self.accumulated_rewards_fees_0.set(&current.saturating_add(rewards_fee_0));
+                self.accumulated_rewards_fees_0
+                    .set(&current.saturating_add(rewards_fee_0));
             }
             if rewards_fee_1 > 0 {
                 let current = self.accumulated_rewards_fees_1.get().unwrap_or(0);
-                self.accumulated_rewards_fees_1.set(&current.saturating_add(rewards_fee_1));
+                self.accumulated_rewards_fees_1
+                    .set(&current.saturating_add(rewards_fee_1));
             }
         }
     }
@@ -1442,6 +1525,10 @@ pub mod pair_contract {
 
         fn set_sender(sender: AccountId) {
             test::set_caller::<ink::env::DefaultEnvironment>(sender);
+        }
+
+        fn set_timestamp(timestamp: Timestamp) {
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(timestamp);
         }
 
         // ========================================
@@ -1475,6 +1562,46 @@ pub mod pair_contract {
 
             assert_eq!(pair.price_0_cumulative_last(), 0);
             assert_eq!(pair.price_1_cumulative_last(), 0);
+        }
+
+        #[ink::test]
+        fn test_twap_update_uses_seconds_for_substrate_millisecond_timestamps() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let mut pair = PairContract::new(accounts.bob, accounts.charlie, accounts.django);
+
+            set_timestamp(1_777_296_714_006);
+            assert_eq!(pair.update(5_000_000_000, 2_500_000_000), Ok(()));
+            assert_eq!(
+                pair.get_reserves(),
+                (5_000_000_000, 2_500_000_000, 1_777_296_714)
+            );
+
+            set_timestamp(1_777_296_834_006);
+            assert_eq!(pair.update(5_100_000_000, 2_451_225_491), Ok(()));
+            assert!(pair.price_0_cumulative_last() > 0);
+            assert!(pair.price_1_cumulative_last() > 0);
+        }
+
+        #[ink::test]
+        fn test_failed_twap_update_does_not_partially_write_cumulative_price() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let mut pair = PairContract::new(accounts.bob, accounts.charlie, accounts.django);
+            pair.reserve_0 = u128::MAX / constants::PRICE_PRECISION;
+            pair.reserve_1 = 1;
+            pair.block_timestamp_last = 0;
+
+            set_timestamp(2_000);
+            assert_eq!(pair.update(1, 1), Err(PairError::Overflow));
+            assert_eq!(pair.price_0_cumulative_last(), 0);
+            assert_eq!(pair.price_1_cumulative_last(), 0);
+            assert_eq!(
+                pair.get_reserves(),
+                (u128::MAX / constants::PRICE_PRECISION, 1, 0)
+            );
         }
 
         // ========================================
@@ -1623,6 +1750,26 @@ pub mod pair_contract {
             assert_eq!(result.unwrap_err(), PairError::InsufficientLiquidity);
         }
 
+        #[ink::test]
+        fn test_failed_transfer_from_does_not_consume_allowance() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+
+            let mut pair = PairContract::new(accounts.bob, accounts.charlie, accounts.django);
+            pair.approve(accounts.bob, 100).unwrap();
+
+            set_sender(accounts.bob);
+            let result = pair.transfer_from(
+                accounts.alice,
+                accounts.django,
+                50,
+                ink::prelude::vec::Vec::new(),
+            );
+
+            assert_eq!(result, Err(PairError::InsufficientLiquidity));
+            assert_eq!(pair.allowance(accounts.alice, accounts.bob), 100);
+        }
+
         // ========================================
         // TESTES DE CONTROLE DE ACESSO
         // ========================================
@@ -1676,7 +1823,7 @@ pub mod pair_contract {
             assert_eq!(PairContract::sqrt(16), 4);
             assert_eq!(PairContract::sqrt(100), 10);
             assert_eq!(PairContract::sqrt(1000000), 1000);
-            
+
             // Testar com números não-quadrados perfeitos (retorna floor)
             assert_eq!(PairContract::sqrt(2), 1);
             assert_eq!(PairContract::sqrt(5), 2);
@@ -1714,7 +1861,9 @@ pub mod pair_contract {
             assert_eq!(constants::PROTOCOL_FEE_SHARE, 200); // 20%
             assert_eq!(constants::REWARDS_FEE_SHARE, 200); // 20%
             assert_eq!(
-                constants::LP_FEE_SHARE + constants::PROTOCOL_FEE_SHARE + constants::REWARDS_FEE_SHARE,
+                constants::LP_FEE_SHARE
+                    + constants::PROTOCOL_FEE_SHARE
+                    + constants::REWARDS_FEE_SHARE,
                 constants::TOTAL_FEE_SHARES
             );
         }

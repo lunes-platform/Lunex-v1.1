@@ -11,6 +11,8 @@ import { rehydrateOrderbooks } from './services/orderbookBootstrapService';
 import { paginationMiddleware } from './middleware/pagination';
 import { errorHandler } from './middleware/errors';
 import { requireAdminOrInternal } from './middleware/adminGuard';
+import { securityShield } from './middleware/securityShield';
+import { responseSanitizer } from './middleware/responseSanitizer';
 import { log } from './utils/logger';
 import {
   metricsRegistry,
@@ -24,6 +26,7 @@ import {
 } from './utils/metrics';
 import { redisHealthy, disconnectRedis } from './utils/redis';
 import { vaultReconciliationService } from './services/vaultReconciliationService';
+import { collectProductionConfigErrors } from './utils/productionGuards';
 
 // Routes
 import pairsRouter from './routes/pairs';
@@ -47,6 +50,7 @@ import tokenRegistryRouter from './routes/tokenRegistry';
 import favoritesRouter from './routes/favorites';
 import marketInfoRouter from './routes/marketInfo';
 import rewardsRouter from './routes/rewards';
+import adminRouter from './routes/admin';
 import { rewardScheduler } from './services/rewardScheduler';
 import { copytradeWalletContinuationScheduler } from './services/copytradeWalletContinuationScheduler';
 import { settlementService } from './services/settlementService';
@@ -62,42 +66,11 @@ import { copytradeService } from './services/copytradeService';
 // In production it MUST be injected by the deployment platform (e.g. AWS Secrets
 // Manager, Kubernetes Secret, Vault agent) and never stored in a committed file.
 function assertProductionSecrets() {
-  if (!config.isProd) return;
-
-  const DEV_SEEDS = [
-    '//Alice',
-    '//Bob',
-    '//Charlie',
-    '//Dave',
-    '//Eve',
-    '//Ferdie',
-  ];
-  const relayerSeed = config.blockchain.relayerSeed;
-
-  if (!relayerSeed) {
-    log.warn('RELAYER_SEED is not set — on-chain settlement will be disabled');
-    return;
-  }
-
-  if (DEV_SEEDS.some((dev) => relayerSeed.startsWith(dev))) {
-    // A dev seed in production is a critical misconfiguration — crash immediately
-    // so ops notices before funds are at risk.
-    log.error(
-      { relayerSeed: relayerSeed.slice(0, 8) + '...' },
-      'FATAL: RELAYER_SEED is a development account — refusing to start in production',
-    );
-    process.exit(1);
-  }
-
-  if (!config.adminSecret) {
-    log.error('FATAL: ADMIN_SECRET is not set in production');
-    process.exit(1);
-  }
-
-  if (config.adminSecret.length < 32) {
-    log.error(
-      'FATAL: ADMIN_SECRET must be at least 32 characters in production',
-    );
+  const errors = collectProductionConfigErrors(config);
+  if (errors.length > 0) {
+    for (const error of errors) {
+      log.error(`FATAL: ${error}`);
+    }
     process.exit(1);
   }
 }
@@ -115,6 +88,12 @@ if (config.trustProxy) {
 // ─── Security Headers ────────────────────────────────────────────
 app.use(
   helmet({
+    hsts: config.isProd
+      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+      : false,
+    frameguard: { action: 'deny' },
+    noSniff: true,
+    referrerPolicy: { policy: 'no-referrer' },
     contentSecurityPolicy: config.isProd
       ? {
           directives: {
@@ -134,6 +113,10 @@ app.use(
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   }),
 );
+
+// ─── Application Shield ──────────────────────────────────────────
+app.use(securityShield());
+app.use(responseSanitizer());
 
 // ─── CORS ────────────────────────────────────────────────────────
 // Routes that REQUIRE browser origin (trading, user-facing)
@@ -309,6 +292,7 @@ app.use('/api/v1/tokens', tokenRegistryRouter);
 app.use('/api/v1/user', favoritesRouter);
 app.use('/api/v1/markets', marketInfoRouter);
 app.use('/api/v1/rewards', rewardsRouter);
+app.use('/api/v1/admin', adminRouter);
 
 // ─── Health & Metrics ────────────────────────────────────────────
 app.get('/health', async (_req, res) => {
@@ -364,7 +348,9 @@ app.get('/metrics', requireAdminOrInternal, async (_req, res) => {
     }
 
     try {
-      blockchainConnectedGauge.set((await settlementService.ensureReady()) ? 1 : 0);
+      blockchainConnectedGauge.set(
+        (await settlementService.ensureReady()) ? 1 : 0,
+      );
     } catch {
       blockchainConnectedGauge.set(0);
     }

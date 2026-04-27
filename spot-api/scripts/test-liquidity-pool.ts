@@ -15,21 +15,29 @@ import { ApiPromise, WsProvider, Keyring } from '@polkadot/api'
 import { ContractPromise, CodePromise } from '@polkadot/api-contract'
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { blake2AsHex } from '@polkadot/util-crypto'
 
 const WS_URL    = 'ws://127.0.0.1:9944'
 const ARTIFACTS = join(__dirname, '../../target/ink')
+const ADDRESSES_FILE = join(__dirname, '../deployed-addresses.json')
 
-const ADDRESSES = {
-  wnative:  '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo',
-  factory:  '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2',
-  router:   '5GSR7WUo53S2UpqSW7sMccSYNeP2dmAakfUnoK9BCY3YMb2B',
+function loadAddresses() {
+  const addresses = JSON.parse(readFileSync(ADDRESSES_FILE, 'utf8')) as Record<string, string>
+  for (const key of ['wnative', 'factory', 'router']) {
+    if (!addresses[key]) throw new Error(`Missing ${key} in deployed-addresses.json`)
+  }
+  return addresses as { wnative: string; factory: string; router: string }
 }
+
+const ADDRESSES = loadAddresses()
 
 function ok(msg: string)   { console.log(`  ✅ ${msg}`) }
 function fail(msg: string) { console.log(`  ❌ ${msg}`); throw new Error(msg) }
 function log(msg: string)  { console.log(`  ℹ  ${msg}`) }
 function section(msg: string) { console.log(`\n  📦 ${msg}`) }
+
+function okBalance(value: any): bigint {
+  return BigInt((value?.ok ?? value).toString())
+}
 
 function loadAbi(name: string) {
   return JSON.parse(readFileSync(join(ARTIFACTS, name, `${name}.json`), 'utf8'))
@@ -240,18 +248,22 @@ async function main() {
   log(`Pair reserves: ${JSON.stringify(reservesResult)}`)
 
   // LP token balance of Alice
-  const lpBalance = await query(api, alice, pairContract, 'balanceOf', [alice.address])
-  log(`Alice LP balance: ${JSON.stringify(lpBalance)}`)
+  if ((pairContract.query as any)['balanceOf']) {
+    const lpBalance = await query(api, alice, pairContract, 'balanceOf', [alice.address])
+    log(`Alice LP balance: ${JSON.stringify(lpBalance)}`)
+  } else {
+    log('Alice LP balance: unavailable in local pair metadata')
+  }
   ok('Liquidity confirmed in pair!')
 
   // ── Step 8: Swap WLUNES → USDT ────────────────────────────────────────────
-  section('8. Swapping 1 WLUNES → USDT')
-  const ONE_WLUNES = 1_000_000_000n
+  section('8. Swapping 0.1 WLUNES → USDT')
+  const SWAP_WLUNES = 100_000_000n
 
   // Approve router for the swap
   await sendTx(
     'WLUNES.approve(router) for swap',
-    (wlunes.tx as any)['approve']({ gasLimit: gas, storageDepositLimit: null }, ADDRESSES.router, ONE_WLUNES),
+    (wlunes.tx as any)['approve']({ gasLimit: gas, storageDepositLimit: null }, ADDRESSES.router, SWAP_WLUNES),
     alice,
   )
 
@@ -262,7 +274,7 @@ async function main() {
     'router.swapExactTokensForTokens',
     (router.tx as any)['swapExactTokensForTokens'](
       { gasLimit: gas, storageDepositLimit: null },
-      ONE_WLUNES,           // amount_in
+      SWAP_WLUNES,          // amount_in
       0n,                   // amount_out_min
       [ADDRESSES.wnative, usdtAddress], // path
       alice.address,         // to
@@ -273,6 +285,9 @@ async function main() {
 
   const usdtAfter = await query(api, alice, usdt, 'balanceOf', [alice.address])
   log(`USDT balance after swap: ${JSON.stringify(usdtAfter)}`)
+  if (okBalance(usdtAfter) <= okBalance(usdtBefore)) {
+    fail('USDT balance did not increase after swap')
+  }
   ok('Swap completed!')
 
   // ── Final Summary ──────────────────────────────────────────────────────────

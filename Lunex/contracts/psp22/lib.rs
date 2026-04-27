@@ -159,23 +159,25 @@ pub mod psp22_token {
             let new_allowance = current
                 .checked_sub(value)
                 .ok_or(PSP22Error::InsufficientAllowance)?;
+
+            self._transfer(from, to, value)?;
             self.allowances.insert((from, spender), &new_allowance);
-            self._transfer(from, to, value)
+            Ok(())
         }
 
         /// PSP22 selector: 0xb20f1bbd
         #[ink(message, selector = 0xb20f1bbd)]
-        pub fn approve(
-            &mut self,
-            spender: AccountId,
-            value: Balance,
-        ) -> Result<(), PSP22Error> {
+        pub fn approve(&mut self, spender: AccountId, value: Balance) -> Result<(), PSP22Error> {
             let owner = self.env().caller();
             if owner == spender {
                 return Err(PSP22Error::SelfTransfer);
             }
             self.allowances.insert((owner, spender), &value);
-            self.env().emit_event(Approval { owner, spender, value });
+            self.env().emit_event(Approval {
+                owner,
+                spender,
+                value,
+            });
             Ok(())
         }
 
@@ -211,13 +213,13 @@ pub mod psp22_token {
             }
             self.balances.insert(
                 from,
-                &from_bal.checked_sub(value).ok_or(PSP22Error::InsufficientBalance)?,
+                &from_bal
+                    .checked_sub(value)
+                    .ok_or(PSP22Error::InsufficientBalance)?,
             );
             let to_bal = self.balance_of(to);
-            self.balances.insert(
-                to,
-                &to_bal.checked_add(value).ok_or(PSP22Error::Overflow)?,
-            );
+            self.balances
+                .insert(to, &to_bal.checked_add(value).ok_or(PSP22Error::Overflow)?);
             self.env().emit_event(Transfer {
                 from: Some(from),
                 to: Some(to),
@@ -235,10 +237,8 @@ pub mod psp22_token {
                 .checked_add(value)
                 .ok_or(PSP22Error::Overflow)?;
             let to_bal = self.balance_of(to);
-            self.balances.insert(
-                to,
-                &to_bal.checked_add(value).ok_or(PSP22Error::Overflow)?,
-            );
+            self.balances
+                .insert(to, &to_bal.checked_add(value).ok_or(PSP22Error::Overflow)?);
             self.env().emit_event(Transfer {
                 from: None,
                 to: Some(to),
@@ -312,10 +312,28 @@ pub mod psp22_token {
             let mut token = PSP22Token::new(None, None, 6, 1000);
             assert!(token.approve(accs.bob, 300).is_ok());
             set_sender(accs.bob);
-            assert!(token.transfer_from(accs.alice, accs.charlie, 200, vec![]).is_ok());
+            assert!(token
+                .transfer_from(accs.alice, accs.charlie, 200, vec![])
+                .is_ok());
             assert_eq!(token.balance_of(accs.alice), 800);
             assert_eq!(token.balance_of(accs.charlie), 200);
             assert_eq!(token.allowance(accs.alice, accs.bob), 100);
+        }
+
+        #[ink::test]
+        fn failed_transfer_from_does_not_consume_allowance() {
+            let accs = accounts();
+            set_sender(accs.alice);
+            let mut token = PSP22Token::new(None, None, 6, 100);
+            assert!(token.approve(accs.bob, 500).is_ok());
+
+            set_sender(accs.bob);
+            let result = token.transfer_from(accs.alice, accs.charlie, 200, vec![]);
+
+            assert_eq!(result, Err(PSP22Error::InsufficientBalance));
+            assert_eq!(token.balance_of(accs.alice), 100);
+            assert_eq!(token.balance_of(accs.charlie), 0);
+            assert_eq!(token.allowance(accs.alice, accs.bob), 500);
         }
     }
 }

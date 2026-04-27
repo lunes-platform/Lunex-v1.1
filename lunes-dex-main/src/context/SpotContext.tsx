@@ -75,7 +75,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [pairs, setPairs] = useState<SpotPair[]>([])
-  const [selectedPair, setSelectedPairState] = useState('LUNES/LUSDT')
+  const [selectedPair, setSelectedPairState] = useState('WLUNES/LUSDT')
   const [ticker, setTicker] = useState<SpotTicker | null>(null)
   const [orderbook, setOrderbook] = useState<OrderbookSnapshot | null>(null)
   const [recentTrades, setRecentTrades] = useState<SpotTrade[]>([])
@@ -86,9 +86,6 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
   const nonceCounter = useRef(Date.now())
   const prevPairRef = useRef(selectedPair)
-  const readAuthCache = useRef(
-    new Map<string, SignedActionAuth & { expiresAt: number }>()
-  )
 
   const signReadAction = useCallback(
     async (
@@ -96,16 +93,6 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
       address: string,
       fields?: Record<string, string | number>
     ): Promise<SignedActionAuth> => {
-      const cacheKey = `${action}:${address}:${JSON.stringify(fields ?? {})}`
-      const cached = readAuthCache.current.get(cacheKey)
-      if (cached && cached.expiresAt > Date.now()) {
-        return {
-          nonce: cached.nonce,
-          timestamp: cached.timestamp,
-          signature: cached.signature
-        }
-      }
-
       const metadata = createSignedActionMetadata()
       const signature = await signMessage(
         buildWalletActionMessage({
@@ -117,12 +104,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         })
       )
 
-      const auth = { ...metadata, signature }
-      readAuthCache.current.set(cacheKey, {
-        ...auth,
-        expiresAt: Date.now() + 4 * 60 * 1000
-      })
-      return auth
+      return { ...metadata, signature }
     },
     [signMessage]
   )

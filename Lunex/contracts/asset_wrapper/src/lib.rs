@@ -316,19 +316,16 @@ pub mod asset_wrapper_contract {
             let new_allowance = current_allowance
                 .checked_sub(value)
                 .ok_or(WrapperError::InsufficientAllowance)?;
-            self.allowances.insert((from, spender), &new_allowance);
 
-            self._transfer(from, to, value)
+            self._transfer(from, to, value)?;
+            self.allowances.insert((from, spender), &new_allowance);
+            Ok(())
         }
 
         /// PSP22::approve — same selector as WNative
         /// SEC-FIX C-05: Now checks pause state
         #[ink(message, selector = 0xb20f1bbd)]
-        pub fn approve(
-            &mut self,
-            spender: AccountId,
-            value: Balance,
-        ) -> Result<(), WrapperError> {
+        pub fn approve(&mut self, spender: AccountId, value: Balance) -> Result<(), WrapperError> {
             self.ensure_not_paused()?;
             let owner = self.env().caller();
             if owner == spender {
@@ -361,14 +358,16 @@ pub mod asset_wrapper_contract {
                 return Err(WrapperError::InsufficientBalance);
             }
 
+            let new_total_withdrawn = self
+                .total_withdrawn
+                .checked_add(amount)
+                .ok_or(WrapperError::Overflow)?;
+
             // Burn the PSP22 tokens
             self._burn(caller, amount)?;
 
             // Track total withdrawn
-            self.total_withdrawn = self
-                .total_withdrawn
-                .checked_add(amount)
-                .ok_or(WrapperError::Overflow)?;
+            self.total_withdrawn = new_total_withdrawn;
 
             // Emit event for relayer to process
             self.env().emit_event(WithdrawRequest {
@@ -422,16 +421,18 @@ pub mod asset_wrapper_contract {
                 }
             }
 
+            let new_total_minted = self
+                .total_minted
+                .checked_add(amount)
+                .ok_or(WrapperError::Overflow)?;
+
             self._mint(to, amount)?;
 
             // Mark deposit as processed (idempotency)
             self.processed_deposits.insert(deposit_ref, &true);
 
             // Track total minted
-            self.total_minted = self
-                .total_minted
-                .checked_add(amount)
-                .ok_or(WrapperError::Overflow)?;
+            self.total_minted = new_total_minted;
 
             self.env().emit_event(Mint {
                 to,
@@ -446,11 +447,7 @@ pub mod asset_wrapper_contract {
         /// Legacy mint without reference (kept for backward compatibility, admin-only).
         /// Prefer `mint_with_ref` for production use.
         #[ink(message)]
-        pub fn mint(
-            &mut self,
-            to: AccountId,
-            amount: Balance,
-        ) -> Result<(), WrapperError> {
+        pub fn mint(&mut self, to: AccountId, amount: Balance) -> Result<(), WrapperError> {
             self.ensure_admin()?;
             self.ensure_not_paused()?;
 
@@ -469,12 +466,14 @@ pub mod asset_wrapper_contract {
                 }
             }
 
-            self._mint(to, amount)?;
-
-            self.total_minted = self
+            let new_total_minted = self
                 .total_minted
                 .checked_add(amount)
                 .ok_or(WrapperError::Overflow)?;
+
+            self._mint(to, amount)?;
+
+            self.total_minted = new_total_minted;
 
             self.env().emit_event(Mint {
                 to,
@@ -489,24 +488,22 @@ pub mod asset_wrapper_contract {
         /// Admin can burn tokens on behalf of a user (emergency).
         /// SEC-FIX C-04: Now updates total_withdrawn for audit trail.
         #[ink(message)]
-        pub fn burn_for(
-            &mut self,
-            from: AccountId,
-            amount: Balance,
-        ) -> Result<(), WrapperError> {
+        pub fn burn_for(&mut self, from: AccountId, amount: Balance) -> Result<(), WrapperError> {
             self.ensure_admin()?;
 
             if amount == 0 {
                 return Err(WrapperError::ZeroAmount);
             }
 
-            self._burn(from, amount)?;
-
-            // SEC-FIX C-04: Track in audit trail
-            self.total_withdrawn = self
+            let new_total_withdrawn = self
                 .total_withdrawn
                 .checked_add(amount)
                 .ok_or(WrapperError::Overflow)?;
+
+            self._burn(from, amount)?;
+
+            // SEC-FIX C-04: Track in audit trail
+            self.total_withdrawn = new_total_withdrawn;
 
             Ok(())
         }
@@ -631,9 +628,7 @@ pub mod asset_wrapper_contract {
                 .ok_or(WrapperError::Overflow)?;
 
             let balance = self.balance_of(to);
-            let new_balance = balance
-                .checked_add(value)
-                .ok_or(WrapperError::Overflow)?;
+            let new_balance = balance.checked_add(value).ok_or(WrapperError::Overflow)?;
             self.balances.insert(to, &new_balance);
 
             self.env().emit_event(Transfer {
@@ -765,6 +760,22 @@ pub mod asset_wrapper_contract {
             assert_eq!(result, Err(WrapperError::ZeroAmount));
         }
 
+        #[ink::test]
+        fn test_failed_mint_overflow_does_not_mint() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+
+            wrapper.total_minted = u128::MAX;
+
+            let result = wrapper.mint(accounts.bob, 10);
+
+            assert_eq!(result, Err(WrapperError::Overflow));
+            assert_eq!(wrapper.balance_of(accounts.bob), 0);
+            assert_eq!(wrapper.total_supply(), 0);
+            assert_eq!(wrapper.total_minted(), u128::MAX);
+        }
+
         // ── SEC: Double-Mint Prevention (C-02) ──
 
         #[ink::test]
@@ -799,6 +810,23 @@ pub mod asset_wrapper_contract {
 
             assert_eq!(wrapper.balance_of(accounts.bob), 3000);
             assert_eq!(wrapper.total_supply(), 3000);
+        }
+
+        #[ink::test]
+        fn test_failed_mint_with_ref_overflow_does_not_mint_or_mark_ref() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+
+            wrapper.total_minted = u128::MAX;
+
+            let result = wrapper.mint_with_ref(accounts.bob, 10, 42);
+
+            assert_eq!(result, Err(WrapperError::Overflow));
+            assert_eq!(wrapper.balance_of(accounts.bob), 0);
+            assert_eq!(wrapper.total_supply(), 0);
+            assert_eq!(wrapper.total_minted(), u128::MAX);
+            assert!(!wrapper.is_deposit_processed(42));
         }
 
         // ── SEC: Mint Cap (C-03) ──
@@ -897,12 +925,7 @@ pub mod asset_wrapper_contract {
             assert_eq!(wrapper.allowance(accounts.bob, accounts.alice), 500);
 
             set_sender(accounts.alice);
-            let result = wrapper.transfer_from(
-                accounts.bob,
-                accounts.charlie,
-                300,
-                Vec::new(),
-            );
+            let result = wrapper.transfer_from(accounts.bob, accounts.charlie, 300, Vec::new());
             assert!(result.is_ok());
 
             assert_eq!(wrapper.balance_of(accounts.bob), 700);
@@ -922,13 +945,28 @@ pub mod asset_wrapper_contract {
             wrapper.approve(accounts.alice, 100).unwrap();
 
             set_sender(accounts.alice);
-            let result = wrapper.transfer_from(
-                accounts.bob,
-                accounts.charlie,
-                500,
-                Vec::new(),
-            );
+            let result = wrapper.transfer_from(accounts.bob, accounts.charlie, 500, Vec::new());
             assert_eq!(result, Err(WrapperError::InsufficientAllowance));
+        }
+
+        #[ink::test]
+        fn test_failed_transfer_from_does_not_consume_allowance() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+
+            wrapper.mint(accounts.bob, 100).unwrap();
+
+            set_sender(accounts.bob);
+            wrapper.approve(accounts.alice, 500).unwrap();
+
+            set_sender(accounts.alice);
+            let result = wrapper.transfer_from(accounts.bob, accounts.charlie, 200, Vec::new());
+
+            assert_eq!(result, Err(WrapperError::InsufficientBalance));
+            assert_eq!(wrapper.balance_of(accounts.bob), 100);
+            assert_eq!(wrapper.balance_of(accounts.charlie), 0);
+            assert_eq!(wrapper.allowance(accounts.bob, accounts.alice), 500);
         }
 
         // ── SEC: Approve Blocked When Paused (C-05) ──
@@ -977,6 +1015,24 @@ pub mod asset_wrapper_contract {
             set_sender(accounts.bob);
             let result = wrapper.request_withdraw(200);
             assert_eq!(result, Err(WrapperError::InsufficientBalance));
+        }
+
+        #[ink::test]
+        fn test_failed_request_withdraw_overflow_does_not_burn() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+
+            wrapper.mint(accounts.bob, 100).unwrap();
+            wrapper.total_withdrawn = u128::MAX;
+
+            set_sender(accounts.bob);
+            let result = wrapper.request_withdraw(10);
+
+            assert_eq!(result, Err(WrapperError::Overflow));
+            assert_eq!(wrapper.balance_of(accounts.bob), 100);
+            assert_eq!(wrapper.total_supply(), 100);
+            assert_eq!(wrapper.total_withdrawn(), u128::MAX);
         }
 
         #[ink::test]
@@ -1043,6 +1099,23 @@ pub mod asset_wrapper_contract {
         }
 
         #[ink::test]
+        fn test_failed_burn_for_overflow_does_not_burn() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+
+            wrapper.mint(accounts.bob, 100).unwrap();
+            wrapper.total_withdrawn = u128::MAX;
+
+            let result = wrapper.burn_for(accounts.bob, 10);
+
+            assert_eq!(result, Err(WrapperError::Overflow));
+            assert_eq!(wrapper.balance_of(accounts.bob), 100);
+            assert_eq!(wrapper.total_supply(), 100);
+            assert_eq!(wrapper.total_withdrawn(), u128::MAX);
+        }
+
+        #[ink::test]
         fn test_burn_for_unauthorized() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
@@ -1080,10 +1153,7 @@ pub mod asset_wrapper_contract {
                 wrapper.approve(accounts.charlie, 100),
                 Err(WrapperError::Paused)
             );
-            assert_eq!(
-                wrapper.request_withdraw(100),
-                Err(WrapperError::Paused)
-            );
+            assert_eq!(wrapper.request_withdraw(100), Err(WrapperError::Paused));
 
             set_sender(accounts.alice);
             assert_eq!(
@@ -1121,7 +1191,9 @@ pub mod asset_wrapper_contract {
 
             // 1. Relayer mints with unique deposit refs
             wrapper.mint_with_ref(accounts.bob, 5000, 100001).unwrap();
-            wrapper.mint_with_ref(accounts.charlie, 3000, 100002).unwrap();
+            wrapper
+                .mint_with_ref(accounts.charlie, 3000, 100002)
+                .unwrap();
 
             // 2. Double-mint attempt BLOCKED
             assert_eq!(

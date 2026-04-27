@@ -178,6 +178,23 @@ describe('Orderbook', () => {
 
       expect(book.getLastUpdatedAt()).toBe(2000);
     });
+
+    it('should restore a checkpoint after a failed match mutation', () => {
+      book.addLimitOrder('s1', 'SELL', 100, 5, 'alice');
+      const checkpoint = book.createCheckpoint();
+
+      const matches = book.addMarketOrder('m1', 'BUY', 3, 'bob');
+      expect(matches).toHaveLength(1);
+      expect(book.getSnapshot().asks).toEqual([
+        { price: 100, amount: 2, total: 2 },
+      ]);
+
+      book.restoreCheckpoint(checkpoint);
+
+      expect(book.getSnapshot().asks).toEqual([
+        { price: 100, amount: 5, total: 5 },
+      ]);
+    });
   });
 
   describe('Snapshot', () => {

@@ -2,12 +2,12 @@ import { NextFunction, Router, Request, Response } from 'express';
 import { orderService } from '../services/orderService';
 import { CreateOrderSchema, CancelOrderSchema } from '../utils/validation';
 import {
-  buildSpotCancelMessage,
   buildSpotOrderMessage,
+  verifyWalletActionSignature,
   verifyWalletReadSignature,
   verifyAddressSignature,
+  consumeNonce,
   isNonceUsed,
-  markNonceUsed,
 } from '../middleware/auth';
 import { z } from 'zod';
 
@@ -61,7 +61,15 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     );
     if (!isValid) return res.status(401).json({ error: 'Invalid signature' });
 
-    await markNonceUsed(nonceKey);
+    const consumeResult = await consumeNonce(nonceKey);
+    if (!consumeResult.ok) {
+      return res.status(consumeResult.error === 'replay' ? 401 : 503).json({
+        error:
+          consumeResult.error === 'replay'
+            ? 'Order nonce already used'
+            : 'Nonce store unavailable',
+      });
+    }
 
     const order = await orderService.createOrder(parsed.data);
     res.status(201).json({ order });
@@ -120,12 +128,17 @@ router.delete(
           .json({ error: 'Too many cancellations. Max 20 per minute.' });
       }
 
-      const isValid = await verifyAddressSignature(
-        buildSpotCancelMessage(req.params.id),
-        parsed.data.signature,
-        parsed.data.makerAddress,
-      );
-      if (!isValid) return res.status(401).json({ error: 'Invalid signature' });
+      const auth = await verifyWalletActionSignature({
+        action: 'orders.cancel',
+        address: parsed.data.makerAddress,
+        nonce: parsed.data.nonce,
+        timestamp: parsed.data.timestamp,
+        signature: parsed.data.signature,
+        fields: {
+          orderId: req.params.id,
+        },
+      });
+      if (!auth.ok) return res.status(401).json({ error: auth.error });
 
       const order = await orderService.cancelOrder(
         req.params.id,

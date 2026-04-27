@@ -171,7 +171,12 @@ pub mod wnative_contract {
 
         /// Transfer tokens para outro endereço (selector PSP22::transfer)
         #[ink(message, selector = 0xdb20f9f5)]
-        pub fn transfer(&mut self, to: AccountId, value: Balance, _data: Vec<u8>) -> Result<(), WnativeError> {
+        pub fn transfer(
+            &mut self,
+            to: AccountId,
+            value: Balance,
+            _data: Vec<u8>,
+        ) -> Result<(), WnativeError> {
             let from = self.env().caller();
             self._transfer(from, to, value)
         }
@@ -193,14 +198,13 @@ pub mod wnative_contract {
                 return Err(WnativeError::InsufficientAllowance);
             }
 
-            // Decrementar allowance
             let new_allowance = current_allowance
                 .checked_sub(value)
                 .ok_or(WnativeError::InsufficientAllowance)?;
-            self.allowances.insert((from, spender), &new_allowance);
 
-            // Fazer transfer
-            self._transfer(from, to, value)
+            self._transfer(from, to, value)?;
+            self.allowances.insert((from, spender), &new_allowance);
+            Ok(())
         }
 
         /// Aprovar spender para gastar tokens (selector PSP22::approve)
@@ -704,6 +708,30 @@ pub mod wnative_contract {
             let result = wnative.transfer_from(accounts.alice, accounts.charlie, 50, vec![]);
             assert!(result.is_err());
             assert_eq!(result.unwrap_err(), WnativeError::InsufficientAllowance);
+        }
+
+        #[ink::test]
+        fn test_failed_transfer_from_does_not_consume_allowance() {
+            let accounts = default_accounts();
+
+            let mut wnative = WnativeContract::new(
+                Some("Wrapped Native".to_string()),
+                Some("WNATIVE".to_string()),
+                18,
+            );
+
+            set_sender(accounts.alice);
+            set_value_transferred(100);
+            assert!(wnative.deposit().is_ok());
+            assert!(wnative.approve(accounts.bob, 500).is_ok());
+
+            set_sender(accounts.bob);
+            let result = wnative.transfer_from(accounts.alice, accounts.charlie, 200, vec![]);
+
+            assert_eq!(result, Err(WnativeError::InsufficientBalance));
+            assert_eq!(wnative.balance_of(accounts.alice), 100);
+            assert_eq!(wnative.balance_of(accounts.charlie), 0);
+            assert_eq!(wnative.allowance(accounts.alice, accounts.bob), 500);
         }
 
         // ========================================

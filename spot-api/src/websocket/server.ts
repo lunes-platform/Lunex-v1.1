@@ -3,6 +3,7 @@ import { IncomingMessage } from 'http';
 import { orderbookManager } from '../utils/orderbook';
 import { wsConnections as wsConnectionsGauge } from '../utils/metrics';
 import { log } from '../utils/logger';
+import { config } from '../config';
 
 // ─── Security Constants ──────────────────────────────────────────
 
@@ -25,14 +26,7 @@ const ALLOWED_CHANNEL_PREFIXES = ['orderbook:', 'trades:', 'ticker:'];
  * In production, populate from ALLOWED_WS_ORIGINS env var.
  */
 function getAllowedOrigins(): string[] {
-  const envOrigins = process.env.ALLOWED_WS_ORIGINS;
-  if (envOrigins) return envOrigins.split(',').map((o) => o.trim());
-  // Dev fallback — permissive
-  return [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-  ];
+  return config.websocket.allowedOrigins;
 }
 
 function isOriginAllowed(origin: string | undefined): boolean {
