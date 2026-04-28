@@ -1089,6 +1089,29 @@ export const marginService = {
       );
       const releasedCollateral = Math.max(refreshed.equity - penaltyAmount, 0);
 
+      // Atomic claim: only one liquidation can win this transition. Default
+      // PostgreSQL READ COMMITTED would let two concurrent transactions both
+      // pass the `status === 'OPEN'` check above and both succeed with their
+      // updates, double-decrementing `collateralLocked`. The `updateMany`
+      // with `status: 'OPEN'` filter is the row-level CAS that prevents this.
+      const claimed = await txAny.marginPosition.updateMany({
+        where: { id: position.id, status: 'OPEN' },
+        data: {
+          status: 'LIQUIDATED',
+          markPrice: toDecimal(refreshed.markPrice),
+          unrealizedPnl: new Decimal('0'),
+          realizedPnl: toDecimal(refreshed.unrealizedPnl - penaltyAmount),
+          closedAt: new Date(),
+        },
+      });
+
+      if (claimed.count === 0) {
+        // Lost the race — another transaction already liquidated this position.
+        // Throwing rolls back the transaction (no double credit on the account
+        // and no duplicate marginLiquidation record).
+        throw new Error('Position already liquidated');
+      }
+
       await txAny.marginAccount.update({
         where: { id: account.id },
         data: {
@@ -1101,17 +1124,6 @@ export const marginService = {
           totalRealizedPnl: account.totalRealizedPnl.plus(
             (refreshed.unrealizedPnl - penaltyAmount).toFixed(18),
           ),
-        },
-      });
-
-      await txAny.marginPosition.update({
-        where: { id: position.id },
-        data: {
-          status: 'LIQUIDATED',
-          markPrice: toDecimal(refreshed.markPrice),
-          unrealizedPnl: new Decimal('0'),
-          realizedPnl: toDecimal(refreshed.unrealizedPnl - penaltyAmount),
-          closedAt: new Date(),
         },
       });
 

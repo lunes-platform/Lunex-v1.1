@@ -22,6 +22,7 @@ import StrategyMarketplace from 'pages/strategies'
 import StrategyDetail from 'pages/strategies/Detail'
 import AgentDashboard from 'pages/agent'
 import AgentGetStarted from 'pages/agents/GetStarted'
+import NotFound from 'pages/notFound'
 
 const AppRoutes = () => {
   return (
@@ -53,6 +54,7 @@ const AppRoutes = () => {
       <Route path="/strategies/:id" element={<StrategyDetail />} />
       <Route path="/agent" element={<AgentDashboard />} />
       <Route path="/agents/get-started" element={<AgentGetStarted />} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   )
 }

@@ -83,12 +83,12 @@ jobs:
       - name: Typecheck frontend
         run: |
           npm install --prefix lunes-dex-main
-          cd lunes-dex-main && npx tsc --noEmit || true
+          cd lunes-dex-main && npx tsc --noEmit
 
       - name: Typecheck admin
         run: |
           npm install --prefix lunex-admin
-          cd lunex-admin && npx tsc --noEmit || true
+          cd lunex-admin && npx tsc --noEmit
 
   # ── 3. Backend Tests ──────────────────────────────────────────────────────────
   test-api:

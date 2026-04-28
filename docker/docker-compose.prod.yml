@@ -17,8 +17,7 @@ services:
       - "max_connections=100"
       - "-c"
       - "wal_buffers=16MB"
-      - "-c"
-      - "synchronous_commit=off"
+      # synchronous_commit defaults to ON — financial data integrity over micro-perf gains.
     environment:
       POSTGRES_DB: lunex_spot
       POSTGRES_USER: ${DB_USER:-lunex}
@@ -136,6 +135,9 @@ services:
       start_period: 30s
 
   # ── SubQuery Node (blockchain indexer) ──
+  # Uses entrypoint.sh to render project.yaml from project.template.yaml at
+  # startup, substituting LUNES_CHAIN_ID / LUNES_WS_URL / LUNES_START_BLOCK.
+  # The committed project.yaml has dev defaults — production must override.
   subquery-node:
     image: subquerynetwork/subql-node-substrate:v6.4.0
     restart: unless-stopped
@@ -148,9 +150,16 @@ services:
       DB_DATABASE: lunex_spot
       DB_HOST: postgres
       DB_PORT: "5432"
+      LUNES_CHAIN_ID: ${LUNES_CHAIN_ID:?Set LUNES_CHAIN_ID — genesis hash of target Lunes chain}
+      LUNES_WS_URL: ${LUNES_WS_URL:?Set LUNES_WS_URL — wss endpoint of target Lunes chain}
+      LUNES_START_BLOCK: ${LUNES_START_BLOCK:-1}
     volumes:
       - ../subquery-node:/app
+    entrypoint: ["/bin/sh", "/app/entrypoint.sh"]
     command:
+      - /sbin/tini
+      - --
+      - /usr/local/bin/subql-node-substrate
       - -f=/app
       - --db-schema=subquery
       - --workers=2
@@ -206,11 +215,20 @@ services:
       - internal_network
     command: '/bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g ''daemon off;''"'
 
-  # ── Redis (nonce store + cache) ──
+  # ── Redis (nonce store + matching engine lock + cache) ──
+  # AOF enabled — nonces & matching locks are critical state, not pure cache.
+  # appendfsync=everysec: max 1s of data loss in crash, near-zero write overhead.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --save ""
+    command: >-
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --appendfsync everysec
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
     networks:
       - internal_network
     healthcheck:
@@ -248,6 +266,37 @@ services:
     networks:
       - internal_network
 
+  # ── Nginx Prometheus Exporter ──
+  # Reads stub_status from nginx:8888 and exports as Prometheus metrics.
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.1.0
+    restart: unless-stopped
+    depends_on:
+      - nginx
+    command:
+      - "-nginx.scrape-uri=http://nginx:8888/stub_status"
+    networks:
+      - internal_network
+
+  # ── Blackbox Exporter (SSL expiry + HTTP uptime probes) ──
+  # Required by the `ssl_expiry` and `http_probe` jobs in prometheus.yml so
+  # the SSLCertificateExpiringSoon alert actually has data to fire on.
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    restart: unless-stopped
+    volumes:
+      - ./blackbox-exporter.yml:/config/blackbox.yml:ro
+    command:
+      - "--config.file=/config/blackbox.yml"
+    networks:
+      - internal_network
+      - public_network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9115/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   # ── Prometheus ──
   prometheus:
     image: prom/prometheus:v2.51.0
@@ -282,6 +331,9 @@ services:
       - internal_network
 
   # ── DB Backup ──
+  # Daily at 01:00 UTC. S3 upload is REQUIRED in production — set
+  # BACKUP_S3_BUCKET + AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY.
+  # Local retention: 7 days. S3 retention: 30 days.
   db-backup:
     image: postgres:15-alpine
     restart: unless-stopped
@@ -294,17 +346,31 @@ services:
       DB_USER: ${DB_USER:-lunex}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: lunex_spot
-      S3_BUCKET: ${BACKUP_S3_BUCKET:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_BUCKET: ${BACKUP_S3_BUCKET:?Set BACKUP_S3_BUCKET — off-host backups are mandatory in production}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID for S3 backups}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY for S3 backups}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_S3_RETENTION_DAYS: ${BACKUP_S3_RETENTION_DAYS:-30}
     volumes:
       - ./backup.sh:/backup.sh:ro
       - backupdata:/backups
     networks:
       - internal_network
-    entrypoint: "/bin/sh -c 'chmod +x /backup.sh; while :; do /backup.sh; sleep 86400 & wait; done'"
+    # Run once at startup, then once per day at the configured hour (UTC).
+    # Sleep until the next 01:00 boundary instead of an unaligned 24h loop.
+    entrypoint: >-
+      /bin/sh -c '
+      chmod +x /backup.sh;
+      /backup.sh;
+      while :; do
+        NEXT=$$(date -u -d "tomorrow 01:00:00" +%s 2>/dev/null || date -u -v+1d -v01H -v00M -v00S +%s);
+        NOW=$$(date -u +%s);
+        SLEEP=$$((NEXT - NOW));
+        echo "[backup] sleeping $${SLEEP}s until next 01:00 UTC";
+        sleep $${SLEEP};
+        /backup.sh || echo "[backup] failed, will retry tomorrow";
+      done'
 
   # ── Certbot (SSL) ──
   certbot:

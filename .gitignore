@@ -72,6 +72,7 @@ coverage/
 *.tar.gz
 tmp/
 
-# ── Subprojects (separate repos) ──
+# ── Subprojects ──
+# lunex-admin/ has its own git repo (with own remote) — excluded here.
+# subquery-node/ is committed alongside the rest of the project (no separate repo).
 lunex-admin/
-subquery-node/

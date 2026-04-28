@@ -1,0 +1,133 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTO-GENERATED at container startup from project.template.yaml.
+#
+# In dev/test, run subquery-node manually:
+#   LUNES_CHAIN_ID=0x... LUNES_WS_URL=ws://... ./entrypoint.sh subql-node ...
+#
+# This committed file holds dev defaults so local IDE tooling has something to
+# parse, but the production runtime ALWAYS regenerates it from the template.
+# ─────────────────────────────────────────────────────────────────────────────
+specVersion: "1.0.0"
+name: lunex-subquery
+version: "1.0.0"
+runner:
+  node:
+    name: "@subql/node"
+    version: ">=3.0.0"
+  query:
+    name: "@subql/query"
+    version: ">=2.0.0"
+
+description: "Lunex DEX SubQuery indexer"
+repository: "https://github.com/lunes-platform/lunex"
+
+schema:
+  file: ./schema.graphql
+
+network:
+  # DEV ONLY — replaced at startup by entrypoint.sh
+  chainId: "0x7a556a1ed90087b4dfad63d019ced4b9aa7c49ff0a39c403c14490f9b5b5ad0e"
+  endpoint:
+    - "ws://host.docker.internal:9944"
+
+dataSources:
+  - kind: substrate/Runtime
+    startBlock: 1
+    mapping:
+      file: ./dist/index.js
+      handlers:
+        - handler: handleRouterSwap
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleRouterLiquidityAdded
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleRouterLiquidityRemoved
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleVaultDeposited
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleVaultWithdrawn
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleVaultTradeExecuted
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleVaultCircuitBreaker
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleTokenListed
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleFeeDistributed
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleLiquidityLocked
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleLiquidityUnlocked
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handlePairSwap
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleSpotDeposit
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleSpotWithdraw
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleSpotSettled
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleStakeCreated
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleStakeWithdrawn
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleRewardClaimed
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleSubstrateEvent
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted

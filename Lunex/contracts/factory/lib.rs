@@ -76,21 +76,26 @@ pub mod factory {
     }
 
     impl FactoryContract {
-        /// Constructor do contrato
+        /// Fallible constructor.
         ///
         /// # Parâmetros
         /// * `fee_to_setter` - Endereço autorizado a definir o fee_to
         /// * `pair_code_hash` - Hash do código dos contratos de par
         ///
-        /// # Validações
-        /// * fee_to_setter não pode ser endereço zero
+        /// # Erros
+        /// * `FactoryError::ZeroAddress` se `fee_to_setter` for endereço zero.
+        ///
+        /// Returns `Result<Self, FactoryError>` instead of panicking — a
+        /// panicking constructor can leave storage in a partially-initialised
+        /// state in ink! 4.x.
         #[ink(constructor)]
-        pub fn new(fee_to_setter: AccountId, pair_code_hash: Hash) -> Self {
-            // Validação defensiva no constructor
-            assert!(
-                fee_to_setter != AccountId::from(constants::ZERO_ADDRESS),
-                "fee_to_setter cannot be zero address"
-            );
+        pub fn new(
+            fee_to_setter: AccountId,
+            pair_code_hash: Hash,
+        ) -> Result<Self, FactoryError> {
+            if fee_to_setter == AccountId::from(constants::ZERO_ADDRESS) {
+                return Err(FactoryError::ZeroAddress);
+            }
 
             let mut instance = Self {
                 fee_to: ink::storage::Lazy::new(),
@@ -108,7 +113,7 @@ pub mod factory {
                 .set(&AccountId::from(constants::ZERO_ADDRESS));
             instance.pair_contract_code_hash.set(&pair_code_hash);
 
-            instance
+            Ok(instance)
         }
 
         // ========================================
@@ -371,7 +376,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let factory = FactoryContract::new(accounts.bob, Hash::default());
+            let factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
 
             assert_eq!(factory.fee_to_setter(), accounts.bob);
             assert_eq!(factory.pair_contract_code_hash(), Hash::default());
@@ -383,7 +388,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
             let token_a = accounts.charlie;
             let token_b = accounts.django;
 
@@ -410,7 +415,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
             let token = accounts.charlie;
 
             let result = factory.validate_pair_creation(token, token);
@@ -423,7 +428,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
             let token_a = accounts.charlie;
             let token_b = accounts.django;
 
@@ -454,7 +459,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
 
             // RED: Alice não é fee_to_setter, deve falhar
             let result = factory.set_fee_to(accounts.charlie);
@@ -473,7 +478,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
 
             // RED: Alice não é fee_to_setter atual, deve falhar
             let result = factory.set_fee_to_setter(accounts.charlie);
@@ -496,7 +501,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
             let zero_address = AccountId::from([0u8; 32]);
             let valid_token = accounts.charlie;
 
@@ -521,7 +526,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.bob);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
             let zero_address = AccountId::from([0u8; 32]);
 
             // RED: Tentar definir fee_to_setter como endereço zero deve falhar
@@ -534,12 +539,13 @@ pub mod factory {
         }
 
         #[ink::test]
-        #[should_panic(expected = "fee_to_setter cannot be zero address")]
-        fn test_constructor_with_zero_fee_to_setter_panics() {
+        fn test_constructor_with_zero_fee_to_setter_returns_error() {
             let zero_address = AccountId::from([0u8; 32]);
-
-            // RED: Constructor com fee_to_setter zero deve causar panic
-            let _factory = FactoryContract::new(zero_address, Hash::default());
+            // Fallible constructor — zero fee_to_setter returns an error
+            // instead of panicking (panicking constructors can leave storage
+            // partially initialised in ink! 4.x).
+            let result = FactoryContract::new(zero_address, Hash::default());
+            assert_eq!(result.err(), Some(FactoryError::ZeroAddress));
         }
 
         #[ink::test]
@@ -547,7 +553,7 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.alice);
 
-            let mut factory = FactoryContract::new(accounts.bob, Hash::default());
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
 
             let token_a = accounts.charlie;
             let token_b = accounts.django;

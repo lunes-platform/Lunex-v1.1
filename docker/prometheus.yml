@@ -49,23 +49,46 @@ scrape_configs:
       - targets: ["redis-exporter:9121"]
     scrape_interval: 30s
 
-  # Nginx (via nginx-prometheus-exporter or stub_status)
-  # - job_name: nginx
-  #   static_configs:
-  #     - targets: ["nginx-exporter:9113"]
-  #   scrape_interval: 30s
+  # Nginx (via nginx-prometheus-exporter scraping stub_status on nginx:8888)
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+    scrape_interval: 30s
 
-  # SSL/TLS certificate expiry (blackbox exporter)
-  # - job_name: ssl_expiry
-  #   metrics_path: /probe
-  #   params:
-  #     module: [tcp_connect]
-  #   static_configs:
-  #     - targets: ["lunex.lunes.io:443", "lunex-sandbox.lunes.io:443"]
-  #   relabel_configs:
-  #     - source_labels: [__address__]
-  #       target_label: __param_target
-  #     - source_labels: [__param_target]
-  #       target_label: instance
-  #     - target_label: __address__
-  #       replacement: blackbox-exporter:9115
+  # SSL/TLS certificate expiry (blackbox exporter probes endpoints over TLS).
+  # The SSLCertificateExpiringSoon alert in alert-rules.yml depends on the
+  # `probe_ssl_earliest_cert_expiry` metric produced by this scrape.
+  - job_name: ssl_expiry
+    metrics_path: /probe
+    params:
+      module: [tcp_connect_tls]
+    static_configs:
+      - targets:
+          - lunex.lunes.io:443
+          - lunex-sandbox.lunes.io:443
+    scrape_interval: 5m
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # HTTP probes (uptime + response time) — same exporter, different module.
+  - job_name: http_probe
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://lunex.lunes.io
+          - https://lunex.lunes.io/api/v1/pairs
+    scrape_interval: 60s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

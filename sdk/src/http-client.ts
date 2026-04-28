@@ -14,7 +14,40 @@ type HttpRequestOptions = {
 
 type AxiosConfigWithLunexOptions = AxiosRequestConfig & {
   lunexOptions?: HttpRequestOptions;
+  /** Internal: tracks how many times this request has been retried. */
+  _lunexRetryCount?: number;
 };
+
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+const RETRYABLE_NETWORK_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+]);
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_MAX_DELAY_MS = 30_000;
+
+function computeRetryDelayMs(
+  attempt: number,
+  retryAfterHeader: string | undefined,
+): number {
+  if (retryAfterHeader) {
+    const parsed = Number(retryAfterHeader);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.min(parsed * 1000, RETRY_MAX_DELAY_MS);
+    }
+  }
+  // Exponential backoff with ±20% jitter.
+  const base = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+  const jitter = base * 0.2 * (Math.random() * 2 - 1);
+  return Math.min(Math.max(base + jitter, 0), RETRY_MAX_DELAY_MS);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export class HttpClient {
   private instance: AxiosInstance;
@@ -59,11 +92,41 @@ export class HttpClient {
       (error) => Promise.reject(error),
     );
 
-    // Response interceptor
+    // Response interceptor — retries transient failures (429/502/503/504,
+    // network resets, timeouts) with exponential backoff + jitter. Honours
+    // `Retry-After` header on 429. Non-transient errors and 4xx other than
+    // 429 are surfaced immediately.
     this.instance.interceptors.response.use(
       (response) => response.data,
-      (error: AxiosError<ApiError>) => {
-        return Promise.reject(this.handleError(error));
+      async (error: AxiosError<ApiError>) => {
+        const config = error.config as AxiosConfigWithLunexOptions | undefined;
+        if (!config) return Promise.reject(this.handleError(error));
+
+        const status = error.response?.status;
+        const code = error.code;
+        const isRetryableStatus =
+          typeof status === 'number' && RETRYABLE_STATUS.has(status);
+        const isRetryableNetwork =
+          typeof code === 'string' && RETRYABLE_NETWORK_CODES.has(code);
+
+        if (!isRetryableStatus && !isRetryableNetwork) {
+          return Promise.reject(this.handleError(error));
+        }
+
+        const attempt = (config._lunexRetryCount ?? 0) + 1;
+        if (attempt > MAX_RETRIES) {
+          return Promise.reject(this.handleError(error));
+        }
+
+        config._lunexRetryCount = attempt;
+
+        const retryAfter =
+          (error.response?.headers?.['retry-after'] as string | undefined) ??
+          undefined;
+        const delayMs = computeRetryDelayMs(attempt, retryAfter);
+        await sleep(delayMs);
+
+        return this.instance.request(config);
       },
     );
   }

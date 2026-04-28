@@ -61,6 +61,21 @@ import { rebalancerService } from './services/rebalancerService';
 import { strategyService } from './services/strategyService';
 import { copytradeService } from './services/copytradeService';
 
+// ─── Crash Handlers ──────────────────────────────────────────────
+// Schedulers (rewardScheduler, copytradeWalletContinuationScheduler, etc.) use
+// setInterval with async callbacks — without these handlers, an unhandled
+// rejection would crash the process silently, with no structured log of the
+// cause. We exit with code 1 so the orchestrator (Docker / k8s) restarts us.
+process.on('unhandledRejection', (reason: unknown) => {
+  log.fatal({ err: reason }, 'Unhandled promise rejection — shutting down');
+  process.exit(1);
+});
+
+process.on('uncaughtException', (err: Error) => {
+  log.fatal({ err }, 'Uncaught exception — shutting down');
+  process.exit(1);
+});
+
 // ─── Startup secrets validation ──────────────────────────────────
 // RELAYER_SEED is a Substrate mnemonic / raw seed — treat it like a private key.
 // In production it MUST be injected by the deployment platform (e.g. AWS Secrets
@@ -187,7 +202,11 @@ if (config.isProd) {
 }
 
 // ─── Body Parser ─────────────────────────────────────────────────
-app.use(express.json({ limit: '5mb' }));
+// 100KB global default — orders, signatures, and admin payloads are all small.
+// Listing application uploads (the only legitimate large body) get a higher
+// per-route limit applied below before the global parser sees them.
+app.use('/api/v1/listing', express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '100kb' }));
 
 // ─── Static: token logos ─────────────────────────────────────────
 app.use(
@@ -313,7 +332,10 @@ app.get('/health', async (_req, res) => {
   dbHealthyGauge.set(dbOk ? 1 : 0);
   redisHealthyGauge.set(redisOk ? 1 : 0);
 
-  const overallOk = dbOk;
+  // Redis is critical — matching engine, nonce replay protection, and rate
+  // limiters all depend on it. Reporting OK while Redis is down would let the
+  // load balancer route traffic to a half-functional instance.
+  const overallOk = dbOk && redisOk;
   const status = overallOk ? 'ok' : 'degraded';
   res.status(overallOk ? 200 : 503).json({
     status,

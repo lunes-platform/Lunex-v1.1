@@ -3,6 +3,7 @@ jest.mock('../db', () => ({
   default: {
     userReward: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       updateMany: jest.fn(),
       create: jest.fn(),
     },

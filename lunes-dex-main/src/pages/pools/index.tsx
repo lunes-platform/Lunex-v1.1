@@ -5,7 +5,7 @@ import PageLayout from '../../components/layout'
 import { usePools } from '../../hooks/usePools'
 import TokenIcon from '../../components/TokenIcon'
 
-type PoolFilter = 'all' | 'stable' | 'volatile' | 'my_pools'
+type PoolFilter = 'all' | 'stable' | 'volatile'
 
 // Styled Components
 
@@ -272,8 +272,6 @@ export const Pools: React.FC = () => {
         return pool.fee === '0.1%' // Stable pools have lower fee
       case 'volatile':
         return pool.fee === '0.5%'
-      case 'my_pools':
-        return false // TODO: Filter by user's pools
       default:
         return true
     }
@@ -322,12 +320,8 @@ export const Pools: React.FC = () => {
           >
             Volatile
           </FilterTab>
-          <FilterTab
-            $active={filter === 'my_pools'}
-            onClick={() => setFilter('my_pools')}
-          >
-            My Pools
-          </FilterTab>
+          {/* "My Pools" tab removed pending LP-balance integration in
+              contractService — see issue tracker. */}
         </FilterTabs>
 
         <SearchRow>

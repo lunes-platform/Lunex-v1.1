@@ -1,0 +1,19 @@
+{
+  "name": "lunex-subquery",
+  "version": "1.0.0",
+  "description": "Lunex DEX SubQuery indexer for Lunes blockchain",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "subql build",
+    "codegen": "subql codegen",
+    "start:docker": "docker compose pull && docker compose up --remove-orphans",
+    "dev": "subql-node -f ."
+  },
+  "dependencies": {
+    "@subql/types": "3.15.0"
+  },
+  "devDependencies": {
+    "@subql/cli": "6.6.2",
+    "typescript": "^5.0.0"
+  }
+}

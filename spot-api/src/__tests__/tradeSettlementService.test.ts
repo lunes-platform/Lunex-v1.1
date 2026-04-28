@@ -1,10 +1,27 @@
-const mockPrisma = {
+type MockPrisma = {
+  trade: {
+    update: jest.Mock;
+    updateMany: jest.Mock;
+    findUnique: jest.Mock;
+    findMany: jest.Mock;
+  };
+  $transaction: jest.Mock;
+};
+
+const mockPrisma: MockPrisma = {
   trade: {
     update: jest.fn(),
     updateMany: jest.fn(),
     findUnique: jest.fn(),
     findMany: jest.fn(),
   },
+  // Pass-through transaction stub: hands the same mock to the callback so the
+  // service code that calls `prisma.$transaction((tx) => ...)` exercises the
+  // same `trade.update` mocks the tests assert against.
+  $transaction: jest.fn(
+    async (callback: (tx: MockPrisma) => unknown): Promise<unknown> =>
+      callback(mockPrisma),
+  ),
 };
 
 const mockSettlementService = {
@@ -211,7 +228,9 @@ describe('tradeSettlementService', () => {
     expect(mockPrisma.trade.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          settlementPayload: { not: null },
+          // Prisma.DbNull is a sentinel object — assert presence of the filter
+          // without checking its identity (the test runs without the real client).
+          settlementPayload: expect.objectContaining({ not: expect.anything() }),
           OR: expect.any(Array),
         }),
       }),

@@ -9,6 +9,7 @@ import {
   consumeNonce,
   isNonceUsed,
 } from '../middleware/auth';
+import { checkRedisRateLimit } from '../utils/redisRateLimit';
 import { z } from 'zod';
 
 const SIGNED_ORDER_TTL_MS = 5 * 60 * 1000;
@@ -79,36 +80,19 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
 });
 
 // ─── Anti-Spoofing: cancel rate limiter (max 20 cancels/min per address) ─────
+// Backed by Redis sliding-window counters so the limit holds across process
+// restarts and horizontally scaled API replicas.
 const CANCEL_RATE_WINDOW_MS = 60_000;
 const CANCEL_RATE_MAX = 20;
-const cancelTimestamps = new Map<string, number[]>();
 
-function isCancelRateLimited(address: string): boolean {
-  const now = Date.now();
-  const timestamps = cancelTimestamps.get(address) ?? [];
-  const recent = timestamps.filter((ts) => now - ts < CANCEL_RATE_WINDOW_MS);
-
-  if (recent.length >= CANCEL_RATE_MAX) {
-    cancelTimestamps.set(address, recent);
-    return true;
-  }
-
-  recent.push(now);
-  cancelTimestamps.set(address, recent);
-  return false;
+async function isCancelRateLimited(address: string): Promise<boolean> {
+  const result = await checkRedisRateLimit({
+    key: `ratelimit:cancel:${address}`,
+    limit: CANCEL_RATE_MAX,
+    windowMs: CANCEL_RATE_WINDOW_MS,
+  });
+  return !result.allowed;
 }
-
-// Periodic cleanup to prevent memory leak (every 5 min)
-const cancelCleanupInterval = setInterval(() => {
-  const now = Date.now();
-  for (const [addr, timestamps] of cancelTimestamps.entries()) {
-    const recent = timestamps.filter((ts) => now - ts < CANCEL_RATE_WINDOW_MS);
-    if (recent.length === 0) cancelTimestamps.delete(addr);
-    else cancelTimestamps.set(addr, recent);
-  }
-}, 5 * 60_000);
-
-cancelCleanupInterval.unref?.();
 
 router.delete(
   '/:id',
@@ -121,8 +105,8 @@ router.delete(
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
 
-      // Anti-spoofing: rate limit cancellations
-      if (isCancelRateLimited(parsed.data.makerAddress)) {
+      // Anti-spoofing: rate limit cancellations (Redis-backed sliding window)
+      if (await isCancelRateLimited(parsed.data.makerAddress)) {
         return res
           .status(429)
           .json({ error: 'Too many cancellations. Max 20 per minute.' });

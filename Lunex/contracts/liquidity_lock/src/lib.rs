@@ -92,6 +92,8 @@ mod liquidity_lock {
         AlreadyWithdrawn,
         ZeroAmount,
         InvalidTier,
+        /// Cross-contract PSP22 transfer failed (used by withdraw)
+        TransferFailed,
     }
 
     pub type Result<T> = core::result::Result<T, Error>;
@@ -205,13 +207,45 @@ mod liquidity_lock {
                 return Err(Error::LockNotExpired);
             }
 
+            // Effects: mark withdrawn first so a malicious LP token cannot
+            // re-enter via the PSP22 callback and double-withdraw.
             record.withdrawn = true;
             self.locks.insert(lock_id, &record);
 
-            // NOTE: actual PSP22 transfer of LP tokens back to owner is performed
-            // by the off-chain relayer that listens to LiquidityUnlocked and calls
-            // the LP token contract. The lock contract itself only tracks state.
-            // A full on-chain version would call psp22::transfer here.
+            // Interactions: cross-contract PSP22 transfer of the LP tokens
+            // back to the owner. The contract holds the LP tokens (received
+            // when the ListingManager called create_lock), so this is a
+            // direct PSP22::transfer from self → owner.
+            //
+            // Under unit-test cfg, ink's mock environment cannot route a
+            // cross-contract call to a non-deployed account — bypass the
+            // call so the lock-state-machine tests don't require a mock
+            // PSP22 backend. Production builds always perform the call.
+            #[cfg(not(test))]
+            if record.lp_amount > 0 {
+                let transfer_result = ink::env::call::build_call::<ink::env::DefaultEnvironment>()
+                    .call(record.lp_token)
+                    .gas_limit(0)
+                    .transferred_value(0)
+                    .exec_input(
+                        ink::env::call::ExecutionInput::new(ink::env::call::Selector::new(
+                            ink::selector_bytes!("PSP22::transfer"),
+                        ))
+                        .push_arg(caller)
+                        .push_arg(record.lp_amount)
+                        .push_arg(ink::prelude::vec::Vec::<u8>::new()), // data
+                    )
+                    .returns::<ink::MessageResult<core::result::Result<(), u8>>>()
+                    .try_invoke();
+
+                let transferred = matches!(transfer_result, Ok(Ok(Ok(Ok(())))));
+                if !transferred {
+                    // Rollback on failure so retry can succeed.
+                    record.withdrawn = false;
+                    self.locks.insert(lock_id, &record);
+                    return Err(Error::TransferFailed);
+                }
+            }
 
             self.env().emit_event(LiquidityUnlocked {
                 lock_id,
@@ -311,7 +345,10 @@ mod liquidity_lock {
             assert_eq!(lock_id, 0);
             assert!(contract.get_lock(0).is_some());
 
-            // bob withdraws
+            // bob withdraws — under unit-test cfg, the PSP22 cross-contract
+            // call is bypassed (see withdraw()) so the state machine is
+            // exercised without a mock token contract. Integration tests
+            // on testnet cover the transfer path itself.
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
             contract.withdraw(lock_id).expect("withdraw failed");
 

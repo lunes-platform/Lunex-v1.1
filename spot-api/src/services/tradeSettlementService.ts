@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../db';
 import {
   settlementService,
@@ -5,7 +6,6 @@ import {
   TradeSettlementInput,
 } from './settlementService';
 
-const prismaAny = prisma as any;
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000, 900_000];
 const STALE_SETTLING_MS = 60_000;
 
@@ -87,13 +87,17 @@ function getNextRetryAt(attempts: number) {
   return new Date(Date.now() + delay);
 }
 
+function payloadForPrisma(input: TradeSettlementInput): Prisma.InputJsonValue {
+  return serializeSettlementInput(input) as unknown as Prisma.InputJsonValue;
+}
+
 async function markTradesSkipped(inputs: TradeSettlementInput[]) {
   for (const input of inputs) {
-    await prismaAny.trade.update({
+    await prisma.trade.update({
       where: { id: input.tradeId },
       data: {
         settlementStatus: 'SKIPPED',
-        settlementPayload: serializeSettlementInput(input),
+        settlementPayload: payloadForPrisma(input),
         settlementError: null,
         nextSettlementRetryAt: null,
       },
@@ -112,7 +116,7 @@ async function markTradesSettling(inputs: TradeSettlementInput[]) {
   for (const input of inputs) {
     // Optimistic claim: only update if the trade is in a retryable state.
     // This prevents two concurrent workers from double-settling the same trade.
-    const claimed = await prismaAny.trade.updateMany({
+    const claimed = await prisma.trade.updateMany({
       where: {
         id: input.tradeId,
         OR: [
@@ -127,7 +131,7 @@ async function markTradesSettling(inputs: TradeSettlementInput[]) {
       data: {
         settlementStatus: 'SETTLING',
         settlementAttempts: { increment: 1 },
-        settlementPayload: serializeSettlementInput(input),
+        settlementPayload: payloadForPrisma(input),
         settlementError: null,
         lastSettlementAttemptAt: startedAt,
         nextSettlementRetryAt: null,
@@ -139,7 +143,7 @@ async function markTradesSettling(inputs: TradeSettlementInput[]) {
       continue;
     }
 
-    const updatedTrade = await prismaAny.trade.findUnique({
+    const updatedTrade = await prisma.trade.findUnique({
       where: { id: input.tradeId },
       select: { id: true, settlementAttempts: true },
     });
@@ -159,43 +163,51 @@ async function applySettlementResults(
 ) {
   const settledAt = new Date();
 
-  for (const result of results) {
-    if (result.status === 'SETTLED') {
-      await prismaAny.trade.update({
+  // Wrap the batch update in a transaction so that a partial failure cannot
+  // leave the DB in an inconsistent state where some trades are recorded as
+  // SETTLED while siblings stay in SETTLING. Without this, a crash mid-loop
+  // produces phantom SETTLING records that the retry path will re-attempt
+  // on-chain (the contract idempotency catches it, but the duplicate call is
+  // wasted gas + latency and pollutes the FAILED-with-already-settled state).
+  await prisma.$transaction(async (tx) => {
+    for (const result of results) {
+      if (result.status === 'SETTLED') {
+        await tx.trade.update({
+          where: { id: result.tradeId },
+          data: {
+            settlementStatus: 'SETTLED',
+            txHash: result.txHash,
+            settledAt,
+            settlementError: null,
+            nextSettlementRetryAt: null,
+          },
+        });
+        continue;
+      }
+
+      if (result.status === 'SKIPPED') {
+        await tx.trade.update({
+          where: { id: result.tradeId },
+          data: {
+            settlementStatus: 'SKIPPED',
+            settlementError: result.error || null,
+            nextSettlementRetryAt: null,
+          },
+        });
+        continue;
+      }
+
+      const attempts = attemptsByTradeId.get(result.tradeId) || 1;
+      await tx.trade.update({
         where: { id: result.tradeId },
         data: {
-          settlementStatus: 'SETTLED',
-          txHash: result.txHash,
-          settledAt,
-          settlementError: null,
-          nextSettlementRetryAt: null,
+          settlementStatus: 'FAILED',
+          settlementError: result.error || 'Unknown settlement failure',
+          nextSettlementRetryAt: getNextRetryAt(attempts),
         },
       });
-      continue;
     }
-
-    if (result.status === 'SKIPPED') {
-      await prismaAny.trade.update({
-        where: { id: result.tradeId },
-        data: {
-          settlementStatus: 'SKIPPED',
-          settlementError: result.error || null,
-          nextSettlementRetryAt: null,
-        },
-      });
-      continue;
-    }
-
-    const attempts = attemptsByTradeId.get(result.tradeId) || 1;
-    await prismaAny.trade.update({
-      where: { id: result.tradeId },
-      data: {
-        settlementStatus: 'FAILED',
-        settlementError: result.error || 'Unknown settlement failure',
-        nextSettlementRetryAt: getNextRetryAt(attempts),
-      },
-    });
-  }
+  });
 }
 
 async function processAttempt(inputs: TradeSettlementInput[]) {
@@ -234,9 +246,9 @@ export const tradeSettlementService = {
     const now = new Date();
     const staleSettlingBefore = new Date(now.getTime() - STALE_SETTLING_MS);
 
-    const trades = await prismaAny.trade.findMany({
+    const trades = await prisma.trade.findMany({
       where: {
-        settlementPayload: { not: null },
+        settlementPayload: { not: Prisma.DbNull },
         OR: [
           { settlementStatus: 'PENDING' },
           { settlementStatus: 'FAILED', nextSettlementRetryAt: { lte: now } },
@@ -255,12 +267,11 @@ export const tradeSettlementService = {
     });
 
     const inputs = trades
-      .filter(
-        (trade: { settlementPayload: SerializedTradeSettlementInput | null }) =>
-          Boolean(trade.settlementPayload),
-      )
-      .map((trade: { settlementPayload: SerializedTradeSettlementInput }) =>
-        deserializeSettlementInput(trade.settlementPayload),
+      .filter((trade) => trade.settlementPayload !== null)
+      .map((trade) =>
+        deserializeSettlementInput(
+          trade.settlementPayload as unknown as SerializedTradeSettlementInput,
+        ),
       );
 
     if (inputs.length === 0) {

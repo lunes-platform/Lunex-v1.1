@@ -2,6 +2,7 @@ import { collectProductionConfigErrors } from '../utils/productionGuards';
 
 const validProductionConfig = {
   isProd: true,
+  nodeEnv: 'production',
   adminSecret: 'a'.repeat(32),
   cors: {
     allowedOrigins: ['https://app.lunex.io'],
@@ -13,6 +14,7 @@ const validProductionConfig = {
     relayerSeed: 'real seed injected by secret manager',
     spotContractAddress: '5SpotSettlementContractAddress',
     spotContractMetadataPath: './abis/SpotSettlement.json',
+    nativeTokenAddress: '5NativeTokenSentinelAccountId',
   },
   redis: {
     url: 'redis://redis.internal:6379',
@@ -22,20 +24,34 @@ const validProductionConfig = {
     lockWaitMs: 2000,
     lockRetryMs: 50,
   },
+  rewards: {
+    enabled: true,
+    leaderPoolPct: 40,
+    traderPoolPct: 30,
+    stakerPoolPct: 30,
+    rewardSplitTotalPct: 100,
+    rewardSplitValid: true,
+  },
 };
 
 describe('production startup guards', () => {
+  it('returns no errors with a fully-valid production config', () => {
+    expect(collectProductionConfigErrors(validProductionConfig)).toEqual([]);
+  });
+
   it('does not require settlement config outside production', () => {
     expect(
       collectProductionConfigErrors({
         ...validProductionConfig,
         isProd: false,
+        nodeEnv: 'development',
         adminSecret: '',
         cors: { allowedOrigins: ['*'] },
         blockchain: {
           relayerSeed: '',
           spotContractAddress: '',
           spotContractMetadataPath: '',
+          nativeTokenAddress: '',
         },
       }),
     ).toEqual([]);
@@ -48,6 +64,7 @@ describe('production startup guards', () => {
         relayerSeed: '',
         spotContractAddress: '',
         spotContractMetadataPath: '',
+        nativeTokenAddress: '',
       },
     });
 
@@ -58,6 +75,9 @@ describe('production startup guards', () => {
         'SPOT_CONTRACT_METADATA_PATH is required in production',
       ]),
     );
+    expect(
+      errors.some((e) => e.startsWith('NATIVE_TOKEN_ADDRESS is required')),
+    ).toBe(true);
   });
 
   it('rejects development relayer seeds and wildcard CORS in production', () => {
@@ -76,6 +96,20 @@ describe('production startup guards', () => {
         'Wildcard CORS origins are forbidden in production',
       ]),
     );
+  });
+
+  it('rejects placeholder relayer seeds in production', () => {
+    const errors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      blockchain: {
+        ...validProductionConfig.blockchain,
+        relayerSeed: 'REPLACE_WITH_PRODUCTION_RELAYER_SEED_FROM_SECRETS_MANAGER',
+      },
+    });
+
+    expect(
+      errors.some((e) => e.includes('RELAYER_SEED still contains a placeholder')),
+    ).toBe(true);
   });
 
   it('rejects missing or wildcard WebSocket origins in production', () => {
@@ -113,5 +147,60 @@ describe('production startup guards', () => {
         'MATCHING_LOCK_RETRY_MS must be positive in production',
       ]),
     );
+  });
+
+  it('rejects NODE_ENV that is not exactly "production"', () => {
+    const errors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      nodeEnv: 'prod',
+    });
+    expect(errors.some((e) => e.includes('NODE_ENV must be exactly'))).toBe(
+      true,
+    );
+  });
+
+  it('rejects reward split that does not sum to 100', () => {
+    const errors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      rewards: {
+        enabled: true,
+        leaderPoolPct: 40,
+        traderPoolPct: 40,
+        stakerPoolPct: 40,
+        rewardSplitTotalPct: 120,
+        rewardSplitValid: false,
+      },
+    });
+    expect(
+      errors.some((e) => e.includes('REWARD split percentages must sum to 100')),
+    ).toBe(true);
+  });
+
+  it('skips reward split validation when rewards are disabled', () => {
+    const errors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      rewards: {
+        enabled: false,
+        leaderPoolPct: 0,
+        traderPoolPct: 0,
+        stakerPoolPct: 0,
+        rewardSplitTotalPct: 0,
+        rewardSplitValid: false,
+      },
+    });
+    expect(errors.some((e) => e.includes('REWARD split'))).toBe(false);
+  });
+
+  it('rejects missing NATIVE_TOKEN_ADDRESS in production', () => {
+    const errors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      blockchain: {
+        ...validProductionConfig.blockchain,
+        nativeTokenAddress: '',
+      },
+    });
+    expect(
+      errors.some((e) => e.startsWith('NATIVE_TOKEN_ADDRESS is required')),
+    ).toBe(true);
   });
 });

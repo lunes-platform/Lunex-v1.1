@@ -156,11 +156,12 @@ class CopyVaultService {
               );
               return;
             }
-            if (txResult.status.isInBlock || txResult.status.isFinalized) {
+            // Wait for finality — vault deposits move user funds. Resolving
+            // on `isInBlock` would let an off-chain rollback (DB write) commit
+            // shares against an on-chain transfer that a fork later reverts.
+            if (txResult.status.isFinalized) {
               const txHash = txResult.txHash.toHex();
-              const blockHash = txResult.status.isInBlock
-                ? txResult.status.asInBlock.toHex()
-                : txResult.status.asFinalized.toHex();
+              const blockHash = txResult.status.asFinalized.toHex();
 
               if (unsub) unsub();
               resolve({
@@ -237,11 +238,10 @@ class CopyVaultService {
               );
               return;
             }
-            if (txResult.status.isInBlock || txResult.status.isFinalized) {
+            // Wait for finality — withdrawal returns underlying tokens.
+            if (txResult.status.isFinalized) {
               const txHash = txResult.txHash.toHex();
-              const blockHash = txResult.status.isInBlock
-                ? txResult.status.asInBlock.toHex()
-                : txResult.status.asFinalized.toHex();
+              const blockHash = txResult.status.asFinalized.toHex();
 
               if (unsub) unsub();
               resolve({

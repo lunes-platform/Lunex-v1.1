@@ -112,6 +112,9 @@ pub mod spot_settlement {
         NotOrderMaker,
         /// Immutable order fields changed for a nonce already partially filled
         OrderMismatch,
+        /// Reentrancy detected — a malicious PSP22 token attempted to call back
+        /// into the contract while a deposit/withdraw was in progress.
+        Reentrancy,
     }
 
     // ========================================
@@ -229,6 +232,14 @@ pub mod spot_settlement {
         owner: AccountId,
         /// Whether the contract is paused
         paused: bool,
+        /// Reentrancy guard — set true while a message that performs cross-contract
+        /// PSP22 calls is in flight. A malicious token cannot re-enter the contract
+        /// while this is true (acquire_lock returns SpotError::Reentrancy).
+        reentrancy_lock: bool,
+        /// Pending owner address (two-step ownership transfer).
+        /// Set by `transfer_ownership`, cleared by `accept_ownership`.
+        /// Prevents permanent loss of admin control if a typo'd address is used.
+        pending_owner: Option<AccountId>,
         /// User balances: (user, token) -> balance
         /// For native LUNES, token = AccountId::from(ZERO_ADDRESS)
         balances: Mapping<(AccountId, AccountId), Balance>,
@@ -266,6 +277,8 @@ pub mod spot_settlement {
             Self {
                 owner: caller,
                 paused: false,
+                reentrancy_lock: false,
+                pending_owner: None,
                 balances: Mapping::default(),
                 used_nonces: Mapping::default(),
                 filled_amounts: Mapping::default(),
@@ -290,6 +303,22 @@ pub mod spot_settlement {
 
         fn is_native_token(token: &AccountId) -> bool {
             *token == Self::native_token_id()
+        }
+
+        // ========================================
+        // HELPER: Reentrancy guard
+        // ========================================
+
+        fn acquire_lock(&mut self) -> Result<(), SpotError> {
+            if self.reentrancy_lock {
+                return Err(SpotError::Reentrancy);
+            }
+            self.reentrancy_lock = true;
+            Ok(())
+        }
+
+        fn release_lock(&mut self) {
+            self.reentrancy_lock = false;
         }
 
         // ========================================
@@ -333,20 +362,30 @@ pub mod spot_settlement {
             amount: Balance,
         ) -> Result<(), SpotError> {
             self.ensure_not_paused()?;
+            // Reentrancy guard — must be acquired before the cross-contract
+            // call so a malicious PSP22 token cannot recurse back into any
+            // guarded message while the caller's balance is mid-transition.
+            self.acquire_lock()?;
 
             if amount == 0 {
+                self.release_lock();
                 return Err(SpotError::ZeroAmount);
             }
             if amount < constants::MIN_DEPOSIT {
+                self.release_lock();
                 return Err(SpotError::DepositTooSmall);
             }
             if Self::is_native_token(&token) {
+                self.release_lock();
                 return Err(SpotError::PSP22TransferFailed);
             }
 
             let caller = self.env().caller();
             let current = self.balances.get((caller, token)).unwrap_or(0);
-            let new_balance = current.checked_add(amount).ok_or(SpotError::Overflow)?;
+            let new_balance = current.checked_add(amount).ok_or_else(|| {
+                self.release_lock();
+                SpotError::Overflow
+            })?;
 
             // Cross-contract call to PSP22 transferFrom
             // In production, this calls token.transfer_from(caller, self, amount)
@@ -371,7 +410,10 @@ pub mod spot_settlement {
 
             match transfer_result {
                 Ok(Ok(Ok(Ok(())))) => {}
-                _ => return Err(SpotError::PSP22TransferFailed),
+                _ => {
+                    self.release_lock();
+                    return Err(SpotError::PSP22TransferFailed);
+                }
             }
 
             self.balances.insert((caller, token), &new_balance);
@@ -382,6 +424,7 @@ pub mod spot_settlement {
                 amount,
             });
 
+            self.release_lock();
             Ok(())
         }
 
@@ -432,11 +475,14 @@ pub mod spot_settlement {
             amount: Balance,
         ) -> Result<(), SpotError> {
             self.ensure_not_paused()?;
+            self.acquire_lock()?;
 
             if amount == 0 {
+                self.release_lock();
                 return Err(SpotError::ZeroAmount);
             }
             if Self::is_native_token(&token) {
+                self.release_lock();
                 return Err(SpotError::PSP22TransferFailed);
             }
 
@@ -444,10 +490,14 @@ pub mod spot_settlement {
             let current = self.balances.get((caller, token)).unwrap_or(0);
 
             if current < amount {
+                self.release_lock();
                 return Err(SpotError::WithdrawExceedsBalance);
             }
 
-            let new_balance = current.checked_sub(amount).ok_or(SpotError::Overflow)?;
+            let new_balance = current.checked_sub(amount).ok_or_else(|| {
+                self.release_lock();
+                SpotError::Overflow
+            })?;
             self.balances.insert((caller, token), &new_balance);
 
             // Cross-contract call to PSP22 transfer
@@ -471,10 +521,12 @@ pub mod spot_settlement {
                 _ => {
                     // Revert balance change
                     self.balances.insert((caller, token), &current);
+                    self.release_lock();
                     return Err(SpotError::PSP22TransferFailed);
                 }
             }
 
+            self.release_lock();
             self.env().emit_event(WithdrawPSP22 {
                 user: caller,
                 token,
@@ -940,12 +992,46 @@ pub mod spot_settlement {
             Ok(())
         }
 
-        /// Transfer ownership
+        /// Initiate two-step ownership transfer.
+        /// Stores `new_owner` as pending; the new owner must call
+        /// `accept_ownership` to complete the handover. A typo can be undone
+        /// by re-calling this with the correct address (overwrites pending).
         #[ink(message)]
         pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), SpotError> {
             self.ensure_owner()?;
-            self.owner = new_owner;
+            self.pending_owner = Some(new_owner);
             Ok(())
+        }
+
+        /// Cancel a pending ownership transfer (current owner only).
+        #[ink(message)]
+        pub fn cancel_ownership_transfer(&mut self) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            self.pending_owner = None;
+            Ok(())
+        }
+
+        /// Accept a pending ownership transfer.
+        /// Must be called by the address set via `transfer_ownership`.
+        /// This two-step pattern prevents typos in `transfer_ownership` from
+        /// permanently locking out admin control of the contract.
+        #[ink(message)]
+        pub fn accept_ownership(&mut self) -> Result<(), SpotError> {
+            let caller = self.env().caller();
+            match self.pending_owner {
+                Some(pending) if pending == caller => {
+                    self.owner = caller;
+                    self.pending_owner = None;
+                    Ok(())
+                }
+                _ => Err(SpotError::AccessDenied),
+            }
+        }
+
+        /// Returns the pending owner (if any).
+        #[ink(message)]
+        pub fn pending_owner(&self) -> Option<AccountId> {
+            self.pending_owner
         }
 
         /// Withdraw collected fees to treasury
@@ -1406,16 +1492,47 @@ pub mod spot_settlement {
         }
 
         #[ink::test]
-        fn test_transfer_ownership() {
+        fn test_transfer_ownership_two_step() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            // Step 1: Alice initiates transfer to Bob.
+            assert!(contract.transfer_ownership(accounts.bob).is_ok());
+            // Owner unchanged until Bob accepts.
+            assert_eq!(contract.get_owner(), accounts.alice);
+            assert_eq!(contract.pending_owner(), Some(accounts.bob));
+
+            // Wrong caller cannot accept.
+            set_caller(accounts.charlie);
+            assert_eq!(contract.accept_ownership(), Err(SpotError::AccessDenied));
+
+            // Step 2: Bob accepts.
+            set_caller(accounts.bob);
+            assert!(contract.accept_ownership().is_ok());
+            assert_eq!(contract.get_owner(), accounts.bob);
+            assert_eq!(contract.pending_owner(), None);
+
+            // Alice no longer has access.
+            set_caller(accounts.alice);
+            assert_eq!(contract.pause(), Err(SpotError::AccessDenied));
+        }
+
+        #[ink::test]
+        fn test_cancel_ownership_transfer() {
             let accounts = default_accounts();
             set_caller(accounts.alice);
             let mut contract = create_contract();
 
             assert!(contract.transfer_ownership(accounts.bob).is_ok());
-            assert_eq!(contract.get_owner(), accounts.bob);
+            assert_eq!(contract.pending_owner(), Some(accounts.bob));
 
-            // Alice no longer has access
-            assert_eq!(contract.pause(), Err(SpotError::AccessDenied));
+            assert!(contract.cancel_ownership_transfer().is_ok());
+            assert_eq!(contract.pending_owner(), None);
+
+            // Bob can no longer accept after cancel.
+            set_caller(accounts.bob);
+            assert_eq!(contract.accept_ownership(), Err(SpotError::AccessDenied));
         }
 
         // ─── Settle Trade Tests ───

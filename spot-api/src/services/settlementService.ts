@@ -521,7 +521,11 @@ class SpotSettlementService {
               return;
             }
 
-            if (txResult.status.isInBlock || txResult.status.isFinalized) {
+            // Wait for finality — `isInBlock` only means included in a
+            // non-finalized block, which forks can revert. For operations
+            // that move user funds (settlements, cancels), the off-chain
+            // DB state must only update after the chain confirms finality.
+            if (txResult.status.isFinalized) {
               const txHash = txResult.txHash.toHex();
               if (unsub) unsub();
               resolve(txHash);
@@ -637,7 +641,11 @@ class SpotSettlementService {
               return;
             }
 
-            if (txResult.status.isInBlock || txResult.status.isFinalized) {
+            // Wait for finality — `isInBlock` only means included in a
+            // non-finalized block, which forks can revert. For operations
+            // that move user funds (settlements, cancels), the off-chain
+            // DB state must only update after the chain confirms finality.
+            if (txResult.status.isFinalized) {
               const txHash = txResult.txHash.toHex();
               if (unsub) unsub();
               resolve(txHash);

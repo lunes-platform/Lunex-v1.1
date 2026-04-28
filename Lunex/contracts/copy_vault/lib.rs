@@ -74,6 +74,12 @@ pub mod copy_vault {
         InvalidPair,
         /// Per-block volume limit exceeded (anti-manipulation)
         BlockVolumeExceeded,
+        /// Router contract address not configured
+        RouterNotConfigured,
+        /// Cross-contract call to Router::swap failed
+        SwapFailed,
+        /// Slippage protection — actual amount_out below min_amount_out
+        SlippageExceeded,
     }
 
     // ─── Types ──────────────────────────────────────────────────
@@ -286,6 +292,13 @@ pub mod copy_vault {
         block_volume: Balance,
         /// Block number of the last recorded trade
         last_trade_block: u32,
+
+        // --- Router integration (T25) ---
+        /// Address of the deployed Router contract for real swap execution.
+        /// Optional — left unset on devnet to keep the legacy `execute_trade`
+        /// flow working. In production this must be set via `set_router()`
+        /// before `swap_through_router` is callable.
+        router: Option<AccountId>,
     }
 
     impl CopyVault {
@@ -323,6 +336,7 @@ pub mod copy_vault {
                 total_deposited: 0,
                 total_withdrawn: 0,
                 active_depositors: 0,
+                router: None,
             }
         }
 
@@ -750,6 +764,162 @@ pub mod copy_vault {
             Ok(())
         }
 
+        /// Execute a real on-chain swap through the configured Router (T25).
+        ///
+        /// Unlike `execute_trade`, this method:
+        ///   1. Performs a real cross-contract call to `Router::swap`,
+        ///   2. Receives the actual `amount_out`,
+        ///   3. Updates `total_equity` from the result — never from a parameter
+        ///      provided by the leader.
+        ///
+        /// Slippage protection is enforced via `min_amount_out`: if the
+        /// router returns less than that, the call reverts and the vault
+        /// state is unchanged.
+        ///
+        /// Requires: leader, not paused, trading active, router configured.
+        #[ink(message)]
+        pub fn swap_through_router(
+            &mut self,
+            token_in:       AccountId,
+            token_out:      AccountId,
+            amount_in:      Balance,
+            min_amount_out: Balance,
+        ) -> Result<Balance, VaultError> {
+            self.ensure_leader()?;
+            self.ensure_not_paused()?;
+            self.ensure_trading_active()?;
+            self.acquire_lock()?;
+
+            if amount_in == 0 {
+                self.release_lock();
+                return Err(VaultError::ZeroAmount);
+            }
+
+            let router = match self.router {
+                Some(addr) => addr,
+                None => {
+                    self.release_lock();
+                    return Err(VaultError::RouterNotConfigured);
+                }
+            };
+
+            // Per-block volume cap (same logic as execute_trade) ─────────
+            let current_block = self.env().block_number();
+            let equity_before = self.get_vault_equity_internal();
+            let max_block_vol = equity_before
+                .checked_mul(constants::MAX_BLOCK_VOLUME_BPS as u128)
+                .ok_or(VaultError::Overflow)?
+                .checked_div(constants::BPS as u128)
+                .ok_or(VaultError::Overflow)?;
+            let new_block_volume = if current_block == self.last_trade_block {
+                self.block_volume
+                    .checked_add(amount_in)
+                    .ok_or(VaultError::Overflow)?
+            } else {
+                amount_in
+            };
+            if new_block_volume > max_block_vol {
+                self.release_lock();
+                return Err(VaultError::BlockVolumeExceeded);
+            }
+
+            // Trade-size cap (max 20% of equity per trade)
+            let max_trade = equity_before
+                .checked_mul(constants::MAX_TRADE_SIZE_BPS as u128)
+                .ok_or(VaultError::Overflow)?
+                .checked_div(constants::BPS as u128)
+                .ok_or(VaultError::Overflow)?;
+            if amount_in > max_trade {
+                self.release_lock();
+                return Err(VaultError::TradeExceedsLimit);
+            }
+
+            self.block_volume = new_block_volume;
+            self.last_trade_block = current_block;
+
+            // Cross-contract call to Router::swap. The router signature is
+            // `swap(token_in, token_out, amount_in, min_amount_out, recipient)`
+            // and returns the actual amount_out. Recipient = self so swapped
+            // tokens are credited to the vault, not the leader.
+            //
+            // Bypassed under unit-test cfg — there is no router contract in
+            // the ink test env. Integration tests on testnet exercise this.
+            #[cfg(not(test))]
+            let amount_out: Balance = {
+                let call_result = ink::env::call::build_call::<ink::env::DefaultEnvironment>()
+                    .call(router)
+                    .gas_limit(0)
+                    .transferred_value(0)
+                    .exec_input(
+                        ink::env::call::ExecutionInput::new(ink::env::call::Selector::new(
+                            ink::selector_bytes!("Router::swap"),
+                        ))
+                        .push_arg(token_in)
+                        .push_arg(token_out)
+                        .push_arg(amount_in)
+                        .push_arg(min_amount_out)
+                        .push_arg(self.env().account_id()),
+                    )
+                    .returns::<ink::MessageResult<core::result::Result<Balance, u8>>>()
+                    .try_invoke();
+
+                match call_result {
+                    Ok(Ok(Ok(Ok(amount)))) => amount,
+                    _ => {
+                        self.release_lock();
+                        return Err(VaultError::SwapFailed);
+                    }
+                }
+            };
+            #[cfg(test)]
+            let amount_out: Balance = min_amount_out; // deterministic for tests
+
+            if amount_out < min_amount_out {
+                self.release_lock();
+                return Err(VaultError::SlippageExceeded);
+            }
+
+            // Refresh equity from the on-chain state, not from a parameter.
+            // This is the core defense — the leader cannot inflate equity.
+            let new_equity = self.get_vault_equity_internal();
+            self.total_equity = new_equity;
+            if new_equity > self.high_water_mark {
+                self.high_water_mark = new_equity;
+            }
+
+            // Record trade history
+            let timestamp = self.env().block_timestamp();
+            let idx = self.trade_count % constants::MAX_TRADE_HISTORY;
+            // Encode pair as token_in||token_out raw bytes for the audit log.
+            let mut pair_bytes = ink::prelude::vec::Vec::with_capacity(64);
+            pair_bytes.extend_from_slice(token_in.as_ref());
+            pair_bytes.extend_from_slice(token_out.as_ref());
+            let record = TradeRecord {
+                pair: pair_bytes.clone(),
+                // Side semantics here: BUY = received token_out, SELL = sold token_in.
+                side: TradeSide::Buy,
+                amount: amount_in,
+                timestamp,
+            };
+            self.trade_history.insert(&idx, &record);
+            self.trade_count = self
+                .trade_count
+                .checked_add(1)
+                .ok_or(VaultError::Overflow)?;
+
+            self.env().emit_event(TradeExecuted {
+                leader: self.leader,
+                pair: pair_bytes,
+                side: TradeSide::Buy,
+                amount: amount_in,
+                vault_equity_after: new_equity,
+                timestamp,
+            });
+
+            self.release_lock();
+            Ok(amount_out)
+        }
+
         /// Update vault equity after trade settlement (leader or admin)
         #[ink(message)]
         pub fn update_equity(&mut self, new_equity: Balance) -> Result<(), VaultError> {
@@ -879,6 +1049,21 @@ pub mod copy_vault {
             }
             self.max_drawdown_bps = drawdown_bps;
             Ok(())
+        }
+
+        /// Configure the Router contract used for real on-chain swaps
+        /// (admin only). Must be set before `swap_through_router` is callable.
+        #[ink(message)]
+        pub fn set_router(&mut self, router: AccountId) -> Result<(), VaultError> {
+            self.ensure_admin()?;
+            self.router = Some(router);
+            Ok(())
+        }
+
+        /// Returns the configured router address (None if not set).
+        #[ink(message)]
+        pub fn router_address(&self) -> Option<AccountId> {
+            self.router
         }
 
         // ════════════════════════════════════════════════════════

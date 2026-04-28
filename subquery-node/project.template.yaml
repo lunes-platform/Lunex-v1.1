@@ -1,0 +1,137 @@
+specVersion: "1.0.0"
+name: lunex-subquery
+version: "1.0.0"
+runner:
+  node:
+    name: "@subql/node"
+    version: ">=3.0.0"
+  query:
+    name: "@subql/query"
+    version: ">=2.0.0"
+
+description: "Lunex DEX SubQuery indexer — indexes swap, liquidity, vault, and trade events from ink! contracts on the Lunes blockchain"
+repository: "https://github.com/lunes-platform/lunex"
+
+schema:
+  file: ./schema.graphql
+
+network:
+  # Set via environment variables at container startup (see entrypoint.sh).
+  # Required env vars:
+  #   LUNES_CHAIN_ID  — genesis hash of the target chain (devnet/testnet/mainnet)
+  #   LUNES_WS_URL    — WebSocket endpoint (e.g. wss://ws.lunes.io for mainnet)
+  chainId: "__LUNES_CHAIN_ID__"
+  endpoint:
+    - "__LUNES_WS_URL__"
+
+dataSources:
+  # Single dataSource — all ink! ContractEmitted events.
+  # Handlers discriminate by contract address + event selector at runtime.
+  - kind: substrate/Runtime
+    startBlock: __LUNES_START_BLOCK__
+    mapping:
+      file: ./dist/index.js
+      handlers:
+        # ── Router: swaps & liquidity ──────────────────────────────────
+        - handler: handleRouterSwap
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleRouterLiquidityAdded
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleRouterLiquidityRemoved
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        # ── Copy Vault ─────────────────────────────────────────────────
+        - handler: handleVaultDeposited
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleVaultWithdrawn
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleVaultTradeExecuted
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleVaultCircuitBreaker
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        # ── ListingManager ─────────────────────────────────────────────
+        - handler: handleTokenListed
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleFeeDistributed
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        # ── LiquidityLock ──────────────────────────────────────────────
+        - handler: handleLiquidityLocked
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleLiquidityUnlocked
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        # ── Pair contract: direct AMM Swap events ──────────────────────
+        - handler: handlePairSwap
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        # ── Spot Settlement: deposits, withdraws, settle_trade ─────────
+        - handler: handleSpotDeposit
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleSpotWithdraw
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleSpotSettled
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        # ── Staking: stake/unstake/claim ───────────────────────────────
+        - handler: handleStakeCreated
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleStakeWithdrawn
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        - handler: handleRewardClaimed
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted
+        # ── Generic fallback ───────────────────────────────────────────
+        - handler: handleSubstrateEvent
+          kind: substrate/EventHandler
+          filter:
+            module: contracts
+            method: ContractEmitted

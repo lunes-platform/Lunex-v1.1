@@ -54,6 +54,9 @@ mod asymmetric_pair {
         ZeroAmount,
         ManagerNotSet,
         GuardrailViolation,
+        /// Reentrancy guard tripped — a callback attempted to call back into
+        /// asymmetric_swap while a swap was already in flight.
+        Reentrancy,
     }
 
     pub type Result<T> = core::result::Result<T, Error>;
@@ -111,6 +114,10 @@ mod asymmetric_pair {
         manager: Option<AccountId>,
         /// Guardrails for the manager role
         guardrails: Guardrails,
+        /// Reentrancy guard for `asymmetric_swap`. The current implementation
+        /// is in-contract math but if a future revision adds PSP22 calls (or
+        /// receives them via an integrated router), the guard is in place.
+        locked: bool,
 
         // Curve state
         buy_curve: CurveSide,
@@ -227,6 +234,7 @@ mod asymmetric_pair {
                 owner: Self::env().caller(),
                 manager: None,
                 guardrails: Guardrails::default(),
+                locked: false,
                 buy_curve: CurveSide {
                     k: 0,
                     gamma: buy_gamma,
@@ -386,7 +394,13 @@ mod asymmetric_pair {
         /// Returns the amount of liquidity available (output) for `amount_in`.
         #[ink(message)]
         pub fn asymmetric_swap(&mut self, amount_in: u128, is_buy: bool) -> Result<u128> {
+            if self.locked {
+                return Err(Error::Reentrancy);
+            }
+            self.locked = true;
+
             if amount_in == 0 {
+                self.locked = false;
                 return Err(Error::ZeroAmount);
             }
 
@@ -399,15 +413,20 @@ mod asymmetric_pair {
             // Compute available liquidity at current volume
             let available = compute_liquidity(curve.current_volume, curve);
             if available < amount_in {
+                self.locked = false;
                 return Err(Error::InsufficientLiquidity);
             }
 
             // Check we won't exceed max capacity with this volume
-            let new_volume = curve
-                .current_volume
-                .checked_add(amount_in)
-                .ok_or(Error::ArithmeticOverflow)?;
+            let new_volume = match curve.current_volume.checked_add(amount_in) {
+                Some(v) => v,
+                None => {
+                    self.locked = false;
+                    return Err(Error::ArithmeticOverflow);
+                }
+            };
             if new_volume > curve.max_capacity_x0 {
+                self.locked = false;
                 return Err(Error::ExceedsCapacity);
             }
 
@@ -425,6 +444,7 @@ mod asymmetric_pair {
                 liquidity_out,
             });
 
+            self.locked = false;
             Ok(liquidity_out)
         }
 

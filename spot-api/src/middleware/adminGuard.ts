@@ -75,13 +75,24 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
 /**
  * Allows trusted internal scrape traffic without bearer token while keeping
  * external /metrics access protected by ADMIN_SECRET.
+ *
+ * Defence against `X-Forwarded-For` spoofing: even if `req.ip` resolves to a
+ * private/loopback IP, refuse the bypass when ANY `X-Forwarded-For` header is
+ * present — that means the request came through a proxy, which (in our
+ * topology) only happens for external traffic. Internal scrapes go directly
+ * api:4000 from the Docker network with no XFF header.
  */
 export function requireAdminOrInternal(
   req: Request,
   res: Response,
   next: NextFunction,
 ) {
-  if (isPrivateOrLoopbackIp(req.ip)) {
+  const hasForwardedHeader =
+    Boolean(req.headers['x-forwarded-for']) ||
+    Boolean(req.headers['x-forwarded-host']) ||
+    Boolean(req.headers['forwarded']);
+
+  if (!hasForwardedHeader && isPrivateOrLoopbackIp(req.ip)) {
     return next();
   }
 

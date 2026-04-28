@@ -4,6 +4,40 @@ import { log } from '../utils/logger';
 import { Decimal } from '@prisma/client/runtime/library';
 import { rewardPayoutService } from './rewardPayoutService';
 import { abbreviateAum } from '../utils/copytrade';
+import { getRedis } from '../utils/redis';
+
+// ─── Distribution lock ──────────────────────────────────────────────────────
+// Acquired by runWeeklyDistribution to prevent two scheduler instances (or a
+// scheduler + manual trigger) from running the same week concurrently. TTL is
+// long enough to cover a worst-case run (many leaders + traders + on-chain
+// transfers) but bounded so a crashed worker eventually releases it.
+const DISTRIBUTION_LOCK_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+async function acquireDistributionLock(weekId: string): Promise<boolean> {
+  try {
+    const redis = getRedis();
+    const result = await redis.set(
+      `reward-distribution-lock:${weekId}`,
+      Date.now().toString(),
+      'PX',
+      DISTRIBUTION_LOCK_TTL_MS,
+      'NX',
+    );
+    return result === 'OK';
+  } catch (err) {
+    log.error({ err, weekId }, '[Rewards] Failed to acquire distribution lock');
+    return false;
+  }
+}
+
+async function releaseDistributionLock(weekId: string): Promise<void> {
+  try {
+    const redis = getRedis();
+    await redis.del(`reward-distribution-lock:${weekId}`);
+  } catch (err) {
+    log.warn({ err, weekId }, '[Rewards] Failed to release distribution lock');
+  }
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -567,6 +601,36 @@ export const rewardDistributionService = {
       return { status: 'ALREADY_DISTRIBUTED', weekId: week.id };
     }
 
+    // Distributed lock — prevents concurrent runs (scheduler + manual trigger,
+    // two replicas, etc). Combined with the per-recipient idempotency below,
+    // this guarantees no double payment even if one run crashes mid-flight.
+    const lockAcquired = await acquireDistributionLock(week.id);
+    if (!lockAcquired) {
+      log.warn(
+        { weekId: week.id, weekStart: prevWeekStart },
+        '[Rewards] Distribution already in progress on another instance — skipping',
+      );
+      return { status: 'LOCK_HELD', weekId: week.id };
+    }
+
+    try {
+      return await this._runWeeklyDistributionLocked(
+        week,
+        now,
+        prevWeekStart,
+        prevWeekEnd,
+      );
+    } finally {
+      await releaseDistributionLock(week.id);
+    }
+  },
+
+  async _runWeeklyDistributionLocked(
+    week: { id: string; status: string },
+    now: Date,
+    prevWeekStart: Date,
+    prevWeekEnd: Date,
+  ) {
     // 1. Calculate total fees
     const totalFees = await this.calculateWeeklyFees(
       prevWeekStart,
@@ -798,6 +862,30 @@ export const rewardDistributionService = {
     for (const reward of rewards) {
       if (reward.amount <= 0) continue;
 
+      // Per-recipient idempotency: if a userReward record already exists for
+      // this (week, address, rewardType), a previous run already processed
+      // this recipient. Skip the on-chain transfer to prevent double payment.
+      const existing = await db.userReward.findFirst({
+        where: {
+          rewardWeekId: weekId,
+          walletAddress: reward.address,
+          rewardType: 'LEADER',
+        },
+      });
+      if (existing) {
+        log.warn(
+          {
+            address: reward.address,
+            existingTxHash: existing.txHash,
+            existingStatus: existing.payoutStatus,
+          },
+          '[Rewards] Skipping leader — already paid in a prior run',
+        );
+        reward.txHash = existing.txHash ?? null;
+        reward.status = existing.payoutStatus ?? 'PENDING';
+        continue;
+      }
+
       if (payoutEnabled) {
         const payoutResult = await rewardPayoutService.transferNative(
           reward.address,
@@ -895,6 +983,28 @@ export const rewardDistributionService = {
 
     for (const reward of rewards) {
       if (reward.amount <= 0) continue;
+
+      // Per-recipient idempotency — see distributeLeaderRewards comment.
+      const existing = await db.userReward.findFirst({
+        where: {
+          rewardWeekId: weekId,
+          walletAddress: reward.address,
+          rewardType: 'TRADER',
+        },
+      });
+      if (existing) {
+        log.warn(
+          {
+            address: reward.address,
+            existingTxHash: existing.txHash,
+            existingStatus: existing.payoutStatus,
+          },
+          '[Rewards] Skipping trader — already paid in a prior run',
+        );
+        reward.txHash = existing.txHash ?? null;
+        reward.status = existing.payoutStatus ?? 'PENDING';
+        continue;
+      }
 
       if (payoutEnabled) {
         const result = await rewardPayoutService.transferNative(

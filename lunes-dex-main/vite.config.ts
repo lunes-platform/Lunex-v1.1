@@ -45,7 +45,27 @@ export default defineConfig(({ mode }) => {
 
     build: {
       outDir: 'build', // Match CRA output dir
-      sourcemap: mode !== 'production'
+      sourcemap: mode !== 'production',
+      // Code-splitting: keep heavy ecosystem deps in their own chunks so they
+      // can be cached independently and loaded on-demand. @polkadot/api alone
+      // is ~2-3MB and would otherwise dominate the main bundle's LCP.
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            polkadot: [
+              '@polkadot/api',
+              '@polkadot/api-contract',
+              '@polkadot/extension-dapp',
+              '@polkadot/keyring',
+              '@polkadot/util',
+              '@polkadot/util-crypto'
+            ],
+            charts: ['lightweight-charts', 'recharts'],
+            vendor: ['react', 'react-dom', 'react-router-dom', 'styled-components']
+          }
+        }
+      },
+      chunkSizeWarningLimit: 800
     },
 
     esbuild: {

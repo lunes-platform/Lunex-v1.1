@@ -1,0 +1,187 @@
+# ─────────────────────────────────────────────────────────────────
+#  Lunex SubQuery Schema
+#  Indexa eventos dos contratos ink! na rede Lunes (Substrate)
+# ─────────────────────────────────────────────────────────────────
+
+type SwapEvent @entity {
+  id: ID!                     # blockNumber-extrinsicIndex-eventIndex
+  blockNumber: BigInt!        @index
+  timestamp: Date!            @index
+  extrinsicHash: String       @index
+  contractAddress: String!    @index
+  contractKind: String!       # router | pair | asymmetric_pair
+  trader: String!             @index
+  recipient: String
+  pairSymbol: String          @index
+  amountIn: BigInt!
+  amountOut: BigInt!
+  tokenIn: String
+  tokenOut: String
+  path: String                # JSON array of addresses
+}
+
+type LiquidityEvent @entity {
+  id: ID!
+  blockNumber: BigInt!        @index
+  timestamp: Date!            @index
+  extrinsicHash: String       @index
+  contractAddress: String!    @index
+  kind: String!               # ADD | REMOVE
+  provider: String!           @index
+  pairSymbol: String          @index
+  amount0: BigInt!
+  amount1: BigInt!
+  lpTokens: BigInt
+}
+
+type VaultEvent @entity {
+  id: ID!
+  blockNumber: BigInt!        @index
+  timestamp: Date!            @index
+  extrinsicHash: String       @index
+  contractAddress: String!    @index
+  kind: String!               # DEPOSIT | WITHDRAW | TRADE_EXECUTED | CIRCUIT_BREAKER
+  vaultAddress: String        @index
+  actor: String!              @index
+  leader: String              @index
+  amountIn: BigInt
+  amountOut: BigInt
+  sharesAmount: BigInt
+  sharePrice: BigInt
+  pairSymbol: String
+  equityAfter: BigInt
+  performanceFee: BigInt
+  drawdownBps: BigInt
+}
+
+type TradeEvent @entity {
+  id: ID!
+  blockNumber: BigInt!        @index
+  timestamp: Date!            @index
+  extrinsicHash: String       @index
+  contractAddress: String!    @index
+  kind: String!               # OPEN | CLOSE
+  trader: String!             @index
+  pairSymbol: String          @index
+  side: String                # BUY | SELL
+  size: BigInt
+  entryPrice: BigInt
+  exitPrice: BigInt
+  realizedPnl: BigInt
+  collateral: BigInt
+}
+
+type WalletSummary @entity {
+  id: ID!                     # wallet address — updated in-place
+  address: String!            @index
+  totalSwapCount: Int!
+  totalSwapVolumeIn: BigInt!
+  totalSwapVolumeOut: BigInt!
+  totalLiquidityAdded: BigInt!
+  totalLiquidityRemoved: BigInt!
+  totalVaultDeposited: BigInt!
+  totalVaultWithdrawn: BigInt!
+  totalTradeCount: Int!
+  totalRealizedPnl: BigInt!
+  winningTrades: Int!
+  losingTrades: Int!
+  lastActivityAt: Date!
+  firstActivityAt: Date!
+}
+
+type PairStats @entity {
+  id: ID!                     # pairSymbol — updated in-place
+  pairSymbol: String!         @index
+  swapCount: BigInt!
+  volumeToken0: BigInt!
+  volumeToken1: BigInt!
+  liquidityAddCount: BigInt!
+  liquidityRemoveCount: BigInt!
+  lastSwapAt: Date
+  firstSwapAt: Date
+}
+
+type DailyProtocolStats @entity {
+  id: ID!                     # YYYY-MM-DD
+  date: String!               @index
+  swapCount: BigInt!
+  swapVolumeUsd: BigInt!
+  uniqueTraders: Int!
+  liquidityEvents: BigInt!
+  vaultDeposits: BigInt!
+  vaultWithdrawals: BigInt!
+  newLeaders: Int!
+  activeLeaders: Int!
+  newListings: Int!
+  totalLunesLocked: BigInt!
+}
+
+# ─── AI Trading Network: Per-vault daily aggregation ─────────────────────────
+# id = "{vaultAddress}_{YYYY-MM-DD}"  — updated in-place each trade
+type VaultDailyStat @entity {
+  id: ID!
+  vaultAddress: String!       @index
+  leader: String              @index
+  date: String!               @index   # YYYY-MM-DD (UTC)
+  tradeCount: Int!
+  volumeIn: BigInt!
+  equityEnd: BigInt!        # last equityAfter seen that day
+  drawdownBps: BigInt       # max drawdown seen that day (from CircuitBreaker)
+  lastTradeAt: Date!
+}
+
+type ListingEvent @entity {
+  id: ID!                       # blockNumber-extrinsicIndex-eventIndex
+  blockNumber: BigInt!          @index
+  timestamp: Date!              @index
+  extrinsicHash: String         @index
+  contractAddress: String!      @index
+  kind: String!                 # TOKEN_LISTED | LIQUIDITY_LOCKED | LIQUIDITY_UNLOCKED | FEE_DISTRIBUTED
+  owner: String!                @index
+  tokenAddress: String          @index
+  pairAddress: String
+  lpTokenAddress: String
+  lpAmount: BigInt
+  lunesAmount: BigInt
+  tokenAmount: BigInt
+  unlockTimestamp: BigInt
+  tier: Int
+  listingFee: BigInt
+  burnAmount: BigInt
+  treasuryAmount: BigInt
+  rewardsAmount: BigInt
+}
+
+# ─── Spot Settlement: orderbook deposits, withdraws, settled trades ──────────
+type SpotSettlementEvent @entity {
+  id: ID!                       # blockNumber-extrinsicIndex-eventIndex
+  blockNumber: BigInt!          @index
+  timestamp: Date!              @index
+  extrinsicHash: String         @index
+  contractAddress: String!      @index
+  kind: String!                 # DEPOSIT | WITHDRAW | SETTLED
+  account: String!              @index   # depositor / withdrawer / maker (for SETTLED, the maker order's owner)
+  counterparty: String          @index   # for SETTLED, the taker side
+  token: String                 @index
+  amount: BigInt
+  pairSymbol: String            @index
+  price: BigInt
+  size: BigInt
+  side: String                  # BUY | SELL — settled trades only
+  fee: BigInt
+}
+
+# ─── Staking: stake/unstake/claim ────────────────────────────────────────────
+type StakingEvent @entity {
+  id: ID!                       # blockNumber-extrinsicIndex-eventIndex
+  blockNumber: BigInt!          @index
+  timestamp: Date!              @index
+  extrinsicHash: String         @index
+  contractAddress: String!      @index
+  kind: String!                 # STAKE_CREATED | STAKE_WITHDRAWN | REWARD_CLAIMED
+  staker: String!               @index
+  amount: BigInt
+  rewardAmount: BigInt
+  lockPeriodSeconds: BigInt
+  pendingRewardsBefore: BigInt  # claim only — for audit/observability
+}
