@@ -184,7 +184,7 @@ jobs:
       # ── API ──
       - name: Docker metadata (API)
         id: meta-api
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api
           tags: |
@@ -208,7 +208,7 @@ jobs:
       # ── Frontend ──
       - name: Docker metadata (Frontend)
         id: meta-frontend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
           tags: |
@@ -235,7 +235,7 @@ jobs:
       # ── Admin ──
       - name: Docker metadata (Admin)
         id: meta-admin
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/admin
           tags: |
