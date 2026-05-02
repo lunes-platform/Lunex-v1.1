@@ -28,7 +28,7 @@
     "@typescript-eslint/parser": "^8.39.0",
     "@types/node": "^22.13.10",
     "depcheck": "^1.4.7",
-    "eslint": "^8.57.1",
+    "eslint": "^10.3.0",
     "prettier": "^3.6.2",
     "ts-prune": "^0.10.3",
     "tsx": "^4.20.5",
