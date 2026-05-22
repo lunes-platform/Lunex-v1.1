@@ -126,17 +126,70 @@ Deferred to post-mainnet milestone.
 
 ## Traceability
 
-Will be populated by `gsd-roadmapper`. Each REQ-ID maps to exactly one phase.
+Populated by `gsd-roadmapper` on 2026-05-21. Each REQ-ID maps to exactly one phase.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (to be filled by roadmap) | — | Pending |
+| CRYPTO-01 | Phase 5 | Pending |
+| CRYPTO-02 | Phase 5 | Pending |
+| FIN-01 | Phase 1 | Pending |
+| FIN-02 | Phase 1 | Pending |
+| FIN-03 | Phase 1 | Pending |
+| FIN-04 | Phase 1 | Pending |
+| FIN-05 | Phase 1 | Pending |
+| SEC-01 | Phase 2 | Pending |
+| SEC-02 | Phase 2 | Pending |
+| SEC-03 | Phase 2 | Pending |
+| SEC-04 | Phase 2 | Pending |
+| API-01 | Phase 3 | Pending |
+| API-02 | Phase 3 | Pending |
+| API-03 | Phase 3 | Pending |
+| API-04 | Phase 3 | Pending |
+| FE-01 | Phase 4 | Pending |
+| FE-02 | Phase 4 | Pending |
+| FE-03 | Phase 4 | Pending |
+| FE-04 | Phase 4 | Pending |
+| FE-05 | Phase 4 | Pending |
+| FE-06 | Phase 4 | Pending |
+| FE-07 | Phase 4 | Pending |
+| FE-08 | Phase 4 | Pending |
+| FE-09 | Phase 4 | Pending |
+| FE-10 | Phase 4 | Pending |
+| CONTRACT-01 | Phase 5 | Pending |
+| CONTRACT-02 | Phase 5 | Pending |
+| CONTRACT-03 | Phase 5 | Pending |
+| CONTRACT-04 | Phase 5 | Pending |
+| INFRA-01 | Phase 6 | Pending |
+| INFRA-02 | Phase 7 | Pending |
+| INFRA-03 | Phase 7 | Pending |
+| INFRA-04 | Phase 6 | Pending |
+| INFRA-05 | Phase 6 | Pending |
+| INFRA-06 | Phase 6 | Pending |
+| OBS-01 | Phase 8 | Pending |
+| OBS-02 | Phase 8 | Pending |
+| OBS-03 | Phase 8 | Pending |
+| OBS-04 | Phase 8 | Pending |
+| OBS-05 | Phase 8 | Pending |
+| OBS-06 | Phase 8 | Pending |
+| CI-01 | Phase 6 | Pending |
+| CI-02 | Phase 6 | Pending |
+| CI-03 | Phase 6 | Pending |
+| CI-04 | Phase 10 | Pending |
+| DOCS-01 | Phase 9 | Pending |
+| DOCS-02 | Phase 9 | Pending |
+| DOCS-03 | Phase 0 | Pending |
+| DOCS-04 | Phase 9 | Pending |
+| DOCS-05 | Phase 9 | Pending |
+| MAINNET-01 | Phase 10 | Pending |
+| MAINNET-02 | Phase 10 | Pending |
+| MAINNET-03 | Phase 10 | Pending |
 
 **Coverage:**
-- v1 requirements: 47 total (CRYPTO×2, FIN×5, SEC×4, API×4, FE×10, CONTRACT×4, INFRA×6, OBS×6, CI×4, DOCS×5, MAINNET×3)
-- Mapped to phases: 0 (pre-roadmap)
-- Unmapped: 47 ⚠️ (will resolve to 0 after roadmap)
+- v1 requirements: **53 total** by category sum (CRYPTO×2, FIN×5, SEC×4, API×4, FE×10, CONTRACT×4, INFRA×6, OBS×6, CI×4, DOCS×5, MAINNET×3). Prior header stated "47" — header was stale; category sum is authoritative.
+- Mapped to phases: **53** ✓
+- Unmapped: **0** ✓
 
 ---
+
 *Requirements defined: 2026-05-21*
-*Last updated: 2026-05-21 after audit-driven initialization*
+*Last updated: 2026-05-21 — traceability populated by gsd-roadmapper*
