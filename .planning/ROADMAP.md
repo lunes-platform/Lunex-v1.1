@@ -12,7 +12,7 @@ Brownfield production-readiness milestone. The DEX is deployed on testnet; this 
 
 ### External Dependencies (track separately, do not block team-closable work)
 
-- **EXT-CRYPTO:** Lunes pallet-contracts upgrade exposing `seal_sr25519_verify` — gates the on-chain `verify_order_signature` body. Team-closable side: `CRYPTO-02` decision recorded (off-chain attestation interim) and tests scaffolded so the body swap is mechanical when chain delivers. This is why Tier-0 `CRYPTO-01` lands in Phase 5 (contract test work) rather than earlier — there is no team-side code path until either the pallet ships or the interim attestation path is chosen.
+- **EXT-CRYPTO:** Lunes pallet-contracts upgrade exposing `seal_sr25519_verify` — gates the direct on-chain signature-verification path. Team-side work remains required because the current API/frontend/SDK/MCP ASCII signing payload does not match the contract's binary canonical payload. Per `.planning/decisions.md`, public mainnet requires either (a) host-function verification plus a versioned canonical message migration, or (b) an on-chain order-commitment fallback.
 - **EXT-AUDIT:** Security audit firm (Halborn / Trail of Bits / OpenZeppelin / CertiK) engagement + remediation cycle. Audit handoff must follow Phase 1 (no `isInBlock` on fund paths) and Phase 2 (no `//Alice` reachable). Sign-off is `MAINNET-03`, closed in Phase 10.
 
 ### Parallelization Map
@@ -113,7 +113,7 @@ Brownfield production-readiness milestone. The DEX is deployed on testnet; this 
   2. Four `#[cfg(not(test))]` gates (`copy_vault::swap_through_router`, `liquidity_lock::withdraw`, `staking::execute_proposal` transfer, staking test-constant alignment) replaced with mockable contract clients; `tests/integration/` harness via `ink-e2e` or local Substrate testnet runs nightly
   3. `copy_vault` fuzz target binds to actual `CopyVault` (no empty `fuzz_target!{}`); `VaultModel` invariants are ported; nightly run is ≥600s duration
   4. ink! workspace pinned to exactly one version (4.2.1 or 4.3.x — decision recorded); `cargo deny` or workspace check enforces it
-  5. CRYPTO-02 decision recorded and implemented: either `verify_order_signature` body swapped to call `seal_sr25519_verify` (if pallet ready) with SPEC-SPOT-001-CRYPTO happy + tampered tests passing, OR off-chain attestation + on-chain commitment is shipped and documented; `verify_order_signature` is no longer a no-op
+  5. CRYPTO-02 decision recorded and implemented: either `verify_order_signature` calls a production-usable on-chain sr25519 verification primitive after all consumers migrate to one versioned canonical payload, OR an on-chain order-commitment fallback is shipped and documented; relayer-only/off-chain verification is not accepted for public mainnet
 **Plans**: TBD
 
 ### Phase 6: Submodule & Deploy Trust Model
@@ -181,13 +181,13 @@ Brownfield production-readiness milestone. The DEX is deployed on testnet; this 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 0. Truth-up & Reconciliation | 0/0 | Not started | - |
-| 1. Finality Discipline | 0/0 | Not started | - |
-| 2. Secrets & Production Guards | 0/0 | Not started | - |
+| 1. Finality Discipline | 0/0 | In progress | spot-api finality-only helper, regression tests, and CI guard implemented |
+| 2. Secrets & Production Guards | 0/0 | In progress | bridge admin seed fallback removed; production guards and env templates expanded |
 | 3. API/SDK Contract | 0/0 | Not started | - |
-| 4. Frontend Hardening | 0/0 | Not started | - |
+| 4. Frontend Hardening | 0/0 | In progress | explicit signing cleanup, signed-read headers, production API URL guard, critical fake financial display cleanup, frontend regression guard, and runtime SS58 fallback cleanup implemented |
 | 5. Contract Test Honesty | 0/0 | Not started | - |
 | 6. Submodule & Deploy Trust | 0/0 | Not started | - |
-| 7. Operational Readiness | 0/0 | Not started | - |
+| 7. Operational Readiness | 0/0 | In progress | SECURITY.md, threat model, runbook baseline, alert links, and ops-docs CI guard implemented |
 | 8. Observability Completion | 0/0 | Not started | - |
 | 9. Documentation Truth-up | 0/0 | Not started | - |
 | 10. Mainnet Dress Rehearsal | 0/0 | Not started | - |

@@ -1,6 +1,6 @@
 # Project State: Lunex
 
-**Last updated:** 2026-05-21
+**Last updated:** 2026-06-04
 **Milestone:** Mainnet launch readiness
 **Core Value:** Custody-grade correctness at every fund-moving step
 
@@ -8,14 +8,14 @@
 
 Lunex is a decentralized exchange on the Lunes Substrate-based blockchain. The system spans 13 ink! smart contracts, a TypeScript orchestration backend (`spot-api`), a Next.js admin panel (`lunex-admin`), a Vite+React DEX UI (`lunes-dex-main`), a client SDK, an MCP server, a SubQuery indexer, and a faucet. Production runs on PM2 + nginx VPS with Docker Compose for non-prod; Doppler for secrets; Prometheus + Grafana + Loki + Alertmanager for observability.
 
-**Current focus:** Brownfield production-readiness milestone driven by the 2026-05-21 consolidated audit (`.planning/audit/PRODUCTION_READINESS_AUDIT.md`). 11-phase roadmap starting with cheap truth-up and ending with a full dress rehearsal.
+**Current focus:** Brownfield production-readiness milestone driven by the 2026-05-21 consolidated audit (`.planning/audit/PRODUCTION_READINESS_AUDIT.md`) plus the 2026-06-03 five-specialist NO-GO review. Execution plan is tracked in `.planning/PRODUCTION_GSD_EXECUTION_PLAN_2026-06-03.md`.
 
 ## Current Position
 
-- **Phase:** 0 (Truth-up & Reconciliation) — not started
-- **Plan:** none yet
-- **Status:** Roadmap drafted, awaiting plan generation
-- **Progress:** [░░░░░░░░░░░░░░░░░░░░] 0% (0 of 11 phases complete)
+- **Phase:** 0 (Truth-up & Reconciliation) plus P0 execution prep
+- **Plan:** `.planning/PRODUCTION_GSD_EXECUTION_PLAN_2026-06-03.md`
+- **Status:** NO-GO confirmed; Sprint 1 hardening implemented; CRYPTO-02 strategy recorded; signed-read query leakage closed for mapped clients; critical fake financial display removed; frontend no-auto-signing/static fallback guard added; security disclosure, threat model, runbook baseline added; token-listing activation/withdraw now fail closed against finalized SubQuery evidence; listing relayer has production compose wiring, durable finalized cursor, metrics, alerts, runbook coverage, Grafana dashboard, and SubQuery listing deploy/backfill gate
+- **Progress:** [███████████████░░░░░] Sprint 1 complete for API finality/guards; cancel signing, synthetic settlement gates, signed-read headers, frontend explicit-signing cleanup, frontend prod API URL guard, compose template validation, critical fake financial display cleanup, no-auto-signing guard, runtime SS58 fallback cleanup, ops-docs baseline, listing fail-closed activation, listing finalized proof verification, relayer durable cursor, relayer/indexer alerting, Grafana dashboard, and SubQuery listing deploy gate aligned; contract redesign and lifecycle e2e still pending
 
 ## Performance Metrics
 
@@ -44,6 +44,7 @@ Lunex is a decentralized exchange on the Lunes Substrate-based blockchain. The s
 | 11-phase roadmap starting with Truth-up | Cheap reconciliation unblocks every downstream phase | Written (2026-05-21) |
 | Mainnet blocker = correctness + secrets + finality + custody | Per Core Value | Active |
 | `lunex-admin` repo strategy (absorb vs locked submodule) | Either restores parent CI visibility | Open — Phase 0 closes Q2 |
+| CRYPTO-02: SpotSettlement signature strategy | Relayer-only verification is not acceptable for public mainnet; current signed payloads do not match contract canonical payload | Accepted 2026-06-03 — see `.planning/decisions.md` |
 
 ### Open Questions (resolved in Phase 0)
 
@@ -57,18 +58,27 @@ Lunex is a decentralized exchange on the Lunes Substrate-based blockchain. The s
 
 ### External Dependencies (track outside the phase critical path)
 
-- **Lunes pallet-contracts** must expose `seal_sr25519_verify` for `CRYPTO-01` body swap. If chain team is blocked at Phase 5 time, fall back to off-chain attestation interim per `CRYPTO-02`.
+- **Lunes pallet-contracts** must expose a production-usable sr25519 verification primitive for the direct `CRYPTO-01` path. Even then, Lunex must migrate API/frontend/SDK/MCP to one canonical payload. If chain support is blocked, the accepted fallback is an on-chain order-commitment design, not public-mainnet relayer-only settlement.
 - **Security audit firm** engagement (Halborn / Trail of Bits / OpenZeppelin / CertiK). Handoff must occur post-Phase 1 (no `isInBlock` on fund paths) and post-Phase 2 (no `//Alice` reachable). Sign-off is `MAINNET-03`, closed in Phase 10.
 
 ### Active Todos / Blockers
 
-- None yet (pre-Phase 0).
+- P0 fund safety: implemented for reward payout, rebalancer, and emergency services; finalized-only helper, tests, and CI grep gate are in place.
+- P0 contracts: close `SpotSettlement` signature no-op risk and `CopyVault`/`Router` ABI mismatch.
+- P0 signing contract: cancel signing is aligned across frontend, API, SDK, MCP, and docs; synthetic `agent:` / `manual:` settlement paths are blocked when settlement is enabled; create-order canonical payload and on-chain contract implementation remain open.
+- P0 secrets: implemented for `BRIDGE_ADMIN_SEED || '//Alice'` removal, production guard expansion, and env/deploy examples.
+- P0 frontend: Spot tab/remount signing prompts fixed; mapped signed reads moved from query string to `X-Lunex-*` headers across Spot, margin, agents, social/copytrade, rewards, strategies, governance, affiliate, SDK, and MCP. Automatic signing removed from copytrade dashboard load, margin overview load, bot registry wallet lookup, affiliate dashboard load, strategies follow-state sync, social profile private follow-state sync, and social settings saved-profile load. Critical fake financial values removed from wallet balance modal, Spot order form, token picker, chart trade-line defaults, and swap confirmation. `frontend:guard` now blocks signing inside `useEffect` and runtime SS58 contract/token fallbacks; Playwright browser-level coverage still needed.
+- P0 integration: frontend production API build URL now fails closed for missing/localhost/private URLs; SDK/API route drift and canonical OpenAPI remain open.
+- P0 operations/compliance: prod/testnet compose templates now interpolate successfully; root `SECURITY.md`, `docs/THREAT_MODEL.md`, runbook baseline, alert runbook links, and `ops:docs` guard are in place. Still need backup restore proof, chaos/runbook drills, backup metric runtime proof, and launch compliance posture.
+- P0 listing lifecycle: new applications no longer create fake locked-liquidity rows; activation now requires proof fields plus finalized SubQuery `TOKEN_LISTED`/`LIQUIDITY_LOCKED` evidence; withdraw finalization requires finalized `LIQUIDITY_UNLOCKED`; listing relayer is wired in production compose with durable cursor/replay, metrics, alerts, runbook, and Grafana dashboard; SubQuery listing deploy/backfill has an executable gate; admin direct approve is disabled; DEX copy no longer claims immediate lock/listing; logo upload matches backend PNG/WebP validation. Still need production execution evidence, canonical on-chain wizard or application-only launch posture, and lifecycle e2e coverage.
 
 ## Session Continuity
 
-- Last session: 2026-05-21 — roadmap drafted from audit, requirements traceability updated, STATE.md initialized.
-- Next session start: run `/gsd:plan-phase 0` to generate Phase 0 plans (PRODUCTION-READINESS reconciliation, admin lint exit-code fix, Open Question resolution write-up, AGENTS.md pointer cleanup).
-- Working tree state: `.planning/ROADMAP.md`, `.planning/STATE.md`, `.planning/REQUIREMENTS.md` updated; no code changes.
+- Last major roadmap session: 2026-05-21 — roadmap drafted from audit, requirements traceability updated, STATE.md initialized.
+- Latest implementation: 2026-06-05 — completed mapped signed-read header migration across frontend/API/SDK/MCP, added regression gates for signed auth in client query strings and frontend auto-signing/address fallbacks, removed automatic signing from copytrade/margin/bot registry/affiliate/strategies/social profile/social settings loads, replaced critical fake financial displays with unavailable states, removed runtime SS58 contract/token fallbacks, added SECURITY/threat-model/runbook baseline with CI guard, made token-listing activation fail closed, added finalized SubQuery proof verification plus finalized-head relayer processing for listing activation/withdraw, added relayer production compose wiring with durable cursor/replay, added relayer/SubQuery metrics, alerts, runbook coverage, Grafana dashboard, and executable SubQuery listing deploy/backfill gate.
+- Next session start: continue with listing lifecycle e2e, production execution evidence collection, browser-level Playwright no-auto-signing tests when deps are available, create-order canonical payload alignment, contract-side CRYPTO-02 implementation path, public docs/dev-key cleanup, backup restore drill proof, and legal/compliance launch posture.
+- 2026-06-12 — auditoria 5-especialistas + sprint P0 (sessão grande, tudo na working tree SEM commits): veredito NO-GO mantido (relatórios em `.planning/audit-2026-06-12/`). Node lunes-nightly dev local rodando (ws://localhost:9944) + staging local sincronizando (ws://localhost:9945); 6 contratos core + tokens deployados localmente; E2E on-chain swap PASSOU. P0-2 copy_vault swap corrigido + provado on-chain; P0-1 gate fail-closed `signature_verification_enforced` no spot_settlement (46/46) + ADR-001; P0-3 ADR-002; P0-4 Alertmanager template+sed validado com amtool. P1s: slippage copytrade fail-closed (TDD), executionPrice fabricado removido (TDD), bridge → pino, CVEs zerados (npm audit fix), SDK reconciliado com API real (3 fixes + ~30 métodos deprecados honestos), CI com admin+e2e+contratos no gate, Dockerfile.api npm ci, alertas de backup/pool vivos via postgres-exporter custom queries (provado), fuzz 600s, graceful shutdown completo, golden tests de assinatura no sdk (paridade dex↔sdk provada), admin lint --max-warnings=0 (Fase 0). Limpeza 8-agentes: ~700 LOC (relatórios `.planning/cleanup-2026-06-12/`). Ambiente: cargo-contract 4.1.1 instalado; Rust do Homebrew (1.94) incompatível — usar rustup 1.85.0 do toolchain file. Decisões pendentes: ADR-001/ADR-002, rebuild+verificação de artifacts pré-deploy (relatório 08), float→BigInt, sandbox.lunes.io fora do ar.
+- Working tree state: frontend Spot signature-prompt fixes are already modified locally; `spot-api/prisma/migrations/20260603194050_local_bootstrap_sync/` remains untracked from local bootstrap; sessão 2026-06-12 adicionou mudanças extensas não commitadas (ver `git status` + relatórios da auditoria).
 
 ## Verification Notes
 
