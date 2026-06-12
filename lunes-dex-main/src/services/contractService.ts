@@ -56,8 +56,10 @@ export interface PairInfo {
   totalSupply: string
 }
 
-// Dry-run gas limit (conservative)
-const DRY_GAS = { refTime: BigInt('50000000000'), proofSize: BigInt('1000000') }
+// Dry-run gas limit. proofSize precisa ser generoso (5M) porque swaps passam
+// por chamadas cross-contract aninhadas (router→factory→pair→psp22); 1M causava
+// ContractTrapped (module 24, 0x02000000) no dry-run do swap.
+const DRY_GAS = { refTime: BigInt('500000000000'), proofSize: BigInt('5000000') }
 
 class ContractService {
   private api: ApiPromise | null = null
@@ -150,6 +152,30 @@ class ContractService {
   private makeDryGas(): any {
     if (!this.api) throw new Error('Not connected')
     return this.api.registry.createType('WeightV2', DRY_GAS)
+  }
+
+  /**
+   * Unwrap nested ink Result envelopes from output.toJSON().
+   * Messages that return `Result<T, E>` produce two layers:
+   * `{ ok: { ok: <value> } }` (MessageResult wraps the function Result).
+   * Returns the innermost scalar, or null if any layer is `Err`.
+   */
+  private unwrapResult(json: unknown): unknown {
+    let v: unknown = json
+    while (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      if ('err' in o || 'Err' in o) return null
+      if ('ok' in o) {
+        v = o.ok
+        continue
+      }
+      if ('Ok' in o) {
+        v = o.Ok
+        continue
+      }
+      break
+    }
+    return v
   }
 
   /**
@@ -665,8 +691,11 @@ class ContractService {
       )
 
       if (result.isOk && output) {
-        const json = output.toJSON() as any
-        const amountOut = (json?.ok ?? json ?? '0').toString().replace(/,/g, '')
+        // get_amount_out retorna Result<Balance,RouterError> → dupla camada
+        // de Result no toJSON; unwrapResult desce até o Balance (ou null em Err).
+        const inner = this.unwrapResult(output.toJSON())
+        if (inner === null || inner === undefined) return null
+        const amountOut = inner.toString().replace(/,/g, '')
         return [amountIn, amountOut]
       }
       return null
