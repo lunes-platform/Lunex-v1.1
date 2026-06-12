@@ -115,6 +115,22 @@ pub mod spot_settlement {
         /// Reentrancy detected — a malicious PSP22 token attempted to call back
         /// into the contract while a deposit/withdraw was in progress.
         Reentrancy,
+        /// On-chain cryptographic signature verification is UNAVAILABLE on the
+        /// current Lunes runtime (pallet-contracts does not expose
+        /// `sr25519_verify` — EXT-CRYPTO dependency, see P0-1). While the
+        /// fail-closed gate `signature_verification_enforced` is active (the
+        /// default), `settle_trade` is blocked for safety: settling custodial
+        /// balances on signatures that were never cryptographically verified
+        /// on-chain would reduce the security model to "trust the relayer".
+        /// With ADR-001 (option c) this error also means: enforcement is
+        /// active but no `attestor_pubkey` is configured yet, so the ECDSA
+        /// attestation path cannot run — settlement stays blocked.
+        SignatureVerificationUnavailable,
+        /// The ECDSA attestation attached to a `SignedOrder` is invalid:
+        /// either `ecdsa_recover` failed (malformed signature / recovery id)
+        /// or the recovered public key does not match the configured
+        /// `attestor_pubkey`. See ADR-001 (option c, 2-of-2 attestation).
+        AttestationInvalid,
     }
 
     // ========================================
@@ -151,6 +167,16 @@ pub mod spot_settlement {
         pub expiry: u64,
         /// sr25519 signature over build_order_message() output (64 bytes)
         pub signature: [u8; 64],
+        /// ECDSA (secp256k1) attestation by the independent attestor service
+        /// over `blake2x256(build_order_message_v2(order))` — 65 bytes:
+        /// `r (32) ‖ s (32) ‖ recovery_id (1, values 0/1 or 27/28)`.
+        ///
+        /// ADR-001 (option c): the attestor verifies the maker's sr25519
+        /// `signature` OFF-chain and, only if valid, signs the canonical v2
+        /// order hash with its own secp256k1 key. On-chain the contract
+        /// recovers the public key via `ecdsa_recover` and compares it with
+        /// the owner-configured `attestor_pubkey` (2-of-2: relayer + attestor).
+        pub attestation: [u8; 65],
     }
 
     // ========================================
@@ -222,6 +248,31 @@ pub mod spot_settlement {
         pub relayer: AccountId,
     }
 
+    /// Emitted whenever the owner toggles the fail-closed signature gate.
+    /// Indexers/alerting MUST watch this event: `enforced == false` means the
+    /// contract is running in explicit testnet mode WITHOUT on-chain
+    /// cryptographic verification of order signatures.
+    #[ink(event)]
+    pub struct SignatureEnforcementChanged {
+        /// New state of the fail-closed gate.
+        pub enforced: bool,
+        /// Owner account that performed the change.
+        #[ink(topic)]
+        pub changed_by: AccountId,
+    }
+
+    /// Emitted whenever the owner sets/rotates the ECDSA attestor public key
+    /// (ADR-001, option c). Indexers/alerting MUST watch this event: a key
+    /// rotation is a privileged, security-sensitive operation.
+    #[ink(event)]
+    pub struct AttestorKeyChanged {
+        /// New compressed secp256k1 public key of the attestor service.
+        pub attestor_pubkey: [u8; 33],
+        /// Owner account that performed the change.
+        #[ink(topic)]
+        pub changed_by: AccountId,
+    }
+
     // ========================================
     // STORAGE
     // ========================================
@@ -263,6 +314,23 @@ pub mod spot_settlement {
         taker_fee_bps: Balance,
         /// Total fees collected per token: token -> accumulated_fees
         collected_fees: Mapping<AccountId, Balance>,
+        /// Fail-closed gate (P0-1): while `true` (the DEFAULT), `settle_trade`
+        /// is blocked with `SignatureVerificationUnavailable` because the
+        /// current Lunes runtime cannot verify sr25519 signatures on-chain.
+        /// Only the owner can set it to `false` (explicit testnet mode), and
+        /// every change emits `SignatureEnforcementChanged`.
+        signature_verification_enforced: bool,
+        /// Compressed secp256k1 public key (33 bytes, SEC1) of the
+        /// independent attestor service (ADR-001, option c — 2-of-2
+        /// attestation). Stored split as `(sec1_tag_byte, x_coordinate)`
+        /// because ink! 4.x only implements `StorageLayout` for arrays up to
+        /// 32 bytes; the public ABI (`set_attestor_key`/`get_attestor_key`)
+        /// always speaks `[u8; 33]`.
+        /// `None` (the default) keeps `settle_trade` blocked with
+        /// `SignatureVerificationUnavailable` while enforcement is active.
+        /// Only the owner can set it, and every change emits
+        /// `AttestorKeyChanged`.
+        attestor_pubkey: Option<(u8, [u8; 32])>,
     }
 
     // ========================================
@@ -290,6 +358,12 @@ pub mod spot_settlement {
                 maker_fee_bps: constants::DEFAULT_MAKER_FEE_BPS,
                 taker_fee_bps: constants::DEFAULT_TAKER_FEE_BPS,
                 collected_fees: Mapping::default(),
+                // FAIL-CLOSED by default: settlement stays blocked until the
+                // owner explicitly opts into testnet mode (audited via event).
+                signature_verification_enforced: true,
+                // No attestor key at deploy time: enforcement stays
+                // fail-closed until the owner registers one (ADR-001).
+                attestor_pubkey: None,
             }
         }
 
@@ -1101,6 +1175,60 @@ pub mod spot_settlement {
             output
         }
 
+        /// Build the canonical **v2** byte payload of an order (ADR-001).
+        ///
+        /// ⚠️ INTEGRATION CONTRACT — the off-chain backend (spot-api relayer
+        /// + attestor service) MUST reproduce this layout byte-for-byte. The
+        /// attestor signs `blake2_256(build_order_message_v2(order))` with
+        /// its secp256k1 key; `verify_order_signature` recovers that key
+        /// on-chain via `ecdsa_recover` and compares it to `attestor_pubkey`.
+        ///
+        /// Only the **immutable** order fields are included. `filled_amount`
+        /// is excluded (on-chain cumulative fill tracking is canonical) and
+        /// `signature`/`attestation` are excluded (they are proofs OVER this
+        /// payload, never part of it). Keeping the v2 payload free of the
+        /// sr25519 signature means the SAME hash can later be verified
+        /// directly against the maker's sr25519 signature when the Lunes
+        /// runtime ships `sr25519_verify` (EXT-CRYPTO → ADR-001 option a),
+        /// without another payload migration.
+        ///
+        /// Layout (integers little-endian, fixed order, no separators):
+        ///   offset   0: b"lunex:v2:spot-order\n" (20 bytes, version-tagged
+        ///               domain separator)
+        ///   offset  20: maker        (32 bytes — AccountId raw bytes)
+        ///   offset  52: base_token   (32 bytes)
+        ///   offset  84: quote_token  (32 bytes)
+        ///   offset 116: side         ( 1 byte — 0 = BUY, 1 = SELL)
+        ///   offset 117: price        (16 bytes — u128 LE)
+        ///   offset 133: amount       (16 bytes — u128 LE)
+        ///   offset 149: nonce        ( 8 bytes — u64 LE)
+        ///   offset 157: expiry       ( 8 bytes — u64 LE)
+        ///   ──────────────────────────────────────────────
+        ///   total: 165 bytes
+        fn build_order_message_v2(order: &SignedOrder) -> Vec<u8> {
+            const PREFIX_V2: &[u8] = b"lunex:v2:spot-order\n";
+            let mut msg = Vec::with_capacity(165);
+            msg.extend_from_slice(PREFIX_V2);
+            msg.extend_from_slice(order.maker.as_ref());
+            msg.extend_from_slice(order.base_token.as_ref());
+            msg.extend_from_slice(order.quote_token.as_ref());
+            msg.push(order.side);
+            msg.extend_from_slice(&order.price.to_le_bytes());
+            msg.extend_from_slice(&order.amount.to_le_bytes());
+            // filled_amount intentionally excluded — on-chain storage is canonical.
+            msg.extend_from_slice(&order.nonce.to_le_bytes());
+            msg.extend_from_slice(&order.expiry.to_le_bytes());
+            msg
+        }
+
+        /// 32-byte message hash the attestor signs: `blake2_256(payload_v2)`.
+        fn build_attestation_hash(order: &SignedOrder) -> [u8; 32] {
+            let msg = Self::build_order_message_v2(order);
+            let mut output = <Blake2x256 as HashOutput>::Type::default();
+            ink::env::hash_bytes::<Blake2x256>(&msg, &mut output);
+            output
+        }
+
         fn ensure_order_hash_matches(
             &self,
             order: &SignedOrder,
@@ -1114,28 +1242,72 @@ pub mod spot_settlement {
             Ok(())
         }
 
-        /// Validate the sr25519 signature stored in a `SignedOrder`.
+        /// Cryptographically validate a `SignedOrder` (ADR-001, option c).
         ///
-        /// # ink! 4.x host-function limitation
+        /// # Security model — 2-of-2 interim attestation
         ///
-        /// `pallet-contracts` prior to the ink! 5.x upgrade does NOT expose a
-        /// `seal_sr25519_verify` host function, so full on-chain cryptographic
-        /// proof is not yet possible on Lunes.
+        /// `pallet-contracts` on the current Lunes runtime does NOT expose a
+        /// `sr25519_verify` host function (EXT-CRYPTO dependency, P0-1), so
+        /// the maker's sr25519 signature cannot be verified on-chain yet.
+        /// Instead, while `signature_verification_enforced == true` (the
+        /// DEFAULT) settlement requires an **ECDSA attestation**:
         ///
-        /// What this function DOES today (ink! 4.x):
-        ///   1. Rejects blank / zero signatures — obvious relayer programming errors.
-        ///   2. Computes and discards the canonical message bytes so the codepath is
-        ///      ready; the hash is emitted implicitly via the stored `signature` field.
+        ///   1. The maker signs the order with sr25519 (unchanged UX).
+        ///   2. An independent **attestor service** (secp256k1 key, separate
+        ///      host/process/secret from the relayer) verifies that sr25519
+        ///      signature off-chain and, only if valid, signs
+        ///      `blake2_256(build_order_message_v2(order))` with its key.
+        ///   3. On-chain, this function runs
+        ///      `ecdsa_recover(attestation, hash)` and compares the recovered
+        ///      compressed pubkey with the owner-configured `attestor_pubkey`.
         ///
-        /// What the RELAYER must do (off-chain, enforceable):
+        /// Forging a settlement therefore requires compromising BOTH the
+        /// relayer (extrinsic signer, `ensure_relayer_or_owner`) AND the
+        /// attestor (per-order attestation) — 2-of-2. This is an **interim
+        /// mitigation**, NOT trustless: when the Lunes runtime ships native
+        /// `sr25519_verify` (EXT-CRYPTO, ADR-001 option a), the maker's own
+        /// signature over the SAME v2 payload becomes verifiable on-chain
+        /// (defense-in-depth third check or attestation replacement; the
+        /// versioned payload prefix discriminates the regimes).
+        ///
+        /// Fail-closed behaviour while enforcement is active:
+        ///   - No `attestor_pubkey` configured → `SignatureVerificationUnavailable`.
+        ///   - Recover failure or pubkey mismatch → `AttestationInvalid`.
+        ///
+        /// What the RELAYER must still do (off-chain, unchanged):
         ///   - Verify each `SignedOrder.signature` against `build_order_message()`
         ///     using `@polkadot/util-crypto` before calling `settle_trade()`.
         ///   - See `spot-api/src/services/settlementService.ts`.
-        ///
-        /// Upgrade path:
-        ///   When Lunes ships pallet-contracts with `seal_sr25519_verify` support,
-        ///   replace the body below with the commented snippet in the source.
         fn verify_order_signature(&self, order: &SignedOrder) -> Result<(), SpotError> {
+            // ── ENFORCED MODE (P0-1 / ADR-001, the DEFAULT) ──────────────
+            // Require a real on-chain cryptographic check: the ECDSA
+            // attestation by the independent attestor over the canonical v2
+            // order payload. Without a configured attestor key the gate
+            // stays fail-closed exactly as before.
+            if self.signature_verification_enforced {
+                let Some((tag, x)) = self.attestor_pubkey else {
+                    return Err(SpotError::SignatureVerificationUnavailable);
+                };
+                let expected_pubkey = Self::join_pubkey(tag, x);
+                // An all-zero sr25519 signature is always a relayer bug —
+                // the attestor must never attest an unsigned order.
+                if order.signature == [0u8; 64] {
+                    return Err(SpotError::InvalidSignature);
+                }
+                let message_hash = Self::build_attestation_hash(order);
+                let recovered = self
+                    .env()
+                    .ecdsa_recover(&order.attestation, &message_hash)
+                    .map_err(|_| SpotError::AttestationInvalid)?;
+                if recovered != expected_pubkey {
+                    return Err(SpotError::AttestationInvalid);
+                }
+                return Ok(());
+            }
+            // ── EXPLICIT TESTNET MODE (enforced == false) ────────────────
+            // No cryptographic verification is performed. The relayer MUST
+            // verify each signature off-chain against build_order_message()
+            // (see spot-api/src/services/settlementService.ts).
             // Reject an all-zero signature — it is a sign of a relayer bug
             // where the signature field was never populated.
             if order.signature == [0u8; 64] {
@@ -1144,6 +1316,79 @@ pub mod spot_settlement {
             // Compute canonical message (validates that build_order_message compiles
             // correctly and keeps this function testable end-to-end in unit tests).
             let _msg = Self::build_order_message(order);
+            Ok(())
+        }
+
+        // ========================================
+        // SIGNATURE-ENFORCEMENT GATE (ADMIN)
+        // ========================================
+
+        /// Returns whether the fail-closed signature gate is active.
+        #[ink(message)]
+        pub fn is_signature_verification_enforced(&self) -> bool {
+            self.signature_verification_enforced
+        }
+
+        /// Enable/disable the fail-closed signature gate. Owner only (the
+        /// owner role itself is protected by two-step ownership transfer).
+        ///
+        /// `false` is an EXPLICIT testnet-only mode: `settle_trade` will
+        /// accept orders whose signatures were only verified OFF-chain by the
+        /// relayer. Every state change emits `SignatureEnforcementChanged`
+        /// so indexers and alerting can audit the transition on-chain.
+        #[ink(message)]
+        pub fn set_signature_verification_enforced(
+            &mut self,
+            enforced: bool,
+        ) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            self.signature_verification_enforced = enforced;
+            self.env().emit_event(SignatureEnforcementChanged {
+                enforced,
+                changed_by: self.env().caller(),
+            });
+            Ok(())
+        }
+
+        /// Split a 33-byte compressed SEC1 pubkey into its storage form
+        /// `(tag_byte, x_coordinate)` — see `attestor_pubkey` field docs.
+        fn split_pubkey(pubkey: &[u8; 33]) -> (u8, [u8; 32]) {
+            let mut x = [0u8; 32];
+            x.copy_from_slice(&pubkey[1..]);
+            (pubkey[0], x)
+        }
+
+        /// Rebuild the 33-byte compressed SEC1 pubkey from its storage form.
+        fn join_pubkey(tag: u8, x: [u8; 32]) -> [u8; 33] {
+            let mut pubkey = [0u8; 33];
+            pubkey[0] = tag;
+            pubkey[1..].copy_from_slice(&x);
+            pubkey
+        }
+
+        /// Returns the configured attestor public key (compressed secp256k1,
+        /// 33 bytes), or `None` while no attestor has been registered.
+        #[ink(message)]
+        pub fn get_attestor_key(&self) -> Option<[u8; 33]> {
+            self.attestor_pubkey
+                .map(|(tag, x)| Self::join_pubkey(tag, x))
+        }
+
+        /// Register/rotate the ECDSA attestor public key (ADR-001, option c).
+        /// Owner only. Every change emits `AttestorKeyChanged` so indexers
+        /// and alerting can audit key rotations on-chain.
+        ///
+        /// While `signature_verification_enforced == true`, settlement only
+        /// becomes possible AFTER this key is set — and every settled order
+        /// must carry an ECDSA attestation recoverable to this key.
+        #[ink(message)]
+        pub fn set_attestor_key(&mut self, pubkey: [u8; 33]) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            self.attestor_pubkey = Some(Self::split_pubkey(&pubkey));
+            self.env().emit_event(AttestorKeyChanged {
+                attestor_pubkey: pubkey,
+                changed_by: self.env().caller(),
+            });
             Ok(())
         }
 
@@ -1208,6 +1453,56 @@ pub mod spot_settlement {
             signature
         }
 
+        /// Placeholder attestation for tests that run in explicit testnet
+        /// mode (`signature_verification_enforced == false`), where the
+        /// attestation path is skipped entirely.
+        fn no_attestation() -> [u8; 65] {
+            [0u8; 65]
+        }
+
+        // ─── ECDSA attestation test fixtures (ADR-001, option c) ───
+        //
+        // `ecdsa_recover` is a pure function, fully supported by the ink!
+        // off-chain engine (ink_engine -> secp256k1 crate), so these tests
+        // perform REAL sign/recover round-trips with a deterministic test
+        // keypair (fixed secret key bytes — NEVER use in production).
+
+        /// Deterministic attestor secret key for tests: 32 bytes of 0x42.
+        fn attestor_secret() -> secp256k1::SecretKey {
+            secp256k1::SecretKey::from_slice(&[0x42u8; 32])
+                .expect("0x42*32 is a valid secp256k1 secret key")
+        }
+
+        /// Compressed (33-byte) public key matching `attestor_secret()`.
+        fn attestor_pubkey() -> [u8; 33] {
+            let secp = secp256k1::Secp256k1::new();
+            secp256k1::PublicKey::from_secret_key(&secp, &attestor_secret()).serialize()
+        }
+
+        /// Sign `blake2_256(build_order_message_v2(order))` with `secret`,
+        /// producing the 65-byte `r ‖ s ‖ recovery_id` attestation exactly
+        /// like the off-chain attestor service must.
+        fn sign_attestation_with(
+            order: &SignedOrder,
+            secret: &secp256k1::SecretKey,
+        ) -> [u8; 65] {
+            let secp = secp256k1::Secp256k1::new();
+            let hash = SpotSettlement::build_attestation_hash(order);
+            let message = secp256k1::Message::from_slice(&hash)
+                .expect("blake2_256 output is 32 bytes");
+            let recoverable = secp.sign_ecdsa_recoverable(&message, secret);
+            let (recovery_id, compact) = recoverable.serialize_compact();
+            let mut attestation = [0u8; 65];
+            attestation[..64].copy_from_slice(&compact);
+            attestation[64] = recovery_id.to_i32() as u8;
+            attestation
+        }
+
+        /// Attestation by the canonical test attestor key.
+        fn sign_attestation(order: &SignedOrder) -> [u8; 65] {
+            sign_attestation_with(order, &attestor_secret())
+        }
+
         fn set_account_balance(account: AccountId, balance: Balance) {
             ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(account, balance);
         }
@@ -1219,7 +1514,13 @@ pub mod spot_settlement {
         fn create_contract() -> SpotSettlement {
             let accounts = default_accounts();
             set_caller(accounts.alice);
-            let contract = SpotSettlement::new(treasury_id());
+            let mut contract = SpotSettlement::new(treasury_id());
+            // Settlement-logic tests run in EXPLICIT testnet mode: the
+            // fail-closed signature gate (P0-1) is disabled by the owner
+            // (alice). Dedicated tests below cover the enforced default.
+            contract
+                .set_signature_verification_enforced(false)
+                .expect("owner can disable the signature gate");
             // Give the contract some native balance for withdraw tests
             set_account_balance(get_contract_id(), 100_000_000_000);
             contract
@@ -1240,6 +1541,331 @@ pub mod spot_settlement {
             let (maker_fee, taker_fee) = contract.get_fee_rates();
             assert_eq!(maker_fee, constants::DEFAULT_MAKER_FEE_BPS);
             assert_eq!(taker_fee, constants::DEFAULT_TAKER_FEE_BPS);
+        }
+
+        // ─── Signature-Enforcement Gate Tests (P0-1 fail-closed) ───
+
+        #[ink::test]
+        fn test_signature_enforcement_default_is_enforced() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let contract = SpotSettlement::new(treasury_id());
+            assert!(contract.is_signature_verification_enforced());
+        }
+
+        #[ink::test]
+        fn test_settle_trade_blocked_when_enforcement_active() {
+            // Fresh contract WITHOUT the create_contract() testnet override —
+            // the fail-closed default must block settlement outright.
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+
+            let maker_order = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+            let taker_order = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Err(SpotError::SignatureVerificationUnavailable)
+            );
+            // No balances were touched by the blocked settlement.
+            assert_eq!(contract.get_balance(accounts.bob, quote), 10_000_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, base), 5_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_owner_can_disable_enforcement_and_event_is_emitted() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            let events_before = test::recorded_events().count();
+            assert!(contract.set_signature_verification_enforced(false).is_ok());
+            assert!(!contract.is_signature_verification_enforced());
+
+            let events: Vec<_> = test::recorded_events().collect();
+            assert_eq!(events.len(), events_before + 1);
+
+            type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
+            let decoded =
+                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                    .expect("SignatureEnforcementChanged must decode");
+            match decoded {
+                Event::SignatureEnforcementChanged(e) => {
+                    assert!(!e.enforced);
+                    assert_eq!(e.changed_by, accounts.alice);
+                }
+                _ => panic!("expected SignatureEnforcementChanged event"),
+            }
+
+            // Re-enabling also works and emits another auditable event.
+            assert!(contract.set_signature_verification_enforced(true).is_ok());
+            assert!(contract.is_signature_verification_enforced());
+            assert_eq!(test::recorded_events().count(), events_before + 2);
+        }
+
+        #[ink::test]
+        fn test_non_owner_cannot_change_enforcement() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            set_caller(accounts.bob);
+            assert_eq!(
+                contract.set_signature_verification_enforced(false),
+                Err(SpotError::AccessDenied)
+            );
+            assert!(contract.is_signature_verification_enforced());
+        }
+
+        // ─── ECDSA Attestation Tests (ADR-001, option c — 2-of-2) ───
+
+        /// Enforced-mode contract (the production default) with the test
+        /// attestor key registered and bob/charlie funded for a BUY/SELL
+        /// match (base = 0xBB, quote = 0xCC).
+        fn create_enforced_contract_with_attestor() -> SpotSettlement {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+            assert!(contract.is_signature_verification_enforced());
+            contract
+                .set_attestor_key(attestor_pubkey())
+                .expect("owner can register the attestor key");
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+            contract
+        }
+
+        /// Matched BUY (bob) / SELL (charlie) order pair, both attested by
+        /// the canonical test attestor key.
+        fn attested_order_pair() -> (SignedOrder, SignedOrder) {
+            let accounts = default_accounts();
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+
+            let mut maker_order = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+            maker_order.attestation = sign_attestation(&maker_order);
+
+            let mut taker_order = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+            taker_order.attestation = sign_attestation(&taker_order);
+
+            (maker_order, taker_order)
+        }
+
+        #[ink::test]
+        fn test_settle_trade_with_valid_attestation_succeeds() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+            let (maker_order, taker_order) = attested_order_pair();
+
+            // Enforcement stays ON — the real ECDSA recover path must pass.
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Ok(())
+            );
+
+            // quote_amount = 1e9 * 2e8 / 1e8 = 2_000_000_000
+            // buyer (bob, maker, 10 bps fee) pays 2_000_000_000 + 2_000_000
+            // seller (charlie, taker, 25 bps fee) receives 2_000_000_000 - 5_000_000
+            assert_eq!(contract.get_balance(accounts.bob, base), 1_000_000_000);
+            assert_eq!(
+                contract.get_balance(accounts.bob, quote),
+                10_000_000_000 - 2_002_000_000
+            );
+            assert_eq!(
+                contract.get_balance(accounts.charlie, quote),
+                1_995_000_000
+            );
+            assert_eq!(contract.get_balance(accounts.charlie, base), 4_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_settle_trade_attestation_from_wrong_key_fails() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+            let (mut maker_order, taker_order) = attested_order_pair();
+
+            // Re-attest the maker order with a DIFFERENT secp256k1 key:
+            // ecdsa_recover succeeds but yields a pubkey != attestor_pubkey.
+            let rogue_secret = secp256k1::SecretKey::from_slice(&[0x24u8; 32])
+                .expect("0x24*32 is a valid secp256k1 secret key");
+            maker_order.attestation = sign_attestation_with(&maker_order, &rogue_secret);
+
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Err(SpotError::AttestationInvalid)
+            );
+            // No state was touched.
+            assert_eq!(contract.get_balance(accounts.bob, quote), 10_000_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, base), 5_000_000_000);
+            assert!(!contract.is_nonce_used(accounts.bob, 1));
+            assert!(!contract.is_nonce_used(accounts.charlie, 1));
+        }
+
+        #[ink::test]
+        fn test_settle_trade_tampered_payload_fails() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+            let quote = AccountId::from([0xCC; 32]);
+            let (mut maker_order, taker_order) = attested_order_pair();
+
+            // Tamper a signed field AFTER attestation: the v2 hash changes,
+            // so the recovered pubkey no longer matches the attestor's.
+            maker_order.price = maker_order.price.wrapping_add(1);
+
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Err(SpotError::AttestationInvalid)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 10_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_settle_trade_enforced_without_attestor_key_stays_blocked() {
+            // Fresh enforced contract WITHOUT a registered attestor key:
+            // even orders carrying valid attestations must stay blocked
+            // (fail-closed, same observable behaviour as before ADR-001).
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+            assert_eq!(contract.get_attestor_key(), None);
+
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+            let (maker_order, taker_order) = attested_order_pair();
+
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Err(SpotError::SignatureVerificationUnavailable)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 10_000_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, base), 5_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_only_owner_sets_attestor_key_and_event_is_emitted() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            // Non-owner cannot register an attestor key.
+            set_caller(accounts.bob);
+            assert_eq!(
+                contract.set_attestor_key(attestor_pubkey()),
+                Err(SpotError::AccessDenied)
+            );
+            assert_eq!(contract.get_attestor_key(), None);
+
+            // Owner can, and the change is audited via AttestorKeyChanged.
+            set_caller(accounts.alice);
+            let events_before = test::recorded_events().count();
+            assert!(contract.set_attestor_key(attestor_pubkey()).is_ok());
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+
+            let events: Vec<_> = test::recorded_events().collect();
+            assert_eq!(events.len(), events_before + 1);
+
+            type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
+            let decoded =
+                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                    .expect("AttestorKeyChanged must decode");
+            match decoded {
+                Event::AttestorKeyChanged(e) => {
+                    assert_eq!(e.attestor_pubkey, attestor_pubkey());
+                    assert_eq!(e.changed_by, accounts.alice);
+                }
+                _ => panic!("expected AttestorKeyChanged event"),
+            }
+        }
+
+        #[ink::test]
+        fn test_enforced_mode_rejects_zero_maker_signature_even_with_attestation() {
+            let mut contract = create_enforced_contract_with_attestor();
+            let (mut maker_order, taker_order) = attested_order_pair();
+
+            // The attestor must never attest an unsigned order; an all-zero
+            // sr25519 signature is rejected before the ECDSA recover runs.
+            maker_order.signature = [0u8; 64];
+            maker_order.attestation = sign_attestation(&maker_order);
+
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Err(SpotError::InvalidSignature)
+            );
         }
 
         // ─── Deposit Native Tests ───
@@ -1568,6 +2194,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0, // no expiry
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker_order = SignedOrder {
@@ -1581,6 +2208,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let fill_amount = 1_000_000_000; // 10.0 base
@@ -1629,6 +2257,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let order2 = SignedOrder {
@@ -1642,6 +2271,7 @@ pub mod spot_settlement {
                 nonce: 2,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -1670,6 +2300,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let order2 = SignedOrder {
@@ -1683,6 +2314,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -1708,6 +2340,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let order2 = SignedOrder {
@@ -1721,6 +2354,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -1754,6 +2388,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -1767,6 +2402,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -1809,6 +2445,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -1822,6 +2459,7 @@ pub mod spot_settlement {
                 nonce: 2,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -1864,6 +2502,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -1877,6 +2516,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert!(contract
@@ -1907,6 +2547,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -1920,6 +2561,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -1955,6 +2597,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -1968,6 +2611,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             // Try to fill 10.0 base but maker only has 5.0 remaining
@@ -2005,6 +2649,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2018,6 +2663,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             // Fill price 200M < seller's ask 300M
@@ -2054,6 +2700,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2067,6 +2714,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -2106,6 +2754,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: [0u8; 64],
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2119,6 +2768,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -2159,6 +2809,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2172,6 +2823,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -2215,6 +2867,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2228,6 +2881,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             // Fill only 500M out of 2B (partial)
@@ -2276,6 +2930,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2289,6 +2944,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -2355,6 +3011,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2368,6 +3025,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
@@ -2440,6 +3098,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2453,6 +3112,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             contract
@@ -2517,6 +3177,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             let taker = SignedOrder {
@@ -2530,6 +3191,7 @@ pub mod spot_settlement {
                 nonce: 1,
                 expiry: 0,
                 signature: valid_order_signature(),
+                attestation: no_attestation(),
             };
 
             assert_eq!(
