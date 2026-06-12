@@ -887,6 +887,38 @@ export const rewardDistributionService = {
         continue;
       }
 
+      // Idempotency claim: persist the reward record BEFORE moving money.
+      // The @@unique([rewardWeekId, walletAddress, rewardType]) constraint makes
+      // this the durable lock — if a concurrent run already inserted the row,
+      // create throws P2002 and we skip the transfer entirely. A crash between
+      // this create and the transfer leaves a PENDING record that blocks a
+      // re-pay on the next run (findFirst above returns it).
+      let rewardRecordId: string;
+      try {
+        const created = await db.userReward.create({
+          data: {
+            rewardWeekId: weekId,
+            walletAddress: reward.address,
+            amount: new Decimal(reward.amount.toString()),
+            rewardType: 'LEADER',
+            rank: reward.rank,
+            txHash: null,
+            payoutStatus: 'PENDING',
+            payoutError: null,
+          },
+        });
+        rewardRecordId = created.id;
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code === 'P2002') {
+          log.warn(
+            { address: reward.address },
+            '[Rewards] Leader reward already claimed concurrently — skipping payout',
+          );
+          continue;
+        }
+        throw err;
+      }
+
       if (payoutEnabled) {
         const payoutResult = await rewardPayoutService.transferNative(
           reward.address,
@@ -905,21 +937,17 @@ export const rewardDistributionService = {
             '[Rewards] Leader payout failed',
           );
         }
-      }
 
-      // Persist to DB
-      await db.userReward.create({
-        data: {
-          rewardWeekId: weekId,
-          walletAddress: reward.address,
-          amount: new Decimal(reward.amount.toString()),
-          rewardType: 'LEADER',
-          rank: reward.rank,
-          txHash: reward.txHash,
-          payoutStatus: payoutEnabled ? reward.status : 'PENDING',
-          payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
-        },
-      });
+        // Record the payout outcome on the already-claimed record.
+        await db.userReward.update({
+          where: { id: rewardRecordId },
+          data: {
+            txHash: reward.txHash,
+            payoutStatus: reward.status,
+            payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
+          },
+        });
+      }
     }
 
     return rewards;
@@ -1007,6 +1035,33 @@ export const rewardDistributionService = {
         continue;
       }
 
+      // Idempotency claim BEFORE moving money — see distributeLeaderRewards.
+      let rewardRecordId: string;
+      try {
+        const created = await db.userReward.create({
+          data: {
+            rewardWeekId: weekId,
+            walletAddress: reward.address,
+            amount: new Decimal(reward.amount.toString()),
+            rewardType: 'TRADER',
+            rank: reward.rank,
+            txHash: null,
+            payoutStatus: 'PENDING',
+            payoutError: null,
+          },
+        });
+        rewardRecordId = created.id;
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code === 'P2002') {
+          log.warn(
+            { address: reward.address },
+            '[Rewards] Trader reward already claimed concurrently — skipping payout',
+          );
+          continue;
+        }
+        throw err;
+      }
+
       if (payoutEnabled) {
         const result = await rewardPayoutService.transferNative(
           reward.address,
@@ -1025,20 +1080,16 @@ export const rewardDistributionService = {
             '[Rewards] Trader payout failed',
           );
         }
-      }
 
-      await db.userReward.create({
-        data: {
-          rewardWeekId: weekId,
-          walletAddress: reward.address,
-          amount: new Decimal(reward.amount.toString()),
-          rewardType: 'TRADER',
-          rank: reward.rank,
-          txHash: reward.txHash,
-          payoutStatus: payoutEnabled ? reward.status : 'PENDING',
-          payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
-        },
-      });
+        await db.userReward.update({
+          where: { id: rewardRecordId },
+          data: {
+            txHash: reward.txHash,
+            payoutStatus: reward.status,
+            payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
+          },
+        });
+      }
     }
 
     return rewards;

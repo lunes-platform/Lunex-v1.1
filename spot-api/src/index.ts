@@ -59,6 +59,8 @@ import { tradeSettlementService } from './services/tradeSettlementService';
 import { marginService } from './services/marginService';
 import { rebalancerService } from './services/rebalancerService';
 import { strategyService } from './services/strategyService';
+import { setStakeChainVerifier } from './services/agentService';
+import { stakingChainVerifier } from './services/stakeChainVerifier';
 import { copytradeService } from './services/copytradeService';
 
 // ─── Crash Handlers ──────────────────────────────────────────────
@@ -406,6 +408,10 @@ async function main() {
 
     await settlementService.ensureReady();
     await rebalancerService.ensureReady();
+
+    // Wire the on-chain stake verifier so verifyStake() can confirm agent
+    // stakes against the Staking contract instead of trusting user input.
+    setStakeChainVerifier(stakingChainVerifier);
 
     const recovery = await tradeSettlementService.retryPendingSettlements();
     log.info(

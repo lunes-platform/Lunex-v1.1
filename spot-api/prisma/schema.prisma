@@ -1252,6 +1252,7 @@ model UserReward {
 
   rewardWeek RewardWeek @relation(fields: [rewardWeekId], references: [id])
 
+  @@unique([rewardWeekId, walletAddress, rewardType])
   @@index([walletAddress, claimed])
   @@index([rewardWeekId])
   @@index([payoutStatus])
