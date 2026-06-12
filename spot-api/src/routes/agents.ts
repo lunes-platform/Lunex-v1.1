@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { agentService } from '../services/agentService';
 import { agentAuth, optionalAgentAuth } from '../middleware/agentAuth';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -147,7 +148,10 @@ router.get(
   '/by-wallet/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedWalletActionSchema.safeParse(req.query);
+      const parsed = SignedWalletActionSchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success) {
         return res
           .status(400)

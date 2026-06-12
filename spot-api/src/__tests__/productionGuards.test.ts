@@ -11,10 +11,15 @@ const validProductionConfig = {
     allowedOrigins: ['https://app.lunex.io'],
   },
   blockchain: {
+    wsUrl: 'wss://rpc.lunes.io',
     relayerSeed: 'real seed injected by secret manager',
     spotContractAddress: '5SpotSettlementContractAddress',
     spotContractMetadataPath: './abis/SpotSettlement.json',
     nativeTokenAddress: '5NativeTokenSentinelAccountId',
+    factoryContractAddress: '5FactoryContractAddress',
+  },
+  bridge: {
+    adminSeed: 'real bridge seed injected by secret manager',
   },
   redis: {
     url: 'redis://redis.internal:6379',
@@ -31,6 +36,8 @@ const validProductionConfig = {
     stakerPoolPct: 30,
     rewardSplitTotalPct: 100,
     rewardSplitValid: true,
+    treasuryAddress: '5TreasuryAddress',
+    stakingContractAddress: '5StakingContractAddress',
   },
 };
 
@@ -52,6 +59,8 @@ describe('production startup guards', () => {
           spotContractAddress: '',
           spotContractMetadataPath: '',
           nativeTokenAddress: '',
+          wsUrl: '',
+          factoryContractAddress: '',
         },
       }),
     ).toEqual([]);
@@ -61,18 +70,22 @@ describe('production startup guards', () => {
     const errors = collectProductionConfigErrors({
       ...validProductionConfig,
       blockchain: {
+        wsUrl: '',
         relayerSeed: '',
         spotContractAddress: '',
         spotContractMetadataPath: '',
         nativeTokenAddress: '',
+        factoryContractAddress: '',
       },
     });
 
     expect(errors).toEqual(
       expect.arrayContaining([
         'RELAYER_SEED is required in production',
+        'LUNES_WS_URL is required in production',
         'SPOT_CONTRACT_ADDRESS is required in production',
         'SPOT_CONTRACT_METADATA_PATH is required in production',
+        'FACTORY_CONTRACT_ADDRESS is required in production',
       ]),
     );
     expect(
@@ -103,12 +116,58 @@ describe('production startup guards', () => {
       ...validProductionConfig,
       blockchain: {
         ...validProductionConfig.blockchain,
-        relayerSeed: 'REPLACE_WITH_PRODUCTION_RELAYER_SEED_FROM_SECRETS_MANAGER',
+        relayerSeed:
+          'REPLACE_WITH_PRODUCTION_RELAYER_SEED_FROM_SECRETS_MANAGER',
       },
     });
 
     expect(
-      errors.some((e) => e.includes('RELAYER_SEED still contains a placeholder')),
+      errors.some((e) =>
+        e.includes('RELAYER_SEED still contains a placeholder'),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects local LUNES RPC endpoints in production', () => {
+    const errors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      blockchain: {
+        ...validProductionConfig.blockchain,
+        wsUrl: 'ws://127.0.0.1:9944',
+      },
+    });
+    expect(errors).toContain(
+      'LUNES_WS_URL must not point to localhost in production',
+    );
+  });
+
+  it('rejects missing, development, or placeholder bridge admin seeds', () => {
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        bridge: { adminSeed: '' },
+      }),
+    ).toContain('BRIDGE_ADMIN_SEED is required in production');
+
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        bridge: { adminSeed: '//Alice' },
+      }),
+    ).toContain(
+      'BRIDGE_ADMIN_SEED must not use a development account in production',
+    );
+
+    const placeholderErrors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      bridge: {
+        adminSeed: 'REPLACE_WITH_PRODUCTION_BRIDGE_ADMIN_SEED',
+      },
+    });
+    expect(
+      placeholderErrors.some((e) =>
+        e.includes('BRIDGE_ADMIN_SEED still contains a placeholder'),
+      ),
     ).toBe(true);
   });
 
@@ -163,6 +222,7 @@ describe('production startup guards', () => {
     const errors = collectProductionConfigErrors({
       ...validProductionConfig,
       rewards: {
+        ...validProductionConfig.rewards,
         enabled: true,
         leaderPoolPct: 40,
         traderPoolPct: 40,
@@ -172,7 +232,9 @@ describe('production startup guards', () => {
       },
     });
     expect(
-      errors.some((e) => e.includes('REWARD split percentages must sum to 100')),
+      errors.some((e) =>
+        e.includes('REWARD split percentages must sum to 100'),
+      ),
     ).toBe(true);
   });
 
@@ -180,6 +242,7 @@ describe('production startup guards', () => {
     const errors = collectProductionConfigErrors({
       ...validProductionConfig,
       rewards: {
+        ...validProductionConfig.rewards,
         enabled: false,
         leaderPoolPct: 0,
         traderPoolPct: 0,
@@ -189,6 +252,23 @@ describe('production startup guards', () => {
       },
     });
     expect(errors.some((e) => e.includes('REWARD split'))).toBe(false);
+  });
+
+  it('requires treasury and staking contract addresses when rewards are enabled', () => {
+    const errors = collectProductionConfigErrors({
+      ...validProductionConfig,
+      rewards: {
+        ...validProductionConfig.rewards,
+        treasuryAddress: '',
+        stakingContractAddress: '',
+      },
+    });
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        'TREASURY_ADDRESS is required when rewards are enabled',
+        'STAKING_CONTRACT_ADDRESS is required when rewards are enabled',
+      ]),
+    );
   });
 
   it('rejects missing NATIVE_TOKEN_ADDRESS in production', () => {

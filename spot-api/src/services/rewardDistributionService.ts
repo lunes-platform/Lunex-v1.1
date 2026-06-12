@@ -82,7 +82,7 @@ function toFloat(value: unknown): number {
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
-const db = prisma as any;
+const db = prisma;
 
 export const rewardDistributionService = {
   // ─── Week Helpers ────────────────────────────────────────────────────────
@@ -144,7 +144,8 @@ export const rewardDistributionService = {
 
   summarizeDbBackedWeekRewards(
     rewards: Array<{
-      rewardType: RewardType;
+      // Schema persists rewardType as String; comparison below scopes it.
+      rewardType: string;
       amount: unknown;
       payoutStatus?: string | null;
       claimed?: boolean | null;
@@ -327,7 +328,7 @@ export const rewardDistributionService = {
       vaults.map((vault) => [vault.leaderId, toFloat(vault.totalEquity)]),
     );
     const analyticsSnapshotMap = new Map(
-      analyticsSnapshots.map((snapshot: any) => [snapshot.leaderId, snapshot]),
+      analyticsSnapshots.map((snapshot) => [snapshot.leaderId, snapshot]),
     );
 
     const normalizedLeaders = leaders.map((leader) => {
@@ -1091,16 +1092,16 @@ export const rewardDistributionService = {
       orderBy: { createdAt: 'desc' },
     });
     const dbBackedRewards = rewards.filter(
-      (r: any) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
+      (r) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
     );
 
     const leaderTotal = dbBackedRewards
-      .filter((r: any) => r.rewardType === 'LEADER')
-      .reduce((sum: number, r: any) => sum + toFloat(r.amount), 0);
+      .filter((r) => r.rewardType === 'LEADER')
+      .reduce((sum, r) => sum + toFloat(r.amount), 0);
 
     const traderTotal = dbBackedRewards
-      .filter((r: any) => r.rewardType === 'TRADER')
-      .reduce((sum: number, r: any) => sum + toFloat(r.amount), 0);
+      .filter((r) => r.rewardType === 'TRADER')
+      .reduce((sum, r) => sum + toFloat(r.amount), 0);
 
     return {
       total: leaderTotal + traderTotal,
@@ -1108,7 +1109,7 @@ export const rewardDistributionService = {
       traderRewards: traderTotal,
       stakerRewards: 0,
       stakerClaimMode: 'on-chain',
-      entries: dbBackedRewards.map((r: any) => ({
+      entries: dbBackedRewards.map((r) => ({
         id: r.id,
         amount: toFloat(r.amount),
         type: r.rewardType,
@@ -1138,7 +1139,7 @@ export const rewardDistributionService = {
       },
     });
     const dbBackedPending = pending.filter(
-      (r: any) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
+      (r) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
     );
 
     if (dbBackedPending.length === 0) {
@@ -1146,7 +1147,7 @@ export const rewardDistributionService = {
     }
 
     const totalAmount = dbBackedPending.reduce(
-      (sum: number, r: any) => sum + toFloat(r.amount),
+      (sum, r) => sum + toFloat(r.amount),
       0,
     );
 
@@ -1188,10 +1189,10 @@ export const rewardDistributionService = {
       take: limit,
     });
     const dbBackedRewards = rewards.filter(
-      (r: any) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
+      (r) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
     );
 
-    return dbBackedRewards.map((r: any) => ({
+    return dbBackedRewards.map((r) => ({
       id: r.id,
       amount: toFloat(r.amount),
       type: r.rewardType,
@@ -1225,7 +1226,7 @@ export const rewardDistributionService = {
       },
     });
 
-    return weeks.map((week: any) => {
+    return weeks.map((week) => {
       const rewardPoolAmount = toFloat(week.rewardPoolAmount);
       const leaderPoolAmount = toFloat(week.leaderPoolAmount);
       const stakerPoolAmount = toFloat(week.stakerPoolAmount);

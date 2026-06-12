@@ -29,7 +29,10 @@ jest.mock('../../services/walletRiskService', () => ({
 }));
 
 import { signatureVerify } from '@polkadot/util-crypto';
-import { verifyWalletActionSignature } from '../../middleware/auth';
+import {
+  getSignedAuthInput,
+  verifyWalletActionSignature,
+} from '../../middleware/auth';
 import * as redisModule from '../../utils/redis';
 import { walletRiskService } from '../../services/walletRiskService';
 
@@ -145,5 +148,60 @@ describe('verifyWalletActionSignature security', () => {
       error: 'Wallet is banned: market abuse',
     });
     expect(mockRedis.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('getSignedAuthInput', () => {
+  function requestWith(input: {
+    headers?: Record<string, string | undefined>;
+    query?: Record<string, unknown>;
+    body?: Record<string, unknown>;
+  }) {
+    return {
+      get: (name: string) => input.headers?.[name.toLowerCase()],
+      query: input.query,
+      body: input.body,
+    };
+  }
+
+  it('reads signed auth from headers', () => {
+    const auth = getSignedAuthInput(
+      requestWith({
+        headers: {
+          'x-lunex-nonce': 'nonce-from-header',
+          'x-lunex-timestamp': '1710000000000',
+          'x-lunex-signature': 'signature-from-header',
+        },
+      }),
+    );
+
+    expect(auth).toEqual({
+      nonce: 'nonce-from-header',
+      timestamp: '1710000000000',
+      signature: 'signature-from-header',
+    });
+  });
+
+  it('lets headers override legacy query values', () => {
+    const auth = getSignedAuthInput(
+      requestWith({
+        headers: {
+          'x-lunex-nonce': 'nonce-from-header',
+          'x-lunex-timestamp': '1710000000000',
+          'x-lunex-signature': 'signature-from-header',
+        },
+        query: {
+          nonce: 'legacy-query-nonce',
+          timestamp: '1700000000000',
+          signature: 'legacy-query-signature',
+        },
+      }),
+    );
+
+    expect(auth).toEqual({
+      nonce: 'nonce-from-header',
+      timestamp: '1710000000000',
+      signature: 'signature-from-header',
+    });
   });
 });

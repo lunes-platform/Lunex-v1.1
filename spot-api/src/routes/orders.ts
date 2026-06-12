@@ -8,6 +8,7 @@ import {
   verifyAddressSignature,
   consumeNonce,
   isNonceUsed,
+  getSignedAuthInput,
 } from '../middleware/auth';
 import { checkRedisRateLimit } from '../utils/redisRateLimit';
 import { z } from 'zod';
@@ -137,7 +138,10 @@ router.delete(
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = SignedReadSchema.safeParse(req.query);
+    const parsed = SignedReadSchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success) {
       return res
         .status(400)

@@ -19,9 +19,18 @@
 
 import { ApiPromise, WsProvider, Keyring } from '@polkadot/api';
 import { ContractPromise } from '@polkadot/api-contract';
+import type { KeyringPair } from '@polkadot/keyring/types';
+import type { ISubmittableResult } from '@polkadot/types/types';
 import { BN } from '@polkadot/util';
 import * as fs from 'fs';
 import * as path from 'path';
+import { config } from '../config';
+import { log } from '../utils/logger';
+import {
+  isDevSeed,
+  isLocalEndpoint,
+  isPlaceholder,
+} from '../utils/productionGuards';
 
 // --- Types ---
 
@@ -55,7 +64,7 @@ function asContractApi(api: ApiPromise): ContractApi {
 
 export class AssetBridgeService {
   private api!: ApiPromise;
-  private adminAccount: any;
+  private adminAccount!: KeyringPair;
   private wrapperContracts: Map<number, ContractPromise> = new Map();
   private running = false;
   private unsubscribeBlocks?: () => void;
@@ -81,7 +90,7 @@ export class AssetBridgeService {
         return JSON.parse(data);
       }
     } catch (err) {
-      console.error('[AssetBridge] Failed to load state, starting fresh:', err);
+      log.error({ err }, '[AssetBridge] Failed to load state, starting fresh');
     }
     return {
       lastProcessedBlock: 0,
@@ -97,7 +106,7 @@ export class AssetBridgeService {
         JSON.stringify(this.state, null, 2),
       );
     } catch (err) {
-      console.error('[AssetBridge] CRITICAL: Failed to save state:', err);
+      log.error({ err }, '[AssetBridge] CRITICAL: Failed to save state');
     }
   }
 
@@ -113,12 +122,12 @@ export class AssetBridgeService {
   // --- Lifecycle ---
 
   async start(): Promise<void> {
-    console.log('[AssetBridge] Starting bridge service...');
+    log.info('[AssetBridge] Starting bridge service...');
 
     const provider = new WsProvider(this.config.wsEndpoint);
     this.api = await ApiPromise.create({ provider });
     await this.api.isReady;
-    console.log(
+    log.info(
       `[AssetBridge] Connected. Bridge account: ${this.bridgeAddress}`,
     );
 
@@ -137,7 +146,7 @@ export class AssetBridgeService {
         asset.wrapperAddress,
       );
       this.wrapperContracts.set(asset.assetId, contract);
-      console.log(
+      log.info(
         `[AssetBridge] Registered ${asset.symbol} (asset #${asset.assetId}) -> ${asset.wrapperAddress}`,
       );
     }
@@ -147,7 +156,7 @@ export class AssetBridgeService {
       this.adminAccount.address,
     );
     this.currentNonce = nonce.toNumber();
-    console.log(`[AssetBridge] Starting nonce: ${this.currentNonce}`);
+    log.info(`[AssetBridge] Starting nonce: ${this.currentNonce}`);
 
     this.running = true;
 
@@ -176,15 +185,15 @@ export class AssetBridgeService {
           this.state.lastProcessedBlock = blockNumber;
           this.saveState();
         } catch (err) {
-          console.error(
-            `[AssetBridge] Error processing block ${blockNumber}:`,
-            err,
+          log.error(
+            { err, blockNumber },
+            '[AssetBridge] Error processing block',
           );
         }
       },
     )) as unknown as () => void;
 
-    console.log(
+    log.info(
       `[AssetBridge] Listening for FINALIZED deposit/withdraw events (from block ${
         this.state.lastProcessedBlock + 1
       })...`,
@@ -200,7 +209,7 @@ export class AssetBridgeService {
     if (this.api) {
       await this.api.disconnect();
     }
-    console.log('[AssetBridge] Stopped. State saved.');
+    log.info('[AssetBridge] Stopped. State saved.');
   }
 
   // --- Deposit Processing ---
@@ -223,7 +232,7 @@ export class AssetBridgeService {
 
       const contract = this.wrapperContracts.get(assetIdNum);
       if (!contract) {
-        console.warn(
+        log.warn(
           `[AssetBridge] Received asset #${assetIdNum} but no wrapper configured`,
         );
         continue;
@@ -237,7 +246,7 @@ export class AssetBridgeService {
 
       // Check local deduplication
       if (this.state.processedDeposits[depositKey]) {
-        console.log(`[AssetBridge] Skipping duplicate deposit ${depositKey}`);
+        log.info(`[AssetBridge] Skipping duplicate deposit ${depositKey}`);
         continue;
       }
 
@@ -245,7 +254,7 @@ export class AssetBridgeService {
       const depositAmount = amount.toBn();
       const depositRef = this.makeDepositRef(blockNumber, extrinsicIndex);
 
-      console.log(
+      log.info(
         `[AssetBridge] Deposit detected: ${depositAmount} of asset #${assetIdNum} from ${fromAddress} (block ${blockNumber}, ref ${depositRef})`,
       );
 
@@ -261,13 +270,13 @@ export class AssetBridgeService {
         this.state.processedDeposits[depositKey] = true;
         this.saveState();
 
-        console.log(
+        log.info(
           `[AssetBridge] Minted ${depositAmount} wrapper tokens to ${fromAddress} (ref ${depositRef})`,
         );
       } catch (err) {
-        console.error(
-          `[AssetBridge] CRITICAL: Failed to mint for deposit ${depositKey}:`,
-          err,
+        log.error(
+          { err, depositKey, blockNumber },
+          '[AssetBridge] CRITICAL: Failed to mint for deposit',
         );
         // Do NOT mark as processed — will retry on next restart
       }
@@ -305,7 +314,7 @@ export class AssetBridgeService {
       const withdrawKey = `w:${blockNumber}:${extrinsicIndex}`;
 
       if (this.state.processedWithdrawals[withdrawKey]) {
-        console.log(
+        log.info(
           `[AssetBridge] Skipping duplicate withdrawal ${withdrawKey}`,
         );
         continue;
@@ -317,7 +326,7 @@ export class AssetBridgeService {
         const dataBytes = Buffer.from(eventData.replace('0x', ''), 'hex');
 
         if (dataBytes.length < 52) {
-          console.warn(
+          log.warn(
             '[AssetBridge] Event data too short for WithdrawRequest, skipping',
           );
           continue;
@@ -333,7 +342,7 @@ export class AssetBridgeService {
           .createType('u32', dataBytes.subarray(48, 52))
           .toNumber();
 
-        console.log(
+        log.info(
           `[AssetBridge] Withdraw: ${withdrawAmount} of asset #${assetId} to ${userAddress} (block ${blockNumber})`,
         );
 
@@ -343,8 +352,9 @@ export class AssetBridgeService {
           this.bridgeAddress,
         );
         if (bridgeBalance.lt(withdrawAmount)) {
-          console.error(
-            `[AssetBridge] CRITICAL: Insufficient bridge balance for asset #${assetId}. Has: ${bridgeBalance}, needs: ${withdrawAmount}`,
+          log.error(
+            { assetId, has: bridgeBalance.toString(), needs: withdrawAmount.toString() },
+            '[AssetBridge] CRITICAL: Insufficient bridge balance',
           );
           continue; // Do not mark as processed — manual intervention needed
         }
@@ -354,13 +364,13 @@ export class AssetBridgeService {
         this.state.processedWithdrawals[withdrawKey] = true;
         this.saveState();
 
-        console.log(
+        log.info(
           `[AssetBridge] Sent ${withdrawAmount} of asset #${assetId} to ${userAddress}`,
         );
       } catch (err) {
-        console.error(
-          `[AssetBridge] CRITICAL: Failed to process withdrawal ${withdrawKey}:`,
-          err,
+        log.error(
+          { err, withdrawKey, blockNumber },
+          '[AssetBridge] CRITICAL: Failed to process withdrawal',
         );
       }
     }
@@ -408,21 +418,25 @@ export class AssetBridgeService {
         amount,
         depositRef,
       )
-        .signAndSend(this.adminAccount, { nonce }, (result: any) => {
-          if (result.status.isFinalized) {
-            const failed = result.events.find(
-              ({ event: e }: any) =>
-                e.section === 'system' && e.method === 'ExtrinsicFailed',
-            );
-            if (failed) {
-              reject(
-                new Error(`Mint failed (ref ${depositRef}): ExtrinsicFailed`),
+        .signAndSend(
+          this.adminAccount,
+          { nonce },
+          (result: ISubmittableResult) => {
+            if (result.status.isFinalized) {
+              const failed = result.events.find(
+                ({ event: e }) =>
+                  e.section === 'system' && e.method === 'ExtrinsicFailed',
               );
-            } else {
-              resolve();
+              if (failed) {
+                reject(
+                  new Error(`Mint failed (ref ${depositRef}): ExtrinsicFailed`),
+                );
+              } else {
+                resolve();
+              }
             }
-          }
-        })
+          },
+        )
         .catch(reject);
     });
   }
@@ -441,19 +455,25 @@ export class AssetBridgeService {
     await new Promise<void>((resolve, reject) => {
       this.api.tx.assets
         .transfer(assetId, to, amount)
-        .signAndSend(this.adminAccount, { nonce }, (result: any) => {
-          if (result.status.isFinalized) {
-            const failed = result.events.find(
-              ({ event: e }: any) =>
-                e.section === 'system' && e.method === 'ExtrinsicFailed',
-            );
-            if (failed) {
-              reject(new Error(`Asset transfer failed for asset #${assetId}`));
-            } else {
-              resolve();
+        .signAndSend(
+          this.adminAccount,
+          { nonce },
+          (result: ISubmittableResult) => {
+            if (result.status.isFinalized) {
+              const failed = result.events.find(
+                ({ event: e }) =>
+                  e.section === 'system' && e.method === 'ExtrinsicFailed',
+              );
+              if (failed) {
+                reject(
+                  new Error(`Asset transfer failed for asset #${assetId}`),
+                );
+              } else {
+                resolve();
+              }
             }
-          }
-        })
+          },
+        )
         .catch(reject);
     });
   }
@@ -461,9 +481,43 @@ export class AssetBridgeService {
 
 // --- Standalone Runner ---
 
+function assertBridgeConfigSafeForStartup(input: {
+  isProd: boolean;
+  wsEndpoint: string;
+  adminSeed: string;
+}) {
+  if (!input.adminSeed) {
+    throw new Error('BRIDGE_ADMIN_SEED is required for asset bridge startup');
+  }
+
+  if (isDevSeed(input.adminSeed)) {
+    throw new Error(
+      'BRIDGE_ADMIN_SEED must not use a development account for asset bridge startup',
+    );
+  }
+
+  if (isPlaceholder(input.adminSeed)) {
+    throw new Error(
+      'BRIDGE_ADMIN_SEED still contains a placeholder value for asset bridge startup',
+    );
+  }
+
+  if (input.isProd) {
+    if (!input.wsEndpoint) {
+      throw new Error('LUNES_WS_URL is required for asset bridge startup');
+    }
+
+    if (isLocalEndpoint(input.wsEndpoint)) {
+      throw new Error(
+        'LUNES_WS_URL must not point to localhost for asset bridge startup',
+      );
+    }
+  }
+}
+
 export function createBridgeFromEnv(): AssetBridgeService {
-  const wsEndpoint = process.env.LUNES_WS_ENDPOINT || 'ws://127.0.0.1:9944';
-  const adminSeed = process.env.BRIDGE_ADMIN_SEED || '//Alice';
+  const wsEndpoint = config.blockchain.wsUrl;
+  const adminSeed = config.bridge.adminSeed;
   const assetsJson = process.env.BRIDGE_ASSETS || '[]';
   const metadataPath =
     process.env.BRIDGE_CONTRACT_METADATA ||
@@ -474,9 +528,15 @@ export function createBridgeFromEnv(): AssetBridgeService {
   try {
     assets = JSON.parse(assetsJson);
   } catch {
-    console.error('Invalid BRIDGE_ASSETS JSON');
+    log.error('[AssetBridge] Invalid BRIDGE_ASSETS JSON');
     assets = [];
   }
+
+  assertBridgeConfigSafeForStartup({
+    isProd: config.isProd,
+    wsEndpoint,
+    adminSeed,
+  });
 
   return new AssetBridgeService({
     wsEndpoint,
@@ -491,12 +551,12 @@ if (require.main === module) {
   const bridge = createBridgeFromEnv();
 
   bridge.start().catch((err) => {
-    console.error('[AssetBridge] Fatal error:', err);
+    log.error({ err }, '[AssetBridge] Fatal error');
     process.exit(1);
   });
 
   process.on('SIGINT', async () => {
-    console.log('\n[AssetBridge] Shutting down...');
+    log.info('[AssetBridge] Shutting down...');
     await bridge.stop();
     process.exit(0);
   });

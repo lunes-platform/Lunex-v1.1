@@ -10,8 +10,6 @@ import {
 import { affiliateService } from './affiliateService';
 import { log } from '../utils/logger';
 
-const prismaAny = prisma as any;
-
 function sanitizeTradeForClient<T extends Record<string, unknown>>(trade: T) {
   const {
     pairId,
@@ -43,6 +41,9 @@ export const tradeService = {
   async processMatches(pairId: string, matches: MatchResult[]) {
     const { trades, settlementInputs } = await prisma.$transaction(
       async (tx) => {
+        // TODO(types): typing `tx` surfaces a pre-existing issue — the create
+        // below passes `settlementPayload: null` where Prisma expects the
+        // DbNull/JsonNull sentinel for `Json?`. Behavior decision needed.
         const txAny = tx as any;
         const transactionTrades = [];
         const transactionSettlementInputs: TradeSettlementInput[] = [];
@@ -300,7 +301,7 @@ export const tradeService = {
     limit = 50,
     offset = 0,
   ) {
-    return prismaAny.trade.findMany({
+    return prisma.trade.findMany({
       where: status ? { settlementStatus: status } : undefined,
       orderBy: [{ createdAt: 'desc' }],
       take: limit,

@@ -71,7 +71,11 @@ export async function checkRedisRateLimit(
     }
 
     // Under limit — record the attempt.
-    await redis.pipeline().zadd(key, now, member).expire(key, ttlSeconds).exec();
+    await redis
+      .pipeline()
+      .zadd(key, now, member)
+      .expire(key, ttlSeconds)
+      .exec();
 
     return {
       allowed: true,

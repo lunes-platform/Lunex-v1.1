@@ -3,6 +3,7 @@ import { affiliateService } from '../services/affiliateService';
 import prisma from '../db';
 import { z } from 'zod';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -57,7 +58,10 @@ router.post(
 
 router.get('/code', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = AddressQuerySchema.safeParse(req.query);
+    const parsed = AddressQuerySchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success)
       return res.status(400).json({ error: 'address required' });
     const auth = await verifyWalletReadSignature({
@@ -81,7 +85,10 @@ router.get(
   '/dashboard',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = AddressQuerySchema.safeParse(req.query);
+      const parsed = AddressQuerySchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success)
         return res.status(400).json({ error: 'address required' });
       const auth = await verifyWalletReadSignature({
@@ -104,7 +111,10 @@ router.get(
 
 router.get('/tree', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = AddressQuerySchema.safeParse(req.query);
+    const parsed = AddressQuerySchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success)
       return res.status(400).json({ error: 'address required' });
     const depth = Math.min(parseInt(req.query.depth as string) || 3, 5);
@@ -131,7 +141,10 @@ router.get(
   '/payouts',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = AddressQuerySchema.safeParse(req.query);
+      const parsed = AddressQuerySchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success)
         return res.status(400).json({ error: 'address required' });
       const limit =

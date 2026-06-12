@@ -4,7 +4,10 @@ import {
   RetryTradeSettlementsSchema,
   TradeSettlementQuerySchema,
 } from '../utils/validation';
-import { verifyWalletReadSignature } from '../middleware/auth';
+import {
+  getSignedAuthInput,
+  verifyWalletReadSignature,
+} from '../middleware/auth';
 import { requireAdmin } from '../middleware/adminGuard';
 import { z } from 'zod';
 
@@ -94,7 +97,10 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       );
       return res.json({ trades });
     }
-    const parsed = SignedTradesReadSchema.safeParse(req.query);
+    const parsed = SignedTradesReadSchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success) {
       return res
         .status(400)

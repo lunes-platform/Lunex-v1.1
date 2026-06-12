@@ -230,7 +230,9 @@ describe('tradeSettlementService', () => {
         where: expect.objectContaining({
           // Prisma.DbNull is a sentinel object — assert presence of the filter
           // without checking its identity (the test runs without the real client).
-          settlementPayload: expect.objectContaining({ not: expect.anything() }),
+          settlementPayload: expect.objectContaining({
+            not: expect.anything(),
+          }),
           OR: expect.any(Array),
         }),
       }),

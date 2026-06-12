@@ -14,6 +14,7 @@ import {
   getListings,
   getOwnerListings,
   withdrawLock,
+  finalizeWithdrawLockByOnChainId,
   getListingStats,
   processExpiredLocks,
   CreateListingInput,
@@ -23,6 +24,7 @@ import {
 } from '../services/listingService';
 import { requireAdmin } from '../middleware/adminGuard';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -120,12 +122,26 @@ const CreateListingSchema = z
 const WithdrawLockSchema = z
   .object({
     ownerAddress: z.string().min(8).max(128),
-    txHash: z.string().max(128).optional(),
+    txHash: z.string().min(8).max(128),
   })
   .merge(SignedActionSchema);
 
 const SignedOwnerReadSchema = SignedActionSchema.extend({
   address: z.string().min(8).max(128),
+});
+
+const ActivateListingSchema = z.object({
+  onChainListingId: z.coerce.number().int().nonnegative(),
+  onChainLockId: z.coerce.number().int().nonnegative(),
+  pairAddress: z.string().min(8).max(128),
+  lpTokenAddress: z.string().min(8).max(128),
+  lpAmount: z.union([z.string(), z.number()]).transform(String),
+  txHash: z.string().min(8).max(128),
+});
+
+const FinalizeWithdrawSchema = z.object({
+  ownerAddress: z.string().min(8).max(128),
+  txHash: z.string().min(8).max(128),
 });
 
 // ── GET /api/v1/listing/tiers ─────────────────────────────────────
@@ -193,6 +209,7 @@ router.get(
     try {
       const parsed = SignedOwnerReadSchema.safeParse({
         ...req.query,
+        ...getSignedAuthInput(req),
         address: req.params.address,
       });
       if (!parsed.success) {
@@ -316,23 +333,30 @@ router.post(
   requireAdmin,
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const {
-        onChainListingId,
-        pairAddress,
-        lpTokenAddress,
-        lpAmount,
-        txHash,
-      } = req.body;
+      const parsed = ActivateListingSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: 'On-chain listing proof is required before activation',
+          details: parsed.error.issues,
+        });
+      }
       const input: ActivateListingInput = {
-        onChainListingId,
-        pairAddress,
-        lpTokenAddress,
-        lpAmount,
-        txHash,
+        ...parsed.data,
       };
       const listing = await activateListing(req.params.id, input);
       res.json({ message: 'Listing activated', listing });
-    } catch (err) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      if (
+        msg.includes('On-chain listing proof') ||
+        msg.includes('Finalized') ||
+        msg.includes('requires SUBQUERY') ||
+        msg.includes('must be PENDING') ||
+        msg.includes('must be a') ||
+        msg.includes('Listing not found')
+      ) {
+        return res.status(400).json({ error: msg });
+      }
       next(err);
     }
   },
@@ -354,6 +378,45 @@ router.post(
 );
 
 // ── POST /api/v1/listing/lock/:lockId/withdraw ────────────────────
+router.post(
+  '/lock/onchain/:onChainLockId/withdraw-finalized',
+  requireAdmin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const onChainLockId = z.coerce
+        .number()
+        .int()
+        .nonnegative()
+        .parse(req.params.onChainLockId);
+      const parsed = FinalizeWithdrawSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+
+      const lock = await finalizeWithdrawLockByOnChainId(
+        onChainLockId,
+        parsed.data.ownerAddress,
+        parsed.data.txHash,
+      );
+      res.json({ message: 'Lock withdrawal finalized', lock });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      if (
+        msg.includes('Lock not found') ||
+        msg.includes('Not the lock owner') ||
+        msg.includes('Already withdrawn') ||
+        msg.includes('Finalized') ||
+        msg.includes('requires SUBQUERY')
+      ) {
+        return res.status(400).json({ error: msg });
+      }
+      next(err);
+    }
+  },
+);
+
 router.post(
   '/lock/:lockId/withdraw',
   async (req: Request, res: Response, next: NextFunction) => {
@@ -391,7 +454,10 @@ router.post(
       if (
         msg.includes('Not the lock owner') ||
         msg.includes('Already withdrawn') ||
-        msg.includes('expires')
+        msg.includes('expires') ||
+        msg.includes('txHash is required') ||
+        msg.includes('Finalized') ||
+        msg.includes('requires SUBQUERY')
       ) {
         return res.status(400).json({ error: msg });
       }

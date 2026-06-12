@@ -266,8 +266,13 @@ async function main() {
   const pair     = new ContractPromise(api, pairAbi, pairAddress)
   const reserves = await query(api, alice, pair, 'getReserves', [])
   log(`Reserves: ${JSON.stringify(reserves)}`)
-  const lpBalance = await query(api, alice, pair, 'balanceOf', [alice.address])
-  log(`Alice LP tokens: ${lpBalance}`)
+  // O artifact do pair pode não expor a interface PSP22 (balanceOf) — não é fatal
+  if ((pair.query as any)['balanceOf']) {
+    const lpBalance = await query(api, alice, pair, 'balanceOf', [alice.address])
+    log(`Alice LP tokens: ${lpBalance}`)
+  } else {
+    log('Pair ABI sem balanceOf (artifact desatualizado) — pulando leitura de LP')
+  }
 
   // ── 6. Fund test wallet ───────────────────────────────────────────────────
   section(`6. Sending tokens to TEST_WALLET: ${TEST_WALLET}`)

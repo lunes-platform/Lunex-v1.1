@@ -17,6 +17,7 @@ import { PrismaClient } from '@prisma/client';
 import {
   verifyWalletReadSignature,
   verifyWalletActionSignature,
+  getSignedAuthInput,
 } from '../middleware/auth';
 
 const prisma = new PrismaClient();
@@ -38,9 +39,11 @@ async function authorizeFavoriteAction(
   action: string,
   fields?: Record<string, string>,
 ) {
-  const parsed = SignedActionSchema.safeParse(
-    req.method === 'GET' ? req.query : req.body,
-  );
+  const fallbackSource = req.method === 'GET' ? 'query' : 'body';
+  const parsed = SignedActionSchema.safeParse({
+    ...(req[fallbackSource] as Record<string, unknown>),
+    ...getSignedAuthInput(req, fallbackSource),
+  });
   if (!parsed.success) {
     res
       .status(400)

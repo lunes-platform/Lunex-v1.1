@@ -65,6 +65,10 @@ export const config = {
       process.env.FACTORY_CONTRACT_METADATA_PATH || './abis/Factory.json',
   },
 
+  bridge: {
+    adminSeed: process.env.BRIDGE_ADMIN_SEED || '',
+  },
+
   // Admin secret for protected admin routes (pair registration, etc.)
   adminSecret:
     process.env.ADMIN_SECRET ||

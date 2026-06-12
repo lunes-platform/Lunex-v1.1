@@ -390,6 +390,9 @@ app.use(errorHandler());
 
 // ─── Startup ─────────────────────────────────────────────────────
 let httpServer: ReturnType<typeof app.listen> | null = null;
+let wsServer: ReturnType<typeof createWebSocketServer> | null = null;
+let settlementRetryTimer: NodeJS.Timeout | null = null;
+let strategySyncTimer: NodeJS.Timeout | null = null;
 
 async function main() {
   try {
@@ -413,7 +416,7 @@ async function main() {
     vaultReconciliationService.start();
     copytradeWalletContinuationScheduler.start();
 
-    setInterval(() => {
+    settlementRetryTimer = setInterval(() => {
       tradeSettlementService.retryPendingSettlements().catch((error) => {
         log.error({ err: error }, 'Trade settlement retry loop failed');
       });
@@ -431,7 +434,7 @@ async function main() {
     };
     // Run once at startup (non-blocking), then every 6 h
     runStrategySyncOnce();
-    setInterval(runStrategySyncOnce, SIX_HOURS_MS);
+    strategySyncTimer = setInterval(runStrategySyncOnce, SIX_HOURS_MS);
 
     // ─── Reward Distribution Scheduler ───────────────────────────
     rewardScheduler.start();
@@ -442,7 +445,7 @@ async function main() {
       );
     });
 
-    createWebSocketServer(config.wsPort);
+    wsServer = createWebSocketServer(config.wsPort);
   } catch (error) {
     log.error({ err: error }, 'Failed to start server');
     process.exit(1);
@@ -459,10 +462,23 @@ async function shutdown(signal: string) {
     });
   }
 
+  // Fecha o WS antes dos schedulers: clientes param de receber eventos de um
+  // processo que está morrendo. wss.close() também limpa o heartbeat interno.
+  if (wsServer) {
+    for (const client of wsServer.clients) client.terminate();
+    wsServer.close(() => log.info('WebSocket server closed'));
+  }
+
+  if (settlementRetryTimer) clearInterval(settlementRetryTimer);
+  if (strategySyncTimer) clearInterval(strategySyncTimer);
+
   try {
     rewardScheduler.stop();
     vaultReconciliationService.stop();
     copytradeWalletContinuationScheduler.stop();
+    socialAnalyticsPipeline.stop();
+    // Settlements em voo: o claim otimista é idempotente e o recovery de boot
+    // (recoverPendingSettlements) reprocessa pendências — não é preciso drenar.
     await prisma.$disconnect();
     await disconnectRedis();
     log.info('Database and Redis disconnected');

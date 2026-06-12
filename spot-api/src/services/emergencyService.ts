@@ -5,7 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { config } from '../config';
 import { log } from '../utils/logger';
-import { withTxTimeout } from '../utils/txWithTimeout';
+import { waitForFinalizedTx } from '../utils/finalizedTx';
 
 /**
  * Emergency controls — wraps the on-chain pause/unpause messages of
@@ -60,9 +60,9 @@ class EmergencyService {
   private isConfigured() {
     return Boolean(
       config.blockchain.wsUrl &&
-        config.blockchain.spotContractAddress &&
-        config.blockchain.spotContractMetadataPath &&
-        config.blockchain.relayerSeed,
+      config.blockchain.spotContractAddress &&
+      config.blockchain.spotContractMetadataPath &&
+      config.blockchain.relayerSeed,
     );
   }
 
@@ -152,7 +152,12 @@ class EmergencyService {
   private async querySpotPaused(
     ready: boolean,
   ): Promise<EmergencyComponentStatus> {
-    if (!ready || !this.spotContract || !this.spotIsPausedQueryKey || !this.relayer) {
+    if (
+      !ready ||
+      !this.spotContract ||
+      !this.spotIsPausedQueryKey ||
+      !this.relayer
+    ) {
       return {
         component: 'spot_settlement',
         available: false,
@@ -162,7 +167,9 @@ class EmergencyService {
     }
 
     try {
-      const queryFn = (this.spotContract.query as any)[this.spotIsPausedQueryKey];
+      const queryFn = (this.spotContract.query as any)[
+        this.spotIsPausedQueryKey
+      ];
       const { result, output } = await queryFn(this.relayer.address, {});
       if (!result.isOk) {
         return {
@@ -172,12 +179,17 @@ class EmergencyService {
           error: 'paused() query reverted',
         };
       }
-      const value = output?.toJSON?.() as { ok?: boolean } | boolean | null | undefined;
-      const paused = typeof value === 'boolean'
-        ? value
-        : (value && typeof value === 'object' && 'ok' in value)
-          ? Boolean((value as { ok?: boolean }).ok)
-          : null;
+      const value = output?.toJSON?.() as
+        | { ok?: boolean }
+        | boolean
+        | null
+        | undefined;
+      const paused =
+        typeof value === 'boolean'
+          ? value
+          : value && typeof value === 'object' && 'ok' in value
+            ? Boolean((value as { ok?: boolean }).ok)
+            : null;
       return {
         component: 'spot_settlement',
         available: true,
@@ -231,19 +243,9 @@ class EmergencyService {
         storageDepositLimit: null,
       });
 
-      const txHash = await withTxTimeout(
+      const txHash = await waitForFinalizedTx(
         `spot_settlement.${action}`,
-        new Promise<string>((resolve, reject) => {
-          tx.signAndSend(this.relayer!, ({ status, dispatchError, txHash: hash }: any) => {
-            if (dispatchError) {
-              reject(new Error(dispatchError.toString()));
-              return;
-            }
-            if (status.isFinalized || status.isInBlock) {
-              resolve(hash.toHex());
-            }
-          }).catch(reject);
-        }),
+        (callback) => tx.signAndSend(this.relayer!, callback),
         60_000,
       );
 
@@ -259,7 +261,10 @@ class EmergencyService {
         txHash,
       };
     } catch (err) {
-      log.error({ err, action }, '[Emergency] spot_settlement state change failed');
+      log.error(
+        { err, action },
+        '[Emergency] spot_settlement state change failed',
+      );
       return {
         component: 'spot_settlement',
         available: true,

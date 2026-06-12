@@ -76,7 +76,7 @@ function normalizeOptionalString(value?: string | null) {
 }
 
 function getAnalyticsDb() {
-  const db = prisma as any;
+  const db = prisma;
   if (typeof db.leaderAnalyticsSnapshot?.findMany !== 'function') {
     return null;
   }

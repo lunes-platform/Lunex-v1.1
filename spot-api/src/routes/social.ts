@@ -2,6 +2,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import { socialService } from '../services/socialService';
 import { socialAnalyticsService } from '../services/socialAnalyticsService';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -48,7 +49,10 @@ async function getVerifiedViewerAddress(
       timestamp: z.coerce.number().int().positive(),
       signature: z.string().min(8),
     })
-    .safeParse(req.query);
+    .safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
 
   if (!parsed.success) {
     res
@@ -185,7 +189,10 @@ router.get(
           timestamp: z.coerce.number().int().positive(),
           signature: z.string().min(8),
         })
-        .safeParse(req.query);
+        .safeParse({
+          ...req.query,
+          ...getSignedAuthInput(req),
+        });
       if (!parsed.success) {
         return res
           .status(400)

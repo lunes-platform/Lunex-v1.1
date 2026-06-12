@@ -21,6 +21,7 @@
 import prisma from '../db';
 import { orderbookManager } from '../utils/orderbook';
 import { rebalancerService } from './rebalancerService';
+import { settlementService } from './settlementService';
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -501,6 +502,12 @@ export const routerService = {
     }
 
     if (quote.bestRoute === 'ORDERBOOK') {
+      if (settlementService.isEnabled()) {
+        throw new Error(
+          'ORDERBOOK router execution requires wallet-signed order authorization before on-chain settlement can be used',
+        );
+      }
+
       const freshOrderbookQuote = assertFreshOrderbookExecution({
         pairSymbol,
         side,

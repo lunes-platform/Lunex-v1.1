@@ -22,12 +22,12 @@ import { Decimal } from '@prisma/client/runtime/library';
  * @module marginService
  */
 import prisma from '../db';
+import { Prisma } from '@prisma/client';
 import { config } from '../config';
 import { decimalToNumber } from '../utils/helpers';
 import { orderbookManager } from '../utils/orderbook';
 import { log } from '../utils/logger';
 
-const prismaAny = prisma as any;
 const DEFAULT_COLLATERAL_TOKEN = 'USDT';
 const MIN_LEVERAGE = 1;
 const MAX_LEVERAGE = 10;
@@ -342,7 +342,7 @@ function getPriceHealthSnapshot(pairSymbol?: string) {
 }
 
 async function resolveReferencePriceWithClient(
-  client: any,
+  client: Prisma.TransactionClient,
   pairId: string,
   pairSymbol: string,
 ): Promise<MarginPriceReference> {
@@ -401,14 +401,18 @@ async function resolveReferencePriceWithClient(
     }
 
     throw new Error(`Unable to determine safe mark price for ${pairSymbol}`);
-  } catch (error: any) {
-    recordPriceFailure(pairSymbol, error.message, now);
+  } catch (error: unknown) {
+    recordPriceFailure(
+      pairSymbol,
+      error instanceof Error ? error.message : String(error),
+      now,
+    );
     throw error;
   }
 }
 
 async function getReferencePriceWithClient(
-  client: any,
+  client: Prisma.TransactionClient,
   pairId: string,
   pairSymbol: string,
 ): Promise<number> {
@@ -421,7 +425,7 @@ async function getReferencePriceWithClient(
 }
 
 async function getOrCreateMarginAccountWithClient(
-  client: any,
+  client: Prisma.TransactionClient,
   address: string,
 ) {
   let account = (await client.marginAccount.findUnique({
@@ -442,7 +446,7 @@ async function getOrCreateMarginAccountWithClient(
 }
 
 async function getOrCreateMarginAccount(address: string) {
-  return getOrCreateMarginAccountWithClient(prismaAny, address);
+  return getOrCreateMarginAccountWithClient(prisma, address);
 }
 
 function formatPosition(
@@ -492,7 +496,7 @@ function formatPositionWithPriceMetadata(
 }
 
 async function refreshPositionWithClient(
-  client: any,
+  client: Prisma.TransactionClient,
   position: MarginPositionRecord,
 ): Promise<FormattedMarginPosition> {
   if (position.status !== 'OPEN') {
@@ -539,11 +543,11 @@ async function refreshPositionWithClient(
 async function refreshPosition(
   position: MarginPositionRecord,
 ): Promise<FormattedMarginPosition> {
-  return refreshPositionWithClient(prismaAny, position);
+  return refreshPositionWithClient(prisma, position);
 }
 
 async function getAccountRiskSnapshot(
-  client: any,
+  client: Prisma.TransactionClient,
   account: MarginAccountRecord,
 ) {
   const openPositions = (await client.marginPosition.findMany({
@@ -585,7 +589,7 @@ async function getAccountRiskSnapshot(
 async function getAccountPositions(
   accountId: string,
 ): Promise<FormattedMarginPosition[]> {
-  const positions = (await prismaAny.marginPosition.findMany({
+  const positions = (await prisma.marginPosition.findMany({
     where: { accountId },
     orderBy: { openedAt: 'desc' },
   })) as MarginPositionRecord[];
@@ -779,7 +783,7 @@ export const marginService = {
       throw new Error('Collateral amount must be positive');
 
     const updated = await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const account = await getOrCreateMarginAccountWithClient(
         txAny,
         input.address,
@@ -829,7 +833,7 @@ export const marginService = {
       throw new Error('Collateral amount must be positive');
 
     const updated = await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const account = await getOrCreateMarginAccountWithClient(
         txAny,
         input.address,
@@ -913,7 +917,7 @@ export const marginService = {
     assertPairNotOperationallyBlocked(input.pairSymbol);
 
     const position = await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const pair = await tx.pair.findUnique({
         where: { symbol: input.pairSymbol },
       });
@@ -1008,7 +1012,7 @@ export const marginService = {
 
   async closePosition(positionId: string, address: string) {
     await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const position = (await txAny.marginPosition.findUnique({
         where: { id: positionId },
         include: { account: true },
@@ -1063,7 +1067,7 @@ export const marginService = {
     let ownerAddress = '';
 
     await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const position = (await txAny.marginPosition.findUnique({
         where: { id: positionId },
         include: { account: true },

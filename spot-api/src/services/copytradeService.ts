@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { cryptoWaitReady, signatureVerify } from '@polkadot/util-crypto';
 import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 import prisma from '../db';
 import { config } from '../config';
 import { log } from '../utils/logger';
@@ -164,12 +165,14 @@ type WalletContinuationRepo = {
 function getWalletContinuationRepo(
   client: unknown,
 ): WalletContinuationRepo | null {
-  const repo = (client as any)?.copyTradeWalletContinuation;
+  const repo = (
+    client as { copyTradeWalletContinuation?: WalletContinuationRepo } | null
+  )?.copyTradeWalletContinuation;
   if (!repo || typeof repo !== 'object') return null;
   if (typeof repo.create !== 'function') return null;
   if (typeof repo.findUnique !== 'function') return null;
   if (typeof repo.update !== 'function') return null;
-  return repo as WalletContinuationRepo;
+  return repo;
 }
 
 const API_KEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -405,13 +408,7 @@ function buildLiveExecutionSlice(
 }
 
 async function resolveOpenTradeNotional(
-  client: {
-    copyTradeSignal: {
-      findFirst: (args: Record<string, unknown>) => Promise<{
-        amountIn: { toString(): string } | null;
-      } | null>;
-    };
-  },
+  client: Prisma.TransactionClient,
   input: {
     leaderId: string;
     pairSymbol: string;
@@ -487,10 +484,32 @@ async function maybeExecuteVaultSignal(params: {
     ('requiresWalletSignature' in routedExecution &&
       routedExecution.requiresWalletSignature)
   ) {
-    const continuation: WalletAssistedSignalContinuation | null =
+    // Fail-closed: intent sem minAmountOut válido (> 0) não vira continuation —
+    // minAmountOut 0 entregaria um swap sem proteção de slippage para o
+    // seguidor assinar (exposição a sandwich/MEV).
+    const intentMinAmountOut =
       'contractCallIntent' in routedExecution &&
       routedExecution.contractCallIntent &&
       typeof routedExecution.contractCallIntent === 'object'
+        ? Number((routedExecution.contractCallIntent as any).minAmountOut)
+        : Number.NaN;
+    const intentHasSlippageProtection =
+      Number.isFinite(intentMinAmountOut) && intentMinAmountOut > 0;
+    if (
+      'contractCallIntent' in routedExecution &&
+      routedExecution.contractCallIntent &&
+      !intentHasSlippageProtection
+    ) {
+      log.error(
+        { leaderId: params.leaderId, vaultId: params.vault.id },
+        '[Copytrade] contractCallIntent sem minAmountOut válido — continuation descartada (fail-closed)',
+      );
+    }
+    const continuation: WalletAssistedSignalContinuation | null =
+      'contractCallIntent' in routedExecution &&
+      routedExecution.contractCallIntent &&
+      typeof routedExecution.contractCallIntent === 'object' &&
+      intentHasSlippageProtection
         ? {
             executedVia: 'ASYMMETRIC',
             requiresWalletSignature: true,
@@ -504,9 +523,7 @@ async function maybeExecuteVaultSignal(params: {
               ),
               side: params.input.side,
               amountIn: params.amountIn,
-              minAmountOut: Number(
-                (routedExecution.contractCallIntent as any).minAmountOut ?? 0,
-              ),
+              minAmountOut: intentMinAmountOut,
               makerAddress: String(
                 (routedExecution.contractCallIntent as any).makerAddress ??
                   params.vault.contractAddress,
@@ -1247,10 +1264,15 @@ export const copytradeService = {
         ? toNumber(input.executionPrice)
         : 0;
     }
+    if (executionPrice <= 0 && latestPairTrade) {
+      executionPrice = decimalToNumber(latestPairTrade.price);
+    }
     if (executionPrice <= 0) {
-      executionPrice = latestPairTrade
-        ? decimalToNumber(latestPairTrade.price)
-        : requestedAmountIn / Math.max(requestedAmountOutMin, 1);
+      // Nunca fabricar preço a partir de amountOutMin: é um floor de slippage,
+      // não um preço — PnL e performance fee sairiam de um número inventado.
+      throw new Error(
+        'Cannot record signal: no execution price source available (no live execution, no provided price and no market trades for this pair)',
+      );
     }
 
     const effectiveAmountIn =
@@ -1281,7 +1303,7 @@ export const copytradeService = {
       });
 
     const openTradeNotional = openTrade
-      ? await resolveOpenTradeNotional(prisma as any, {
+      ? await resolveOpenTradeNotional(prisma, {
           leaderId,
           pairSymbol: input.pairSymbol,
           openingSide: openTrade.side,
@@ -1322,7 +1344,7 @@ export const copytradeService = {
             route,
             maxSlippageBps: effectiveSlippageBps,
             status: isPendingWalletSignature
-              ? ('PENDING_WALLET_SIGNATURE' as any)
+              ? 'PENDING_WALLET_SIGNATURE'
               : liveExecution
                 ? 'EXECUTED'
                 : executionSlices.length > 1
@@ -1590,7 +1612,7 @@ export const copytradeService = {
           entryPrice: openTrade.entryPrice,
           exitPrice: executionPrice,
         });
-        const openTradeNotional = await resolveOpenTradeNotional(tx as any, {
+        const openTradeNotional = await resolveOpenTradeNotional(tx, {
           leaderId,
           pairSymbol: signal.pairSymbol,
           openingSide: openTrade.side,

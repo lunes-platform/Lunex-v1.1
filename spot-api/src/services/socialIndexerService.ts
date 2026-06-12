@@ -89,6 +89,9 @@ const ASYMMETRIC_PAIR_ABI_PATH = path.resolve(
 const PLANCKS_PER_UNIT = 1_000_000_000_000;
 
 function getAnalyticsDb() {
+  // TODO(types): typing this client surfaces a pre-existing bug — the
+  // subquery backfill creates pass `blockHash: null` while the schema column
+  // is a required String. Requires a logic/schema fix before removing the cast.
   const db = prisma as any;
   if (
     typeof db.socialAnalyticsCursor?.findUnique !== 'function' ||
@@ -100,7 +103,7 @@ function getAnalyticsDb() {
   return db;
 }
 
-function toSerializable(value: any): any {
+function toSerializable(value: unknown): unknown {
   if (value == null) return value;
   if (typeof value === 'bigint') return value.toString();
   if (
@@ -119,7 +122,7 @@ function toSerializable(value: any): any {
 }
 
 function collectPrimitiveValues(
-  value: any,
+  value: unknown,
   output: Array<string | number> = [],
 ): Array<string | number> {
   if (value == null) return output;
@@ -143,7 +146,7 @@ function collectPrimitiveValues(
   return output;
 }
 
-function extractAddresses(payload: any, signer?: string | null) {
+function extractAddresses(payload: unknown, signer?: string | null) {
   const values = collectPrimitiveValues(payload);
   const addresses = values
     .filter((value): value is string => typeof value === 'string')
@@ -157,7 +160,7 @@ function extractAddresses(payload: any, signer?: string | null) {
   return Array.from(new Set(addresses));
 }
 
-function extractNumbers(payload: any) {
+function extractNumbers(payload: unknown) {
   return collectPrimitiveValues(payload)
     .map((value) => {
       if (typeof value === 'number') return value;
@@ -169,7 +172,7 @@ function extractNumbers(payload: any) {
     .filter((value) => Number.isFinite(value));
 }
 
-function extractPairSymbol(payload: any) {
+function extractPairSymbol(payload: unknown) {
   const values = collectPrimitiveValues(payload);
   const matched = values
     .filter((value): value is string => typeof value === 'string')
@@ -1274,7 +1277,7 @@ class SocialIndexerService {
       try {
         await this.updateCursor({ status: 'RUNNING', lastError: null });
 
-        const leaders = await (prisma as any).leader
+        const leaders = await prisma.leader
           .findMany({ select: { address: true } })
           .catch(() => []);
         const addresses = (leaders as Array<{ address: string }>).map(
