@@ -10,9 +10,9 @@ groups:
           severity: critical
           environment: production
         annotations:
-          summary: "Lunex API is down"
-          description: "The spot-api service has been unreachable for >1 minute."
-          runbook: "https://github.com/your-org/lunex/blob/main/docs/runbooks/api-down.md"
+          summary: 'Lunex API is down'
+          description: 'The spot-api service has been unreachable for >1 minute.'
+          runbook: 'docs/runbooks/api-down.md'
 
       - alert: APIHighErrorRate
         expr: |
@@ -24,8 +24,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "High API error rate (>5%)"
-          description: "{{ $value | humanizePercentage }} of requests returning 5xx over the last 5 minutes."
+          summary: 'High API error rate (>5%)'
+          description: '{{ $value | humanizePercentage }} of requests returning 5xx over the last 5 minutes.'
+          runbook: 'docs/runbooks/api-down.md'
 
       - alert: APIHighLatency
         expr: |
@@ -37,8 +38,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "API p95 latency >2s"
-          description: "95th percentile latency is {{ $value | humanizeDuration }}."
+          summary: 'API p95 latency >2s'
+          description: '95th percentile latency is {{ $value | humanizeDuration }}.'
+          runbook: 'docs/runbooks/api-down.md'
 
       - alert: APIRateLimitHigh
         expr: |
@@ -48,8 +50,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "High rate of 429 Too Many Requests"
-          description: "More than 10 rate-limited requests per second — possible DDoS or abuse."
+          summary: 'High rate of 429 Too Many Requests'
+          description: 'More than 10 rate-limited requests per second — possible DDoS or abuse.'
+          runbook: 'docs/runbooks/api-down.md'
 
       - alert: WebSocketConnectionsDrop
         expr: count(lunex_ws_connections) > 0 and max(lunex_ws_connections) == 0
@@ -58,8 +61,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "WebSocket connections dropped to zero"
-          description: "No active WebSocket connections — orderbook stream may be down."
+          summary: 'WebSocket connections dropped to zero'
+          description: 'No active WebSocket connections — orderbook stream may be down.'
+          runbook: 'docs/runbooks/websocket.md'
 
   # ── Order Engine ──────────────────────────────────────────────────────────
   - name: lunex_trading
@@ -72,8 +76,9 @@ groups:
           severity: warning
           category: blockchain
         annotations:
-          summary: "Order settlement backlog growing"
-          description: "{{ $value }} settlements pending — possible blockchain connectivity issue."
+          summary: 'Order settlement backlog growing'
+          description: '{{ $value }} settlements pending — possible blockchain connectivity issue.'
+          runbook: 'docs/runbooks/settlement-backlog.md'
 
       - alert: BlockchainNodeUnreachable
         expr: lunex_blockchain_connected == 0
@@ -82,9 +87,97 @@ groups:
           severity: critical
           category: blockchain
         annotations:
-          summary: "Lunes blockchain node unreachable"
-          description: "API cannot connect to the Lunes WS node. Settlements are halted."
-          runbook: "https://github.com/your-org/lunex/blob/main/docs/runbooks/blockchain-down.md"
+          summary: 'Lunes blockchain node unreachable'
+          description: 'API cannot connect to the Lunes WS node. Settlements are halted.'
+          runbook: 'docs/runbooks/blockchain-down.md'
+
+  # ── Listing / Indexer ────────────────────────────────────────────────────
+  - name: lunex_listing_indexer
+    interval: 30s
+    rules:
+      - alert: ListingRelayerDown
+        expr: up{job="listing_relayer"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          environment: production
+          category: listing
+        annotations:
+          summary: 'Listing relayer metrics endpoint is down'
+          description: 'Prometheus cannot scrape listing-relayer for >1 minute. Listing activation/withdraw finalization may stop.'
+          runbook: 'docs/runbooks/listing-relayer.md'
+
+      - alert: ListingRelayerCursorStale
+        expr: lunex_listing_relayer_cursor_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+          environment: production
+          category: listing
+        annotations:
+          summary: 'Listing relayer finalized cursor is stale'
+          description: 'listing-relayer has not advanced its finalized cursor for {{ $value | humanizeDuration }}.'
+          runbook: 'docs/runbooks/listing-relayer.md'
+
+      - alert: ListingRelayerBlockFailures
+        expr: increase(lunex_listing_relayer_failed_blocks_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          environment: production
+          category: listing
+        annotations:
+          summary: 'Listing relayer failed to process finalized block'
+          description: '{{ $value }} finalized block processing failures in the last 10 minutes. Cursor does not advance on failed blocks.'
+          runbook: 'docs/runbooks/listing-relayer.md'
+
+      - alert: ListingRelayerActivationFailures
+        expr: increase(lunex_listing_relayer_activation_failure_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          environment: production
+          category: listing
+        annotations:
+          summary: 'Listing activation proof failed in relayer'
+          description: '{{ $value }} activation API failures in the last 10 minutes.'
+          runbook: 'docs/runbooks/listing-relayer.md'
+
+      - alert: ListingRelayerWithdrawFailures
+        expr: increase(lunex_listing_relayer_withdraw_failure_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          environment: production
+          category: listing
+        annotations:
+          summary: 'Listing withdraw finalization failed in relayer'
+          description: '{{ $value }} withdraw finalization failures in the last 10 minutes.'
+          runbook: 'docs/runbooks/listing-relayer.md'
+
+      - alert: SubQueryNodeDown
+        expr: probe_success{job="internal_http_probe",instance="http://subquery-node:3000/ready"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          environment: production
+          category: indexer
+        annotations:
+          summary: 'SubQuery node readiness probe failed'
+          description: 'subquery-node /ready has failed for >2 minutes. Finalized listing proof verification may stall.'
+          runbook: 'docs/runbooks/indexer-lag.md'
+
+      - alert: SubQueryQueryDown
+        expr: probe_success{job="internal_http_probe",instance="http://subquery-query:3000"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          environment: production
+          category: indexer
+        annotations:
+          summary: 'SubQuery GraphQL query service probe failed'
+          description: 'subquery-query has failed for >2 minutes. API listing proof verification cannot query indexed events.'
+          runbook: 'docs/runbooks/indexer-lag.md'
 
   # ── Infrastructure ────────────────────────────────────────────────────────
   - name: lunex_infra
@@ -98,8 +191,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "High CPU usage ({{ $value | humanize }}%)"
-          description: "CPU usage has been above 85% for 10 minutes on {{ $labels.instance }}."
+          summary: 'High CPU usage ({{ $value | humanize }}%)'
+          description: 'CPU usage has been above 85% for 10 minutes on {{ $labels.instance }}.'
+          runbook: 'docs/runbooks/host-resources.md'
 
       - alert: HighMemoryUsage
         expr: |
@@ -109,8 +203,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "High memory usage ({{ $value | humanize }}%)"
-          description: "Memory usage above 90% on {{ $labels.instance }}."
+          summary: 'High memory usage ({{ $value | humanize }}%)'
+          description: 'Memory usage above 90% on {{ $labels.instance }}.'
+          runbook: 'docs/runbooks/host-resources.md'
 
       - alert: DiskSpaceLow
         expr: |
@@ -120,8 +215,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "Low disk space ({{ $value | humanize }}% free)"
-          description: "Less than 15% disk available on {{ $labels.instance }}."
+          summary: 'Low disk space ({{ $value | humanize }}% free)'
+          description: 'Less than 15% disk available on {{ $labels.instance }}.'
+          runbook: 'docs/runbooks/host-resources.md'
 
       - alert: DiskSpaceCritical
         expr: |
@@ -131,8 +227,9 @@ groups:
           severity: critical
           environment: production
         annotations:
-          summary: "CRITICAL: Disk almost full ({{ $value | humanize }}% free)"
-          description: "Less than 5% disk — services may crash soon!"
+          summary: 'CRITICAL: Disk almost full ({{ $value | humanize }}% free)'
+          description: 'Less than 5% disk — services may crash soon!'
+          runbook: 'docs/runbooks/host-resources.md'
 
   # ── Database ──────────────────────────────────────────────────────────────
   - name: lunex_database
@@ -145,28 +242,48 @@ groups:
           severity: critical
           environment: production
         annotations:
-          summary: "PostgreSQL is down"
-          description: "Database unreachable for >1 minute. All API operations will fail."
+          summary: 'PostgreSQL is down'
+          description: 'Database unreachable for >1 minute. All API operations will fail.'
+          runbook: 'docs/runbooks/database.md'
 
       - alert: DatabaseBackupFailed
-        expr: count(lunex_last_backup_age_seconds) > 0 and max(lunex_last_backup_age_seconds) > 86400 * 1.5
+        # Métrica vem do postgres-exporter (postgres-exporter-queries.yml),
+        # gravada pelo backup.sh. Valor 0 = nunca houve backup com sucesso.
+        expr: (time() - max(lunex_last_backup_timestamp_seconds)) > 86400 * 1.5
         for: 0m
         labels:
           severity: warning
           environment: production
         annotations:
-          summary: "Database backup overdue (>36h)"
-          description: "Last successful backup was {{ $value | humanizeDuration }} ago."
+          summary: 'Database backup overdue (>36h)'
+          description: 'Last successful backup was {{ $value | humanizeDuration }} ago (0 epoch = never).'
+          runbook: 'docs/runbooks/database.md'
+
+      - alert: DatabaseBackupMetricMissing
+        # Fail-closed: se a métrica sumir (exporter quebrado, query removida),
+        # ninguém está vigiando backups — isso também é incidente.
+        expr: absent(lunex_last_backup_timestamp_seconds)
+        for: 15m
+        labels:
+          severity: warning
+          environment: production
+        annotations:
+          summary: 'Backup monitoring metric is absent'
+          description: 'lunex_last_backup_timestamp_seconds não está sendo exportada — cobertura de backup cega.'
+          runbook: 'docs/runbooks/database.md'
 
       - alert: DatabaseConnectionPoolExhausted
+        # lunex_db_connections_waiting agora existe de fato (custom query do
+        # postgres-exporter sobre pg_stat_activity).
         expr: count(lunex_db_connections_waiting) > 0 and max(lunex_db_connections_waiting) > 20
         for: 2m
         labels:
           severity: warning
           environment: production
         annotations:
-          summary: "DB connection pool near exhaustion"
-          description: "{{ $value }} queries waiting for a DB connection."
+          summary: 'DB connection pool near exhaustion'
+          description: '{{ $value }} queries waiting for a DB connection.'
+          runbook: 'docs/runbooks/database.md'
 
   # ── Redis ─────────────────────────────────────────────────────────────────
   - name: lunex_redis
@@ -179,8 +296,9 @@ groups:
           severity: critical
           environment: production
         annotations:
-          summary: "Redis is down"
-          description: "Redis unavailable — nonce management and rate limiting are disabled."
+          summary: 'Redis is down'
+          description: 'Redis unavailable — nonce management and rate limiting are disabled.'
+          runbook: 'docs/runbooks/redis.md'
 
       - alert: RedisHighMemory
         expr: |
@@ -193,8 +311,9 @@ groups:
           severity: warning
           environment: production
         annotations:
-          summary: "Redis memory usage above 85%"
-          description: "Redis at {{ $value | humanizePercentage }} capacity — evictions may occur."
+          summary: 'Redis memory usage above 85%'
+          description: 'Redis at {{ $value | humanizePercentage }} capacity — evictions may occur.'
+          runbook: 'docs/runbooks/redis.md'
 
   # ── Security ──────────────────────────────────────────────────────────────
   - name: lunex_security
@@ -208,8 +327,9 @@ groups:
           severity: warning
           category: security
         annotations:
-          summary: "Unusual order submission rate ({{ $value | humanize }}/s)"
-          description: "Order volume spike — possible bot activity or attack vector."
+          summary: 'Unusual order submission rate ({{ $value | humanize }}/s)'
+          description: 'Order volume spike — possible bot activity or attack vector.'
+          runbook: 'docs/runbooks/security-alerts.md'
 
       - alert: MultipleFailedAuthAttempts
         expr: |
@@ -219,8 +339,9 @@ groups:
           severity: warning
           category: security
         annotations:
-          summary: "Multiple auth failures ({{ $value | humanize }}/s)"
-          description: "Possible brute-force or credential stuffing attack."
+          summary: 'Multiple auth failures ({{ $value | humanize }}/s)'
+          description: 'Possible brute-force or credential stuffing attack.'
+          runbook: 'docs/runbooks/security-alerts.md'
 
       - alert: SSLCertificateExpiringSoon
         expr: |
@@ -230,8 +351,9 @@ groups:
           severity: warning
           category: security
         annotations:
-          summary: "SSL certificate expires in {{ $value | humanize }} days"
-          description: "Certificate for {{ $labels.instance }} will expire soon."
+          summary: 'SSL certificate expires in {{ $value | humanize }} days'
+          description: 'Certificate for {{ $labels.instance }} will expire soon.'
+          runbook: 'docs/runbooks/ssl-certificate.md'
 
       - alert: SSLCertificateCritical
         expr: |
@@ -241,5 +363,6 @@ groups:
           severity: critical
           category: security
         annotations:
-          summary: "SSL certificate expires in {{ $value | humanize }} days — URGENT"
-          description: "Certbot renewal may have failed. Immediate action required."
+          summary: 'SSL certificate expires in {{ $value | humanize }} days — URGENT'
+          description: 'Certbot renewal may have failed. Immediate action required.'
+          runbook: 'docs/runbooks/ssl-certificate.md'

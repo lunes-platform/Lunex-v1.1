@@ -1,7 +1,9 @@
 global:
   resolve_timeout: 5m
   smtp_from: 'lunex-alerts@lunes.io'
-  smtp_smarthost: '${SMTP_HOST:-smtp.gmail.com}:587'
+  # Default de SMTP_HOST vem do compose (docker-compose.prod.yml); sintaxe de
+  # default inline (dois-pontos-hífen) não é suportada pelo sed do entrypoint.
+  smtp_smarthost: '${SMTP_HOST}:587'
   smtp_auth_username: '${SMTP_USER}'
   smtp_auth_password: '${SMTP_PASSWORD}'
   smtp_require_tls: true

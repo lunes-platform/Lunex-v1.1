@@ -158,7 +158,9 @@ const resourceDefinitions = [
 ] as const;
 
 function generateNonce(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${Date.now()}${Math.floor(Math.random() * 1000)
+    .toString()
+    .padStart(3, '0')}`;
 }
 
 function buildSpotOrderSignMessage(input: {
@@ -174,8 +176,21 @@ function buildSpotOrderSignMessage(input: {
   return `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}:${input.timestamp}`;
 }
 
-function buildSpotCancelSignMessage(orderId: string) {
-  return `lunex-cancel:${orderId}`;
+function buildSpotCancelSignMessage(input: {
+  address: string;
+  orderId: string;
+  nonce: string;
+  timestamp: number;
+}) {
+  return buildWalletActionSignMessage({
+    action: 'orders.cancel',
+    address: input.address,
+    nonce: input.nonce,
+    timestamp: input.timestamp,
+    fields: {
+      orderId: input.orderId,
+    },
+  });
 }
 
 function getServerEntrypoint() {
@@ -251,12 +266,12 @@ function buildSpotTradingDocs() {
     '',
     '1. Call `prepare_spot_cancel_signature` with `orderId` and `makerAddress`.',
     '2. Sign the returned cancel message externally.',
-    '3. Call `cancel_spot_order` with `orderId`, `makerAddress`, and `signature`.',
+    '3. Call `cancel_spot_order` with `orderId`, `makerAddress`, `nonce`, `timestamp`, and `signature`.',
     '',
     '## Message formats',
     '',
     '- Order: `lunex-order:{pairSymbol}:{side}:{type}:{price||0}:{stopPrice||0}:{amount}:{nonce}:{timestamp}`',
-    '- Cancel: `lunex-cancel:{orderId}`',
+    '- Cancel: wallet action `lunex-auth:orders.cancel` with fields `address`, `orderId`, `nonce`, and `timestamp`.',
     '',
     '## Notes',
     '',
@@ -735,8 +750,18 @@ const toolDefinitions = [
           description:
             'External wallet signature for the cancel signing message.',
         },
+        nonce: {
+          type: 'string',
+          description:
+            'Nonce returned by prepare_spot_cancel_signature for this cancel request.',
+        },
+        timestamp: {
+          type: 'number',
+          description:
+            'Unix-ms timestamp returned by prepare_spot_cancel_signature.',
+        },
       },
-      required: ['orderId', 'makerAddress', 'signature'],
+      required: ['orderId', 'makerAddress', 'signature', 'nonce', 'timestamp'],
       additionalProperties: false,
     },
   },
@@ -2080,6 +2105,14 @@ function getOptionalPositiveInteger(args: JsonObject, key: string) {
   return value;
 }
 
+function getRequiredPositiveInteger(args: JsonObject, key: string) {
+  const value = getOptionalPositiveInteger(args, key);
+  if (value === undefined) {
+    throw new McpError(ErrorCode.InvalidParams, `${key} is required`);
+  }
+  return value;
+}
+
 function assertPositiveNumberString(value: string, field: string) {
   if (!Number.isFinite(Number(value)) || Number(value) <= 0) {
     throw new McpError(
@@ -2256,6 +2289,18 @@ function toQuery(params: Record<string, string | number | undefined>) {
   }
   const query = search.toString();
   return query ? `?${query}` : '';
+}
+
+function signedReadHeaders(signed: {
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}) {
+  return {
+    'X-Lunex-Nonce': signed.nonce,
+    'X-Lunex-Timestamp': String(signed.timestamp),
+    'X-Lunex-Signature': signed.signature,
+  };
 }
 
 async function requestJson(path: string, init?: RequestInit, apiKey?: string) {
@@ -2557,12 +2602,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case 'prepare_spot_cancel_signature': {
       const orderId = getRequiredString(args, 'orderId');
       const makerAddress = getRequiredString(args, 'makerAddress');
+      const nonce = generateNonce();
+      const timestamp = Date.now();
 
       return textResult({
-        message: buildSpotCancelSignMessage(orderId),
+        message: buildSpotCancelSignMessage({
+          address: makerAddress,
+          orderId,
+          nonce,
+          timestamp,
+        }),
         cancellation: {
           orderId,
           makerAddress,
+          nonce,
+          timestamp,
         },
       });
     }
@@ -2570,6 +2624,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const orderId = getRequiredString(args, 'orderId');
       const makerAddress = getRequiredString(args, 'makerAddress');
       const signature = getRequiredString(args, 'signature');
+      const nonce = getRequiredString(args, 'nonce');
+      const timestamp = getRequiredPositiveInteger(args, 'timestamp');
 
       const data = await requestJson(
         `/api/v1/orders/${encodeURIComponent(orderId)}`,
@@ -2577,6 +2633,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           method: 'DELETE',
           body: JSON.stringify({
             makerAddress,
+            nonce,
+            timestamp,
             signature,
           }),
         },
@@ -2607,16 +2665,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
+      const signedHeaders = {
+        nonce: signed.nonce,
+        timestamp: signed.timestamp,
+        signature: signed.signature,
+      };
       const query = toQuery({
         makerAddress,
         status,
         limit,
         offset,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       });
-      const data = await requestJson(`/api/v1/orders${query}`);
+      const data = await requestJson(`/api/v1/orders${query}`, {
+        headers: signedReadHeaders(signedHeaders),
+      });
       return textResult(data);
     }
     case 'get_user_trade_history': {
@@ -2641,15 +2703,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
+      const signedHeaders = {
+        nonce: signed.nonce,
+        timestamp: signed.timestamp,
+        signature: signed.signature,
+      };
       const query = toQuery({
         address,
         limit,
         offset,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       });
-      const data = await requestJson(`/api/v1/trades${query}`);
+      const data = await requestJson(`/api/v1/trades${query}`, {
+        headers: signedReadHeaders(signedHeaders),
+      });
       return textResult(data);
     }
     case 'list_social_leaders': {
@@ -2685,14 +2751,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
-      const query = toQuery({
-        viewerAddress,
+      const signedHeaders = {
         nonce: signed.nonce,
         timestamp: signed.timestamp,
         signature: signed.signature,
+      };
+      const query = toQuery({
+        viewerAddress,
       });
       const data = await requestJson(
         `/api/v1/social/leaders/${leaderId}${query}`,
+        { headers: signedReadHeaders(signedHeaders) },
       );
       return textResult(data);
     }
@@ -2721,13 +2790,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
-      const query = toQuery({
-        address,
+      const signedHeaders = {
         nonce: signed.nonce,
         timestamp: signed.timestamp,
         signature: signed.signature,
+      };
+      const query = toQuery({
+        address,
       });
-      const data = await requestJson(`/api/v1/copytrade/positions${query}`);
+      const data = await requestJson(`/api/v1/copytrade/positions${query}`, {
+        headers: signedReadHeaders(signedHeaders),
+      });
       return textResult(data);
     }
     case 'get_copytrade_activity': {
@@ -2750,14 +2823,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
-      const query = toQuery({
-        address,
-        limit,
+      const signedHeaders = {
         nonce: signed.nonce,
         timestamp: signed.timestamp,
         signature: signed.signature,
+      };
+      const query = toQuery({
+        address,
+        limit,
       });
-      const data = await requestJson(`/api/v1/copytrade/activity${query}`);
+      const data = await requestJson(`/api/v1/copytrade/activity${query}`, {
+        headers: signedReadHeaders(signedHeaders),
+      });
       return textResult(data);
     }
     case 'get_vault_executions': {
@@ -3479,13 +3556,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
 
-      const query = toQuery({
+      const signedHeaders = {
         nonce: signed.nonce,
         timestamp: signed.timestamp,
         signature: signed.signature,
-      });
+      };
       const data = await requestJson(
-        `/api/v1/strategies/followed/${encodeURIComponent(walletAddress)}${query}`,
+        `/api/v1/strategies/followed/${encodeURIComponent(walletAddress)}`,
+        { headers: signedReadHeaders(signedHeaders) },
       );
       return textResult(data);
     }

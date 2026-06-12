@@ -81,6 +81,7 @@ services:
       context: ../lunes-dex-main
       dockerfile: ../docker/Dockerfile.frontend
       args:
+        LUNEX_FRONTEND_STRICT_BUILD: "false"
         REACT_APP_NETWORK: testnet
         REACT_APP_SPOT_API_URL: ""
         REACT_APP_RPC_MAINNET: ${SANDBOX_RPC_URL:-wss://sandbox.lunes.io/ws}

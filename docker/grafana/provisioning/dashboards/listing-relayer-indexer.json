@@ -1,0 +1,191 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [{ "expr": "up{job=\"listing_relayer\"}", "refId": "A" }],
+      "title": "Relayer Up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "displayMode": "basic" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 300 },
+              { "color": "red", "value": 900 }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 0 },
+      "id": 2,
+      "targets": [{ "expr": "lunex_listing_relayer_cursor_age_seconds", "refId": "A" }],
+      "title": "Cursor Age",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "none" } },
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 0 },
+      "id": 3,
+      "targets": [{ "expr": "lunex_listing_relayer_last_finalized_block", "refId": "A" }],
+      "title": "Last Finalized Block",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 14, "y": 0 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "probe_success{job=\"internal_http_probe\",instance=\"http://subquery-node:3000/ready\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "SubQuery Node Ready",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "text": "DOWN" } }, "type": "value" },
+            { "options": { "1": { "color": "green", "text": "UP" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 4, "w": 5, "x": 19, "y": 0 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "probe_success{job=\"internal_http_probe\",instance=\"http://subquery-query:3000\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "SubQuery Query Up",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "id": 6,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        { "expr": "rate(lunex_listing_relayer_processed_blocks_total[5m])", "legendFormat": "processed blocks/s", "refId": "A" },
+        { "expr": "rate(lunex_listing_relayer_failed_blocks_total[5m])", "legendFormat": "failed blocks/s", "refId": "B" }
+      ],
+      "title": "Finalized Block Processing",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "id": 7,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        { "expr": "rate(lunex_listing_relayer_activation_success_total[5m])", "legendFormat": "activation success/s", "refId": "A" },
+        { "expr": "rate(lunex_listing_relayer_activation_failure_total[5m])", "legendFormat": "activation failure/s", "refId": "B" },
+        { "expr": "rate(lunex_listing_relayer_withdraw_success_total[5m])", "legendFormat": "withdraw success/s", "refId": "C" },
+        { "expr": "rate(lunex_listing_relayer_withdraw_failure_total[5m])", "legendFormat": "withdraw failure/s", "refId": "D" }
+      ],
+      "title": "API Proof Calls",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 12 },
+      "id": 8,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [{ "expr": "lunex_listing_relayer_cursor_age_seconds", "legendFormat": "cursor age", "refId": "A" }],
+      "title": "Relayer Cursor Age",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 12 },
+      "id": 9,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "probe_success{job=\"internal_http_probe\",instance=~\"http://subquery-.*\"}",
+          "legendFormat": "{{ instance }}",
+          "refId": "A"
+        },
+        {
+          "expr": "probe_success{job=\"internal_http_probe\",instance=\"http://listing-relayer:9471/metrics\"}",
+          "legendFormat": "{{ instance }}",
+          "refId": "B"
+        }
+      ],
+      "title": "Internal Service Probes",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["lunex", "listing", "relayer", "subquery"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Lunex Listing Relayer and Indexer",
+  "uid": "lunex-listing-relayer-indexer",
+  "version": 1
+}

@@ -44,6 +44,12 @@ fi
 
 mkdir -p "${BACKUP_DIR}"
 
+# Tabela de status lida pelo postgres-exporter (postgres-exporter-queries.yml)
+# para a métrica lunex_last_backup_timestamp_seconds. Criada aqui (e não no
+# schema Prisma) porque pertence à operação, não à aplicação.
+PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -q -c \
+  "CREATE TABLE IF NOT EXISTS public.ops_backup_status (id int PRIMARY KEY, last_success timestamptz NOT NULL);"
+
 echo "[backup] Starting backup of ${DB_NAME} at ${TIMESTAMP}"
 
 PGPASSWORD="${DB_PASSWORD}" pg_dump \
@@ -77,5 +83,12 @@ fi
 # Prune old local backups
 find "${BACKUP_DIR}" -name "lunex_*.sql.gz" -mtime "+${RETENTION_DAYS}" -delete
 echo "[backup] Pruned local backups older than ${RETENTION_DAYS} days"
+
+# Marca sucesso APÓS dump + upload (set -e garante que não chegamos aqui em
+# falha). Alimenta lunex_last_backup_timestamp_seconds no postgres-exporter.
+PGPASSWORD="${DB_PASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${DB_USER}" -d "${DB_NAME}" -q -c \
+  "INSERT INTO public.ops_backup_status (id, last_success) VALUES (1, now())
+   ON CONFLICT (id) DO UPDATE SET last_success = now();"
+echo "[backup] Success timestamp recorded for monitoring"
 
 echo "[backup] Done"
