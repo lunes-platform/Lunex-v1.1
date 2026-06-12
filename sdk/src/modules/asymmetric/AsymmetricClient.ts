@@ -16,6 +16,18 @@ type SignedWalletAuth = {
   signMessage?: (message: string) => Promise<string>;
 };
 
+function signedReadHeaders(signed: {
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}) {
+  return {
+    'X-Lunex-Nonce': signed.nonce,
+    'X-Lunex-Timestamp': String(signed.timestamp),
+    'X-Lunex-Signature': signed.signature,
+  };
+}
+
 /**
  * AsymmetricClient — SDK module for Lunex V2 Asymmetric Liquidity.
  *
@@ -105,10 +117,8 @@ export class AsymmetricModule {
       '/api/v1/asymmetric/strategies',
       {
         address: userAddress,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       },
+      { headers: signedReadHeaders(signed) },
     );
     return response.map((entry) => this.normalizeStrategyStatus(entry));
   }
@@ -186,10 +196,8 @@ export class AsymmetricModule {
       `/api/v1/asymmetric/strategies/${strategyId}`,
       {
         userAddress,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       },
+      { headers: signedReadHeaders(signed) },
     );
     return this.normalizeStrategyStatus(response);
   }
@@ -284,10 +292,8 @@ export class AsymmetricModule {
       {
         userAddress,
         limit,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       },
+      { headers: signedReadHeaders(signed) },
     );
   }
 

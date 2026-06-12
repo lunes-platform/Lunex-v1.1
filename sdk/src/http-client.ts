@@ -49,6 +49,36 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Error payload occasionally returned by the API as a flat shape
+ * (`{ error: string, details? }`) instead of the structured `ApiError`.
+ */
+type FlatErrorPayload = {
+  error: string;
+  details?: unknown;
+};
+
+/**
+ * Typed error produced by the HTTP client. Carries the same runtime fields
+ * previously attached via `as any` (`code`, `details`, `statusCode`),
+ * now with proper types. Intentionally not part of the public SDK surface.
+ */
+class LunexApiError extends Error {
+  readonly code?: string;
+  readonly details?: unknown;
+  readonly statusCode?: number;
+
+  constructor(
+    message: string,
+    options: { code?: string; details?: unknown; statusCode?: number } = {},
+  ) {
+    super(message);
+    this.code = options.code;
+    this.details = options.details;
+    this.statusCode = options.statusCode;
+  }
+}
+
 export class HttpClient {
   private instance: AxiosInstance;
   private authToken: string | null = null;
@@ -152,7 +182,7 @@ export class HttpClient {
     params?: unknown,
     options?: HttpRequestOptions,
   ): Promise<T> {
-    const response = await this.instance.get<any, unknown>(url, {
+    const response = await this.instance.get<unknown, unknown>(url, {
       params,
       lunexOptions: options,
     } as AxiosConfigWithLunexOptions);
@@ -164,7 +194,7 @@ export class HttpClient {
     data?: unknown,
     options?: HttpRequestOptions,
   ): Promise<T> {
-    const response = await this.instance.post<any, unknown>(url, data, {
+    const response = await this.instance.post<unknown, unknown>(url, data, {
       lunexOptions: options,
     } as AxiosConfigWithLunexOptions);
     return this.unwrapResponse<T>(response);
@@ -175,7 +205,7 @@ export class HttpClient {
     data?: unknown,
     options?: HttpRequestOptions,
   ): Promise<T> {
-    const response = await this.instance.put<any, unknown>(url, data, {
+    const response = await this.instance.put<unknown, unknown>(url, data, {
       lunexOptions: options,
     } as AxiosConfigWithLunexOptions);
     return this.unwrapResponse<T>(response);
@@ -186,7 +216,7 @@ export class HttpClient {
     data?: unknown,
     options?: HttpRequestOptions,
   ): Promise<T> {
-    const response = await this.instance.patch<any, unknown>(url, data, {
+    const response = await this.instance.patch<unknown, unknown>(url, data, {
       lunexOptions: options,
     } as AxiosConfigWithLunexOptions);
     return this.unwrapResponse<T>(response);
@@ -197,7 +227,7 @@ export class HttpClient {
     params?: unknown,
     options?: HttpRequestOptions,
   ): Promise<T> {
-    const response = await this.instance.delete<any, unknown>(url, {
+    const response = await this.instance.delete<unknown, unknown>(url, {
       data: params,
       params,
       lunexOptions: options,
@@ -206,22 +236,25 @@ export class HttpClient {
   }
 
   private handleError(error: AxiosError<ApiError>): Error {
-    const responseData = error.response?.data as any;
+    const responseData = error.response?.data as
+      | ApiError
+      | FlatErrorPayload
+      | undefined;
+    const rawError = responseData?.error;
 
-    if (typeof responseData?.error === 'string') {
-      const customError = new Error(responseData.error);
-      (customError as any).details = responseData.details;
-      (customError as any).statusCode = error.response?.status;
-      return customError;
+    if (typeof rawError === 'string') {
+      return new LunexApiError(rawError, {
+        details: (responseData as FlatErrorPayload).details,
+        statusCode: error.response?.status,
+      });
     }
 
-    if (responseData?.error) {
-      const apiError = responseData.error as ApiError['error'];
-      const customError = new Error(apiError.message);
-      (customError as any).code = apiError.code;
-      (customError as any).details = apiError.details;
-      (customError as any).statusCode = error.response?.status;
-      return customError;
+    if (rawError) {
+      return new LunexApiError(rawError.message, {
+        code: rawError.code,
+        details: rawError.details,
+        statusCode: error.response?.status,
+      });
     }
 
     if (error.code === 'ECONNABORTED') {

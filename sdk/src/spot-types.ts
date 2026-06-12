@@ -175,6 +175,8 @@ export interface CreateSpotOrderInput {
 
 export interface CancelSpotOrderInput {
   makerAddress: string;
+  nonce: string;
+  timestamp: number;
   signature: string;
 }
 
@@ -196,6 +198,8 @@ export interface PrepareSignedSpotOrderInput {
 export interface PrepareSignedCancelOrderInput {
   orderId: string;
   makerAddress: string;
+  nonce?: string;
+  timestamp?: number;
   signMessage: (message: string) => Promise<string>;
 }
 

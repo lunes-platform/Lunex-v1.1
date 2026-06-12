@@ -21,6 +21,7 @@ import {
   getTokenDecimals,
   COMMON_DECIMALS,
 } from '../utils';
+import { EndpointNotAvailableError } from '../errors';
 
 export class TokensModule {
   constructor(private http: HttpClient) {}
@@ -30,7 +31,11 @@ export class TokensModule {
   // ============================================
 
   /**
-   * Get all listed tokens
+   * Get all listed tokens (token registry — GET /api/v1/tokens)
+   *
+   * Note: the registry endpoint filters by `verified`/`trusted` and does
+   * not paginate, so `pagination` is `undefined` at runtime and the
+   * page/limit/sort options are ignored server-side.
    * @param options - Filter and pagination options
    */
   async getTokens(options?: {
@@ -40,25 +45,30 @@ export class TokensModule {
     sort?: 'marketCap' | 'volume24h' | 'priceChange24h';
     order?: 'asc' | 'desc';
   }): Promise<{ tokens: TokenWithDecimals[]; pagination: any }> {
-    return this.http.get('/public/tokens', options);
+    return this.http.get('/api/v1/tokens', options);
   }
 
   /**
-   * Get token by address
+   * Get token by address (token registry — GET /api/v1/tokens/:address)
    * @param address - Token contract address
    */
   async getToken(address: string): Promise<TokenWithDecimals> {
-    return this.http.get(`/public/token/${address}`);
+    return this.http.get(`/api/v1/tokens/${address}`);
   }
 
   /**
-   * Get token decimals
+   * Get token decimals (derived from GET /api/v1/tokens/:address)
    * @param address - Token contract address
    */
   async getTokenDecimals(
     address: string,
   ): Promise<{ address: string; decimals: number; symbol: string }> {
-    return this.http.get(`/public/token/${address}/decimals`);
+    const token = await this.getToken(address);
+    return {
+      address,
+      decimals: token.decimals,
+      symbol: token.symbol,
+    };
   }
 
   /**
@@ -82,37 +92,65 @@ export class TokensModule {
 
   /**
    * Get all native assets available on Lunes
+   * @deprecated spot-api does not expose `/public/native-assets` (this
+   * call always returned HTTP 404). Native asset metadata is a chain-level
+   * read via `@polkadot/api`. Always throws
+   * {@link EndpointNotAvailableError}.
    */
   async getNativeAssets(): Promise<NativeAssetInfo[]> {
-    return this.http.get('/public/native-assets');
+    throw new EndpointNotAvailableError(
+      'tokens.getNativeAssets',
+      'native asset metadata is a chain-level read. Query the Lunes node via @polkadot/api.',
+    );
   }
 
   /**
    * Get native asset info
-   * @param assetId - Native asset ID
+   * @param _assetId - Native asset ID
+   * @deprecated spot-api does not expose `/public/native-asset/*` (this
+   * call always returned HTTP 404). Native asset metadata is a chain-level
+   * read via `@polkadot/api`. Always throws
+   * {@link EndpointNotAvailableError}.
    */
-  async getNativeAsset(assetId: string): Promise<NativeAssetInfo> {
-    return this.http.get(`/public/native-asset/${assetId}`);
+  async getNativeAsset(_assetId: string): Promise<NativeAssetInfo> {
+    throw new EndpointNotAvailableError(
+      'tokens.getNativeAsset',
+      'native asset metadata is a chain-level read. Query the Lunes node via @polkadot/api.',
+    );
   }
 
   /**
    * Wrap native asset to PSP22 token
-   * @param params - Wrap parameters
+   * @param _params - Wrap parameters
+   * @deprecated spot-api does not expose `/tokens/wrap` (this call always
+   * returned HTTP 404). Wrapping is an on-chain transaction on the asset
+   * wrapper contract that must be signed by the user's wallet. Always
+   * throws {@link EndpointNotAvailableError}.
    */
   async wrapNativeAsset(
-    params: WrapParams,
+    _params: WrapParams,
   ): Promise<TransactionResult & { wrappedAmount: string }> {
-    return this.http.post('/tokens/wrap', params);
+    throw new EndpointNotAvailableError(
+      'tokens.wrapNativeAsset',
+      'wrapping a native asset is an on-chain transaction on the wrapper contract that must be signed by the wallet via @polkadot/api-contract.',
+    );
   }
 
   /**
    * Unwrap PSP22 token to native asset
-   * @param params - Unwrap parameters
+   * @param _params - Unwrap parameters
+   * @deprecated spot-api does not expose `/tokens/unwrap` (this call
+   * always returned HTTP 404). Unwrapping is an on-chain transaction on
+   * the asset wrapper contract that must be signed by the user's wallet.
+   * Always throws {@link EndpointNotAvailableError}.
    */
   async unwrapToNative(
-    params: UnwrapParams,
+    _params: UnwrapParams,
   ): Promise<TransactionResult & { nativeAmount: string }> {
-    return this.http.post('/tokens/unwrap', params);
+    throw new EndpointNotAvailableError(
+      'tokens.unwrapToNative',
+      'unwrapping to a native asset is an on-chain transaction on the wrapper contract that must be signed by the wallet via @polkadot/api-contract.',
+    );
   }
 
   // ============================================
@@ -121,53 +159,37 @@ export class TokensModule {
 
   /**
    * Get user balance for a token
-   * @param address - User address
-   * @param tokenAddress - Token address
+   * @param _address - User address
+   * @param _tokenAddress - Token address
+   * @deprecated spot-api does not expose `/balances/*` endpoints (this
+   * call always returned HTTP 404). Token balances are on-chain reads
+   * (PSP22 `balance_of`). Agents can use `sdk.agents` portfolio
+   * (GET /api/v1/trade/portfolio). Always throws
+   * {@link EndpointNotAvailableError}.
    */
   async getBalance(
-    address: string,
-    tokenAddress: string,
+    _address: string,
+    _tokenAddress: string,
   ): Promise<UserBalance> {
-    const response = await this.http.get(
-      `/balances/${address}/${tokenAddress}`,
+    throw new EndpointNotAvailableError(
+      'tokens.getBalance',
+      'token balances are on-chain reads (PSP22 balance_of). Query the chain via @polkadot/api-contract, or use the agent portfolio endpoint (GET /api/v1/trade/portfolio) for agent accounts.',
     );
-    return this.formatUserBalance(response);
   }
 
   /**
    * Get all user balances
-   * @param address - User address
+   * @param _address - User address
+   * @deprecated spot-api does not expose `/balances/*` endpoints (this
+   * call always returned HTTP 404). Balances are on-chain reads. Agents
+   * can use `sdk.agents` portfolio (GET /api/v1/trade/portfolio). Always
+   * throws {@link EndpointNotAvailableError}.
    */
-  async getAllBalances(address: string): Promise<PortfolioSummary> {
-    const response = await this.http.get<{
-      balances: any[];
-      totalValueUSD: string;
-      change24h: string;
-      change24hPercent: string;
-    }>(`/balances/${address}`);
-    return {
-      totalValueUSD: response.totalValueUSD,
-      change24h: response.change24h,
-      change24hPercent: response.change24hPercent,
-      balances: response.balances.map((b: any) => this.formatUserBalance(b)),
-    };
-  }
-
-  /**
-   * Format a balance with proper decimals
-   */
-  private formatUserBalance(data: any): UserBalance {
-    const token = data.token as TokenWithDecimals;
-    return {
-      token,
-      balance: data.balance,
-      formattedBalance: formatAmountWithDecimals(
-        data.balance,
-        token.decimals,
-        6,
-      ),
-      valueUSD: data.valueUSD || '0',
-    };
+  async getAllBalances(_address: string): Promise<PortfolioSummary> {
+    throw new EndpointNotAvailableError(
+      'tokens.getAllBalances',
+      'wallet balances are on-chain reads. Query the chain via @polkadot/api, or use the agent portfolio endpoint (GET /api/v1/trade/portfolio) for agent accounts.',
+    );
   }
 
   // ============================================
@@ -256,26 +278,39 @@ export class TokensModule {
 
   /**
    * Get current price for token
-   * @param address - Token address
+   * @param _address - Token address
+   * @deprecated spot-api does not expose `/public/price/*` endpoints
+   * (this call always returned HTTP 404). Prices are keyed by pair
+   * symbol, not token address — use the pair ticker
+   * (GET /api/v1/pairs/:symbol/ticker) via `sdk.market`. Always throws
+   * {@link EndpointNotAvailableError}.
    */
-  async getPrice(address: string): Promise<{
+  async getPrice(_address: string): Promise<{
     price: string;
     priceUSD: string;
     priceChange24h: string;
   }> {
-    return this.http.get(`/public/price/${address}`);
+    throw new EndpointNotAvailableError(
+      'tokens.getPrice',
+      'no per-token-address price endpoint exists. Prices are keyed by pair symbol: use GET /api/v1/pairs/:symbol/ticker via sdk.market.',
+    );
   }
 
   /**
    * Get prices for multiple tokens
-   * @param addresses - Array of token addresses
+   * @param _addresses - Array of token addresses
+   * @deprecated spot-api does not expose `/public/prices` (this call
+   * always returned HTTP 404). Prices are keyed by pair symbol, not token
+   * address — use the pair ticker (GET /api/v1/pairs/:symbol/ticker) via
+   * `sdk.market`. Always throws {@link EndpointNotAvailableError}.
    */
   async getPrices(
-    addresses: string[],
+    _addresses: string[],
   ): Promise<Record<string, { price: string; priceChange24h: string }>> {
-    return this.http.get('/public/prices', {
-      addresses: addresses.join(','),
-    });
+    throw new EndpointNotAvailableError(
+      'tokens.getPrices',
+      'no per-token-address prices endpoint exists. Prices are keyed by pair symbol: use GET /api/v1/pairs/:symbol/ticker via sdk.market.',
+    );
   }
 
   /**
