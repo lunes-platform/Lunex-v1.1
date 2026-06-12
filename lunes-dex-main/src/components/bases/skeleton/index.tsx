@@ -24,14 +24,6 @@ const SkeletonBase = styled.div<{
   animation: ${shimmer} 1.5s infinite linear;
 `
 
-export const SkeletonBox: React.FC<{
-  width?: string
-  height?: string
-  radius?: string
-}> = ({ width, height, radius }) => (
-  <SkeletonBase $width={width} $height={height} $radius={radius} />
-)
-
 const CardSkeletonWrapper = styled.div`
   background: #232323;
   border: 1px solid #2a2a2c;

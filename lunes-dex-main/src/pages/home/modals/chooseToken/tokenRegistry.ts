@@ -21,13 +21,13 @@ export interface Token {
   isNative?: boolean
 }
 
-const tokens: Token[] = [
+const allTokens: Token[] = [
   {
     id: 0,
     icon: '/img/lunes-green.svg',
     acronym: 'WLUNES',
     token: 'Wrapped Lunes',
-    tokenPrice: '$ 0.00',
+    tokenPrice: 'Unavailable',
     address: TOKEN_ADDRESSES.WLUNES,
     decimals: 8,
     isNative: false
@@ -37,7 +37,7 @@ const tokens: Token[] = [
     icon: '/img/lusdt.svg',
     acronym: 'LUSDT',
     token: 'Lunes USD Tether',
-    tokenPrice: '$ 1.00',
+    tokenPrice: 'Unavailable',
     address: TOKEN_ADDRESSES.LUSDT,
     decimals: 6
   },
@@ -46,7 +46,7 @@ const tokens: Token[] = [
     icon: '/img/lbtc.svg',
     acronym: 'LBTC',
     token: 'Lunes Bitcoin',
-    tokenPrice: '$ 0.00',
+    tokenPrice: 'Unavailable',
     address: TOKEN_ADDRESSES.LBTC,
     decimals: 8
   },
@@ -55,7 +55,7 @@ const tokens: Token[] = [
     icon: '/img/leth.svg',
     acronym: 'LETH',
     token: 'Lunes Ethereum',
-    tokenPrice: '$ 0.00',
+    tokenPrice: 'Unavailable',
     address: TOKEN_ADDRESSES.LETH,
     decimals: 8
   },
@@ -64,7 +64,7 @@ const tokens: Token[] = [
     icon: '/img/gmc.svg',
     acronym: 'GMC',
     token: 'Game Coin',
-    tokenPrice: '$ 0.00',
+    tokenPrice: 'Unavailable',
     address: TOKEN_ADDRESSES.GMC,
     decimals: 8
   },
@@ -73,10 +73,21 @@ const tokens: Token[] = [
     icon: '/img/up.svg',
     acronym: 'LUP',
     token: 'Lunes UP',
-    tokenPrice: '$ 0.00',
+    tokenPrice: 'Unavailable',
     address: TOKEN_ADDRESSES.LUP,
     decimals: 8
   }
 ]
+
+// Token sem endereço configurado no env não pode aparecer na UI: selecioná-lo
+// produziria queries/aprovações contra address vazio, falhando de forma
+// confusa. Filtrar aqui é fail-closed e o warn aponta a env var que falta.
+const tokens: Token[] = allTokens.filter((t) => {
+  if (t.address) return true
+  console.warn(
+    `[tokenRegistry] ${t.acronym} sem endereço configurado (REACT_APP_TOKEN_${t.acronym}) — removido da lista de tokens`
+  )
+  return false
+})
 
 export default tokens

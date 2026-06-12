@@ -25,17 +25,9 @@ export const fadeIn = keyframes`
   from { opacity: 0; }
   to   { opacity: 1; }
 `
-export const floatY = keyframes`
-  0%, 100% { transform: translateY(0) rotate(var(--r,0deg)); }
-  50%       { transform: translateY(-10px) rotate(var(--r,0deg)); }
-`
 export const orbitSpin = keyframes`
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
-`
-export const counterSpin = keyframes`
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(-360deg); }
 `
 export const shimmer = keyframes`
   0%   { background-position: -200% 0; }

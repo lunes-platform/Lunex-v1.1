@@ -1,5 +1,5 @@
-const MARGIN_API_URL =
-  process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
+import { signedAuthHeaders } from '../utils/signing'
+import { SPOT_API_URL } from '../config/api'
 
 interface SignedReadAuth {
   nonce: string
@@ -97,7 +97,7 @@ export interface MarginOverview {
 }
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${MARGIN_API_URL}${path}`, {
+  const response = await fetch(`${SPOT_API_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(options?.headers ?? {})
@@ -119,7 +119,8 @@ export const marginApi = {
     auth: SignedReadAuth
   ): Promise<MarginOverview> {
     return await fetchApi<MarginOverview>(
-      `/api/v1/margin?address=${encodeURIComponent(address)}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+      `/api/v1/margin?address=${encodeURIComponent(address)}`,
+      { headers: signedAuthHeaders(auth) }
     )
   },
 

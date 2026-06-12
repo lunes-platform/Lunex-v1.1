@@ -61,8 +61,8 @@ const ConfirmSwap = ({ ...props }: ConfirmSwapProps) => {
           I accept the updated price
         </B.Checkbox>
         <B.Span textAlign="left" margin="16px 0 0">
-          Output is estimated. You will receive at last 0.03 BTC or the
-          transaction will revert.
+          Output is estimated from the current quote. Minimum received is
+          unavailable until the router returns a live quote.
         </B.Span>
       </B.Wrapper>
 
@@ -77,18 +77,18 @@ const ConfirmSwap = ({ ...props }: ConfirmSwapProps) => {
             <B.Paragraph colors={100} weight={700}>
               Price
             </B.Paragraph>
-            <B.Span>Minumum received</B.Span>
+            <B.Span>Minimum received</B.Span>
             <B.Span>Price impact</B.Span>
-            <B.Span>Liquidity Provider Free</B.Span>
+            <B.Span>Liquidity Provider Fee</B.Span>
           </B.Wrapper>
           <B.Wrapper width="auto" bg="trasnparent" alignItems="flex-end">
             <B.Paragraph colors={100} weight={700}>
               {state.inputValue1} {state.selectedOption1?.acronym} per{' '}
               {state.selectedOption2?.acronym}
             </B.Paragraph>
-            <B.Span>0.000003 BTC</B.Span>
-            <B.Span>0.02%</B.Span>
-            <B.Span>0.000001 BTC</B.Span>
+            <B.Span>Unavailable</B.Span>
+            <B.Span>Unavailable</B.Span>
+            <B.Span>Unavailable</B.Span>
           </B.Wrapper>
         </S.Descriptions>
         <B.Wrapper

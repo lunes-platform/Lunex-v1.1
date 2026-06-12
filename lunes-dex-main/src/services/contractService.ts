@@ -19,6 +19,7 @@ import FactoryABI from '../abis/Factory.json'
 import PairABI from '../abis/Pair.json'
 import WNativeABI from '../abis/WNative.json'
 import StakingABI from '../abis/Staking.json'
+import { CONTRACTS } from '../config/contracts'
 
 // Network configuration — env vars override defaults so local dev node is used automatically
 const NETWORKS = {
@@ -323,11 +324,21 @@ class ContractService {
         return j?.ok ?? j
       }
 
+      // decimals errado distorce todos os valores do token em ordens de
+      // magnitude — nunca fabricar um default; sem decimals, não há TokenInfo.
+      const rawDecimals = Number(extract(decimalsQ))
+      if (!Number.isFinite(rawDecimals) || rawDecimals < 0) {
+        console.error(
+          `Token decimals unavailable for ${tokenAddress} — refusing to fabricate metadata`
+        )
+        return null
+      }
+
       return {
         address: tokenAddress,
         name: String(extract(nameQ) ?? 'Unknown'),
         symbol: String(extract(symbolQ) ?? '???'),
-        decimals: Number(extract(decimalsQ) ?? 12),
+        decimals: rawDecimals,
         totalSupply: String(extract(supplyQ) ?? '0').replace(/,/g, '')
       }
     } catch (error) {
@@ -434,9 +445,8 @@ class ContractService {
   async allPairsLength(): Promise<number> {
     if (!this.api || !this.factoryContract) return 0
     try {
-      const FACTORY_ADDR =
-        process.env.REACT_APP_FACTORY_CONTRACT ||
-        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
+      const FACTORY_ADDR = CONTRACTS.FACTORY
+      if (!FACTORY_ADDR) return 0
       const { result, output } =
         await this.factoryContract.query.allPairsLength(FACTORY_ADDR, {
           gasLimit: this.makeDryGas()
@@ -458,9 +468,8 @@ class ContractService {
   async allPairs(index: number): Promise<string | null> {
     if (!this.api || !this.factoryContract) return null
     try {
-      const FACTORY_ADDR =
-        process.env.REACT_APP_FACTORY_CONTRACT ||
-        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
+      const FACTORY_ADDR = CONTRACTS.FACTORY
+      if (!FACTORY_ADDR) return null
       const { result, output } = await this.factoryContract.query.allPairs(
         FACTORY_ADDR,
         { gasLimit: this.makeDryGas() },

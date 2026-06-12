@@ -4,8 +4,7 @@ import * as S from './styles'
 import * as B from 'components/bases'
 //Modal
 import Modal from 'components/modal'
-//Mocks
-import slippageTolerance from './mock'
+import slippageTolerance from './settingsDefaults'
 
 export type TransactionSettingProps = {
   close: () => void

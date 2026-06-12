@@ -608,13 +608,19 @@ const StrategyMarketplacePage: React.FC = () => {
     load()
   }, [load])
 
-  useEffect(() => {
+  const refreshFollowedStrategies = useCallback(() => {
     if (!walletAddress) return
     strategyService
       .getFollowedStrategies(walletAddress, signMessage)
       .then(followed => setFollowing(new Set(followed.map(s => s.id))))
       .catch(() => {})
   }, [walletAddress, signMessage])
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setFollowing(new Set())
+    }
+  }, [walletAddress])
 
   const handleFollow = async (strategyId: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -802,6 +808,11 @@ const StrategyMarketplacePage: React.FC = () => {
             <option value="sharpeRatio">Sort: Sharpe Ratio</option>
             <option value="totalVolume">Sort: Volume</option>
           </FilterSelect>
+          {walletAddress && (
+            <LoadMoreBtn type="button" onClick={refreshFollowedStrategies}>
+              Sync Followed
+            </LoadMoreBtn>
+          )}
         </FiltersRow>
 
         {loading ? (

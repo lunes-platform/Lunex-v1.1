@@ -1,9 +1,17 @@
-const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
+import { SPOT_API_URL } from '../config/api'
 
 interface SignedAgentActionPayload {
   nonce: string
   timestamp: number
   signature: string
+}
+
+function signedAgentHeaders(auth: SignedAgentActionPayload): HeadersInit {
+  return {
+    'X-Lunex-Nonce': auth.nonce,
+    'X-Lunex-Timestamp': String(auth.timestamp),
+    'X-Lunex-Signature': auth.signature
+  }
 }
 
 export interface AgentProfile {
@@ -15,9 +23,10 @@ export interface AgentProfile {
   stakingTier: number
   totalTrades: number
   totalVolume: number
-  roi: number
-  sharpe: number
-  maxDrawdown: number
+  // null = métrica não fornecida pela API; a UI exibe "—" (nunca 0 fabricado).
+  roi: number | null
+  sharpe: number | null
+  maxDrawdown: number | null
   isActive: boolean
   lastActiveAt?: string
   createdAt: string
@@ -55,9 +64,9 @@ function normalizeAgentProfile(agent: any): AgentProfile {
     stakingTier: agent.stakingTier ?? 0,
     totalTrades: agent.totalTrades ?? 0,
     totalVolume: agent.totalVolume ?? 0,
-    roi: agent.roi ?? agent.roi30d ?? 0,
-    sharpe: agent.sharpe ?? 0,
-    maxDrawdown: agent.maxDrawdown ?? 0,
+    roi: agent.roi ?? agent.roi30d ?? null,
+    sharpe: agent.sharpe ?? null,
+    maxDrawdown: agent.maxDrawdown ?? null,
     isActive: agent.isActive ?? true,
     lastActiveAt: agent.lastActiveAt || undefined,
     createdAt: agent.createdAt,
@@ -77,7 +86,7 @@ async function apiRequest<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${SPOT_API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options
   })
@@ -126,13 +135,9 @@ const agentService = {
     auth: SignedAgentActionPayload
   ): Promise<AgentProfile | null> {
     try {
-      const query = new URLSearchParams({
-        nonce: auth.nonce,
-        timestamp: String(auth.timestamp),
-        signature: auth.signature
-      })
       const data = await apiRequest<{ agent: any }>(
-        `/api/v1/agents/by-wallet/${wallet}?${query.toString()}`
+        `/api/v1/agents/by-wallet/${encodeURIComponent(wallet)}`,
+        { headers: signedAgentHeaders(auth) }
       )
       return normalizeAgentProfile(data.agent)
     } catch {

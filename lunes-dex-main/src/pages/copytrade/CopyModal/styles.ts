@@ -126,21 +126,6 @@ export const BalanceInfo = styled.div`
   }
 `
 
-export const MaxButton = styled.button`
-  border: none;
-  background: transparent;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  cursor: pointer;
-  font-size: 12px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  padding: 0;
-
-  &:hover {
-    color: ${({ theme }) => theme.colors.themeColors[800]};
-  }
-`
-
 export const WarningBox = styled.div`
   background: ${({ theme }) => theme.colors.themeColors[600]};
   border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};

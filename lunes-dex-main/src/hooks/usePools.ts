@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSDK } from '../context/SDKContext'
 import { contractService } from '../services/contractService'
+import { CONTRACTS, TOKENS } from '../config/contracts'
 
 export interface Pool {
   id: string
@@ -36,60 +37,61 @@ export interface Pool {
   userLiquidity?: string
 }
 
-// Known token metadata keyed by SS58 address
-const TOKEN_META: Record<
-  string,
-  { symbol: string; name: string; decimals: number; icon: string }
-> = {
-  [process.env.REACT_APP_TOKEN_WLUNES ||
-  '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo']: {
+type TokenMeta = {
+  symbol: string
+  name: string
+  decimals: number
+  icon: string
+}
+
+const tokenMeta = (address: string, meta: TokenMeta): [string, TokenMeta] => [
+  address,
+  meta
+]
+
+const TOKEN_META_ENTRIES: Array<[string, TokenMeta]> = [
+  tokenMeta(TOKENS.WLUNES, {
     symbol: 'WLUNES',
     name: 'Wrapped Lunes',
     decimals: 8,
     icon: '/img/lunes.svg'
-  },
-  [process.env.REACT_APP_TOKEN_LUSDT ||
-  '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf']: {
+  }),
+  tokenMeta(TOKENS.LUSDT, {
     symbol: 'LUSDT',
     name: 'Lunes USD',
     decimals: 6,
     icon: '/img/lusdt.svg'
-  },
-  [process.env.REACT_APP_TOKEN_LBTC ||
-  '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg']: {
+  }),
+  tokenMeta(TOKENS.LBTC, {
     symbol: 'LBTC',
     name: 'Lunes BTC',
     decimals: 8,
     icon: '/img/lbtc.svg'
-  },
-  [process.env.REACT_APP_TOKEN_LETH ||
-  '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS']: {
+  }),
+  tokenMeta(TOKENS.LETH, {
     symbol: 'LETH',
     name: 'Lunes ETH',
     decimals: 18,
     icon: '/img/leth.svg'
-  },
-  [process.env.REACT_APP_TOKEN_GMC ||
-  '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ']: {
+  }),
+  tokenMeta(TOKENS.GMC, {
     symbol: 'GMC',
     name: 'GameCoin',
     decimals: 8,
     icon: '/img/gmc.svg'
-  },
-  [process.env.REACT_APP_TOKEN_LUP ||
-  '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3']: {
+  }),
+  tokenMeta(TOKENS.LUP, {
     symbol: 'LUP',
     name: 'Lunex Protocol',
     decimals: 8,
     icon: '/img/lup.svg'
-  }
-}
+  })
+].filter(([address]) => address)
+
+const TOKEN_META = Object.fromEntries(TOKEN_META_ENTRIES)
 
 // LUSDT address for TVL calculation (the USD quote token)
-const LUSDT_ADDRESS = (
-  process.env.REACT_APP_TOKEN_LUSDT ||
-  '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf'
-).toLowerCase()
+const LUSDT_ADDRESS = TOKENS.LUSDT.toLowerCase()
 const LUSDT_DECIMALS = 6
 
 const SPOT_API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
@@ -148,15 +150,13 @@ export const usePools = () => {
       }
 
       // Initialise factory so allPairs* methods work
-      const factoryAddr =
-        process.env.REACT_APP_FACTORY_CONTRACT ||
-        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
-      const routerAddr =
-        process.env.REACT_APP_ROUTER_CONTRACT ||
-        '5GSR7WUo53S2UpqSW7sMccSYNeP2dmAakfUnoK9BCY3YMb2B'
-      const wnativeAddr =
-        process.env.REACT_APP_WNATIVE_CONTRACT ||
-        '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo'
+      const factoryAddr = CONTRACTS.FACTORY
+      const routerAddr = CONTRACTS.ROUTER
+      const wnativeAddr = CONTRACTS.WNATIVE
+      if (!factoryAddr || !routerAddr || !wnativeAddr) {
+        setPools([])
+        return
+      }
       contractService.setContracts({
         factory: factoryAddr,
         router: routerAddr,

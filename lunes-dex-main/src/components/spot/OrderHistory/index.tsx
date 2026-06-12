@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import styled from 'styled-components'
+import { RefreshCw } from 'lucide-react'
 import { useSpot } from 'context/SpotContext'
 import { useSDK } from 'context/SDKContext'
 import { calcFeeBreakdown } from 'services/spotService'
@@ -12,6 +13,7 @@ const Wrapper = styled.div`
 
 const Tabs = styled.div`
   display: flex;
+  align-items: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   padding: 0 16px;
 `
@@ -31,6 +33,38 @@ const Tab = styled.button<{ active?: boolean }>`
 
   &:hover {
     color: rgba(255, 255, 255, 0.8);
+  }
+`
+
+const Spacer = styled.div`
+  flex: 1;
+`
+
+const RefreshButton = styled.button`
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s,
+    background 0.15s;
+
+  &:hover:not(:disabled) {
+    color: #fff;
+    border-color: rgba(108, 56, 254, 0.45);
+    background: rgba(108, 56, 254, 0.12);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
   }
 `
 
@@ -210,12 +244,15 @@ const OrderHistory: React.FC = () => {
     isConnected,
     walletAddress,
     cancelOrder,
-    selectedPair
+    selectedPair,
+    refreshOrders,
+    refreshTrades
   } = useSpot()
   const { signMessage } = useSDK()
   const [activeTab, setActiveTab] = useState<HistoryTab>('open')
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
-  // Real data from API or mock fallback
+  // Real user order data from the API.
   const openOrders = useMemo(() => {
     if (isConnected) {
       return userOrders
@@ -293,6 +330,20 @@ const OrderHistory: React.FC = () => {
     await cancelOrder(orderId, signMessage)
   }
 
+  const handleRefresh = async () => {
+    if (!walletAddress || isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      if (activeTab === 'trades') {
+        await refreshTrades()
+      } else {
+        await refreshOrders()
+      }
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
   return (
     <Wrapper>
       <Tabs>
@@ -311,6 +362,18 @@ const OrderHistory: React.FC = () => {
         >
           Trade History
         </Tab>
+        <Spacer />
+        {walletAddress && (
+          <RefreshButton
+            type="button"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Refresh"
+            aria-label="Refresh"
+          >
+            <RefreshCw size={14} />
+          </RefreshButton>
+        )}
       </Tabs>
 
       <Body>

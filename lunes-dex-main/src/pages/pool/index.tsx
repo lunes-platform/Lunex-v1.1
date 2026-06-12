@@ -6,6 +6,7 @@ import useLiquidity from '../../hooks/useLiquidity'
 import { useSDK } from '../../context/SDKContext'
 import TradeSubNav from '../../components/tradeSubNav'
 import TokenIcon from '../../components/TokenIcon'
+import { TOKENS } from '../../config/contracts'
 
 const ProBanner = styled.button`
   display: flex;
@@ -61,63 +62,50 @@ const ProBannerArrow = styled.span`
   color: ${({ theme }) => theme.colors.themeColors[200]};
 `
 
-// Real deployed token addresses
 const availableTokens = [
   {
-    address:
-      process.env.REACT_APP_TOKEN_WLUNES ||
-      '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo',
+    address: TOKENS.WLUNES,
     symbol: 'WLUNES',
     name: 'Wrapped Lunes',
     decimals: 8,
     icon: '/img/lunes.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LUSDT ||
-      '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf',
+    address: TOKENS.LUSDT,
     symbol: 'LUSDT',
     name: 'Lunes USD',
     decimals: 6,
     icon: '/img/lusdt.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LBTC ||
-      '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg',
+    address: TOKENS.LBTC,
     symbol: 'LBTC',
     name: 'Lunes BTC',
     decimals: 8,
     icon: '/img/lbtc.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LETH ||
-      '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS',
+    address: TOKENS.LETH,
     symbol: 'LETH',
     name: 'Lunes ETH',
     decimals: 8,
     icon: '/img/leth.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_GMC ||
-      '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ',
+    address: TOKENS.GMC,
     symbol: 'GMC',
     name: 'GameCoin',
     decimals: 8,
     icon: '/img/gmc.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LUP ||
-      '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3',
+    address: TOKENS.LUP,
     symbol: 'LUP',
     name: 'Lunex Protocol',
     decimals: 8,
     icon: '/img/lup.svg'
   }
-]
+].filter(token => token.address)
 
 const TabContainer = styled.div`
   display: flex;

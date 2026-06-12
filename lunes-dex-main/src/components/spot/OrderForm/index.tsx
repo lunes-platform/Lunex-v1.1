@@ -10,9 +10,6 @@ import MarginTab from './MarginTab'
 
 // ──────────────────── Constants ────────────────────
 
-const DEFAULT_MAKER_FEE = 0.001 // 0.1% fallback
-const DEFAULT_TAKER_FEE = 0.0025 // 0.25% fallback
-const MARKET_PRICE = 0.02345 // fallback only (replaced by live ticker)
 const MIN_AMOUNT = 10
 const MAX_AMOUNT = 1000000
 const MIN_PRICE = 0.00001
@@ -496,26 +493,38 @@ interface FormProps {
   onSubmit: (order: OrderData) => void
   balanceUsdt?: number
   balanceLunes?: number
-  marketPrice?: number
-  makerFee?: number
-  takerFee?: number
+  marketPrice?: number | null
+  makerFee?: number | null
+  takerFee?: number | null
 }
+
+const UnavailableMarketData = () => (
+  <WarningBox>
+    Market data is unavailable for this pair. Orders are disabled until the live
+    ticker and fee schedule load.
+  </WarningBox>
+)
 
 const MarketForm: React.FC<FormProps> = ({
   side,
   onSubmit,
   balanceUsdt = 0,
   balanceLunes = 0,
-  marketPrice = MARKET_PRICE,
-  takerFee = DEFAULT_TAKER_FEE
+  marketPrice,
+  takerFee
 }) => {
   const [amount, setAmount] = useState('')
   const [sliderVal, setSliderVal] = useState(0)
   const numAmount = parseFloat(amount) || 0
-  const total = numAmount * marketPrice
-  const fee = total * takerFee
+  const marketDataReady =
+    typeof marketPrice === 'number' &&
+    marketPrice > 0 &&
+    typeof takerFee === 'number'
+  const total = marketDataReady ? numAmount * marketPrice : 0
+  const fee = marketDataReady ? total * takerFee : 0
 
   const amountError = useMemo(() => {
+    if (!marketDataReady) return 'Market data unavailable'
     if (!amount) return ''
     if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} LUNES`
     if (numAmount > MAX_AMOUNT)
@@ -524,12 +533,21 @@ const MarketForm: React.FC<FormProps> = ({
     if (side === 'sell' && numAmount > balanceLunes)
       return 'Insufficient balance'
     return ''
-  }, [amount, numAmount, total, side, balanceUsdt, balanceLunes])
+  }, [
+    amount,
+    numAmount,
+    total,
+    side,
+    balanceUsdt,
+    balanceLunes,
+    marketDataReady
+  ])
 
-  const isValid = numAmount >= MIN_AMOUNT && !amountError
+  const isValid = marketDataReady && numAmount >= MIN_AMOUNT && !amountError
 
   const handleSlider = (pct: number) => {
     setSliderVal(pct)
+    if (!marketDataReady) return
     const maxAmount =
       side === 'buy' ? Math.floor(balanceUsdt / marketPrice) : balanceLunes
     setAmount(String(Math.floor((maxAmount * pct) / 100)))
@@ -537,6 +555,7 @@ const MarketForm: React.FC<FormProps> = ({
 
   const handleSubmit = () => {
     if (!isValid) return
+    if (!marketDataReady) return
     onSubmit({
       type: 'Market',
       side,
@@ -551,6 +570,7 @@ const MarketForm: React.FC<FormProps> = ({
 
   return (
     <>
+      {!marketDataReady ? <UnavailableMarketData /> : null}
       <SlippageWarning>
         Market order — price may vary (slippage ~0.1-0.5%)
       </SlippageWarning>
@@ -607,9 +627,9 @@ const MarketForm: React.FC<FormProps> = ({
       {numAmount > 0 && (
         <FeeRow>
           <span>
-            Fee (Taker {(takerFee * 100).toFixed(2)}%)
+            Fee (Taker {((takerFee ?? 0) * 100).toFixed(2)}%)
             <Tooltip
-              content={`Market execution fee (${(takerFee * 100).toFixed(
+              content={`Market execution fee (${((takerFee ?? 0) * 100).toFixed(
                 2
               )}%). Deducted from total received.`}
             />
@@ -629,8 +649,8 @@ const LimitForm: React.FC<FormProps> = ({
   onSubmit,
   balanceUsdt = 0,
   balanceLunes = 0,
-  marketPrice = MARKET_PRICE,
-  makerFee = DEFAULT_MAKER_FEE
+  marketPrice,
+  makerFee
 }) => {
   const [price, setPrice] = useState('')
   const [amount, setAmount] = useState('')
@@ -638,7 +658,8 @@ const LimitForm: React.FC<FormProps> = ({
   const numPrice = parseFloat(price) || 0
   const numAmount = parseFloat(amount) || 0
   const total = numPrice * numAmount
-  const fee = total * makerFee
+  const feeDataReady = typeof makerFee === 'number'
+  const fee = feeDataReady ? total * makerFee : 0
 
   const priceError = useMemo(() => {
     if (!price) return ''
@@ -659,6 +680,7 @@ const LimitForm: React.FC<FormProps> = ({
   }, [amount, numAmount, total, side, balanceUsdt, balanceLunes])
 
   const isValid =
+    feeDataReady &&
     numPrice >= MIN_PRICE &&
     numAmount >= MIN_AMOUNT &&
     !priceError &&
@@ -667,6 +689,7 @@ const LimitForm: React.FC<FormProps> = ({
   const handleSlider = (pct: number) => {
     setSliderVal(pct)
     const effectivePrice = numPrice || marketPrice
+    if (!effectivePrice || effectivePrice <= 0) return
     const maxAmount =
       side === 'buy' ? Math.floor(balanceUsdt / effectivePrice) : balanceLunes
     setAmount(String(Math.floor((maxAmount * pct) / 100)))
@@ -674,6 +697,7 @@ const LimitForm: React.FC<FormProps> = ({
 
   const handleSubmit = () => {
     if (!isValid) return
+    if (!feeDataReady) return
     onSubmit({
       type: 'Limit',
       side,
@@ -688,6 +712,7 @@ const LimitForm: React.FC<FormProps> = ({
 
   return (
     <>
+      {!feeDataReady ? <UnavailableMarketData /> : null}
       <FieldWrapper>
         <FieldLabel>Price (USDT)</FieldLabel>
         <InputWithSuffix>
@@ -757,10 +782,10 @@ const LimitForm: React.FC<FormProps> = ({
       {total > 0 && (
         <FeeRow>
           <span>
-            Fee (Maker {(makerFee * 100).toFixed(2)}%)
+            Fee (Maker {((makerFee ?? 0) * 100).toFixed(2)}%)
             <Tooltip
               content={`Limit orders pay a lower Maker fee (${(
-                makerFee * 100
+                (makerFee ?? 0) * 100
               ).toFixed(2)}%) as they add liquidity to the book.`}
               position="top"
             />
@@ -780,20 +805,26 @@ const StopForm: React.FC<FormProps> = ({
   onSubmit,
   balanceUsdt = 0,
   balanceLunes = 0,
-  marketPrice = MARKET_PRICE,
-  takerFee = DEFAULT_TAKER_FEE
+  marketPrice,
+  takerFee
 }) => {
   const [stopPrice, setStopPrice] = useState('')
   const [amount, setAmount] = useState('')
   const numStop = parseFloat(stopPrice) || 0
   const numAmount = parseFloat(amount) || 0
   const total = numStop * numAmount
-  const fee = total * takerFee
+  const marketDataReady =
+    typeof marketPrice === 'number' &&
+    marketPrice > 0 &&
+    typeof takerFee === 'number'
+  const fee = marketDataReady ? total * takerFee : 0
 
-  const isValid = numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
+  const isValid =
+    marketDataReady && numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
 
   const handleSubmit = () => {
     if (!isValid) return
+    if (!marketDataReady) return
     onSubmit({
       type: 'Stop',
       side,
@@ -809,6 +840,7 @@ const StopForm: React.FC<FormProps> = ({
 
   return (
     <>
+      {!marketDataReady ? <UnavailableMarketData /> : null}
       <InfoBox>
         When the market reaches the <strong>Stop Price</strong>, a market order
         will be executed.
@@ -857,7 +889,7 @@ const StopForm: React.FC<FormProps> = ({
       </AvailableRow>
       {total > 0 && (
         <FeeRow>
-          <span>Fee (Taker {(takerFee * 100).toFixed(2)}%)</span>
+          <span>Fee (Taker {((takerFee ?? 0) * 100).toFixed(2)}%)</span>
           <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
         </FeeRow>
       )}
@@ -873,7 +905,7 @@ const StopLimitForm: React.FC<FormProps> = ({
   onSubmit,
   balanceUsdt = 0,
   balanceLunes = 0,
-  makerFee = DEFAULT_MAKER_FEE
+  makerFee
 }) => {
   const [stopPrice, setStopPrice] = useState('')
   const [limitPrice, setLimitPrice] = useState('')
@@ -882,13 +914,18 @@ const StopLimitForm: React.FC<FormProps> = ({
   const numLimit = parseFloat(limitPrice) || 0
   const numAmount = parseFloat(amount) || 0
   const total = numLimit * numAmount
-  const fee = total * makerFee
+  const feeDataReady = typeof makerFee === 'number'
+  const fee = feeDataReady ? total * makerFee : 0
 
   const isValid =
-    numStop >= MIN_PRICE && numLimit >= MIN_PRICE && numAmount >= MIN_AMOUNT
+    feeDataReady &&
+    numStop >= MIN_PRICE &&
+    numLimit >= MIN_PRICE &&
+    numAmount >= MIN_AMOUNT
 
   const handleSubmit = () => {
     if (!isValid) return
+    if (!feeDataReady) return
     onSubmit({
       type: 'Stop-Limit',
       side,
@@ -904,6 +941,7 @@ const StopLimitForm: React.FC<FormProps> = ({
 
   return (
     <>
+      {!feeDataReady ? <UnavailableMarketData /> : null}
       <InfoBox>
         When the <strong>Stop Price</strong> is reached, a Limit order at the{' '}
         <strong>Limit Price</strong> will be placed.
@@ -964,7 +1002,7 @@ const StopLimitForm: React.FC<FormProps> = ({
       </AvailableRow>
       {total > 0 && (
         <FeeRow>
-          <span>Fee (Maker {(makerFee * 100).toFixed(2)}%)</span>
+          <span>Fee (Maker {((makerFee ?? 0) * 100).toFixed(2)}%)</span>
           <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
         </FeeRow>
       )}
@@ -985,9 +1023,7 @@ const ORDER_TABS: Array<{ key: OrderTab; label: string }> = [
   { key: 'margin', label: 'Margin' }
 ]
 
-const LUSDT_ADDRESS =
-  process.env.REACT_APP_TOKEN_LUSDT ||
-  '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf'
+const LUSDT_ADDRESS = process.env.REACT_APP_TOKEN_LUSDT || ''
 
 const OrderForm: React.FC = () => {
   const {
@@ -1019,9 +1055,11 @@ const OrderForm: React.FC = () => {
       return
     }
     Promise.all([
-      contractService
-        .getTokenBalance(LUSDT_ADDRESS, sdkWalletAddress)
-        .catch(() => '0'),
+      LUSDT_ADDRESS
+        ? contractService
+            .getTokenBalance(LUSDT_ADDRESS, sdkWalletAddress)
+            .catch(() => '0')
+        : Promise.resolve('0'),
       contractService.getNativeBalance(sdkWalletAddress).catch(() => '0')
     ]).then(([lusdtRaw, lunesRaw]) => {
       setBalanceUsdt(Number(lusdtRaw) / 1e6) // LUSDT: 6 decimals
@@ -1091,14 +1129,13 @@ const OrderForm: React.FC = () => {
     setPendingOrder(null)
   }, [])
 
-  const liveMarketPrice = ticker?.lastPrice ?? MARKET_PRICE
+  const liveMarketPrice =
+    typeof ticker?.lastPrice === 'number' && ticker.lastPrice > 0
+      ? ticker.lastPrice
+      : null
   const activePair = pairs.find(p => p.symbol === selectedPair)
-  const makerFee = activePair
-    ? activePair.makerFeeBps / 10000
-    : DEFAULT_MAKER_FEE
-  const takerFee = activePair
-    ? activePair.takerFeeBps / 10000
-    : DEFAULT_TAKER_FEE
+  const makerFee = activePair ? activePair.makerFeeBps / 10000 : null
+  const takerFee = activePair ? activePair.takerFeeBps / 10000 : null
   const formProps = {
     side,
     onSubmit: handleSubmit,

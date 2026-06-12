@@ -24,7 +24,6 @@ export type ChooseTokenProps = {
 
 const ChooseToken = ({ close, onSelect, tokens }: ChooseTokenProps) => {
   const [searchToken, setSearchToken] = useState('')
-  // console.log('token', token)
 
   const searchItems = tokens.filter(
     i =>
@@ -53,7 +52,7 @@ const ChooseToken = ({ close, onSelect, tokens }: ChooseTokenProps) => {
       />
       <S.Content bg="transparent">
         <B.Paragraph size="14px">Token</B.Paragraph>
-        <B.Paragraph size="14px">Token price</B.Paragraph>
+        <B.Paragraph size="14px">Price</B.Paragraph>
       </S.Content>
 
       <S.BoxTokens bg="transparent">
@@ -82,7 +81,7 @@ const ChooseToken = ({ close, onSelect, tokens }: ChooseTokenProps) => {
                   {item.token}
                 </B.Span>
               </B.Paragraph>
-              <B.Paragraph colors={100}>{item.tokenPrice}8787</B.Paragraph>
+              <B.Paragraph colors={100}>{item.tokenPrice}</B.Paragraph>
               <img src="img/arrow-right.svg" />
             </S.Content>
           )

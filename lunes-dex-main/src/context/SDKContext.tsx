@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useState,
+  useRef,
   ReactNode,
   useCallback,
   useMemo
@@ -209,6 +210,15 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   const [balance, setBalance] = useState('0')
   const [currentAccount, setCurrentAccount] =
     useState<InjectedAccountWithMeta | null>(null)
+  const currentAccountRef = useRef<InjectedAccountWithMeta | null>(null)
+
+  const rememberCurrentAccount = useCallback(
+    (account: InjectedAccountWithMeta | null) => {
+      currentAccountRef.current = account
+      setCurrentAccount(account)
+    },
+    []
+  )
 
   // Initialize blockchain connection
   useEffect(() => {
@@ -298,7 +308,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       // Use first available account from the selected wallet
       const account = accounts[0]
-      setCurrentAccount(account)
+      rememberCurrentAccount(account)
       setWalletAddress(account.address)
       setIsConnected(true)
       localStorage.setItem('lunex_last_wallet_address', account.address)
@@ -327,11 +337,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   // Desconectar Wallet
   const disconnectWallet = useCallback((): void => {
     setWalletAddress(null)
-    setCurrentAccount(null)
+    rememberCurrentAccount(null)
     setIsConnected(false)
     setBalance('0')
     localStorage.removeItem('lunex_last_wallet_address')
-  }, [])
+  }, [rememberCurrentAccount])
 
   const signMessage = useCallback(
     async (message: string): Promise<string> => {
@@ -342,7 +352,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       const { web3Accounts, web3FromSource } =
         await import('@polkadot/extension-dapp')
       const account =
-        currentAccount ||
+        currentAccountRef.current ||
         (await web3Accounts()).find(item => item.address === walletAddress) ||
         null
 
@@ -350,8 +360,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         throw new Error('Reconnect your wallet to enable signing')
       }
 
-      if (!currentAccount) {
-        setCurrentAccount(account)
+      if (currentAccountRef.current?.address !== account.address) {
+        rememberCurrentAccount(account)
       }
 
       const injector = await web3FromSource(account.meta.source)
@@ -369,7 +379,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       return signature
     },
-    [currentAccount, walletAddress]
+    [rememberCurrentAccount, walletAddress]
   )
 
   // Obter Quote para Swap

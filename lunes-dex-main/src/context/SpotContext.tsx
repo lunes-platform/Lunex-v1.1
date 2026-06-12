@@ -201,7 +201,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     fetchPairData()
   }, [selectedPair, isConnected])
 
-  // ─── Fetch user data when wallet changes ───
+  // ─── Track user channel without signing reads on route/tab changes ───
   useEffect(() => {
     if (!walletAddress || !isConnected) {
       setUserOrders([])
@@ -209,44 +209,17 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
       return
     }
 
-    const fetchUserData = async () => {
-      try {
-        const [ordersAuth, tradesAuth] = await Promise.all([
-          signReadAction('orders.list', walletAddress, {
-            limit: 50,
-            offset: 0
-          }),
-          signReadAction('trades.list', walletAddress, { limit: 50, offset: 0 })
-        ])
-
-        const [ordersRes, tradesRes] = await Promise.all([
-          spotApi
-            .getUserOrders(walletAddress, ordersAuth, undefined, 50)
-            .catch(() => ({ orders: [] })),
-          spotApi
-            .getUserTrades(walletAddress, tradesAuth, 50)
-            .catch(() => ({ trades: [] }))
-        ])
-        setUserOrders(ordersRes.orders)
-        setUserTrades(tradesRes.trades)
-      } catch {
-        // ignore
-      }
-    }
-
-    fetchUserData()
-
-    // Subscribe to user-specific channel
     const userChannel = `user:${walletAddress}`
     const handleUserUpdate = () => {
-      fetchUserData()
+      setUserOrders([])
+      setUserTrades([])
     }
     spotWs.subscribe(userChannel, handleUserUpdate)
 
     return () => {
       spotWs.unsubscribe(userChannel, handleUserUpdate)
     }
-  }, [walletAddress, isConnected, signReadAction])
+  }, [walletAddress, isConnected])
 
   // ─── Actions ───
 
@@ -294,7 +267,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         })
         const signature = await params.signMessage(messageToSign)
 
-        await spotApi.createOrder({
+        const res = await spotApi.createOrder({
           pairSymbol: params.pairSymbol,
           side: params.side,
           type: params.type,
@@ -308,13 +281,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           makerAddress: walletAddress
         })
 
-        // Refresh user orders
-        const ordersAuth = await signReadAction('orders.list', walletAddress, {
-          limit: 50,
-          offset: 0
-        })
-        const ordersRes = await spotApi.getUserOrders(walletAddress, ordersAuth)
-        setUserOrders(ordersRes.orders)
+        setUserOrders(prev => [res.order, ...prev])
 
         return true
       } catch (err: unknown) {
@@ -324,7 +291,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         setIsLoading(false)
       }
     },
-    [walletAddress, generateNonce, signReadAction]
+    [walletAddress, generateNonce]
   )
 
   const cancelOrder = useCallback(
@@ -341,18 +308,23 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
       setError(null)
 
       try {
-        const messageToSign = buildSpotCancelSignMessage(orderId)
+        const { nonce, timestamp } = createSignedActionMetadata()
+        const messageToSign = buildSpotCancelSignMessage({
+          address: walletAddress,
+          orderId,
+          nonce,
+          timestamp
+        })
         const signature = await signMessage(messageToSign)
 
-        await spotApi.cancelOrder(orderId, walletAddress, signature)
-
-        // Refresh user orders
-        const ordersAuth = await signReadAction('orders.list', walletAddress, {
-          limit: 50,
-          offset: 0
+        const res = await spotApi.cancelOrder(orderId, walletAddress, {
+          nonce,
+          timestamp,
+          signature
         })
-        const ordersRes = await spotApi.getUserOrders(walletAddress, ordersAuth)
-        setUserOrders(ordersRes.orders)
+        setUserOrders(prev =>
+          prev.map(order => (order.id === orderId ? res.order : order))
+        )
 
         return true
       } catch (err: unknown) {
@@ -362,7 +334,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         setIsLoading(false)
       }
     },
-    [walletAddress, signReadAction]
+    [walletAddress]
   )
 
   const refreshOrders = useCallback(async () => {

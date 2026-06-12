@@ -681,9 +681,14 @@ export const Governance: React.FC = () => {
             const histRes = await fetch(
               `/api/v1/governance/vote/history?walletAddress=${encodeURIComponent(
                 sdk.walletAddress
-              )}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${
-                auth.timestamp
-              }&signature=${encodeURIComponent(auth.signature)}`
+              )}`,
+              {
+                headers: {
+                  'X-Lunex-Nonce': auth.nonce,
+                  'X-Lunex-Timestamp': String(auth.timestamp),
+                  'X-Lunex-Signature': auth.signature
+                }
+              }
             )
             if (histRes.ok) {
               const { votes } = await histRes.json()

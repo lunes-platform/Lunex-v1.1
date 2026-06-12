@@ -1,5 +1,5 @@
 import styled, { css, keyframes } from 'styled-components'
-import { LoadingProps } from '.'
+import type { LoadingProps } from '.'
 
 const AnimationLoading = keyframes`
   to {

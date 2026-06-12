@@ -48,10 +48,6 @@ const Account = ({ ...props }: AccountProps) => {
   }
 
   setTimeout(() => {
-    // para efeitos visuais
-    // if (status === 0) {
-    //   setStatus(1)
-    // }
     if (status === 1) {
       reset()
       setStatus(2)
@@ -59,10 +55,6 @@ const Account = ({ ...props }: AccountProps) => {
     if (status === 2) {
       setStatus(0)
     }
-    // if (status === 1) {
-    //   setStatus(0)
-    //   props.statusTransaction()
-    // }
   }, 7000)
 
   return (

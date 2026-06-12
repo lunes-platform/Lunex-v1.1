@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import styled from 'styled-components'
 import { useSDK } from '../../../context/SDKContext'
 import agentService, {
@@ -549,7 +549,8 @@ const typeLabels: Record<string, string> = {
   HUMAN: 'Human'
 }
 
-const formatRoi = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`
+const formatRoi = (v: number | null) =>
+  v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`
 const formatNumber = (v: number) =>
   v >= 1000 ? `${(v / 1000).toFixed(1)}K` : v.toFixed(0)
 
@@ -591,12 +592,12 @@ const BotRegistry: React.FC = () => {
     void load()
   }, [])
 
-  useEffect(() => {
+  const loadMyAgent = useCallback(async () => {
     if (!walletAddress) {
       setMyAgent(null)
       return
     }
-    const check = async () => {
+    try {
       const auth = createSignedActionMetadata()
       const signature = await signMessage(
         buildWalletActionMessage({
@@ -612,9 +613,16 @@ const BotRegistry: React.FC = () => {
         signature
       })
       setMyAgent(agent)
+    } catch {
+      setMyAgent(null)
     }
-    void check()
   }, [walletAddress, signMessage])
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setMyAgent(null)
+    }
+  }, [walletAddress])
 
   const handleRegister = async () => {
     if (!walletAddress) return
@@ -743,7 +751,7 @@ const BotRegistry: React.FC = () => {
 
                 <MetricsRow>
                   <Metric>
-                    <MetricValue positive={myAgent.roi >= 0}>
+                    <MetricValue positive={myAgent.roi != null && myAgent.roi >= 0}>
                       {formatRoi(myAgent.roi)}
                     </MetricValue>
                     <MetricLabel>ROI</MetricLabel>
@@ -802,7 +810,7 @@ const BotRegistry: React.FC = () => {
                 )}
               </Card>
             ) : (
-              <RegisterCard onClick={() => setShowRegister(true)}>
+              <RegisterCard>
                 <BotAvatar>
                   <BotIcon />
                 </BotAvatar>
@@ -810,6 +818,22 @@ const BotRegistry: React.FC = () => {
                 <RegisterSubLabel>
                   Connect your bot or AI agent to start trading via API
                 </RegisterSubLabel>
+                <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+                  <PrimaryBtn
+                    type="button"
+                    onClick={() => setShowRegister(true)}
+                  >
+                    Register
+                  </PrimaryBtn>
+                  <SecondaryBtn
+                    type="button"
+                    onClick={() => {
+                      loadMyAgent().catch(() => undefined)
+                    }}
+                  >
+                    Load My Agent
+                  </SecondaryBtn>
+                </div>
               </RegisterCard>
             )}
           </Section>
@@ -850,7 +874,7 @@ const BotRegistry: React.FC = () => {
 
                   <MetricsRow>
                     <Metric>
-                      <MetricValue positive={agent.roi >= 0}>
+                      <MetricValue positive={agent.roi != null && agent.roi >= 0}>
                         {formatRoi(agent.roi)}
                       </MetricValue>
                       <MetricLabel>ROI</MetricLabel>
@@ -869,7 +893,9 @@ const BotRegistry: React.FC = () => {
                     </Metric>
                     <Metric>
                       <MetricValue>
-                        {agent.maxDrawdown?.toFixed(1)}%
+                        {agent.maxDrawdown != null
+                          ? `${agent.maxDrawdown.toFixed(1)}%`
+                          : '—'}
                       </MetricValue>
                       <MetricLabel>Max DD</MetricLabel>
                     </Metric>

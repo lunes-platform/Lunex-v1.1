@@ -1,19 +1,6 @@
 import styled, { css } from 'styled-components'
 import { Wrapper, Button } from 'components/bases'
-import Modals from 'components/modal'
 import device from 'components/devices/devices'
-
-export const Modal = styled(Modals)`
-  ${css`
-    height: 670px;
-    ${device.mobileL} {
-      height: 550px;
-    }
-    ${device.mobileS} {
-      height: 430px;
-    }
-  `}
-`
 
 export const Content = styled(Wrapper)`
   ${css`

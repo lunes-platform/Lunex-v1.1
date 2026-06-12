@@ -7,8 +7,7 @@ import FooterTag from 'components/FooterTag'
 import TradeSubNav from '../../components/tradeSubNav'
 //Modals
 import * as M from './modals'
-//Mocks
-import tokens from './modals/chooseToken/mock'
+import tokens from './modals/chooseToken/tokenRegistry'
 import useSelectOptions from 'hooks/useSelectOptions'
 import { Option } from 'context/useContext'
 import { useSDK } from '../../context/SDKContext'

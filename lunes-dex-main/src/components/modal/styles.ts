@@ -1,5 +1,5 @@
 import styled, { css } from 'styled-components'
-import { ModalProps } from '.'
+import type { ModalProps } from '.'
 import device from 'components/devices/devices'
 
 type StyledProps = {

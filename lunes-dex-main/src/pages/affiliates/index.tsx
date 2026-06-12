@@ -522,11 +522,8 @@ const Affiliates: React.FC = () => {
         })
       )
 
-      return new URLSearchParams({
+      const query = new URLSearchParams({
         address,
-        nonce: metadata.nonce,
-        timestamp: String(metadata.timestamp),
-        signature,
         ...Object.fromEntries(
           Object.entries(fields ?? {}).map(([key, value]) => [
             key,
@@ -534,6 +531,15 @@ const Affiliates: React.FC = () => {
           ])
         )
       }).toString()
+
+      return {
+        query,
+        headers: {
+          'X-Lunex-Nonce': metadata.nonce,
+          'X-Lunex-Timestamp': String(metadata.timestamp),
+          'X-Lunex-Signature': signature
+        }
+      }
     },
     [address, sdk]
   )
@@ -542,8 +548,11 @@ const Affiliates: React.FC = () => {
     if (!address) return
     setIsLoading(true)
     try {
-      const query = await signAffiliateRead('affiliate.dashboard')
-      const res = await fetch(`${SPOT_API}/api/v1/affiliate/dashboard?${query}`)
+      const auth = await signAffiliateRead('affiliate.dashboard')
+      const res = await fetch(
+        `${SPOT_API}/api/v1/affiliate/dashboard?${auth.query}`,
+        { headers: auth.headers }
+      )
       const data = await res.json()
       if (data.dashboard) {
         setDashboard(data.dashboard)
@@ -560,8 +569,11 @@ const Affiliates: React.FC = () => {
   const fetchTree = useCallback(async () => {
     if (!address) return
     try {
-      const query = await signAffiliateRead('affiliate.tree', { depth: 3 })
-      const res = await fetch(`${SPOT_API}/api/v1/affiliate/tree?${query}`)
+      const auth = await signAffiliateRead('affiliate.tree', { depth: 3 })
+      const res = await fetch(
+        `${SPOT_API}/api/v1/affiliate/tree?${auth.query}`,
+        { headers: auth.headers }
+      )
       const data = await res.json()
       setTree(data.tree || [])
     } catch (err) {
@@ -572,8 +584,11 @@ const Affiliates: React.FC = () => {
   const fetchPayouts = useCallback(async () => {
     if (!address) return
     try {
-      const query = await signAffiliateRead('affiliate.payouts', { limit: 20 })
-      const res = await fetch(`${SPOT_API}/api/v1/affiliate/payouts?${query}`)
+      const auth = await signAffiliateRead('affiliate.payouts', { limit: 20 })
+      const res = await fetch(
+        `${SPOT_API}/api/v1/affiliate/payouts?${auth.query}`,
+        { headers: auth.headers }
+      )
       const data = await res.json()
       setPayouts(data.payouts || [])
     } catch (err) {
@@ -604,21 +619,12 @@ const Affiliates: React.FC = () => {
     generateLocalCode(address).then(code => {
       setReferralCode(prev => prev || code)
     })
+  }, [sdk.isConnected, address, generateLocalCode])
 
-    // Try fetching the code from the API (overrides local if available)
-    signAffiliateRead('affiliate.code')
-      .then(query => fetch(`${SPOT_API}/api/v1/affiliate/code?${query}`))
-      .then(r => r.json())
-      .then(data => {
-        if (data.code) setReferralCode(data.code)
-      })
-      .catch(() => {})
-
-    fetchDashboard()
-    fetchTree()
-    fetchPayouts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sdk.isConnected, address])
+  const loadAffiliateDashboard = useCallback(async () => {
+    await fetchDashboard()
+    await Promise.all([fetchTree(), fetchPayouts()])
+  }, [fetchDashboard, fetchTree, fetchPayouts])
 
   const referralLink = referralCode
     ? `${window.location.origin}/?ref=${referralCode}`
@@ -833,6 +839,14 @@ const Affiliates: React.FC = () => {
                     Share on Telegram
                   </SocialBtn>
                 </SocialRow>
+
+                <ConnectButton
+                  type="button"
+                  onClick={loadAffiliateDashboard}
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Loading dashboard...' : 'Load Dashboard'}
+                </ConnectButton>
               </ShareCard>
             )}
 

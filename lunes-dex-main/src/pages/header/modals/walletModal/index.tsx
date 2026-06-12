@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import styled, { keyframes } from 'styled-components'
 import { useSDK } from '../../../../context/SDKContext'
-import tokens from '../../../home/modals/chooseToken/mock'
+import tokens from '../../../home/modals/chooseToken/tokenRegistry'
 
 // ──────────────────── Animations ────────────────────
 

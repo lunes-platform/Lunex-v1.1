@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import styled from 'styled-components'
 import {
   marginApi,
@@ -247,12 +247,6 @@ export const MarginTab: React.FC<MarginTabProps> = ({
     setOverview(nextOverview)
   }, [walletAddress, signMessage])
 
-  useEffect(() => {
-    loadOverview().catch((err: Error) => {
-      setError(err.message)
-    })
-  }, [loadOverview])
-
   const withWallet = useCallback(async () => {
     if (walletAddress) return walletAddress
     await connectWallet()
@@ -444,6 +438,21 @@ export const MarginTab: React.FC<MarginTabProps> = ({
         <Box tone="warn">
           Connect your wallet to manage margin collateral and positions.
         </Box>
+      ) : null}
+
+      {walletAddress ? (
+        <ActionButton
+          type="button"
+          onClick={() => {
+            loadOverview().catch((err: Error) => {
+              setError(err.message)
+            })
+          }}
+          disabled={isLoading}
+          tone="neutral"
+        >
+          Load Margin Overview
+        </ActionButton>
       ) : null}
 
       <Grid>

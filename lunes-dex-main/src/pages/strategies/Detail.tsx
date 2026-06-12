@@ -425,13 +425,19 @@ const StrategyDetail: React.FC = () => {
     load()
   }, [load])
 
-  useEffect(() => {
+  const refreshFollowState = useCallback(() => {
     if (!id || !walletAddress) return
     strategyService
       .getFollowedStrategies(walletAddress, signMessage)
       .then(followed => setFollowing(followed.some(s => s.id === id)))
       .catch(() => {})
   }, [id, walletAddress, signMessage])
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setFollowing(false)
+    }
+  }, [walletAddress])
 
   const reloadHistory = useCallback(
     async (days: DayRange) => {
@@ -601,6 +607,11 @@ const StrategyDetail: React.FC = () => {
                   ? 'Following · Unfollow'
                   : 'Follow Strategy'}
             </FollowBtn>
+            {walletAddress && (
+              <FollowBtn disabled={followLoading} onClick={refreshFollowState}>
+                Sync Follow State
+              </FollowBtn>
+            )}
           </ROIPanel>
         </TopGrid>
 

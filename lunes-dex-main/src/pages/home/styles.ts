@@ -9,34 +9,6 @@ type StyledProps = {
   size?: string
 }
 
-export const PillNav = styled(Wrapper)`
-  width: fit-content;
-  background: #1a1a1a;
-  border-radius: 12px;
-  padding: 4px;
-  margin-bottom: 24px;
-  gap: 4px;
-`
-
-export const PillOption = styled.button<{ active?: boolean }>`
-  ${({ theme, active }) => css`
-    padding: 8px 16px;
-    border: none;
-    background: ${active ? theme.colors.themeColors[800] : 'transparent'};
-    border-radius: 8px;
-    color: ${active ? '#FFFFFF' : '#8A8A8E'};
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.2s;
-
-    &:hover {
-      color: #ffffff;
-      background: ${active ? theme.colors.themeColors[800] : '#2A2A2C'};
-    }
-  `}
-`
-
 export const Box = styled(Wrapper)`
   ${css`
     position: relative;
@@ -73,26 +45,6 @@ export const Content = styled(Wrapper)`
         font-size: 18px;
       }
     }
-  `}
-`
-
-export const Span = styled.span<StyledProps>`
-  ${({ ...props }) => css`
-    width: 100%;
-    height: 56px;
-    font-size: 16px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: ${props.active
-      ? 'pointer'
-      : 'not-allowed'}; //deixar apenas pointer após criado component "Liquidity pool"
-    border-bottom: 1px solid
-      ${props.active ? props.theme.colors.themeColors[800] : 'transparent'};
-    color: ${props.active
-      ? props.theme.colors.themeColors[100]
-      : props.theme.colors.themeColors[400]};
   `}
 `
 
