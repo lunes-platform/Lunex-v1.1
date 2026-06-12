@@ -125,7 +125,15 @@ async function main() {
   const seedIdx = args.indexOf('--seed');
 
   const networkName = networkIdx >= 0 ? args[networkIdx + 1] : 'local';
-  const seed = seedIdx >= 0 ? args[seedIdx + 1] : '//Alice';
+  // //Alice só como default na rede local; testnet/mainnet exigem --seed.
+  const seed =
+    seedIdx >= 0 ? args[seedIdx + 1] : networkName === 'local' ? '//Alice' : '';
+  if (!seed) {
+    console.error(
+      `--seed é obrigatório para a rede "${networkName}" (//Alice só é default em --network local).`,
+    );
+    process.exit(1);
+  }
 
   const network = NETWORKS[networkName];
   if (!network) {
