@@ -268,8 +268,10 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
     expect(txMock.$executeRaw).toHaveBeenCalled();
     // lock is the first thing that runs inside the transaction
     expect(callOrder.indexOf('lock')).toBe(0);
-    const sql = txMock.$executeRaw.mock.calls[0][0];
-    const flat = Array.isArray(sql) ? sql.join(' ') : String(sql);
+    // The service passes a Prisma.Sql object (tagged-template, injection-safe);
+    // its literal fragments live on `.strings`.
+    const sql = txMock.$executeRaw.mock.calls[0][0] as { strings?: string[] };
+    const flat = (sql.strings ?? [String(sql)]).join(' ');
     expect(flat).toContain('pg_advisory_xact_lock');
   });
 
