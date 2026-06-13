@@ -66,6 +66,7 @@ Lunex is a decentralized exchange on the Lunes Substrate-based blockchain. The s
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260612-udl | Fix B4+B2: normalização de reservas (ordem canônica + decimais) — Price da Pool e price impact/executionPrice do Swap | 2026-06-13 | 53babbc | [260612-udl-fix-b4-b2-normalizar-reservas-ordem-can-](./quick/260612-udl-fix-b4-b2-normalizar-reservas-ordem-can-/) |
+| 260613-k9v | Vitest infra + 25 characterization tests locking Asymmetric Liquidity (reserveUtils B4/B2 → 1063.39, curve math 334.00/237.80, STRATEGY_TEMPLATES, toPlancks); behaviour-preserving toPlancks extraction to utils/plancks.ts | 2026-06-13 | b2f8c48 | [260613-k9v-vitest-asymmetric-liquidity-characteriza](./quick/260613-k9v-vitest-asymmetric-liquidity-characteriza/) |
 
 ### Active Todos / Blockers
 
