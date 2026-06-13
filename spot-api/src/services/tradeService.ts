@@ -7,7 +7,6 @@ import {
   serializeSettlementInput,
   tradeSettlementService,
 } from './tradeSettlementService';
-import { affiliateService } from './affiliateService';
 import { log } from '../utils/logger';
 
 function sanitizeTradeForClient<T extends Record<string, unknown>>(trade: T) {
@@ -221,40 +220,11 @@ export const tradeService = {
       );
     }
 
-    // Distribute affiliate commissions for each trade
-    for (const trade of trades) {
-      try {
-        const pair = await prisma.pair.findUnique({
-          where: { id: trade.pairId },
-        });
-        if (!pair) continue;
-        const takerFee = parseFloat(trade.takerFee.toString());
-        const makerFee = parseFloat(trade.makerFee.toString());
-        if (takerFee > 0) {
-          await affiliateService.distributeCommissions(
-            trade.takerAddress,
-            pair.quoteName,
-            takerFee,
-            'SPOT',
-            trade.id,
-          );
-        }
-        if (makerFee > 0) {
-          await affiliateService.distributeCommissions(
-            trade.makerAddress,
-            pair.quoteName,
-            makerFee,
-            'SPOT',
-            trade.id,
-          );
-        }
-      } catch (err) {
-        log.error(
-          { err, tradeId: trade.id },
-          'Affiliate commission distribution failed for trade',
-        );
-      }
-    }
+    // Affiliate commissions for SPOT trades are NO LONGER distributed here.
+    // They are credited only after the trade reaches SETTLED, inside
+    // tradeSettlementService.processAttempt (see audit finding coesao-04 L1):
+    // crediting a PENDING trade could pay commission on a settlement that
+    // later fails on-chain.
 
     return trades;
   },

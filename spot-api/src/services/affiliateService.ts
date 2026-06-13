@@ -205,6 +205,58 @@ export const affiliateService = {
   },
 
   /**
+   * Credit SPOT affiliate commissions for trades that have reached SETTLED.
+   * Called by the settlement hook (post-onChain confirmation) and by the
+   * payout-batch reconciliation. Only loads trades whose settlementStatus is
+   * SETTLED — fail-closed parity with copytrade (commission exists only for a
+   * trade that actually settled on-chain). Idempotent by construction: a second
+   * credit attempt collides on the unique constraint and is skipped (P2002) by
+   * distributeCommissions.
+   */
+  async distributeSpotTradeCommissions(tradeIds: string[]) {
+    if (tradeIds.length === 0) return;
+
+    const trades = await prisma.trade.findMany({
+      where: { id: { in: tradeIds }, settlementStatus: 'SETTLED' },
+      include: { pair: true },
+    });
+
+    for (const trade of trades) {
+      try {
+        const feeToken = trade.pair.quoteName;
+        // Keep money as strings — distributeCommissions owns the conversion.
+        const takerFee = trade.takerFee.toString();
+        const makerFee = trade.makerFee.toString();
+
+        if (trade.takerFee.gt(0)) {
+          await this.distributeCommissions(
+            trade.takerAddress,
+            feeToken,
+            takerFee,
+            'SPOT',
+            trade.id,
+          );
+        }
+        if (trade.makerFee.gt(0)) {
+          await this.distributeCommissions(
+            trade.makerAddress,
+            feeToken,
+            makerFee,
+            'SPOT',
+            trade.id,
+          );
+        }
+      } catch (error) {
+        // One bad trade must not block the rest of the batch.
+        log.error(
+          { err: error, tradeId: trade.id },
+          '[Affiliate] failed to credit spot commission for settled trade',
+        );
+      }
+    }
+  },
+
+  /**
    * Dashboard: aggregate earnings for an affiliate
    */
   async getDashboard(address: string) {
