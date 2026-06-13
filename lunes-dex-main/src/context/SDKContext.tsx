@@ -11,6 +11,7 @@ import React, {
 import { contractService } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
+import { normalizeReservesForPath } from '../utils/reserveUtils'
 
 interface Quote {
   amountOut: string
@@ -88,6 +89,7 @@ interface SDKContextState {
   addLiquidity: (params: LiquidityParams) => Promise<boolean>
   removeLiquidity: (params: RemoveLiquidityParams) => Promise<boolean>
   getPairInfo: (tokenA: string, tokenB: string) => Promise<PairInfo | null>
+  getPairToken0: (pairAddress: string) => Promise<string | null>
 
   // Funções de Staking
   stake: (amount: string) => Promise<boolean>
@@ -411,8 +413,16 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         // price_impact ≈ amountIn / (reserve_in + amountIn)  [simplified]
         let priceImpact = '0'
         if (pairInfo) {
-          const reserveIn = BigInt(pairInfo.reserve0)
-          const reserveOut = BigInt(pairInfo.reserve1)
+          const pairAddress = await contractService.getPair(path[0], path[1])
+          const pairToken0 = pairAddress
+            ? (await contractService.getPairToken0(pairAddress)) ?? path[0]
+            : path[0]
+          const { reserveIn, reserveOut } = normalizeReservesForPath(
+            pairToken0,
+            path[0],
+            pairInfo.reserve0,
+            pairInfo.reserve1,
+          )
           const aIn = BigInt(amountIn)
           const aOut = BigInt(amountOut)
 
@@ -876,6 +886,21 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
+  // Obter token_0 canônico do par
+  const getPairToken0 = async (
+    pairAddress: string,
+  ): Promise<string | null> => {
+    try {
+      if (!contractService.getIsConnected()) {
+        await contractService.connect(NETWORK)
+      }
+      return await contractService.getPairToken0(pairAddress)
+    } catch (err) {
+      console.error('Error getting pair token0:', err)
+      return null
+    }
+  }
+
   // Obter Info do Token
   const getTokenInfo = async (address: string): Promise<TokenInfo | null> => {
     try {
@@ -979,6 +1004,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       addLiquidity,
       removeLiquidity,
       getPairInfo,
+      getPairToken0,
       stake,
       unstake,
       claimStakingRewards,
