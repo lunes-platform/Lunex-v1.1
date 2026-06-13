@@ -145,3 +145,76 @@ describe('affiliateService.distributeCommissions — idempotency (Task 1)', () =
     ).rejects.toThrow('connection reset');
   });
 });
+
+describe('affiliateService.distributeSpotTradeCommissions (Task 2)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('returns early without querying when tradeIds is empty', async () => {
+    await affiliateService.distributeSpotTradeCommissions([]);
+    expect(mockPrisma.trade.findMany).not.toHaveBeenCalled();
+  });
+
+  it('only loads SETTLED trades and credits both fee legs when positive', async () => {
+    mockPrisma.trade.findMany.mockResolvedValue([
+      {
+        id: 'trade-1',
+        takerAddress: 'taker',
+        makerAddress: 'maker',
+        takerFee: new Decimal('2'),
+        makerFee: new Decimal('1'),
+        pair: { quoteName: 'USDT' },
+      },
+    ]);
+    const spy = jest
+      .spyOn(affiliateService, 'distributeCommissions')
+      .mockResolvedValue([]);
+
+    await affiliateService.distributeSpotTradeCommissions(['trade-1']);
+
+    expect(mockPrisma.trade.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ['trade-1'] }, settlementStatus: 'SETTLED' },
+        include: { pair: true },
+      }),
+    );
+    expect(spy).toHaveBeenCalledWith(
+      'taker',
+      'USDT',
+      '2',
+      'SPOT',
+      'trade-1',
+    );
+    expect(spy).toHaveBeenCalledWith(
+      'maker',
+      'USDT',
+      '1',
+      'SPOT',
+      'trade-1',
+    );
+    spy.mockRestore();
+  });
+
+  it('skips a fee leg whose fee is zero', async () => {
+    mockPrisma.trade.findMany.mockResolvedValue([
+      {
+        id: 'trade-1',
+        takerAddress: 'taker',
+        makerAddress: 'maker',
+        takerFee: new Decimal('2'),
+        makerFee: new Decimal('0'),
+        pair: { quoteName: 'USDT' },
+      },
+    ]);
+    const spy = jest
+      .spyOn(affiliateService, 'distributeCommissions')
+      .mockResolvedValue([]);
+
+    await affiliateService.distributeSpotTradeCommissions(['trade-1']);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('taker', 'USDT', '2', 'SPOT', 'trade-1');
+    spy.mockRestore();
+  });
+});
