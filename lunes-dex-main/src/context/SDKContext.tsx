@@ -11,6 +11,7 @@ import React, {
 import { contractService } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
+import { normalizeReservesForPath } from '../utils/reserveUtils'
 
 interface Quote {
   amountOut: string
@@ -412,8 +413,16 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         // price_impact ≈ amountIn / (reserve_in + amountIn)  [simplified]
         let priceImpact = '0'
         if (pairInfo) {
-          const reserveIn = BigInt(pairInfo.reserve0)
-          const reserveOut = BigInt(pairInfo.reserve1)
+          const pairAddress = await contractService.getPair(path[0], path[1])
+          const pairToken0 = pairAddress
+            ? (await contractService.getPairToken0(pairAddress)) ?? path[0]
+            : path[0]
+          const { reserveIn, reserveOut } = normalizeReservesForPath(
+            pairToken0,
+            path[0],
+            pairInfo.reserve0,
+            pairInfo.reserve1,
+          )
           const aIn = BigInt(amountIn)
           const aOut = BigInt(amountOut)
 
