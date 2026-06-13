@@ -1,6 +1,15 @@
 import crypto from 'crypto';
 import { Decimal } from '@prisma/client/runtime/library';
 import prisma from '../db';
+import { log } from '../utils/logger';
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: string }).code === 'P2002'
+  );
+}
 
 // Aggressive model: 4% → 3% → 1.5% → 1% → 0.5%
 const AFFILIATE_RATES_BPS = [400, 300, 150, 100, 50];
@@ -158,22 +167,38 @@ export const affiliateService = {
       const commissionAmount = (fee * rateBps) / BPS_DENOMINATOR;
       if (commissionAmount <= 0) continue;
 
-      const commission = await prisma.affiliateCommission.create({
-        data: {
-          beneficiaryAddr: ancestor.address,
-          sourceAddr,
-          sourceTradeId,
-          sourceType,
-          level: ancestor.level,
-          feeToken,
-          feeAmount: new Decimal(fee.toString()),
-          commissionRate: rateBps,
-          commissionAmount: new Decimal(commissionAmount.toString()),
-          isPaid: false,
-        },
-      });
+      try {
+        const commission = await prisma.affiliateCommission.create({
+          data: {
+            beneficiaryAddr: ancestor.address,
+            sourceAddr,
+            sourceTradeId,
+            sourceType,
+            level: ancestor.level,
+            feeToken,
+            feeAmount: new Decimal(fee.toString()),
+            commissionRate: rateBps,
+            commissionAmount: new Decimal(commissionAmount.toString()),
+            isPaid: false,
+          },
+        });
 
-      commissions.push(commission);
+        commissions.push(commission);
+      } catch (error) {
+        // Idempotent skip: a P2002 means this exact commission
+        // (sourceTradeId, sourceAddr, beneficiaryAddr, level) already exists
+        // from a prior execution/settlement retry. Drop it and keep going so
+        // the remaining levels of the chain still get credited. Any other
+        // error is a real DB failure and must propagate.
+        if (isUniqueViolation(error)) {
+          log.debug(
+            { sourceTradeId, sourceAddr, beneficiary: ancestor.address, level: ancestor.level },
+            '[Affiliate] skipping duplicate commission (P2002)',
+          );
+          continue;
+        }
+        throw error;
+      }
     }
 
     return commissions;

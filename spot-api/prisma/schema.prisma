@@ -782,6 +782,17 @@ model AffiliateCommission {
 
   batch AffiliatePayoutBatch? @relation(fields: [batchId], references: [id])
 
+  // Idempotency: one commission per (sourceTrade, fee payer, beneficiary, level).
+  // sourceAddr is part of the key on purpose — taker-fee and maker-fee
+  // distributions for the same trade are distinct events with distinct
+  // sourceAddr, so both must be allowed. Postgres treats NULLs as distinct,
+  // so rows with sourceTradeId = null (MARGIN / tradeId-less calls) are
+  // unaffected. Documented side-effect: self-trade (maker == taker) credits
+  // only the first of the two distributions — desirable anti wash-trading.
+  // Explicit `map` is mandatory: the Prisma default name exceeds Postgres'
+  // 63-char identifier limit, and both Prisma schemas must point at the same
+  // physical index name to avoid drift.
+  @@unique([sourceTradeId, sourceAddr, beneficiaryAddr, level], map: "AffiliateCommission_source_dedup_key")
   @@index([beneficiaryAddr, isPaid])
   @@index([sourceAddr, createdAt])
   @@index([batchId])
