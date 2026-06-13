@@ -82,7 +82,12 @@ interface SDKContextState {
   signMessage: (message: string) => Promise<string>
 
   // Funções de Swap
-  getQuote: (amountIn: string, path: string[]) => Promise<Quote | null>
+  getQuote: (
+    amountIn: string,
+    path: string[],
+    decimalsIn?: number,
+    decimalsOut?: number
+  ) => Promise<Quote | null>
   executeSwap: (params: SwapParams) => Promise<boolean>
 
   // Funções de Liquidez
@@ -386,7 +391,12 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
   // Obter Quote para Swap
   const getQuote = useCallback(
-    async (amountIn: string, path: string[]): Promise<Quote | null> => {
+    async (
+      amountIn: string,
+      path: string[],
+      decimalsIn?: number,
+      decimalsOut?: number
+    ): Promise<Quote | null> => {
       setIsLoading(true)
       setError(null)
 
@@ -406,7 +416,16 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         }
 
         const amountOut = amounts[amounts.length - 1]
-        const executionPrice = (Number(amountOut) / Number(amountIn)).toFixed(6)
+        // Raw amounts carry each token's decimal scale; without adjustment a
+        // 8-dec → 6-dec pair displays a price 100× off (10^(8−6)).
+        const decimalScale =
+          decimalsIn !== undefined && decimalsOut !== undefined
+            ? 10 ** (decimalsIn - decimalsOut)
+            : 1
+        const executionPrice = (
+          (Number(amountOut) / Number(amountIn)) *
+          decimalScale
+        ).toFixed(6)
 
         // Real price impact = 1 - (amountOut/amountIn) / (reserve_out/reserve_in)
         // For Uniswap V2 with 0.3% fee:
@@ -435,7 +454,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
           ) {
             // impact = 1 - (aOut * reserveIn) / (aIn * reserveOut)   [in basis points *10000]
             const BPS = BigInt(10000)
-            const midPriceNum = aOut * reserveIn * BPS
+            const midPriceNum = aOut * reserveIn
             const midPriceDen = aIn * reserveOut
             const impactBps =
               midPriceDen > midPriceNum

@@ -79,10 +79,12 @@ const Home = () => {
       const decimals = selectedOption1.decimals || 8
       const amountInWei = sdk.parseAmount(inputValue1, decimals)
 
-      const quoteResult = await sdk.getQuote(amountInWei, [
-        selectedOption1.address,
-        selectedOption2.address
-      ])
+      const quoteResult = await sdk.getQuote(
+        amountInWei,
+        [selectedOption1.address, selectedOption2.address],
+        decimals,
+        selectedOption2.decimals || 8
+      )
 
       if (quoteResult) {
         setQuote(quoteResult)

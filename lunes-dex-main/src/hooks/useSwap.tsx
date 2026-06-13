@@ -68,10 +68,12 @@ const useSwap = (): UseSwapReturn => {
       const amountInWei = sdk.parseAmount(amountIn, tokenIn.decimals)
 
       // Obter quote do SDK
-      const quoteResult = await sdk.getQuote(amountInWei, [
-        tokenIn.address,
-        tokenOut.address
-      ])
+      const quoteResult = await sdk.getQuote(
+        amountInWei,
+        [tokenIn.address, tokenOut.address],
+        tokenIn.decimals,
+        tokenOut.decimals
+      )
 
       if (quoteResult) {
         const amountOutFormatted = sdk.formatAmount(
