@@ -399,7 +399,11 @@ export const Pools: React.FC = () => {
                       </ActionButton>
                       <ActionButton
                         $variant="primary"
-                        onClick={() => navigate('/pool')}
+                        onClick={() =>
+                          navigate(
+                            `/pool?tokenA=${encodeURIComponent(pool.token0.address || '')}&tokenB=${encodeURIComponent(pool.token1.address || '')}`
+                          )
+                        }
                       >
                         Deposit
                       </ActionButton>

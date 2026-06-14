@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import styled from 'styled-components'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import PageLayout from '../../components/layout'
 import useLiquidity from '../../hooks/useLiquidity'
 import { useSDK } from '../../context/SDKContext'
@@ -411,6 +411,7 @@ const Pool: React.FC = () => {
   const sdk = useSDK()
   const liquidity = useLiquidity()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [activeTab, setActiveTab] = useState<'add' | 'remove'>('add')
   const [showTokenSelectA, setShowTokenSelectA] = useState(false)
@@ -418,6 +419,27 @@ const Pool: React.FC = () => {
   const [lpAmountToRemove, setLpAmountToRemove] = useState('')
   const [balanceA, setBalanceA] = useState<string | null>(null)
   const [balanceB, setBalanceB] = useState<string | null>(null)
+
+  // BUG-02 FIX: pre-fill tokens from ?tokenA=...&tokenB=... query params
+  // (set by the /pools Deposit button)
+  useEffect(() => {
+    const addrA = searchParams.get('tokenA')
+    const addrB = searchParams.get('tokenB')
+    if (addrA && !liquidity.tokenA) {
+      const found = availableTokens.find(
+        t => t.address.toLowerCase() === addrA.toLowerCase()
+      )
+      if (found) liquidity.setTokenA(found)
+    }
+    if (addrB && !liquidity.tokenB) {
+      const found = availableTokens.find(
+        t => t.address.toLowerCase() === addrB.toLowerCase()
+      )
+      if (found) liquidity.setTokenB(found)
+    }
+    // Run only once on mount (searchParams is stable on first render)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!sdk.walletAddress || !liquidity.tokenA) {
