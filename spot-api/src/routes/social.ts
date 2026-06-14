@@ -30,12 +30,16 @@ const COPYTRADE_DEPRECATION_RESPONSE = {
   },
 };
 
+// BUG-03 fix: viewerAddress is optional context for personalising public read
+// responses (e.g. isFollowing). When the caller omits the address or provides
+// an address without a valid read-signature, we silently fall back to
+// unauthenticated public data instead of blocking with 400/401.
 async function getVerifiedViewerAddress(
   req: Request,
-  res: Response,
+  _res: Response,
   action: string,
   fields?: Record<string, string>,
-) {
+): Promise<string | undefined> {
   const viewerAddress =
     typeof req.query.viewerAddress === 'string'
       ? req.query.viewerAddress
@@ -54,12 +58,9 @@ async function getVerifiedViewerAddress(
       ...getSignedAuthInput(req),
     });
 
-  if (!parsed.success) {
-    res
-      .status(400)
-      .json({ error: 'Validation failed', details: parsed.error.issues });
-    return null;
-  }
+  // Signature fields are missing or malformed — serve public data without
+  // the personalised isFollowing context rather than blocking the request.
+  if (!parsed.success) return undefined;
 
   const auth = await verifyWalletReadSignature({
     action,
@@ -69,10 +70,9 @@ async function getVerifiedViewerAddress(
     signature: parsed.data.signature,
     fields,
   });
-  if (!auth.ok) {
-    res.status(401).json({ error: auth.error });
-    return null;
-  }
+
+  // Invalid signature — fall back to public data, do not block.
+  if (!auth.ok) return undefined;
 
   return parsed.data.viewerAddress;
 }
@@ -234,7 +234,6 @@ router.get(
           address: parsed.data.address,
         },
       );
-      if (viewerAddress === null) return;
       const leader = await socialService.getLeaderProfileByAddress(
         parsed.data.address,
         viewerAddress,
@@ -258,7 +257,6 @@ router.get(
           leaderId: req.params.leaderId,
         },
       );
-      if (viewerAddress === null) return;
       const leader = await socialService.getLeaderProfile(
         req.params.leaderId,
         viewerAddress,
