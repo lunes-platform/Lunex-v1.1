@@ -790,7 +790,7 @@ const Staking: React.FC = () => {
         <InfoList>
           <li>Add liquidity to the LUNES/USDT pool to receive LP tokens</li>
           <li>Stake LP tokens to earn LUNES rewards</li>
-          <li>Current APR: {stakingInfo?.apr || '120'}% per year</li>
+          <li>Current APR: {stakingInfo?.apr || '0'}% per year</li>
           <li>Lock period: {stakingInfo?.lockPeriod || 7} days</li>
           <li>Rewards are distributed every block</li>
         </InfoList>
