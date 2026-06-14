@@ -412,7 +412,13 @@ class ContractService {
             (result: any) => {
               if (result.dispatchError) {
                 reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
+              } else if (result.status.isFinalized) {
+                // Wait for finalization (not just isInBlock) so the nonce is
+                // fully committed on-chain before any subsequent signAndSend
+                // call reads accountNextIndex. Resolving at isInBlock caused a
+                // nonce race on the second remove-liquidity cycle: the approve
+                // nonce hadn't propagated yet when the remove tx was signed,
+                // producing "1010: Invalid Transaction: bad signature".
                 resolve()
               }
             }
@@ -941,16 +947,12 @@ class ContractService {
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
-      const pairAddress = await this.getPair(tokenA, tokenB)
-      if (pairAddress) {
-        await this.approveToken(
-          pairAddress,
-          contracts.router,
-          liquidity,
-          account
-        )
-      }
-
+      // NOTE: approve is intentionally NOT performed here.
+      // SDKContext.removeLiquidity already handles the allowance check and
+      // calls approveToken before invoking this method. Doing a second approve
+      // here would (a) waste gas, (b) consume an extra nonce immediately before
+      // the removeLiquidity signAndSend, producing a nonce race that causes
+      // "1010: Invalid Transaction: bad signature" on repeated remove calls.
       const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
 
       const { gasRequired } = await this.routerContract.query.removeLiquidity(
