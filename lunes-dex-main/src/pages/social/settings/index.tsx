@@ -8,6 +8,7 @@ import socialApi, {
   buildUpsertLeaderProfileMessage,
   createSignedActionMetadata
 } from '../../../services/socialService'
+import { useToast } from '../../../components/feedback/ToastProvider'
 
 // ── SVG Icons ──
 const ArrowLeftIcon = () => (
@@ -379,6 +380,7 @@ const StatusText = styled.p<{ $error?: boolean; $success?: boolean }>`
 const SocialSettings: React.FC = () => {
   const navigate = useNavigate()
   const { walletAddress, connectWallet, signMessage } = useSDK()
+  const toast = useToast()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const [name, setName] = useState('')
@@ -788,7 +790,7 @@ const SocialSettings: React.FC = () => {
             <TraderCard
               trader={previewTrader}
               rank={99}
-              onCopy={() => alert('Profile preview mode - copying disabled')}
+              onCopy={() => toast.info('Profile preview mode - copying disabled')}
             />
 
             <InfoBox>

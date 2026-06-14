@@ -15,6 +15,7 @@ import strategyService, {
   StrategyPerformancePoint
 } from '../../services/strategyService'
 import { useSDK } from '../../context/SDKContext'
+import { useToast } from '../../components/feedback/ToastProvider'
 
 // ─── Styled ──────────────────────────────────────────────────────
 
@@ -393,6 +394,7 @@ const StrategyDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { walletAddress, signMessage } = useSDK()
+  const toast = useToast()
 
   const [strategy, setStrategy] = useState<Strategy | null>(null)
   const [history, setHistory] = useState<StrategyPerformancePoint[]>([])
@@ -456,7 +458,7 @@ const StrategyDetail: React.FC = () => {
   const handleFollow = async () => {
     if (!strategy) return
     if (!walletAddress) {
-      alert('Connect your wallet to follow strategies.')
+      toast.warning('Connect your wallet to follow strategies.')
       return
     }
     setFollowLoading(true)
@@ -483,7 +485,7 @@ const StrategyDetail: React.FC = () => {
         )
       }
     } catch (e: any) {
-      alert(e.message)
+      toast.error(e.message || 'Action failed')
     } finally {
       setFollowLoading(false)
     }

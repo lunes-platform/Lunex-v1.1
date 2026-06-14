@@ -8,6 +8,7 @@ import strategyService, {
 } from '../../services/strategyService'
 import CreateStrategyModal from './CreateStrategyModal'
 import { useSDK } from '../../context/SDKContext'
+import { useToast } from '../../components/feedback/ToastProvider'
 
 // ─── Styled Components ───────────────────────────────────────────
 
@@ -527,6 +528,7 @@ const PAGE_SIZE = 24
 const StrategyMarketplacePage: React.FC = () => {
   const { walletAddress, signMessage } = useSDK()
   const navigate = useNavigate()
+  const toast = useToast()
   const [tab, setTab] = useState<TabKey>('marketplace')
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [total, setTotal] = useState(0)
@@ -625,7 +627,7 @@ const StrategyMarketplacePage: React.FC = () => {
   const handleFollow = async (strategyId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     if (!walletAddress) {
-      alert('Connect your wallet to follow strategies.')
+      toast.warning('Connect your wallet to follow strategies.')
       return
     }
     setFollowLoading(prev => new Set(prev).add(strategyId))
