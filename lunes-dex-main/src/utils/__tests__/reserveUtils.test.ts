@@ -104,7 +104,7 @@ describe('humanPrice', () => {
 describe('BUG-01 regression — real on-chain reserves produce correct prices', () => {
   // Synthetic addresses — the test only cares about which one is token_0
   const TOKEN_A = '0x0000000000000000000000000000000000000001' // canonical token_0
-  const TOKEN_B = '0x0000000000000000000000000000000000000002' // canonical token_1
+  const _TOKEN_B = '0x0000000000000000000000000000000000000002' // canonical token_1
 
   function getAmountOutRaw(amountIn: bigint, rIn: bigint, rOut: bigint): bigint {
     const fee = amountIn * 997n
