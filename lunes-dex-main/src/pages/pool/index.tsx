@@ -491,6 +491,7 @@ const Pool: React.FC = () => {
 
   const handleRemoveLiquidity = async () => {
     if (!lpAmountToRemove) return
+    toast.info('Aguardando confirmação da aprovação...')
     const success = await liquidity.removeLiquidity(lpAmountToRemove)
     if (success) {
       toast.success('Liquidity removed successfully')
