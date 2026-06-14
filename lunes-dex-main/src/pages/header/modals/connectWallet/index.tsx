@@ -146,7 +146,10 @@ const WalletList = styled.div`
   margin-bottom: 20px;
 `
 
-const WalletCard = styled.button<{ $loading?: boolean }>`
+// Changed from styled.button to styled.div to avoid invalid <button> nesting:
+// WalletAction uses `as="button"` inside, so the outer element must not be a button.
+// Disabled state is replicated via aria-disabled + pointer-events for a11y parity.
+const WalletCard = styled.div<{ $loading?: boolean; $disabled?: boolean }>`
   display: flex;
   align-items: center;
   gap: 14px;
@@ -154,18 +157,20 @@ const WalletCard = styled.button<{ $loading?: boolean }>`
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(255, 255, 255, 0.03);
-  cursor: ${({ $loading }) => ($loading ? 'wait' : 'pointer')};
+  cursor: ${({ $loading, $disabled }) =>
+    $disabled ? 'not-allowed' : $loading ? 'wait' : 'pointer'};
   transition: all 0.15s;
   text-align: left;
   width: 100%;
 
-  &:hover:not(:disabled) {
+  &:hover:not([aria-disabled='true']) {
     border-color: rgba(108, 56, 255, 0.4);
     background: rgba(108, 56, 255, 0.08);
   }
 
-  &:disabled {
-    cursor: not-allowed;
+  &[aria-disabled='true'] {
+    opacity: 0.6;
+    pointer-events: none;
   }
 
   img {
@@ -414,12 +419,21 @@ const ConnectWallet: React.FC<ModalConnectWalletProps> = ({
               <WalletCard
                 key={wallet.id}
                 $loading={isLoading}
-                disabled={isLoading}
+                $disabled={isLoading}
+                aria-disabled={isLoading}
+                role="button"
+                tabIndex={isLoading ? -1 : 0}
                 onClick={() =>
                   isInstalled && !isLoading
                     ? handleConnect(wallet.source)
                     : undefined
                 }
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    if (isInstalled && !isLoading) handleConnect(wallet.source)
+                  }
+                }}
                 style={{ cursor: isInstalled ? 'pointer' : 'default' }}
               >
                 <img
