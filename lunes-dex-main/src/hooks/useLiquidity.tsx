@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSDK, parseBlockchainError } from '../context/SDKContext'
 import { humanPrice } from '../utils/reserveUtils'
+import { LP_TOKEN_DECIMALS } from '../config/contracts'
 
 interface Token {
   address: string
@@ -241,8 +242,7 @@ const useLiquidity = (): UseLiquidityReturn => {
         // LP token tem 8 casas decimais — escalar o valor humano para raw
         // (antes: BigInt(lpAmount) tratava "2" como 2 raw → queima ~0 → revert
         //  INSUFFICIENT_LIQUIDITY_BURNED no pair).
-        const LP_DECIMALS = 8
-        const lpAmountRaw = sdk.parseAmount(lpAmount, LP_DECIMALS)
+        const lpAmountRaw = sdk.parseAmount(lpAmount, LP_TOKEN_DECIMALS)
         const lpAmountBigInt = BigInt(lpAmountRaw)
         const totalSupply = BigInt(poolInfo.totalSupply)
         const reserve0 = BigInt(poolInfo.reserve0)

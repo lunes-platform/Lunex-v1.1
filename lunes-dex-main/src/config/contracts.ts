@@ -38,3 +38,7 @@ export const NETWORK = {
     mainnet: process.env.REACT_APP_RPC_MAINNET || 'wss://ws.lunes.io'
   }
 } as const
+
+// ─── Token Precision ──────────────────────────────────────────────
+/** Número de casas decimais do token LP emitido pelo contrato pair. */
+export const LP_TOKEN_DECIMALS = 8

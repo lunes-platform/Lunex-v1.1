@@ -6,7 +6,7 @@ import useLiquidity from '../../hooks/useLiquidity'
 import { useSDK } from '../../context/SDKContext'
 import TradeSubNav from '../../components/tradeSubNav'
 import TokenIcon from '../../components/TokenIcon'
-import { TOKENS } from '../../config/contracts'
+import { TOKENS, LP_TOKEN_DECIMALS } from '../../config/contracts'
 import { useToast } from '../../components/feedback/ToastProvider'
 
 const ProBanner = styled.button`
@@ -803,7 +803,6 @@ const Pool: React.FC = () => {
 // Helper function
 // LP token tem 8 casas; escala o valor humano para raw e formata a saída
 // na escala do token recebido (antes mostrava raw com LP não escalado).
-const LP_DECIMALS = 8
 const calculateExpectedAmount = (
   lpAmount: string,
   reserve: string,
@@ -813,7 +812,7 @@ const calculateExpectedAmount = (
   try {
     const lpFloat = parseFloat(lpAmount)
     if (!isFinite(lpFloat) || lpFloat <= 0) return '0'
-    const lp = BigInt(Math.round(lpFloat * 10 ** LP_DECIMALS))
+    const lp = BigInt(Math.round(lpFloat * 10 ** LP_TOKEN_DECIMALS))
     const res = BigInt(reserve)
     const total = BigInt(totalSupply)
     if (total === BigInt(0)) return '0'
