@@ -238,8 +238,12 @@ const useLiquidity = (): UseLiquidityReturn => {
       try {
         const deadline = sdk.calculateDeadline(20)
 
-        // Calcular amounts mínimos baseado na proporção do LP
-        const lpAmountBigInt = BigInt(lpAmount)
+        // LP token tem 8 casas decimais — escalar o valor humano para raw
+        // (antes: BigInt(lpAmount) tratava "2" como 2 raw → queima ~0 → revert
+        //  INSUFFICIENT_LIQUIDITY_BURNED no pair).
+        const LP_DECIMALS = 8
+        const lpAmountRaw = sdk.parseAmount(lpAmount, LP_DECIMALS)
+        const lpAmountBigInt = BigInt(lpAmountRaw)
         const totalSupply = BigInt(poolInfo.totalSupply)
         const reserve0 = BigInt(poolInfo.reserve0)
         const reserve1 = BigInt(poolInfo.reserve1)
@@ -259,7 +263,7 @@ const useLiquidity = (): UseLiquidityReturn => {
         const result = await sdk.removeLiquidity({
           tokenA: tokenA.address,
           tokenB: tokenB.address,
-          liquidity: lpAmount,
+          liquidity: lpAmountRaw,
           amountAMin,
           amountBMin,
           to: sdk.walletAddress,

@@ -7,6 +7,7 @@ import { useSDK } from '../../context/SDKContext'
 import TradeSubNav from '../../components/tradeSubNav'
 import TokenIcon from '../../components/TokenIcon'
 import { TOKENS } from '../../config/contracts'
+import { useToast } from '../../components/feedback/ToastProvider'
 
 const ProBanner = styled.button`
   display: flex;
@@ -410,6 +411,7 @@ const TokenItem = styled.div`
 const Pool: React.FC = () => {
   const sdk = useSDK()
   const liquidity = useLiquidity()
+  const toast = useToast()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
@@ -481,7 +483,9 @@ const Pool: React.FC = () => {
   const handleAddLiquidity = async () => {
     const success = await liquidity.addLiquidity()
     if (success) {
-      alert('Liquidity added successfully!')
+      toast.success('Liquidity added successfully')
+    } else {
+      toast.error(liquidity.error || 'Failed to add liquidity')
     }
   }
 
@@ -489,8 +493,10 @@ const Pool: React.FC = () => {
     if (!lpAmountToRemove) return
     const success = await liquidity.removeLiquidity(lpAmountToRemove)
     if (success) {
-      alert('Liquidity removed successfully!')
+      toast.success('Liquidity removed successfully')
       setLpAmountToRemove('')
+    } else {
+      toast.error(liquidity.error || 'Failed to remove liquidity')
     }
   }
 
@@ -688,7 +694,8 @@ const Pool: React.FC = () => {
                   {calculateExpectedAmount(
                     lpAmountToRemove,
                     liquidity.poolInfo.reserve0,
-                    liquidity.poolInfo.totalSupply
+                    liquidity.poolInfo.totalSupply,
+                    liquidity.tokenA?.decimals ?? 6
                   )}
                 </span>
               </InfoRow>
@@ -699,7 +706,8 @@ const Pool: React.FC = () => {
                   {calculateExpectedAmount(
                     lpAmountToRemove,
                     liquidity.poolInfo.reserve1,
-                    liquidity.poolInfo.totalSupply
+                    liquidity.poolInfo.totalSupply,
+                    liquidity.tokenB?.decimals ?? 8
                   )}
                 </span>
               </InfoRow>
@@ -792,18 +800,26 @@ const Pool: React.FC = () => {
 }
 
 // Helper function
+// LP token tem 8 casas; escala o valor humano para raw e formata a saída
+// na escala do token recebido (antes mostrava raw com LP não escalado).
+const LP_DECIMALS = 8
 const calculateExpectedAmount = (
   lpAmount: string,
   reserve: string,
-  totalSupply: string
+  totalSupply: string,
+  tokenDecimals: number
 ): string => {
   try {
-    const lp = BigInt(lpAmount)
+    const lpFloat = parseFloat(lpAmount)
+    if (!isFinite(lpFloat) || lpFloat <= 0) return '0'
+    const lp = BigInt(Math.round(lpFloat * 10 ** LP_DECIMALS))
     const res = BigInt(reserve)
     const total = BigInt(totalSupply)
     if (total === BigInt(0)) return '0'
-    const result = (lp * res) / total
-    return result.toString()
+    const raw = (lp * res) / total
+    return (Number(raw) / 10 ** tokenDecimals).toLocaleString('en-US', {
+      maximumFractionDigits: 6,
+    })
   } catch {
     return '0'
   }
