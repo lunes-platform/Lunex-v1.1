@@ -20,6 +20,7 @@ import PairABI from '../abis/Pair.json'
 import WNativeABI from '../abis/WNative.json'
 import StakingABI from '../abis/Staking.json'
 import { CONTRACTS } from '../config/contracts'
+import { normalizeReservesForPath } from '../utils/reserveUtils'
 
 // Network configuration — env vars override defaults so local dev node is used automatically
 const NETWORKS = {
@@ -681,13 +682,25 @@ class ContractService {
       const reserves = await this.getReserves(pairAddress)
       if (!reserves) return null
 
+      // BUG-01 FIX: pair stores reserves in canonical order (token0 < token1 by
+      // address). We must swap them when path[0] is the canonical token_1 so that
+      // reserve_in corresponds to the token being sold and reserve_out to the token
+      // being bought — matching the router contract's expectation.
+      const pairToken0 = await this.getPairToken0(pairAddress)
+      const { reserveIn, reserveOut } = normalizeReservesForPath(
+        pairToken0 ?? path[0],
+        path[0],
+        reserves.reserve0,
+        reserves.reserve1,
+      )
+
       // Use router.get_amount_out(amount_in, reserve_in, reserve_out)
       const { result, output } = await this.routerContract.query.getAmountOut(
         caller,
         { gasLimit: this.makeDryGas() },
         amountIn,
-        reserves.reserve0,
-        reserves.reserve1
+        reserveIn.toString(),
+        reserveOut.toString()
       )
 
       if (result.isOk && output) {
