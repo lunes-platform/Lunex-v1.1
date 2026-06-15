@@ -179,6 +179,20 @@ class SpotSettlementService {
   private cancelOrderForMethodKey: string | null = null;
   private initPromise: Promise<boolean> | null = null;
 
+  // Relayer nonce pipeline. settle_trade is submitted concurrently (throttled
+  // by MAX_SETTLE_CONCURRENCY) instead of serialized one-per-finalized-block.
+  // polkadot.js `signAndSend(account, cb)` resolves the nonce lazily via
+  // `system.accountNextIndex`, which does NOT account for not-yet-included
+  // in-flight extrinsics — so N parallel submissions would all grab the SAME
+  // nonce and the node would drop all but one. We therefore manage the nonce
+  // explicitly: seed once from chain, then hand out monotonically increasing
+  // values guarded by a single-flight async lock so each in-flight extrinsic
+  // gets a distinct nonce. This preserves custody-grade correctness — each
+  // trade still produces exactly one settle_trade extrinsic; the contract's
+  // `used_nonces` guard (NonceAlreadyUsed) remains the idempotency backstop.
+  private nextRelayerNonce: bigint | null = null;
+  private nonceLock: Promise<void> = Promise.resolve();
+
   private isConfigured() {
     return Boolean(
       config.blockchain.wsUrl &&
@@ -269,6 +283,10 @@ class SpotSettlementService {
       this.api = api;
       this.contract = contract;
       this.relayer = relayer;
+      // Seed the relayer nonce pipeline from chain on (re)connect. Any
+      // previously cached value is discarded so a reconnect re-syncs with the
+      // node's view and never reuses a stale nonce.
+      this.nextRelayerNonce = null;
       this.settleMethodKey = settleMethodKey;
       this.getBalanceMethodKey = getBalanceMethodKey;
       this.isNonceUsedMethodKey = isNonceUsedMethodKey;
@@ -360,6 +378,83 @@ class SpotSettlementService {
     const refTime = (gasRequired.refTime.toBigInt() * 150n) / 100n;
     const proofSize = (gasRequired.proofSize.toBigInt() * 150n) / 100n;
     return this.api.registry.createType('WeightV2', { refTime, proofSize });
+  }
+
+  /**
+   * Max number of settle_trade extrinsics kept in flight simultaneously.
+   * Bounds the relayer's exposure and protects the node's tx-pool from being
+   * flooded. Configurable via MAX_SETTLE_CONCURRENCY (default 8). Clamped to
+   * [1, 64] so a misconfiguration can never serialize (0) or flood the chain.
+   */
+  private settleConcurrency() {
+    const raw = parseInt(process.env.MAX_SETTLE_CONCURRENCY || '8', 10);
+    if (!Number.isFinite(raw) || raw < 1) return 1;
+    return Math.min(raw, 64);
+  }
+
+  /**
+   * Hands out a distinct, monotonically increasing relayer nonce for each
+   * in-flight extrinsic. Seeds lazily from `system.accountNextIndex` on first
+   * use after (re)connect, then increments locally. Serialized by a
+   * single-flight async lock so concurrent callers can never observe the same
+   * value (the seeding RPC await is a yield point, hence the lock).
+   */
+  private async nextNonce(): Promise<bigint> {
+    if (!this.api || !this.relayer) {
+      throw new Error('Settlement API not initialized');
+    }
+
+    let release!: () => void;
+    const prev = this.nonceLock;
+    this.nonceLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prev;
+
+    try {
+      if (this.nextRelayerNonce === null) {
+        const onChain = await this.api.rpc.system.accountNextIndex(
+          this.relayer.address,
+        );
+        this.nextRelayerNonce = BigInt(onChain.toString());
+      }
+      const nonce = this.nextRelayerNonce;
+      this.nextRelayerNonce = nonce + 1n;
+      return nonce;
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Runs `worker` over `items` with at most `limit` concurrent invocations,
+   * returning results in input order. Used to pipeline settle_trade
+   * submissions without serializing on finality (one-per-block) or flooding
+   * the node with the entire batch at once.
+   */
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    worker: (item: T, index: number) => Promise<R>,
+  ): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let cursor = 0;
+
+    const runner = async (): Promise<void> => {
+      while (true) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= items.length) return;
+        results[index] = await worker(items[index], index);
+      }
+    };
+
+    const pool = Array.from(
+      { length: Math.min(limit, items.length) },
+      () => runner(),
+    );
+    await Promise.all(pool);
+    return results;
   }
 
   async getVaultBalance(
@@ -546,6 +641,13 @@ class SpotSettlementService {
       );
     }
 
+    // Acquire an explicit, distinct relayer nonce immediately before submit.
+    // Without this, concurrent settle_trade submissions (pipeline mode) would
+    // share a lazily-resolved nonce and the node would silently drop all but
+    // one. With it, each in-flight extrinsic is uniquely sequenced; the
+    // contract's used_nonces guard still rejects any genuine replay.
+    const relayerNonce = await this.nextNonce();
+
     const txPromise = new Promise<string>((resolve, reject) => {
       let unsub: (() => void) | undefined;
 
@@ -558,6 +660,7 @@ class SpotSettlementService {
       )
         .signAndSend(
           this.relayer!,
+          { nonce: relayerNonce },
           (txResult: {
             status: { isInBlock: boolean; isFinalized: boolean };
             dispatchError?: { toString(): string };
@@ -586,47 +689,70 @@ class SpotSettlementService {
         .catch(reject);
     });
 
-    return withTxTimeout(`settle_trade:${input.tradeId}`, txPromise);
+    // If this submission fails (dispatch error, broadcast failure, or
+    // timeout), the nonce we reserved may never be consumed on-chain, which
+    // would leave a gap and stall every subsequent settle_trade. Invalidate
+    // the cached counter so the next nextNonce() re-seeds from the node's
+    // authoritative accountNextIndex. The contract's used_nonces guard makes
+    // any accidental re-submission of an already-settled trade a no-op revert.
+    return withTxTimeout(`settle_trade:${input.tradeId}`, txPromise).catch(
+      (err) => {
+        this.invalidateNonce();
+        throw err;
+      },
+    );
+  }
+
+  /**
+   * Drops the cached relayer nonce so the next acquisition re-seeds from
+   * chain. Serialized through the same lock as nextNonce so it cannot race a
+   * concurrent acquisition.
+   */
+  private invalidateNonce() {
+    this.nonceLock = this.nonceLock.then(() => {
+      this.nextRelayerNonce = null;
+    });
   }
 
   async settleTrades(
     inputs: TradeSettlementInput[],
   ): Promise<SettlementResult[]> {
-    const settlements: SettlementResult[] = [];
-
-    for (const input of inputs) {
-      try {
-        const txHash = await this.submitSettlement(input);
-        if (txHash) {
-          settlements.push({
-            tradeId: input.tradeId,
-            status: 'SETTLED',
-            txHash,
-          });
-        } else {
-          settlements.push({
+    // Pipeline mode: submit up to settleConcurrency() settle_trade extrinsics
+    // concurrently instead of serializing one-per-finalized-block. Results are
+    // collected in input order. Each trade still maps to exactly one extrinsic
+    // with a distinct relayer nonce, so no trade is ever settled twice (the
+    // on-chain used_nonces guard is the final idempotency backstop), and a
+    // single failure is isolated to its own result without blocking siblings.
+    return this.mapWithConcurrency(
+      inputs,
+      this.settleConcurrency(),
+      async (input): Promise<SettlementResult> => {
+        try {
+          const txHash = await this.submitSettlement(input);
+          if (txHash) {
+            return { tradeId: input.tradeId, status: 'SETTLED', txHash };
+          }
+          return {
             tradeId: input.tradeId,
             status: 'FAILED',
             error: 'Settlement service unavailable',
-          });
+          };
+        } catch (error) {
+          log.error(
+            { err: error, tradeId: input.tradeId },
+            '[SpotSettlement] Failed to settle trade',
+          );
+          return {
+            tradeId: input.tradeId,
+            status: 'FAILED',
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Unknown settlement failure',
+          };
         }
-      } catch (error) {
-        log.error(
-          { err: error, tradeId: input.tradeId },
-          '[SpotSettlement] Failed to settle trade',
-        );
-        settlements.push({
-          tradeId: input.tradeId,
-          status: 'FAILED',
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Unknown settlement failure',
-        });
-      }
-    }
-
-    return settlements;
+      },
+    );
   }
 
   async cancelOrderFor(
