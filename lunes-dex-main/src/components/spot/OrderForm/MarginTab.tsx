@@ -504,6 +504,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               onChange={event => setDepositAmount(event.target.value)}
               placeholder="100"
               type="number"
+              aria-label="Deposit collateral amount in USDT"
             />
           </Field>
           <Field>
@@ -513,6 +514,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               onChange={event => setWithdrawAmount(event.target.value)}
               placeholder="50"
               type="number"
+              aria-label="Withdraw collateral amount in USDT"
             />
           </Field>
         </Row>
@@ -535,11 +537,15 @@ export const MarginTab: React.FC<MarginTabProps> = ({
         <Row>
           <Field>
             <FieldLabel>Pair</FieldLabel>
-            <Input value={selectedPair} readOnly />
+            <Input value={selectedPair} readOnly aria-label="Trading pair" />
           </Field>
           <Field>
             <FieldLabel>Direction</FieldLabel>
-            <Input value={side === 'buy' ? 'Long' : 'Short'} readOnly />
+            <Input
+              value={side === 'buy' ? 'Long' : 'Short'}
+              readOnly
+              aria-label="Position direction"
+            />
           </Field>
         </Row>
         <Row>
@@ -550,6 +556,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               onChange={event => setCollateralAmount(event.target.value)}
               type="number"
               placeholder="100"
+              aria-label="Position collateral in USDT"
             />
           </Field>
           <Field>
@@ -562,6 +569,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               max="7.9"
               step="0.1"
               placeholder="3"
+              aria-label="Leverage multiplier"
             />
           </Field>
         </Row>

@@ -505,7 +505,7 @@ const UnavailableMarketData = () => (
   </WarningBox>
 )
 
-const MarketForm: React.FC<FormProps> = ({
+export const MarketForm: React.FC<FormProps> = ({
   side,
   onSubmit,
   balanceUsdt = 0,
@@ -580,6 +580,7 @@ const MarketForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00"
+            aria-label="Amount in LUNES"
             value={amount}
             onChange={e => setAmount(e.target.value)}
             hasError={!!amountError}
@@ -592,6 +593,7 @@ const MarketForm: React.FC<FormProps> = ({
       </FieldWrapper>
       <Slider
         type="range"
+        aria-label="Amount percentage of available balance"
         min={0}
         max={100}
         value={sliderVal}
@@ -609,6 +611,7 @@ const MarketForm: React.FC<FormProps> = ({
         <InputWithSuffix>
           <Input
             type="text"
+            aria-label="Total in USDT"
             value={total > 0 ? total.toFixed(2) : ''}
             placeholder="0.00"
             readOnly
@@ -644,7 +647,7 @@ const MarketForm: React.FC<FormProps> = ({
   )
 }
 
-const LimitForm: React.FC<FormProps> = ({
+export const LimitForm: React.FC<FormProps> = ({
   side,
   onSubmit,
   balanceUsdt = 0,
@@ -719,6 +722,7 @@ const LimitForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00000"
+            aria-label="Price in USDT"
             value={price}
             onChange={e => setPrice(e.target.value)}
             hasError={!!priceError}
@@ -735,6 +739,7 @@ const LimitForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00"
+            aria-label="Amount in LUNES"
             value={amount}
             onChange={e => setAmount(e.target.value)}
             hasError={!!amountError}
@@ -747,6 +752,7 @@ const LimitForm: React.FC<FormProps> = ({
       </FieldWrapper>
       <Slider
         type="range"
+        aria-label="Amount percentage of available balance"
         min={0}
         max={100}
         value={sliderVal}
@@ -764,6 +770,7 @@ const LimitForm: React.FC<FormProps> = ({
         <InputWithSuffix>
           <Input
             type="text"
+            aria-label="Total in USDT"
             value={total > 0 ? total.toFixed(2) : ''}
             placeholder="0.00"
             readOnly
@@ -800,7 +807,7 @@ const LimitForm: React.FC<FormProps> = ({
   )
 }
 
-const StopForm: React.FC<FormProps> = ({
+export const StopForm: React.FC<FormProps> = ({
   side,
   onSubmit,
   balanceUsdt = 0,
@@ -813,22 +820,23 @@ const StopForm: React.FC<FormProps> = ({
   const numStop = parseFloat(stopPrice) || 0
   const numAmount = parseFloat(amount) || 0
   const total = numStop * numAmount
-  const marketDataReady =
-    typeof marketPrice === 'number' &&
-    marketPrice > 0 &&
-    typeof takerFee === 'number'
-  const fee = marketDataReady ? total * takerFee : 0
+  // Stop orders are armed by the user-supplied trigger price; they do not need a
+  // live market price to be placed (only the fee schedule must have loaded).
+  // Gating on `marketPrice > 0` wrongly disabled stop orders on freshly listed
+  // pairs that have no trades yet (empty ticker => lastPrice 0).
+  const feeDataReady = typeof takerFee === 'number'
+  const fee = feeDataReady ? total * takerFee : 0
 
   const isValid =
-    marketDataReady && numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
+    feeDataReady && numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
 
   const handleSubmit = () => {
     if (!isValid) return
-    if (!marketDataReady) return
+    if (!feeDataReady) return
     onSubmit({
       type: 'Stop',
       side,
-      price: marketPrice,
+      price: numStop,
       stopPrice: numStop,
       amount: numAmount,
       total,
@@ -840,7 +848,7 @@ const StopForm: React.FC<FormProps> = ({
 
   return (
     <>
-      {!marketDataReady ? <UnavailableMarketData /> : null}
+      {!feeDataReady ? <UnavailableMarketData /> : null}
       <InfoBox>
         When the market reaches the <strong>Stop Price</strong>, a market order
         will be executed.
@@ -857,6 +865,7 @@ const StopForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00000"
+            aria-label="Stop price in USDT"
             value={stopPrice}
             onChange={e => setStopPrice(e.target.value)}
             step={0.00001}
@@ -871,6 +880,7 @@ const StopForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00"
+            aria-label="Amount in LUNES"
             value={amount}
             onChange={e => setAmount(e.target.value)}
             min={MIN_AMOUNT}
@@ -900,7 +910,7 @@ const StopForm: React.FC<FormProps> = ({
   )
 }
 
-const StopLimitForm: React.FC<FormProps> = ({
+export const StopLimitForm: React.FC<FormProps> = ({
   side,
   onSubmit,
   balanceUsdt = 0,
@@ -958,6 +968,7 @@ const StopLimitForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00000"
+            aria-label="Stop price in USDT"
             value={stopPrice}
             onChange={e => setStopPrice(e.target.value)}
             step={0.00001}
@@ -971,6 +982,7 @@ const StopLimitForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00000"
+            aria-label="Limit price in USDT"
             value={limitPrice}
             onChange={e => setLimitPrice(e.target.value)}
             step={0.00001}
@@ -984,6 +996,7 @@ const StopLimitForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00"
+            aria-label="Amount in LUNES"
             value={amount}
             onChange={e => setAmount(e.target.value)}
             min={MIN_AMOUNT}

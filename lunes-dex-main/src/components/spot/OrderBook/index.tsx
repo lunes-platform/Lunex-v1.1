@@ -345,6 +345,7 @@ const OrderBook: React.FC = () => {
         {viewMode === 'book' && (
           <PrecisionSelect
             value={precision}
+            aria-label="Order book price precision"
             onChange={e =>
               setPrecision(Number(e.target.value) as PrecisionLevel)
             }
