@@ -46,6 +46,11 @@ export interface SpotContextState {
   isLoading: boolean
   error: string | null
 
+  // Price selected from the order book (click-to-fill into the order form).
+  // Increments a token each time so the form can react even to the same value.
+  selectedPrice: { value: number; token: number } | null
+  setSelectedPrice: (price: number) => void
+
   // Actions
   setSelectedPair: (symbol: string) => void
   setWalletAddress: (address: string | null) => void
@@ -83,8 +88,13 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
   const [userTrades, setUserTrades] = useState<SpotTrade[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selectedPrice, setSelectedPriceState] = useState<{
+    value: number
+    token: number
+  } | null>(null)
 
   const nonceCounter = useRef(Date.now())
+  const priceTokenRef = useRef(0)
   const prevPairRef = useRef(selectedPair)
 
   const signReadAction = useCallback(
@@ -228,6 +238,12 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     setOrderbook(null)
     setRecentTrades([])
     setTicker(null)
+  }, [])
+
+  const setSelectedPrice = useCallback((price: number) => {
+    if (!Number.isFinite(price) || price <= 0) return
+    priceTokenRef.current += 1
+    setSelectedPriceState({ value: price, token: priceTokenRef.current })
   }, [])
 
   const generateNonce = useCallback(() => {
@@ -377,6 +393,8 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     userTrades,
     isLoading,
     error,
+    selectedPrice,
+    setSelectedPrice,
     setSelectedPair,
     setWalletAddress,
     createOrder,
