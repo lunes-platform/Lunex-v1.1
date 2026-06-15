@@ -41,12 +41,25 @@ const Controls = styled.div`
   gap: 4px;
   padding: 10px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+
+  /* Prevent timeframe buttons from overlapping on narrow viewports:
+     scroll horizontally within the toolbar instead of clipping. */
+  @media (max-width: 900px) {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
 `
 
 const TfButton = styled.button<{ active?: boolean }>`
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
+  flex-shrink: 0;
   font-size: 12px;
   font-weight: 600;
   font-family: 'Space Grotesk', sans-serif;

@@ -15,6 +15,24 @@ const MAX_AMOUNT = 1000000
 const MIN_PRICE = 0.00001
 const MAX_PRICE = 1.0
 
+// ──────────────────── Helpers ────────────────────
+
+// Format a total value with thousand separators and 2 decimals.
+const formatTotal = (value: number): string =>
+  value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+
+// Truncate a raw price input string to the pair's quote precision.
+const truncatePrice = (raw: string, decimals: number): string => {
+  if (raw === '' || raw === '-') return raw
+  const dot = raw.indexOf('.')
+  if (dot === -1) return raw
+  if (decimals <= 0) return raw.slice(0, dot)
+  return raw.slice(0, dot + 1 + decimals)
+}
+
 // ──────────────────── Animations ────────────────────
 
 const fadeIn = keyframes`
@@ -390,6 +408,8 @@ interface OrderData {
   fee: number
   feeRate: number
   feeBreakdown: FeeBreakdown
+  baseSymbol: string
+  quoteSymbol: string
 }
 
 // ──────────────────── Confirm Modal Component ────────────────────
@@ -422,25 +442,33 @@ const ConfirmOrderModal: React.FC<ConfirmModalProps> = ({
       {order.stopPrice ? (
         <ModalRow>
           <ModalLabel>Trigger</ModalLabel>
-          <ModalValue>{order.stopPrice.toFixed(5)} USDT</ModalValue>
+          <ModalValue>
+            {order.stopPrice.toFixed(5)} {order.quoteSymbol}
+          </ModalValue>
         </ModalRow>
       ) : null}
       <ModalRow>
         <ModalLabel>{order.type === 'Stop' ? 'Estimate' : 'Price'}</ModalLabel>
-        <ModalValue>{order.price.toFixed(5)} USDT</ModalValue>
+        <ModalValue>
+          {order.price.toFixed(5)} {order.quoteSymbol}
+        </ModalValue>
       </ModalRow>
       <ModalRow>
         <ModalLabel>Amount</ModalLabel>
-        <ModalValue>{order.amount.toLocaleString()} LUNES</ModalValue>
+        <ModalValue>
+          {order.amount.toLocaleString()} {order.baseSymbol}
+        </ModalValue>
       </ModalRow>
       <ModalRow>
         <ModalLabel>Total</ModalLabel>
-        <ModalValue>{order.total.toFixed(2)} USDT</ModalValue>
+        <ModalValue>
+          {formatTotal(order.total)} {order.quoteSymbol}
+        </ModalValue>
       </ModalRow>
       <ModalFeeRow>
         <ModalLabel>Fee ({(order.feeRate * 100).toFixed(2)}%)</ModalLabel>
         <ModalValue style={{ color: 'rgba(255,255,255,0.5)' }}>
-          ~{order.fee.toFixed(4)} USDT
+          ~{order.fee.toFixed(4)} {order.quoteSymbol}
         </ModalValue>
       </ModalFeeRow>
       {order.fee > 0 && (
@@ -496,6 +524,9 @@ interface FormProps {
   marketPrice?: number | null
   makerFee?: number | null
   takerFee?: number | null
+  baseSymbol?: string
+  quoteSymbol?: string
+  priceDecimals?: number
 }
 
 const UnavailableMarketData = () => (
@@ -511,7 +542,9 @@ export const MarketForm: React.FC<FormProps> = ({
   balanceUsdt = 0,
   balanceLunes = 0,
   marketPrice,
-  takerFee
+  takerFee,
+  baseSymbol = 'LUNES',
+  quoteSymbol = 'USDT'
 }) => {
   const [amount, setAmount] = useState('')
   const [sliderVal, setSliderVal] = useState(0)
@@ -526,9 +559,9 @@ export const MarketForm: React.FC<FormProps> = ({
   const amountError = useMemo(() => {
     if (!marketDataReady) return 'Market data unavailable'
     if (!amount) return ''
-    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} LUNES`
+    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} ${baseSymbol}`
     if (numAmount > MAX_AMOUNT)
-      return `Max: ${MAX_AMOUNT.toLocaleString()} LUNES`
+      return `Max: ${MAX_AMOUNT.toLocaleString()} ${baseSymbol}`
     if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
     if (side === 'sell' && numAmount > balanceLunes)
       return 'Insufficient balance'
@@ -540,7 +573,8 @@ export const MarketForm: React.FC<FormProps> = ({
     side,
     balanceUsdt,
     balanceLunes,
-    marketDataReady
+    marketDataReady,
+    baseSymbol
   ])
 
   const isValid = marketDataReady && numAmount >= MIN_AMOUNT && !amountError
@@ -564,7 +598,9 @@ export const MarketForm: React.FC<FormProps> = ({
       total,
       fee,
       feeRate: takerFee,
-      feeBreakdown: calcFeeBreakdown(fee, false)
+      feeBreakdown: calcFeeBreakdown(fee, false),
+      baseSymbol,
+      quoteSymbol
     })
   }
 
@@ -575,19 +611,19 @@ export const MarketForm: React.FC<FormProps> = ({
         Market order — price may vary (slippage ~0.1-0.5%)
       </SlippageWarning>
       <FieldWrapper>
-        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="number"
             placeholder="0.00"
-            aria-label="Amount in LUNES"
+            aria-label={`Amount in ${baseSymbol}`}
             value={amount}
             onChange={e => setAmount(e.target.value)}
             hasError={!!amountError}
             min={MIN_AMOUNT}
             step={1}
           />
-          <Suffix>LUNES</Suffix>
+          <Suffix>{baseSymbol}</Suffix>
         </InputWithSuffix>
         {amountError && <ErrorText>{amountError}</ErrorText>}
       </FieldWrapper>
@@ -607,24 +643,24 @@ export const MarketForm: React.FC<FormProps> = ({
         <span>100%</span>
       </SliderLabels>
       <FieldWrapper>
-        <FieldLabel>Total (USDT)</FieldLabel>
+        <FieldLabel>Total ({quoteSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="text"
-            aria-label="Total in USDT"
-            value={total > 0 ? total.toFixed(2) : ''}
+            aria-label={`Total in ${quoteSymbol}`}
+            value={total > 0 ? formatTotal(total) : ''}
             placeholder="0.00"
             readOnly
           />
-          <Suffix>USDT</Suffix>
+          <Suffix>{quoteSymbol}</Suffix>
         </InputWithSuffix>
       </FieldWrapper>
       <AvailableRow>
         <span>Available</span>
         <span>
           {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} USDT`
-            : `${balanceLunes.toLocaleString()} LUNES`}
+            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
+            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
         </span>
       </AvailableRow>
       {numAmount > 0 && (
@@ -637,11 +673,13 @@ export const MarketForm: React.FC<FormProps> = ({
               )}%). Deducted from total received.`}
             />
           </span>
-          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-        {side === 'buy' ? '▲ Buy LUNES (Market)' : '▼ Sell LUNES (Market)'}
+        {side === 'buy'
+          ? `▲ Buy ${baseSymbol} (Market)`
+          : `▼ Sell ${baseSymbol} (Market)`}
       </SubmitBtn>
     </>
   )
@@ -653,7 +691,10 @@ export const LimitForm: React.FC<FormProps> = ({
   balanceUsdt = 0,
   balanceLunes = 0,
   marketPrice,
-  makerFee
+  makerFee,
+  baseSymbol = 'LUNES',
+  quoteSymbol = 'USDT',
+  priceDecimals = 5
 }) => {
   const [price, setPrice] = useState('')
   const [amount, setAmount] = useState('')
@@ -673,14 +714,14 @@ export const LimitForm: React.FC<FormProps> = ({
 
   const amountError = useMemo(() => {
     if (!amount) return ''
-    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} LUNES`
+    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} ${baseSymbol}`
     if (numAmount > MAX_AMOUNT)
-      return `Max: ${MAX_AMOUNT.toLocaleString()} LUNES`
+      return `Max: ${MAX_AMOUNT.toLocaleString()} ${baseSymbol}`
     if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
     if (side === 'sell' && numAmount > balanceLunes)
       return 'Insufficient balance'
     return ''
-  }, [amount, numAmount, total, side, balanceUsdt, balanceLunes])
+  }, [amount, numAmount, total, side, balanceUsdt, balanceLunes, baseSymbol])
 
   const isValid =
     feeDataReady &&
@@ -709,7 +750,9 @@ export const LimitForm: React.FC<FormProps> = ({
       total,
       fee,
       feeRate: makerFee,
-      feeBreakdown: calcFeeBreakdown(fee, true)
+      feeBreakdown: calcFeeBreakdown(fee, true),
+      baseSymbol,
+      quoteSymbol
     })
   }
 
@@ -717,36 +760,36 @@ export const LimitForm: React.FC<FormProps> = ({
     <>
       {!feeDataReady ? <UnavailableMarketData /> : null}
       <FieldWrapper>
-        <FieldLabel>Price (USDT)</FieldLabel>
+        <FieldLabel>Price ({quoteSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="number"
             placeholder="0.00000"
-            aria-label="Price in USDT"
+            aria-label={`Price in ${quoteSymbol}`}
             value={price}
-            onChange={e => setPrice(e.target.value)}
+            onChange={e => setPrice(truncatePrice(e.target.value, priceDecimals))}
             hasError={!!priceError}
             step={0.00001}
             min={MIN_PRICE}
           />
-          <Suffix>USDT</Suffix>
+          <Suffix>{quoteSymbol}</Suffix>
         </InputWithSuffix>
         {priceError && <ErrorText>{priceError}</ErrorText>}
       </FieldWrapper>
       <FieldWrapper>
-        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="number"
             placeholder="0.00"
-            aria-label="Amount in LUNES"
+            aria-label={`Amount in ${baseSymbol}`}
             value={amount}
             onChange={e => setAmount(e.target.value)}
             hasError={!!amountError}
             min={MIN_AMOUNT}
             step={1}
           />
-          <Suffix>LUNES</Suffix>
+          <Suffix>{baseSymbol}</Suffix>
         </InputWithSuffix>
         {amountError && <ErrorText>{amountError}</ErrorText>}
       </FieldWrapper>
@@ -766,24 +809,24 @@ export const LimitForm: React.FC<FormProps> = ({
         <span>100%</span>
       </SliderLabels>
       <FieldWrapper>
-        <FieldLabel>Total (USDT)</FieldLabel>
+        <FieldLabel>Total ({quoteSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="text"
-            aria-label="Total in USDT"
-            value={total > 0 ? total.toFixed(2) : ''}
+            aria-label={`Total in ${quoteSymbol}`}
+            value={total > 0 ? formatTotal(total) : ''}
             placeholder="0.00"
             readOnly
           />
-          <Suffix>USDT</Suffix>
+          <Suffix>{quoteSymbol}</Suffix>
         </InputWithSuffix>
       </FieldWrapper>
       <AvailableRow>
         <span>Available</span>
         <span>
           {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} USDT`
-            : `${balanceLunes.toLocaleString()} LUNES`}
+            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
+            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
         </span>
       </AvailableRow>
       {total > 0 && (
@@ -797,11 +840,13 @@ export const LimitForm: React.FC<FormProps> = ({
               position="top"
             />
           </span>
-          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-        {side === 'buy' ? '▲ Buy LUNES (Limit)' : '▼ Sell LUNES (Limit)'}
+        {side === 'buy'
+          ? `▲ Buy ${baseSymbol} (Limit)`
+          : `▼ Sell ${baseSymbol} (Limit)`}
       </SubmitBtn>
     </>
   )
@@ -812,11 +857,15 @@ export const StopForm: React.FC<FormProps> = ({
   onSubmit,
   balanceUsdt = 0,
   balanceLunes = 0,
-  marketPrice: _marketPrice,
-  takerFee
+  marketPrice,
+  takerFee,
+  baseSymbol = 'LUNES',
+  quoteSymbol = 'USDT',
+  priceDecimals = 5
 }) => {
   const [stopPrice, setStopPrice] = useState('')
   const [amount, setAmount] = useState('')
+  const [sliderVal, setSliderVal] = useState(0)
   const numStop = parseFloat(stopPrice) || 0
   const numAmount = parseFloat(amount) || 0
   const total = numStop * numAmount
@@ -830,6 +879,15 @@ export const StopForm: React.FC<FormProps> = ({
   const isValid =
     feeDataReady && numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
 
+  const handleSlider = (pct: number) => {
+    setSliderVal(pct)
+    const effectivePrice = numStop || marketPrice
+    if (!effectivePrice || effectivePrice <= 0) return
+    const maxAmount =
+      side === 'buy' ? Math.floor(balanceUsdt / effectivePrice) : balanceLunes
+    setAmount(String(Math.floor((maxAmount * pct) / 100)))
+  }
+
   const handleSubmit = () => {
     if (!isValid) return
     if (!feeDataReady) return
@@ -842,7 +900,9 @@ export const StopForm: React.FC<FormProps> = ({
       total,
       fee,
       feeRate: takerFee,
-      feeBreakdown: calcFeeBreakdown(fee, false)
+      feeBreakdown: calcFeeBreakdown(fee, false),
+      baseSymbol,
+      quoteSymbol
     })
   }
 
@@ -855,7 +915,7 @@ export const StopForm: React.FC<FormProps> = ({
       </InfoBox>
       <FieldWrapper>
         <FieldLabel>
-          Stop Price (USDT)
+          Stop Price ({quoteSymbol})
           <Tooltip
             content="The trigger price to activate your market order."
             position="right"
@@ -865,42 +925,59 @@ export const StopForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00000"
-            aria-label="Stop price in USDT"
+            aria-label={`Stop price in ${quoteSymbol}`}
             value={stopPrice}
-            onChange={e => setStopPrice(e.target.value)}
+            onChange={e =>
+              setStopPrice(truncatePrice(e.target.value, priceDecimals))
+            }
             step={0.00001}
             min={MIN_PRICE}
           />
-          <Suffix>USDT</Suffix>
+          <Suffix>{quoteSymbol}</Suffix>
         </InputWithSuffix>
       </FieldWrapper>
       <FieldWrapper>
-        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="number"
             placeholder="0.00"
-            aria-label="Amount in LUNES"
+            aria-label={`Amount in ${baseSymbol}`}
             value={amount}
             onChange={e => setAmount(e.target.value)}
             min={MIN_AMOUNT}
             step={1}
           />
-          <Suffix>LUNES</Suffix>
+          <Suffix>{baseSymbol}</Suffix>
         </InputWithSuffix>
       </FieldWrapper>
+      <Slider
+        type="range"
+        aria-label="Amount percentage of available balance"
+        min={0}
+        max={100}
+        value={sliderVal}
+        onChange={e => handleSlider(Number(e.target.value))}
+      />
+      <SliderLabels>
+        <span>0%</span>
+        <span>25%</span>
+        <span>50%</span>
+        <span>75%</span>
+        <span>100%</span>
+      </SliderLabels>
       <AvailableRow>
         <span>Available</span>
         <span>
           {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} USDT`
-            : `${balanceLunes.toLocaleString()} LUNES`}
+            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
+            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
         </span>
       </AvailableRow>
       {total > 0 && (
         <FeeRow>
           <span>Fee (Taker {((takerFee ?? 0) * 100).toFixed(2)}%)</span>
-          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
@@ -915,11 +992,15 @@ export const StopLimitForm: React.FC<FormProps> = ({
   onSubmit,
   balanceUsdt = 0,
   balanceLunes = 0,
-  makerFee
+  makerFee,
+  baseSymbol = 'LUNES',
+  quoteSymbol = 'USDT',
+  priceDecimals = 5
 }) => {
   const [stopPrice, setStopPrice] = useState('')
   const [limitPrice, setLimitPrice] = useState('')
   const [amount, setAmount] = useState('')
+  const [sliderVal, setSliderVal] = useState(0)
   const numStop = parseFloat(stopPrice) || 0
   const numLimit = parseFloat(limitPrice) || 0
   const numAmount = parseFloat(amount) || 0
@@ -933,6 +1014,14 @@ export const StopLimitForm: React.FC<FormProps> = ({
     numLimit >= MIN_PRICE &&
     numAmount >= MIN_AMOUNT
 
+  const handleSlider = (pct: number) => {
+    setSliderVal(pct)
+    if (!numLimit || numLimit <= 0) return
+    const maxAmount =
+      side === 'buy' ? Math.floor(balanceUsdt / numLimit) : balanceLunes
+    setAmount(String(Math.floor((maxAmount * pct) / 100)))
+  }
+
   const handleSubmit = () => {
     if (!isValid) return
     if (!feeDataReady) return
@@ -945,7 +1034,9 @@ export const StopLimitForm: React.FC<FormProps> = ({
       total,
       fee,
       feeRate: makerFee,
-      feeBreakdown: calcFeeBreakdown(fee, true)
+      feeBreakdown: calcFeeBreakdown(fee, true),
+      baseSymbol,
+      quoteSymbol
     })
   }
 
@@ -958,7 +1049,7 @@ export const StopLimitForm: React.FC<FormProps> = ({
       </InfoBox>
       <FieldWrapper>
         <FieldLabel>
-          Stop Price (USDT)
+          Stop Price ({quoteSymbol})
           <Tooltip
             content="The trigger price to submit your Limit order to the book."
             position="right"
@@ -968,55 +1059,74 @@ export const StopLimitForm: React.FC<FormProps> = ({
           <Input
             type="number"
             placeholder="0.00000"
-            aria-label="Stop price in USDT"
+            aria-label={`Stop price in ${quoteSymbol}`}
             value={stopPrice}
-            onChange={e => setStopPrice(e.target.value)}
+            onChange={e =>
+              setStopPrice(truncatePrice(e.target.value, priceDecimals))
+            }
             step={0.00001}
           />
-          <Suffix>USDT</Suffix>
+          <Suffix>{quoteSymbol}</Suffix>
         </InputWithSuffix>
       </FieldWrapper>
       <FieldWrapper>
-        <FieldLabel>Limit Price (USDT)</FieldLabel>
+        <FieldLabel>Limit Price ({quoteSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="number"
             placeholder="0.00000"
-            aria-label="Limit price in USDT"
+            aria-label={`Limit price in ${quoteSymbol}`}
             value={limitPrice}
-            onChange={e => setLimitPrice(e.target.value)}
+            onChange={e =>
+              setLimitPrice(truncatePrice(e.target.value, priceDecimals))
+            }
             step={0.00001}
           />
-          <Suffix>USDT</Suffix>
+          <Suffix>{quoteSymbol}</Suffix>
         </InputWithSuffix>
       </FieldWrapper>
       <FieldWrapper>
-        <FieldLabel>Amount (LUNES)</FieldLabel>
+        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
         <InputWithSuffix>
           <Input
             type="number"
             placeholder="0.00"
-            aria-label="Amount in LUNES"
+            aria-label={`Amount in ${baseSymbol}`}
             value={amount}
             onChange={e => setAmount(e.target.value)}
             min={MIN_AMOUNT}
             step={1}
           />
-          <Suffix>LUNES</Suffix>
+          <Suffix>{baseSymbol}</Suffix>
         </InputWithSuffix>
       </FieldWrapper>
+      <Slider
+        type="range"
+        aria-label="Amount percentage of available balance"
+        min={0}
+        max={100}
+        value={sliderVal}
+        onChange={e => handleSlider(Number(e.target.value))}
+      />
+      <SliderLabels>
+        <span>0%</span>
+        <span>25%</span>
+        <span>50%</span>
+        <span>75%</span>
+        <span>100%</span>
+      </SliderLabels>
       <AvailableRow>
         <span>Available</span>
         <span>
           {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} USDT`
-            : `${balanceLunes.toLocaleString()} LUNES`}
+            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
+            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
         </span>
       </AvailableRow>
       {total > 0 && (
         <FeeRow>
           <span>Fee (Maker {((makerFee ?? 0) * 100).toFixed(2)}%)</span>
-          <FeeValue>~{fee.toFixed(4)} USDT</FeeValue>
+          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
@@ -1149,6 +1259,16 @@ const OrderForm: React.FC = () => {
   const activePair = pairs.find(p => p.symbol === selectedPair)
   const makerFee = activePair ? activePair.makerFeeBps / 10000 : null
   const takerFee = activePair ? activePair.takerFeeBps / 10000 : null
+  // Derive base/quote tickers from the selected pair symbol (e.g. "LBTC/LUSDT").
+  // Fall back to the pair's names, then to LUNES/USDT defaults.
+  const [symBase, symQuote] = selectedPair.split('/')
+  const baseSymbol = symBase || activePair?.baseName || 'LUNES'
+  const quoteSymbol = symQuote || activePair?.quoteName || 'USDT'
+  // Price precision: cap input to the pair's quote decimals (default 5).
+  const priceDecimals =
+    activePair && Number.isFinite(activePair.quoteDecimals)
+      ? Math.min(activePair.quoteDecimals, 8)
+      : 5
   const formProps = {
     side,
     onSubmit: handleSubmit,
@@ -1156,7 +1276,10 @@ const OrderForm: React.FC = () => {
     balanceLunes,
     marketPrice: liveMarketPrice,
     makerFee,
-    takerFee
+    takerFee,
+    baseSymbol,
+    quoteSymbol,
+    priceDecimals
   }
 
   const renderForm = () => {
