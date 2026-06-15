@@ -4,6 +4,7 @@ import { ApiPromise, WsProvider } from '@polkadot/api';
 import { ContractPromise } from '@polkadot/api-contract';
 import { config } from '../config';
 import { log } from '../utils/logger';
+import { dryRunGasLimit } from '../utils/contractGas';
 
 /**
  * FactoryService — reads the Factory ink! contract on-chain.
@@ -73,7 +74,7 @@ class FactoryService {
       const queryCaller = tokenA; // any valid address as read-only query caller
       const { result, output } = await this.contract.query.getPair(
         queryCaller,
-        { gasLimit: -1, storageDepositLimit: null },
+        { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null },
         tokenA,
         tokenB,
       );
@@ -102,7 +103,7 @@ class FactoryService {
     try {
       const { result, output } = await this.contract.query.allPairsLength(
         config.blockchain.factoryContractAddress,
-        { gasLimit: -1, storageDepositLimit: null },
+        { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null },
       );
 
       if (result.isErr || !output) return 0;
@@ -129,7 +130,7 @@ class FactoryService {
       Array.from({ length }, (_, i) =>
         this.contract!.query.allPairs(
           config.blockchain.factoryContractAddress,
-          { gasLimit: -1, storageDepositLimit: null },
+          { gasLimit: dryRunGasLimit(this.api!), storageDepositLimit: null },
           i,
         )
           .then(({ result, output }) => {

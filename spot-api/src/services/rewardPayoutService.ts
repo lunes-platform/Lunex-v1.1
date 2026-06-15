@@ -19,6 +19,7 @@ import { BN } from '@polkadot/util';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import { waitForFinalizedTx } from '../utils/finalizedTx';
+import { dryRunGasLimit, txGasLimit } from '../utils/contractGas';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -262,7 +263,7 @@ class RewardPayoutService {
       // Dry-run to estimate gas (payable: attach value)
       const value = new BN(amountPlancks.toString());
       const { gasRequired, result } = await queryMethod(this.relayer.address, {
-        gasLimit: -1,
+        gasLimit: dryRunGasLimit(this.api),
         storageDepositLimit: null,
         value,
       });
@@ -278,7 +279,7 @@ class RewardPayoutService {
       // Submit real transaction
       const txHash = await this.signAndSendContract(
         txMethod,
-        { gasLimit: gasRequired, storageDepositLimit: null, value },
+        { gasLimit: txGasLimit(this.api, gasRequired), storageDepositLimit: null, value },
         [],
         `fund_staking_rewards:${amountLunes}`,
       );
@@ -355,7 +356,7 @@ class RewardPayoutService {
 
       const { gasRequired, result } = await queryMethod(
         this.relayer.address,
-        { gasLimit: -1, storageDepositLimit: null },
+        { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null },
         ...args,
       );
 
@@ -369,7 +370,7 @@ class RewardPayoutService {
 
       const txHash = await this.signAndSendContract(
         txMethod,
-        { gasLimit: gasRequired, storageDepositLimit: null },
+        { gasLimit: txGasLimit(this.api, gasRequired), storageDepositLimit: null },
         args,
         `distribute_trading_rewards${startIndex != null ? `:${startIndex}` : ''}`,
       );

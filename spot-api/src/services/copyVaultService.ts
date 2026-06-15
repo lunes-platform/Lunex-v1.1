@@ -21,6 +21,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import { withTxTimeout } from '../utils/txWithTimeout';
+import { dryRunGasLimit, txGasLimit } from '../utils/contractGas';
 
 // ─── Constants ──────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ class CopyVaultService {
     // Dry-run for gas estimate
     const { gasRequired, result } = await contract.query.deposit(
       depositorAddress,
-      { gasLimit: -1, storageDepositLimit: null, value },
+      { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null, value },
     );
 
     if (result.isErr) {
@@ -145,7 +146,7 @@ class CopyVaultService {
         let unsub: (() => void) | undefined;
 
         contract.tx
-          .deposit({ gasLimit: gasRequired, storageDepositLimit: null, value })
+          .deposit({ gasLimit: txGasLimit(this.api!, gasRequired), storageDepositLimit: null, value })
           .signAndSend(this.relayer!, (txResult: any) => {
             if (txResult.dispatchError) {
               if (unsub) unsub();
@@ -209,7 +210,7 @@ class CopyVaultService {
     // Dry-run
     const { gasRequired, result } = await contract.query.withdraw(
       withdrawerAddress,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null },
       shareBN,
     );
 
@@ -225,7 +226,7 @@ class CopyVaultService {
 
         contract.tx
           .withdraw(
-            { gasLimit: gasRequired, storageDepositLimit: null },
+            { gasLimit: txGasLimit(this.api!, gasRequired), storageDepositLimit: null },
             shareBN,
           )
           .signAndSend(this.relayer!, (txResult: any) => {

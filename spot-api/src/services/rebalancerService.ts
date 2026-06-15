@@ -8,6 +8,7 @@ import prisma from '../db';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import { waitForFinalizedTx } from '../utils/finalizedTx';
+import { dryRunGasLimit, txGasLimit } from '../utils/contractGas';
 import {
   asymmetricService,
   isCoolingDown,
@@ -142,7 +143,7 @@ class RebalancerService {
       contractAddress,
     );
     const { output } = await contract.query.getManager(caller, {
-      gasLimit: -1,
+      gasLimit: dryRunGasLimit(this.api),
       storageDepositLimit: null,
     });
 
@@ -184,11 +185,11 @@ class RebalancerService {
     );
     const { output, result } = isBuySide
       ? await contract.query.getBuyCurve(caller, {
-          gasLimit: -1,
+          gasLimit: dryRunGasLimit(this.api),
           storageDepositLimit: null,
         })
       : await contract.query.getSellCurve(caller, {
-          gasLimit: -1,
+          gasLimit: dryRunGasLimit(this.api),
           storageDepositLimit: null,
         });
 
@@ -393,7 +394,7 @@ class RebalancerService {
     // Dry-run to estimate gas (same pattern as settlementService.ts)
     const { gasRequired, result } = await contract.query.updateCurveParameters(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null },
       input.isBuySide,
       input.newGamma ?? null,
       nextCapacity,
@@ -407,7 +408,7 @@ class RebalancerService {
     return waitForFinalizedTx('rebalancer.updateCurveParameters', (callback) =>
       contract.tx
         .updateCurveParameters(
-          { gasLimit: gasRequired, storageDepositLimit: null },
+          { gasLimit: txGasLimit(this.api!, gasRequired), storageDepositLimit: null },
           input.isBuySide,
           input.newGamma ?? null,
           nextCapacity,
