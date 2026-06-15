@@ -141,6 +141,14 @@ class ContractService {
       await this.api.isReady
       this.isConnected = true
 
+      // Contract addresses may have been registered (via setContracts) before
+      // connect() ran — e.g. at SDK boot, where connect() is now deferred until
+      // first real use. The ContractPromise instances can only be built once
+      // this.api exists, so (re)build them here from the stored addresses.
+      if (this.contracts) {
+        this.setContracts(this.contracts)
+      }
+
       console.log(`Connected to ${network}: ${NETWORKS[network]}`)
       return true
     } catch (error) {

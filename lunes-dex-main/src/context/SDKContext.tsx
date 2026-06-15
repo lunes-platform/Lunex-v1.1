@@ -227,21 +227,15 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     []
   )
 
-  // Initialize blockchain connection
+  // Register contract addresses WITHOUT opening the chain connection.
+  // connect() (which dynamically imports @polkadot/api — the heaviest chunk)
+  // is deferred until first real use: wallet connect, balance read, getQuote,
+  // or any guarded `if (!getIsConnected()) await connect()` call site. This
+  // keeps @polkadot/api out of the landing-page waterfall. setContracts only
+  // stores the addresses here (no api yet); connect() rebuilds the contract
+  // instances from them once the api is ready.
   useEffect(() => {
-    const initBlockchain = async () => {
-      try {
-        const connected = await contractService.connect(NETWORK)
-        if (connected) {
-          contractService.setContracts(CONTRACT_ADDRESSES)
-          if (process.env.NODE_ENV !== 'production')
-            console.log('Connected to Lunes blockchain')
-        }
-      } catch (err) {
-        console.error('Failed to connect to blockchain:', err)
-      }
-    }
-    initBlockchain()
+    contractService.setContracts(CONTRACT_ADDRESSES)
 
     return () => {
       contractService.disconnect()

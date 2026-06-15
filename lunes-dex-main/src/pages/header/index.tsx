@@ -8,6 +8,7 @@ import * as S from './styles'
 import * as M from './modals'
 import BalanceDropdown from './BalanceDropdown'
 import { LunexLogo } from 'components/LunexLogo'
+import { prefetchRoute } from 'routers/prefetch'
 
 const Header = () => {
   const { state } = useAppContext()
@@ -51,12 +52,14 @@ const Header = () => {
             active={
               location.pathname === '/swap' || location.pathname === '/trade'
             }
+            onMouseEnter={() => prefetchRoute('/swap')}
             onClick={() => navigate('/swap')}
           >
             Swap
           </S.NavLink>
           <S.NavLink
             active={location.pathname === '/spot'}
+            onMouseEnter={() => prefetchRoute('/spot')}
             onClick={() => navigate('/spot')}
           >
             Spot
@@ -67,6 +70,7 @@ const Header = () => {
               location.pathname === '/pool' ||
               location.pathname === '/liquidity'
             }
+            onMouseEnter={() => prefetchRoute('/pools')}
             onClick={() => navigate('/pools')}
           >
             Liquidity Pool
@@ -75,24 +79,28 @@ const Header = () => {
             active={
               location.pathname === '/staking' || location.pathname === '/stake'
             }
+            onMouseEnter={() => prefetchRoute('/staking')}
             onClick={() => navigate('/staking')}
           >
             Staking
           </S.NavLink>
           <S.NavLink
             active={location.pathname.startsWith('/social')}
+            onMouseEnter={() => prefetchRoute('/social')}
             onClick={() => navigate('/social')}
           >
             Social Trade
           </S.NavLink>
           <S.NavLink
             active={location.pathname.startsWith('/strategies')}
+            onMouseEnter={() => prefetchRoute('/strategies')}
             onClick={() => navigate('/strategies')}
           >
             Strategies
           </S.NavLink>
           <S.NavLink
             active={location.pathname === '/agent'}
+            onMouseEnter={() => prefetchRoute('/agent')}
             onClick={() => navigate('/agent')}
           >
             Agent
@@ -102,6 +110,7 @@ const Header = () => {
               location.pathname === '/rewards' ||
               location.pathname === '/community'
             }
+            onMouseEnter={() => prefetchRoute('/rewards')}
             onClick={() => navigate('/rewards')}
           >
             Rewards
@@ -111,6 +120,7 @@ const Header = () => {
               location.pathname === '/affiliates' ||
               location.pathname === '/referral'
             }
+            onMouseEnter={() => prefetchRoute('/affiliates')}
             onClick={() => navigate('/affiliates')}
           >
             Affiliates
@@ -143,18 +153,21 @@ const Header = () => {
               <S.DropdownContent>
                 <S.DropdownItem
                   active={location.pathname === '/governance'}
+                  onMouseEnter={() => prefetchRoute('/governance')}
                   onClick={() => navigate('/governance')}
                 >
                   Governance
                 </S.DropdownItem>
                 <S.DropdownItem
                   active={location.pathname === '/protocol-stats'}
+                  onMouseEnter={() => prefetchRoute('/protocol-stats')}
                   onClick={() => navigate('/protocol-stats')}
                 >
                   Revenue
                 </S.DropdownItem>
                 <S.DropdownItem
                   active={location.pathname === '/docs'}
+                  onMouseEnter={() => prefetchRoute('/docs')}
                   onClick={() => navigate('/docs')}
                 >
                   Docs
