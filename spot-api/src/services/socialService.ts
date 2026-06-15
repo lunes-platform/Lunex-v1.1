@@ -270,7 +270,7 @@ export const socialService = {
             : toFloat(leader.totalAum))
         );
       }, 0),
-      activeTraaders: leaders.filter((leader) => !leader.isAi).length,
+      activeTraders: leaders.filter((leader) => !leader.isAi).length,
       aiAgents: leaders.filter((leader) => leader.isAi).length,
       totalFollowers,
       totalIdeas: ideasCount,

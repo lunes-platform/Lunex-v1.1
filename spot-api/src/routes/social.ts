@@ -79,13 +79,20 @@ async function getVerifiedViewerAddress(
 
 // ─── Analytics ──────────────────────────────────────────────────
 
+// Public read: operational pipeline status only (indexer enabled/ready,
+// counters, latest indexed event). No user-identifiable or financial data is
+// exposed here, so it is served unauthenticated per the "Read public data:
+// None" auth matrix. The frontend polls this every 30s to render a status
+// badge; gating it behind requireAdmin produced a permanent 401 + console
+// noise. Mutating analytics ops (recompute, resync-followers) remain
+// requireAdmin below. Response is the status object directly (no envelope) to
+// match the frontend PipelineStatus contract.
 router.get(
   '/analytics/status',
-  requireAdmin,
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const analytics = await socialAnalyticsService.getPipelineStatus();
-      res.json({ analytics });
+      res.json(analytics);
     } catch (err) {
       next(err);
     }
