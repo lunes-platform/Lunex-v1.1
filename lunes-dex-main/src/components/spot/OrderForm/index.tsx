@@ -812,7 +812,7 @@ export const StopForm: React.FC<FormProps> = ({
   onSubmit,
   balanceUsdt = 0,
   balanceLunes = 0,
-  marketPrice,
+  marketPrice: _marketPrice,
   takerFee
 }) => {
   const [stopPrice, setStopPrice] = useState('')
