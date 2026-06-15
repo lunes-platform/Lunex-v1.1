@@ -1,6 +1,7 @@
 import { SubstrateEvent } from '@subql/types'
 import { StakingEvent } from '../types'
 import { makeEventId, safeNum } from './utils'
+import { labelGuard } from './contractEvents'
 
 // ─── staking: StakeCreated ─────────────────────────────────────────────────
 export async function handleStakeCreated(event: SubstrateEvent): Promise<void> {
@@ -8,6 +9,10 @@ export async function handleStakeCreated(event: SubstrateEvent): Promise<void> {
   const blockNumber = BigInt(block.block.header.number.toString())
   const timestamp = block.timestamp ?? new Date()
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
+
+  // Discriminate by ink! string topic; bail on any non-Staked event.
+  const raw = labelGuard(event, ['StakingContract::Staked'])
+  if (!raw) return
 
   const args = event.event.data.toJSON() as Record<string, unknown>
   const staker = String(args.staker ?? args.account ?? '')
@@ -21,7 +26,7 @@ export async function handleStakeCreated(event: SubstrateEvent): Promise<void> {
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'STAKE_CREATED',
     staker,
     amount,
@@ -39,6 +44,10 @@ export async function handleStakeWithdrawn(event: SubstrateEvent): Promise<void>
   const timestamp = block.timestamp ?? new Date()
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
 
+  // Discriminate by ink! string topic; bail on any non-Unstaked event.
+  const raw = labelGuard(event, ['StakingContract::Unstaked'])
+  if (!raw) return
+
   const args = event.event.data.toJSON() as Record<string, unknown>
   const staker = String(args.staker ?? args.account ?? '')
   const amount = safeNum(args.amount)
@@ -50,7 +59,7 @@ export async function handleStakeWithdrawn(event: SubstrateEvent): Promise<void>
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'STAKE_WITHDRAWN',
     staker,
     amount,
@@ -68,6 +77,10 @@ export async function handleRewardClaimed(event: SubstrateEvent): Promise<void> 
   const timestamp = block.timestamp ?? new Date()
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
 
+  // Discriminate by ink! string topic; bail on any non-RewardsClaimed event.
+  const raw = labelGuard(event, ['StakingContract::RewardsClaimed'])
+  if (!raw) return
+
   const args = event.event.data.toJSON() as Record<string, unknown>
   const staker = String(args.staker ?? args.account ?? '')
   const rewardAmount = safeNum(args.reward_amount ?? args.amount)
@@ -80,7 +93,7 @@ export async function handleRewardClaimed(event: SubstrateEvent): Promise<void> 
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'REWARD_CLAIMED',
     staker,
     amount: undefined,

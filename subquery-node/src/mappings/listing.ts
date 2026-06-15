@@ -6,6 +6,7 @@ import {
   getOrCreateDailyStats,
   dateToIsoDate,
 } from './utils';
+import { labelGuard } from './contractEvents';
 
 // ── ListingManager: TokenListed ────────────────────────────────
 export async function handleTokenListed(event: SubstrateEvent): Promise<void> {
@@ -14,6 +15,10 @@ export async function handleTokenListed(event: SubstrateEvent): Promise<void> {
   const timestamp = block.timestamp ?? new Date();
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined;
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined;
+
+  // Discriminate by ink! string topic; bail on any non-TokenListed event.
+  const raw = labelGuard(event, ['ListingManager::TokenListed']);
+  if (!raw) return;
 
   const args = event.event.data.toJSON() as Record<string, unknown>;
   const owner = String(args.owner ?? signer ?? '');
@@ -32,7 +37,7 @@ export async function handleTokenListed(event: SubstrateEvent): Promise<void> {
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'TOKEN_LISTED',
     listingId,
     lockId,
@@ -68,6 +73,10 @@ export async function handleLiquidityLocked(
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined;
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined;
 
+  // Discriminate by ink! string topic; bail on any non-LiquidityLocked event.
+  const raw = labelGuard(event, ['LiquidityLock::LiquidityLocked']);
+  if (!raw) return;
+
   const args = event.event.data.toJSON() as Record<string, unknown>;
   const lockId =
     args.lock_id !== undefined ? BigInt(String(args.lock_id)) : undefined;
@@ -89,7 +98,7 @@ export async function handleLiquidityLocked(
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'LIQUIDITY_LOCKED',
     listingId: undefined,
     lockId,
@@ -125,6 +134,10 @@ export async function handleFeeDistributed(
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined;
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined;
 
+  // Discriminate by ink! string topic; bail on any non-FeeDistributed event.
+  const raw = labelGuard(event, ['ListingManager::FeeDistributed']);
+  if (!raw) return;
+
   const args = event.event.data.toJSON() as Record<string, unknown>;
   const owner = String(args.owner ?? signer ?? '');
   const burnAmount = safeNum(args.burn_amount);
@@ -138,7 +151,7 @@ export async function handleFeeDistributed(
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'FEE_DISTRIBUTED',
     listingId: undefined,
     lockId: undefined,
@@ -170,6 +183,10 @@ export async function handleLiquidityUnlocked(
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined;
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined;
 
+  // Discriminate by ink! string topic; bail on any non-LiquidityUnlocked event.
+  const raw = labelGuard(event, ['LiquidityLock::LiquidityUnlocked']);
+  if (!raw) return;
+
   const args = event.event.data.toJSON() as Record<string, unknown>;
   const lockId =
     args.lock_id !== undefined ? BigInt(String(args.lock_id)) : undefined;
@@ -182,7 +199,7 @@ export async function handleLiquidityUnlocked(
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'LIQUIDITY_UNLOCKED',
     listingId: undefined,
     lockId,

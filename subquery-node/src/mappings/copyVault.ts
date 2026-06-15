@@ -7,6 +7,7 @@ import {
   getOrCreateDailyStats,
   dateToIsoDate,
 } from './utils'
+import { labelGuard } from './contractEvents'
 
 // ── Copy Vault: Deposited ──────────────────────────────────────
 export async function handleVaultDeposited(event: SubstrateEvent): Promise<void> {
@@ -15,6 +16,10 @@ export async function handleVaultDeposited(event: SubstrateEvent): Promise<void>
   const timestamp = block.timestamp ?? new Date()
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
+
+  // Discriminate by ink! string topic; bail on any non-Deposited event.
+  const raw = labelGuard(event, ['CopyVault::Deposited'])
+  if (!raw) return
 
   const args = event.event.data.toJSON() as Record<string, unknown>
   const actor = String(args.depositor ?? signer ?? '')
@@ -29,7 +34,7 @@ export async function handleVaultDeposited(event: SubstrateEvent): Promise<void>
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'DEPOSIT',
     vaultAddress: args.vault ? String(args.vault) : undefined,
     actor,
@@ -64,6 +69,10 @@ export async function handleVaultWithdrawn(event: SubstrateEvent): Promise<void>
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
+  // Discriminate by ink! string topic; bail on any non-Withdrawn event.
+  const raw = labelGuard(event, ['CopyVault::Withdrawn'])
+  if (!raw) return
+
   const args = event.event.data.toJSON() as Record<string, unknown>
   const actor = String(args.depositor ?? signer ?? '')
   const amountOut = safeNum(args.amount_received)
@@ -77,7 +86,7 @@ export async function handleVaultWithdrawn(event: SubstrateEvent): Promise<void>
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'WITHDRAW',
     vaultAddress: args.vault ? String(args.vault) : undefined,
     actor,
@@ -112,6 +121,10 @@ export async function handleVaultTradeExecuted(event: SubstrateEvent): Promise<v
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
+  // Discriminate by ink! string topic; bail on any non-TradeExecuted event.
+  const raw = labelGuard(event, ['CopyVault::TradeExecuted'])
+  if (!raw) return
+
   const args = event.event.data.toJSON() as Record<string, unknown>
   const leader = String(args.leader ?? signer ?? '')
   const amountIn = safeNum(args.amount)
@@ -127,7 +140,7 @@ export async function handleVaultTradeExecuted(event: SubstrateEvent): Promise<v
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'TRADE_EXECUTED',
     vaultAddress: args.vault ? String(args.vault) : undefined,
     actor: leader,
@@ -145,7 +158,7 @@ export async function handleVaultTradeExecuted(event: SubstrateEvent): Promise<v
   await ev.save()
 
   // ── VaultDailyStat: aggregate per-vault per-day ──────────────
-  const vaultAddr = args.vault ? String(args.vault) : event.event.section
+  const vaultAddr = args.vault ? String(args.vault) : raw.contract
   const dayStr = dateToIsoDate(timestamp)
   const statId = `${vaultAddr}_${dayStr}`
   let stat = await VaultDailyStat.get(statId)
@@ -181,6 +194,10 @@ export async function handleVaultCircuitBreaker(event: SubstrateEvent): Promise<
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
+  // Discriminate by ink! string topic; bail on any non-CircuitBreaker event.
+  const raw = labelGuard(event, ['CopyVault::CircuitBreakerTriggered'])
+  if (!raw) return
+
   const args = event.event.data.toJSON() as Record<string, unknown>
   const vaultAddress = String(args.vault ?? signer ?? '')
   const drawdownBps = safeNum(args.drawdown_bps)
@@ -193,7 +210,7 @@ export async function handleVaultCircuitBreaker(event: SubstrateEvent): Promise<
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'CIRCUIT_BREAKER',
     vaultAddress,
     actor: vaultAddress,

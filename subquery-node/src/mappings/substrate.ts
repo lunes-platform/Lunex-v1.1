@@ -17,6 +17,15 @@ export async function handleSubstrateEvent(event: SubstrateEvent): Promise<void>
   const method = event.event.method.toLowerCase()
   const key = `${section}.${method}`
 
+  // ink! contract events arrive as `contracts.ContractEmitted` and are owned by
+  // the contract-specific, label-guarded handlers (router/pair/vault/listing/
+  // staking/spot). This generic fallback only handles native pallet events; it
+  // must never decode a ContractEmitted blob (its `data.toJSON()` yields the
+  // pallet-level array, producing zeroed garbage rows).
+  if (section === 'contracts' && method.toLowerCase() === 'contractemitted') {
+    return
+  }
+
   // Only process events relevant to Lunex
   if (!isRelevantEvent(section, method)) return
 
