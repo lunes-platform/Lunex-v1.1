@@ -16,6 +16,7 @@ const mockTx = {
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
     findUnique: jest.fn(),
   },
   marginCollateralTransfer: {
@@ -113,6 +114,7 @@ describe('marginService hardening', () => {
     mockTx.marginPosition.findMany.mockReset();
     mockTx.marginPosition.create.mockReset();
     mockTx.marginPosition.update.mockReset();
+    mockTx.marginPosition.updateMany.mockReset();
     mockTx.marginPosition.findUnique.mockReset();
     mockTx.marginCollateralTransfer.create.mockReset();
     mockTx.marginLiquidation.create.mockReset();
@@ -702,5 +704,175 @@ describe('marginService hardening', () => {
     expect(
       marginService.getPriceHealth('LUNES/USDT').summary.trackedPairs,
     ).toBe(0);
+  });
+
+  // ───────────────────────────────────────────────────────────────
+  // Liquidation authorization (permissionless keeper, by design)
+  //
+  // `POST /margin/positions/:id/liquidate` intentionally has NO
+  // `requireAdmin` guard: any authenticated (sr25519) address may act
+  // as a liquidator — the standard permissionless-keeper model used by
+  // perps venues. Safety does NOT come from authorization; it comes
+  // from the server-side, in-transaction re-check that the position is
+  // actually eligible (`equity <= maintenanceMargin`). The
+  // `liquidatorAddress` in the request never feeds the eligibility math,
+  // so a third party cannot forge liquidatability. The liquidator earns
+  // NO reward: the 2.5% penalty is only debited from the owner's
+  // realizedPnl (it is not credited to the liquidator), and the residual
+  // equity (`releasedCollateral`) is returned to the position OWNER.
+  // These tests are the regression guard for that contract.
+  // ───────────────────────────────────────────────────────────────
+
+  const liquidationOwner = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
+  const thirdPartyLiquidator =
+    '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty';
+
+  function buildLiquidationPosition(overrides: {
+    markPrice: string;
+    unrealizedPnl: string;
+    maintenanceMargin: string;
+    collateralAmount: string;
+  }) {
+    return {
+      id: 'position-liq',
+      accountId: 'account-1',
+      pairId: 'pair-1',
+      pairSymbol: 'LUNES/USDT',
+      side: 'BUY',
+      status: 'OPEN',
+      collateralAmount: new Decimal(overrides.collateralAmount),
+      leverage: new Decimal('5'),
+      notional: new Decimal('500'),
+      quantity: new Decimal('5000'),
+      entryPrice: new Decimal('0.1'),
+      markPrice: new Decimal(overrides.markPrice),
+      borrowedAmount: new Decimal('400'),
+      maintenanceMargin: new Decimal(overrides.maintenanceMargin),
+      liquidationPrice: new Decimal('0.09'),
+      unrealizedPnl: new Decimal(overrides.unrealizedPnl),
+      realizedPnl: new Decimal('0'),
+      openedAt: new Date('2026-01-01T00:00:00.000Z'),
+      closedAt: null,
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      account: { ...baseAccount },
+    };
+  }
+
+  it('refuses to liquidate a HEALTHY position even for a third-party liquidator (equity > maintenanceMargin)', async () => {
+    // Healthy: equity = collateral(100) + unrealizedPnl(+10) = 110 > maint(40).
+    const healthy = buildLiquidationPosition({
+      markPrice: '0.11',
+      unrealizedPnl: '10',
+      maintenanceMargin: '40',
+      collateralAmount: '100',
+    });
+
+    mockTx.marginPosition.findUnique.mockResolvedValue(healthy);
+    mockTx.marginAccount.findUnique.mockResolvedValue(baseAccount);
+    // Fresh last trade => no stale / circuit-breaker path; mark stays > entry.
+    mockTx.trade.findFirst.mockResolvedValue({
+      price: new Decimal('0.11'),
+      createdAt: new Date(),
+    });
+    mockOrderbookManager.get.mockReturnValue(undefined);
+    // refreshPositionWithClient persists recomputed mark/pnl; echo a healthy
+    // record so formatPosition derives equity(110) > maintenanceMargin(40).
+    mockTx.marginPosition.update.mockResolvedValue({
+      ...healthy,
+      markPrice: new Decimal('0.11'),
+      unrealizedPnl: new Decimal('50'),
+    });
+
+    await expect(
+      marginService.liquidatePosition('position-liq', thirdPartyLiquidator),
+    ).rejects.toThrow('Position is not liquidatable');
+
+    // No state transition: no collateral moved, no liquidation record minted.
+    // (The CAS `updateMany` is never reached because the eligibility re-check
+    // throws first.)
+    expect(mockTx.marginAccount.update).not.toHaveBeenCalled();
+    expect(mockTx.marginLiquidation.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses to liquidate a position that is not OPEN (anti double-liquidation gate)', async () => {
+    const alreadyClosed = {
+      ...buildLiquidationPosition({
+        markPrice: '0.05',
+        unrealizedPnl: '-250',
+        maintenanceMargin: '40',
+        collateralAmount: '100',
+      }),
+      status: 'LIQUIDATED',
+    };
+
+    mockTx.marginPosition.findUnique.mockResolvedValue(alreadyClosed);
+
+    await expect(
+      marginService.liquidatePosition('position-liq', thirdPartyLiquidator),
+    ).rejects.toThrow('Position is not open');
+
+    expect(mockTx.marginAccount.update).not.toHaveBeenCalled();
+    expect(mockTx.marginLiquidation.create).not.toHaveBeenCalled();
+  });
+
+  it('allows a third-party liquidator to liquidate an ELIGIBLE position; penalty is debited from the owner and residual equity returns to the owner (no liquidator reward)', async () => {
+    // Eligible: equity = collateral(100) + unrealizedPnl(-70) = 30 <= maint(40).
+    const eligible = buildLiquidationPosition({
+      markPrice: '0.086',
+      unrealizedPnl: '-70',
+      maintenanceMargin: '40',
+      collateralAmount: '100',
+    });
+
+    mockTx.marginPosition.findUnique.mockResolvedValue(eligible);
+    mockTx.marginAccount.findUnique.mockResolvedValue(baseAccount);
+    mockTx.trade.findFirst.mockResolvedValue({
+      price: new Decimal('0.086'),
+      createdAt: new Date(),
+    });
+    mockOrderbookManager.get.mockReturnValue(undefined);
+    mockTx.marginPosition.update.mockResolvedValue({
+      ...eligible,
+      markPrice: new Decimal('0.086'),
+      unrealizedPnl: new Decimal('-70'),
+    });
+    // Atomic CAS claim wins (one row transitioned OPEN -> LIQUIDATED).
+    mockTx.marginPosition.updateMany.mockResolvedValue({ count: 1 });
+    mockTx.marginAccount.update.mockResolvedValue(baseAccount);
+    mockTx.marginLiquidation.create.mockResolvedValue({});
+    // Trailing getOverview(ownerAddress) reads via the non-tx client.
+    mockPrisma.marginAccount.findUnique.mockResolvedValue(baseAccount);
+    mockPrisma.marginPosition.findMany.mockResolvedValue([]);
+
+    await marginService.liquidatePosition(
+      'position-liq',
+      thirdPartyLiquidator,
+    );
+
+    // The CAS is filtered on status OPEN -> only one liquidation can win.
+    expect(mockTx.marginPosition.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'OPEN' }),
+        data: expect.objectContaining({ status: 'LIQUIDATED' }),
+      }),
+    );
+
+    // Liquidation record attributes the actor but grants NO reward credit.
+    expect(mockTx.marginLiquidation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          liquidatorAddress: thirdPartyLiquidator,
+        }),
+      }),
+    );
+
+    // The only account credited is the OWNER's (residual equity returned).
+    // The liquidator is never passed to marginAccount.update.
+    const accountUpdates = mockTx.marginAccount.update.mock.calls;
+    expect(accountUpdates.length).toBeGreaterThan(0);
+    const creditedLiquidator = accountUpdates.some((call) =>
+      JSON.stringify(call).includes(thirdPartyLiquidator),
+    );
+    expect(creditedLiquidator).toBe(false);
   });
 });
