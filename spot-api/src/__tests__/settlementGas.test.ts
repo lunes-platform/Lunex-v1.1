@@ -87,15 +87,26 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
     const api = {
       registry: { createType: createTypeSpy },
       createType: createTypeSpy,
+      rpc: {
+        system: {
+          // Relayer nonce seed for the settle_trade pipeline.
+          accountNextIndex: jest.fn(async () => ({ toString: () => '0' })),
+        },
+      },
     };
 
     // Build a tx-method mock that records the gas arg and resolves a finalized
-    // extrinsic immediately via the signAndSend callback.
+    // extrinsic immediately via the signAndSend callback. Supports both the
+    // 2-arg form `signAndSend(signer, cb)` (cancel path) and the 3-arg form
+    // `signAndSend(signer, { nonce }, cb)` (pipelined settle path).
     const buildTxMethod = (record: (g: CapturedGas) => void) =>
       jest.fn((gas: CapturedGas) => {
         record(gas);
         return {
-          signAndSend: (_signer: unknown, cb: (r: any) => void) => {
+          signAndSend: (_signer: unknown, ...rest: any[]) => {
+            const cb = (
+              typeof rest[0] === 'function' ? rest[0] : rest[1]
+            ) as (r: any) => void;
             cb({
               status: { isInBlock: true, isFinalized: true },
               txHash: { toHex: () => '0xfeed' },
