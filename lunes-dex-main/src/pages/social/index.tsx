@@ -594,6 +594,29 @@ const formatAumLabel = (value: number): string => {
   return value.toFixed(0)
 }
 
+// Context-specific empty-state copy. With an active search term show the
+// "no match" variant; otherwise show a neutral "nothing yet" message per tab.
+const getListEmptyMessage = (tab: TabType, searchTerm: string): string => {
+  const hasSearch = searchTerm.trim().length > 0
+  const noun =
+    tab === 'bots' ? 'AI bots' : tab === 'leaderboard' ? 'ranked traders' : 'traders'
+
+  if (hasSearch) {
+    return `No ${noun} found matching "${searchTerm.trim()}".`
+  }
+
+  switch (tab) {
+    case 'bots':
+      return 'No AI bots published yet. Check back soon.'
+    case 'leaderboard':
+      return 'The leaderboard is still being built from on-chain activity.'
+    case 'traders':
+      return 'No traders have published a profile yet. Be the first to become a leader.'
+    default:
+      return 'No leaders to show yet. Be the first to become a leader.'
+  }
+}
+
 const SocialTrade: React.FC = () => {
   const navigate = useNavigate()
   const { walletAddress } = useSDK()
@@ -768,32 +791,42 @@ const SocialTrade: React.FC = () => {
         {statusMessage && <StatusBanner>{statusMessage}</StatusBanner>}
 
         <HeaderActions>
-          <TabsContainer>
+          <TabsContainer role="tablist" aria-label="Social trade categories">
             <Tab
+              role="tab"
+              aria-selected={activeTab === 'all'}
               active={activeTab === 'all'}
               onClick={() => setActiveTab('all')}
             >
               <AllIcon /> All
             </Tab>
             <Tab
+              role="tab"
+              aria-selected={activeTab === 'traders'}
               active={activeTab === 'traders'}
               onClick={() => setActiveTab('traders')}
             >
               <UsersIcon /> Traders
             </Tab>
             <Tab
+              role="tab"
+              aria-selected={activeTab === 'bots'}
               active={activeTab === 'bots'}
               onClick={() => setActiveTab('bots')}
             >
               <BotIcon /> AI Bots
             </Tab>
             <Tab
+              role="tab"
+              aria-selected={activeTab === 'leaderboard'}
               active={activeTab === 'leaderboard'}
               onClick={() => setActiveTab('leaderboard')}
             >
               <TrophyIcon /> Leaderboard
             </Tab>
             <Tab
+              role="tab"
+              aria-selected={activeTab === 'ideas'}
               active={activeTab === 'ideas'}
               onClick={() => setActiveTab('ideas')}
             >
@@ -849,6 +882,7 @@ const SocialTrade: React.FC = () => {
                 />
               </SearchInputWrapper>
               <SortSelect
+                aria-label="Sort traders by"
                 value={sortBy}
                 onChange={e => setSortBy(e.target.value)}
               >
@@ -875,7 +909,7 @@ const SocialTrade: React.FC = () => {
             </Grid>
 
             {!isLoading && leaders.length === 0 && (
-              <EmptyState>No traders found matching your search.</EmptyState>
+              <EmptyState>{getListEmptyMessage(activeTab, search)}</EmptyState>
             )}
           </>
         ) : (

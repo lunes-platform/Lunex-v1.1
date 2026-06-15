@@ -212,3 +212,119 @@ export const DropdownItem = styled.button<DropdownItemProps>`
     }
   `}
 `
+
+// ──────────────────── Responsive hamburger / mobile nav ────────────────────
+
+// Hamburger toggle — hidden on desktop, shown when NavLinks collapses (<=1280px)
+export const HamburgerButton = styled.button`
+  ${({ theme }) => css`
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    margin-right: auto;
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: ${theme.colors.themeColors[100] || '#ffffff'};
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      background: ${theme.colors.themeColors[400] || 'rgba(255,255,255,0.06)'};
+    }
+
+    @media (max-width: 1280px) {
+      display: flex;
+    }
+  `}
+`
+
+// Full-screen overlay backdrop for the mobile menu
+export const MobileNavOverlay = styled.div`
+  display: none;
+
+  @media (max-width: 1280px) {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+  }
+`
+
+// Slide-in drawer holding the navigation links on small viewports
+export const MobileNavDrawer = styled.nav`
+  ${({ theme }) => css`
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 85vw;
+    background: ${theme.colors.themeColors[600] || '#0d0d0d'};
+    border-right: 1px solid ${theme.colors.themeColors[400] || '#2a2a2c'};
+    z-index: 1001;
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    box-sizing: border-box;
+  `}
+`
+
+export const MobileNavHeader = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+`
+
+export const MobileNavClose = styled.button`
+  ${({ theme }) => css`
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid ${theme.colors.themeColors[400] || '#2a2a2c'};
+    background: transparent;
+    color: ${theme.colors.themeColors[100] || '#ffffff'};
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &:hover {
+      background: ${theme.colors.themeColors[400] || 'rgba(255,255,255,0.06)'};
+    }
+  `}
+`
+
+export const MobileNavLink = styled.button<NavLinkProps>`
+  ${({ theme, active }) => css`
+    width: 100%;
+    padding: 12px 14px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    font-size: 15px;
+    text-align: left;
+    transition: all 0.15s;
+
+    background: ${active ? theme.colors.themeColors[800] : 'transparent'};
+    color: ${active
+      ? theme.colors.themeColors[100]
+      : theme.colors.themeColors[200]};
+
+    &:hover {
+      background: ${theme.colors.themeColors[400] || 'rgba(255,255,255,0.06)'};
+      color: ${theme.colors.themeColors[100]};
+    }
+  `}
+`

@@ -532,31 +532,44 @@ const SocialSettings: React.FC = () => {
     setErrorMessage('')
     setStatusMessage('')
 
-    if (!walletAddress) {
-      try {
-        await connectWallet()
-        setStatusMessage(
-          'Wallet connected. Click save again to publish your profile.'
-        )
-      } catch (err) {
-        setErrorMessage(
-          err instanceof Error ? err.message : 'Failed to connect wallet'
-        )
-      }
-      return
-    }
-
+    // Validate the form first so the user always gets feedback on an empty
+    // form, regardless of wallet connection state (no silent clicks).
     if (!name.trim() || !username.trim() || !bio.trim()) {
       setErrorMessage('Display name, username, and biography are required.')
       return
     }
 
+    // Resolve the wallet address: use the one from context, or connect now and
+    // continue the submit in the same click (no "click again" dead-end).
+    let activeAddress = walletAddress
+
+    if (!activeAddress) {
+      setStatusMessage('Connect your wallet to publish your leader profile.')
+      try {
+        await connectWallet()
+      } catch (err) {
+        setErrorMessage(
+          err instanceof Error ? err.message : 'Failed to connect wallet'
+        )
+        return
+      }
+
+      activeAddress = walletAddress
+      if (!activeAddress) {
+        setErrorMessage(
+          'Wallet not connected. Please connect your wallet and try again.'
+        )
+        return
+      }
+    }
+
     setIsSaving(true)
+    setStatusMessage('Awaiting wallet signature...')
 
     try {
       const auth = createSignedActionMetadata()
       const payload = {
-        address: walletAddress,
+        address: activeAddress,
         name: name.trim(),
         username: username.trim(),
         bio: bio.trim(),
@@ -585,6 +598,7 @@ const SocialSettings: React.FC = () => {
       )
       navigate(`/social/profile/${trader.id}`, { state: { trader } })
     } catch (err) {
+      setStatusMessage('')
       setErrorMessage(
         err instanceof Error ? err.message : 'Failed to save leader profile'
       )

@@ -337,6 +337,17 @@ const ConnectWallet: React.FC<ModalConnectWalletProps> = ({
     return () => clearTimeout(timer)
   }, [])
 
+  // Close on Escape key for a11y/UX parity with backdrop click
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        close()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [close])
+
   const handleConnect = async (source: string) => {
     setLocalError(null)
     setConnectingSource(source)
