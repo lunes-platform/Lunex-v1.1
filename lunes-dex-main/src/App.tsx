@@ -23,7 +23,9 @@ const App = () => {
         <SpotProvider>
           <ErrorBoundary>
             <HeaderWrapper />
-            <AppRoutes />
+            <main>
+              <AppRoutes />
+            </main>
           </ErrorBoundary>
         </SpotProvider>
       </BrowserRouter>

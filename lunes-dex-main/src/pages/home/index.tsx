@@ -216,6 +216,9 @@ const Home = () => {
                 : '0'}
             </S.Details>
             <B.Input
+              id="swap-from-amount"
+              name="swapFromAmount"
+              aria-label="Amount to swap from"
               placeholder="0"
               height="112px"
               sizeInput="24px"
@@ -246,6 +249,9 @@ const Home = () => {
                 : '0'}
             </S.Details>
             <B.Input
+              id="swap-to-amount"
+              name="swapToAmount"
+              aria-label="Estimated amount to receive"
               placeholder="0"
               height="112px"
               sizeInput="24px"

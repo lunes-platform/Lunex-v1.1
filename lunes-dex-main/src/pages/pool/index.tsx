@@ -182,6 +182,7 @@ const InputRow = styled.div`
 
 const Input = styled.input`
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   font-family: 'Space Grotesk', sans-serif;
@@ -210,6 +211,7 @@ const TokenButton = styled.button`
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
   background: ${({ theme }) => theme.colors.themeColors[400]};
   border: none;
   border-radius: 16px;
@@ -568,7 +570,7 @@ const Pool: React.FC = () => {
                 ) : (
                   'Select'
                 )}
-                <img src="/img/arrow-down.svg" alt="Select" />
+                <img src="/img/arrow-down.svg" alt="Select" width={16} height={16} />
               </TokenButton>
             </InputRow>
           </InputContainer>
@@ -605,7 +607,7 @@ const Pool: React.FC = () => {
                 ) : (
                   'Select'
                 )}
-                <img src="/img/arrow-down.svg" alt="Select" />
+                <img src="/img/arrow-down.svg" alt="Select" width={16} height={16} />
               </TokenButton>
             </InputRow>
           </InputContainer>

@@ -172,7 +172,7 @@ export const Landing: React.FC = () => {
         {/* Token Orbit Visual */}
         <S.HeroOrbit $delay="0.5s">
           <S.OrbitCenter>
-            <img src="/img/lunes.svg" alt="Lunes" />
+            <img src="/img/lunes.svg" alt="Lunes" width={48} height={48} />
           </S.OrbitCenter>
 
           {/* Ring 1 - Inner */}
@@ -186,7 +186,11 @@ export const Landing: React.FC = () => {
               <S.OrbitTokenWrapper key={i} $angle={t.a} $radius={130}>
                 <S.OrbitTokenInner $duration={20} $angle={t.a}>
                   <S.OrbitTokenFloat $delay={i * 0.5}>
-                    {t.img ? <img src={t.img} alt={t.s} /> : <span>{t.s}</span>}
+                    {t.img ? (
+                      <img src={t.img} alt={t.s} width={32} height={32} />
+                    ) : (
+                      <span>{t.s}</span>
+                    )}
                   </S.OrbitTokenFloat>
                 </S.OrbitTokenInner>
               </S.OrbitTokenWrapper>
@@ -207,7 +211,11 @@ export const Landing: React.FC = () => {
               <S.OrbitTokenWrapper key={i} $angle={t.a} $radius={220}>
                 <S.OrbitTokenInner $duration={35} $angle={t.a}>
                   <S.OrbitTokenFloat $delay={i * 0.7}>
-                    {t.img ? <img src={t.img} alt={t.s} /> : <span>{t.s}</span>}
+                    {t.img ? (
+                      <img src={t.img} alt={t.s} width={32} height={32} />
+                    ) : (
+                      <span>{t.s}</span>
+                    )}
                   </S.OrbitTokenFloat>
                 </S.OrbitTokenInner>
               </S.OrbitTokenWrapper>
@@ -229,7 +237,11 @@ export const Landing: React.FC = () => {
               <S.OrbitTokenWrapper key={i} $angle={t.a} $radius={310}>
                 <S.OrbitTokenInner $duration={55} $angle={t.a}>
                   <S.OrbitTokenFloat $delay={i * 0.4}>
-                    {t.img ? <img src={t.img} alt={t.s} /> : <span>{t.s}</span>}
+                    {t.img ? (
+                      <img src={t.img} alt={t.s} width={32} height={32} />
+                    ) : (
+                      <span>{t.s}</span>
+                    )}
                   </S.OrbitTokenFloat>
                 </S.OrbitTokenInner>
               </S.OrbitTokenWrapper>
@@ -240,7 +252,7 @@ export const Landing: React.FC = () => {
         {/* Swap card floating below hero */}
         <S.HeroSwapCard $delay="0.55s">
           <S.SwapHeader>
-            <h3>Live Swap Preview</h3>
+            <h2>Live Swap Preview</h2>
             <span>Default slippage: 0.5%</span>
           </S.SwapHeader>
           <S.SwapTopStats>
@@ -255,7 +267,7 @@ export const Landing: React.FC = () => {
           </S.SwapTopStats>
           <S.SwapField $active>
             <S.SwapFieldLeft>
-              <img src="/img/lunes-green.svg" alt="LUNES" />
+              <img src="/img/lunes-green.svg" alt="LUNES" width={26} height={26} />
               <span>LUNES</span>
             </S.SwapFieldLeft>
             <S.SwapFieldRight>
@@ -270,7 +282,7 @@ export const Landing: React.FC = () => {
           </S.SwapArrow>
           <S.SwapField>
             <S.SwapFieldLeft>
-              <img src="/img/lusdt.svg" alt="lUSDT" />
+              <img src="/img/lusdt.svg" alt="lUSDT" width={26} height={26} />
               <span>lUSDT</span>
             </S.SwapFieldLeft>
             <S.SwapFieldRight>
@@ -466,9 +478,9 @@ export const Landing: React.FC = () => {
                 $delay="0.1s"
                 $accent="#00E5A0"
               >
-                <h4>
+                <h3>
                   <Target size={18} color="#00E5A0" /> Hyper-Concentration
-                </h4>
+                </h3>
                 <p>
                   Deploy capital specifically where the volume happens.
                   Concentrate your range inside tight 10% deviations to maximize
@@ -480,9 +492,9 @@ export const Landing: React.FC = () => {
                 $delay="0.2s"
                 $accent="#FFD700"
               >
-                <h4>
+                <h3>
                   <Bot size={18} color="#FFD700" /> AI-Driven Boundaries
-                </h4>
+                </h3>
                 <p>
                   The LUNEX Agentic Swarm autonomously shifts your liquidity
                   bands, predicting impermanent loss windows before market moves
@@ -494,9 +506,9 @@ export const Landing: React.FC = () => {
                 $delay="0.3s"
                 $accent="#FF3366"
               >
-                <h4>
+                <h3>
                   <Zap size={18} color="#FF3366" /> Single-Sided Exposure
-                </h4>
+                </h3>
                 <p>
                   Provide liquidity without holding the paired asset. The
                   protocol dynamically hedges your position using on-chain
@@ -902,7 +914,7 @@ export const Landing: React.FC = () => {
               <S.AgentStep>
                 <S.AgentStepNum>01</S.AgentStepNum>
                 <S.AgentStepBody>
-                  <h4>Connect OpenClaw</h4>
+                  <h3>Connect OpenClaw</h3>
                   <p>
                     Pair your bot with Lunex via the MCP SDK. One-time setup,
                     fully on-chain.
@@ -912,7 +924,7 @@ export const Landing: React.FC = () => {
               <S.AgentStep>
                 <S.AgentStepNum>02</S.AgentStepNum>
                 <S.AgentStepBody>
-                  <h4>Define Strategy</h4>
+                  <h3>Define Strategy</h3>
                   <p>
                     Set risk limits, target pairs, entry/exit conditions, and
                     execution cadence.
@@ -922,7 +934,7 @@ export const Landing: React.FC = () => {
               <S.AgentStep>
                 <S.AgentStepNum>03</S.AgentStepNum>
                 <S.AgentStepBody>
-                  <h4>Automate & Collect</h4>
+                  <h3>Automate & Collect</h3>
                   <p>
                     Your agent executes 24/7. Track performance on-chain and
                     collect rewards automatically.
@@ -1221,7 +1233,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#00E5A0">
               <Waves size={26} />
             </S.EcoIcon>
-            <h4>Swap</h4>
+            <h3>Swap</h3>
             <p>Fast AMM token conversion with auto-routing.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1233,7 +1245,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#26D07C">
               <Layers size={26} />
             </S.EcoIcon>
-            <h4>Pools</h4>
+            <h3>Pools</h3>
             <p>Provide liquidity, capture fees, earn yield.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1245,7 +1257,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#FF5C00">
               <Activity size={26} />
             </S.EcoIcon>
-            <h4>Spot</h4>
+            <h3>Spot</h3>
             <p>On-chain orderbook with limit and market orders.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1257,7 +1269,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#FFD700">
               <Bot size={26} />
             </S.EcoIcon>
-            <h4>AI Agents</h4>
+            <h3>AI Agents</h3>
             <p>Autonomous trading bots powered by OpenClaw.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1269,7 +1281,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#A0F0D0">
               <BookOpen size={26} />
             </S.EcoIcon>
-            <h4>Strategies</h4>
+            <h3>Strategies</h3>
             <p>Deploy or publish on the strategy marketplace.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1281,7 +1293,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#00B8D9">
               <Copy size={26} />
             </S.EcoIcon>
-            <h4>Copytrade</h4>
+            <h3>Copytrade</h3>
             <p>Follow top traders and replicate results.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1293,7 +1305,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#FF9500">
               <Gift size={26} />
             </S.EcoIcon>
-            <h4>Rewards</h4>
+            <h3>Rewards</h3>
             <p>Unlock tiers and multipliers for platform use.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1305,7 +1317,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#F5C518">
               <Coins size={26} />
             </S.EcoIcon>
-            <h4>Staking</h4>
+            <h3>Staking</h3>
             <p>Turn long-term conviction into yield and governance.</p>
           </S.EcoCard>
           <S.EcoCard
@@ -1317,7 +1329,7 @@ export const Landing: React.FC = () => {
             <S.EcoIcon $accent="#9469FF">
               <Globe size={26} />
             </S.EcoIcon>
-            <h4>Governance</h4>
+            <h3>Governance</h3>
             <p>Vote on proposals and shape the protocol future.</p>
           </S.EcoCard>
         </S.EcoGrid>
@@ -1418,14 +1430,14 @@ export const Landing: React.FC = () => {
             </p>
           </S.FooterBrand>
           <S.FooterCol>
-            <h4>Trading</h4>
+            <h3>Trading</h3>
             <a href="/swap">Swap</a>
             <a href="/spot">Spot Orderbook</a>
             <a href="/pools">Liquidity Pools</a>
             <a href="/spot/copytrade">Copy Trading</a>
           </S.FooterCol>
           <S.FooterCol>
-            <h4>Automation</h4>
+            <h3>Automation</h3>
             <a href="/agent">AI Agents</a>
             <a href="/strategies">Strategy Marketplace</a>
             <a href="/rewards">Rewards</a>
@@ -1433,7 +1445,7 @@ export const Landing: React.FC = () => {
             <a href="/governance">Governance</a>
           </S.FooterCol>
           <S.FooterCol>
-            <h4>Resources</h4>
+            <h3>Resources</h3>
             <a
               href="https://docs.lunes.io"
               target="_blank"
@@ -1451,7 +1463,7 @@ export const Landing: React.FC = () => {
             <a href="/docs">SDK</a>
           </S.FooterCol>
           <S.FooterCol>
-            <h4>Community</h4>
+            <h3>Community</h3>
             <a
               href="https://twitter.com/LunesBlockchain"
               target="_blank"
