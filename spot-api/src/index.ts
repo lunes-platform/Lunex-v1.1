@@ -50,6 +50,7 @@ import tokenRegistryRouter from './routes/tokenRegistry';
 import favoritesRouter from './routes/favorites';
 import marketInfoRouter from './routes/marketInfo';
 import rewardsRouter from './routes/rewards';
+import balancesRouter from './routes/balances';
 import adminRouter from './routes/admin';
 import { rewardScheduler } from './services/rewardScheduler';
 import { copytradeWalletContinuationScheduler } from './services/copytradeWalletContinuationScheduler';
@@ -313,6 +314,7 @@ app.use('/api/v1/tokens', tokenRegistryRouter);
 app.use('/api/v1/user', favoritesRouter);
 app.use('/api/v1/markets', marketInfoRouter);
 app.use('/api/v1/rewards', rewardsRouter);
+app.use('/api/v1/balances', balancesRouter);
 app.use('/api/v1/admin', adminRouter);
 
 // ─── Health & Metrics ────────────────────────────────────────────
