@@ -31,6 +31,37 @@ pub mod spot_settlement {
     use ink::storage::Mapping;
 
     // ========================================
+    // PSP22 ERROR TYPE (DEFINIDO LOCALMENTE)
+    // ========================================
+    //
+    // Tipo de retorno canônico das mensagens PSP22 (transfer / transfer_from /
+    // approve), conforme a PSP22 spec e TODOS os tokens deployados neste repo
+    // (ver `Lunex/contracts/psp22/lib.rs` e o `PSP22Ref` de `pair`/`router`).
+    //
+    // Mensagens PSP22 retornam `Result<(), PSP22Error>`. Decodificar esse
+    // retorno como `Result<(), u8>` faz uma transferência bem-sucedida ser
+    // mal-decodificada e revertida como `PSP22TransferFailed`. Mantemos
+    // `Custom(String)` como variante de índice 0 para casar com o layout
+    // SCALE do `PSP22Ref` do repo e tolerar erros customizados de qualquer
+    // token PSP22 sem falha de decode.
+    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum PSP22Error {
+        /// Erro personalizado com mensagem
+        Custom(ink::prelude::string::String),
+        /// Saldo insuficiente
+        InsufficientBalance,
+        /// Allowance insuficiente
+        InsufficientAllowance,
+        /// Endereço zero (destinatário) não permitido
+        ZeroRecipientAddress,
+        /// Endereço zero (remetente) não permitido
+        ZeroSenderAddress,
+        /// Falha de verificação de transferência segura
+        SafeTransferCheckFailed(ink::prelude::string::String),
+    }
+
+    // ========================================
     // CONSTANTS
     // ========================================
 
@@ -461,17 +492,21 @@ pub mod spot_settlement {
                 SpotError::Overflow
             })?;
 
-            // Cross-contract call to PSP22 transferFrom
-            // In production, this calls token.transfer_from(caller, self, amount)
-            // For ink! 4.2.1 we use build_call
+            // Cross-contract call to PSP22 transfer_from
+            // Calls token.transfer_from(caller, self, amount, data).
+            // The PSP22 standard (and every token deployed in this repo)
+            // returns `Result<(), PSP22Error>` — decoding it as
+            // `Result<(), u8>` mis-decodes the error variant and makes a
+            // successful transfer revert as PSP22TransferFailed. We decode
+            // the canonical PSP22 return type, exactly like `PSP22Ref` in the
+            // `pair`/`router` contracts.
             let transfer_result = ink::env::call::build_call::<ink::env::DefaultEnvironment>()
                 .call(token)
                 .gas_limit(0)
                 .transferred_value(0)
                 .exec_input(
                     ink::env::call::ExecutionInput::new(ink::env::call::Selector::new(
-                        // PSP22::transfer_from selector
-                        // selector_bytes!("psp22::transfer_from")
+                        // PSP22::transfer_from selector = 0x54b3c76e
                         ink::selector_bytes!("PSP22::transfer_from"),
                     ))
                     .push_arg(caller)
@@ -479,11 +514,13 @@ pub mod spot_settlement {
                     .push_arg(amount)
                     .push_arg(Vec::<u8>::new()), // data
                 )
-                .returns::<ink::MessageResult<Result<(), u8>>>()
+                .returns::<Result<(), PSP22Error>>()
                 .try_invoke();
 
+            // Three layers must all be Ok for the transfer to have succeeded:
+            // env error (CalleeTrapped/decode) -> LangError -> PSP22Error.
             match transfer_result {
-                Ok(Ok(Ok(Ok(())))) => {}
+                Ok(Ok(Ok(()))) => {}
                 _ => {
                     self.release_lock();
                     return Err(SpotError::PSP22TransferFailed);
@@ -574,24 +611,26 @@ pub mod spot_settlement {
             })?;
             self.balances.insert((caller, token), &new_balance);
 
-            // Cross-contract call to PSP22 transfer
+            // Cross-contract call to PSP22 transfer. Decode the canonical
+            // PSP22 return type `Result<(), PSP22Error>` (see deposit_psp22).
             let transfer_result = ink::env::call::build_call::<ink::env::DefaultEnvironment>()
                 .call(token)
                 .gas_limit(0)
                 .transferred_value(0)
                 .exec_input(
                     ink::env::call::ExecutionInput::new(ink::env::call::Selector::new(
+                        // PSP22::transfer selector = 0xdb20f9f5
                         ink::selector_bytes!("PSP22::transfer"),
                     ))
                     .push_arg(caller)
                     .push_arg(amount)
                     .push_arg(Vec::<u8>::new()), // data
                 )
-                .returns::<ink::MessageResult<Result<(), u8>>>()
+                .returns::<Result<(), PSP22Error>>()
                 .try_invoke();
 
             match transfer_result {
-                Ok(Ok(Ok(Ok(())))) => {}
+                Ok(Ok(Ok(()))) => {}
                 _ => {
                     // Revert balance change
                     self.balances.insert((caller, token), &current);
@@ -1937,6 +1976,83 @@ pub mod spot_settlement {
                 Err(SpotError::Overflow)
             );
             assert_eq!(contract.get_balance(accounts.bob, token), u128::MAX);
+        }
+
+        // NOTE on the PSP22 decode fix: `deposit_psp22`/`withdraw_psp22` now
+        // decode the token's return as the canonical `Result<(), PSP22Error>`
+        // (every token in this repo returns this — `pair`/`router` use the
+        // same `PSP22Ref` pattern), NOT `Result<(), u8>` which mis-decoded a
+        // successful transfer into PSP22TransferFailed. The cross-call success
+        // path cannot run in an off-chain `#[ink::test]` (the ink 4.3 off-chain
+        // engine panics: "does not support contract invocation"), so it is
+        // proven end-to-end on-chain — see fix-contract-deposit-psp22 report.
+        // The settle-side PSP22/PSP22 accounting is proven by the unit test
+        // below, which operates on funded vaults exactly as a successful
+        // deposit_psp22 would leave them.
+
+        // Proves `settle_trade` atomically moves PSP22/PSP22 vault balances
+        // (both legs are non-native AccountIds = PSP22 tokens, exactly like
+        // the WLUNES/LBTC/LETH/GMC/LUP pairs that were stuck on Bloqueador B).
+        // Funding here simulates a successful `deposit_psp22` crediting each
+        // vault, which the decode fix now enables on-chain.
+        #[ink::test]
+        fn test_settle_trade_psp22_pair_moves_vault_balances() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+
+            // PSP22/PSP22 pair (e.g. LBTC base / LUSDT quote): both non-native.
+            let base = AccountId::from([0xB1; 32]);
+            let quote = AccountId::from([0xC2; 32]);
+
+            // Simulate funded vaults (post deposit_psp22):
+            // buyer (bob) holds quote, seller (charlie) holds base.
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+
+            let maker_order = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+            let taker_order = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 200_000_000,
+                amount: 1_000_000_000,
+                filled_amount: 0,
+                nonce: 1,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+
+            let result =
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000);
+            assert!(result.is_ok());
+
+            // Buyer paid 2B quote + 2M fee, received 1B base.
+            assert_eq!(contract.get_balance(accounts.bob, quote), 7_998_000_000);
+            assert_eq!(contract.get_balance(accounts.bob, base), 1_000_000_000);
+            // Seller delivered 1B base, received 2B quote - 5M fee.
+            assert_eq!(contract.get_balance(accounts.charlie, base), 4_000_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, quote), 1_995_000_000);
+            // Fees collected in quote token.
+            assert_eq!(contract.get_collected_fees(quote), 7_000_000);
         }
 
         // ─── Withdraw Native Tests ───
