@@ -2,8 +2,14 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ApiPromise, Keyring, WsProvider } from '@polkadot/api';
 import { ContractPromise } from '@polkadot/api-contract';
-import { cryptoWaitReady } from '@polkadot/util-crypto';
-import { hexToU8a, isHex } from '@polkadot/util';
+import {
+  cryptoWaitReady,
+  secp256k1PairFromSeed,
+  secp256k1Compress,
+  blake2AsU8a,
+} from '@polkadot/util-crypto';
+import { secp256k1Sign as wasmSecp256k1Sign } from '@polkadot/wasm-crypto';
+import { hexToU8a, isHex, u8aToHex } from '@polkadot/util';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import {
@@ -168,10 +174,175 @@ function nonceToU64(nonce: string) {
   return parsed;
 }
 
+/**
+ * Shape of the on-chain `SignedOrder` payload AFTER `toSignedOrder()` has
+ * converted DB values into contract-native representations: `maker`,
+ * `base_token`, `quote_token` are Substrate `AccountId` codec instances (32
+ * bytes), `side` is 0|1, and `price`/`amount`/`nonce`/`expiry` are decimal
+ * strings already scaled to the smallest unit (u128 / u64).
+ */
+type OnChainSignedOrder = {
+  maker: { toU8a(): Uint8Array };
+  base_token: { toU8a(): Uint8Array };
+  quote_token: { toU8a(): Uint8Array };
+  side: number;
+  price: string;
+  amount: string;
+  nonce: string;
+  expiry: string;
+  signature: number[];
+};
+
+function u128LeBytes(value: string): Uint8Array {
+  let v = BigInt(value);
+  if (v < 0n) {
+    throw new Error(`Negative balance cannot be encoded as u128: ${value}`);
+  }
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i += 1) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  if (v !== 0n) {
+    throw new Error(`Balance exceeds u128 range: ${value}`);
+  }
+  return out;
+}
+
+function u64LeBytes(value: string): Uint8Array {
+  let v = BigInt(value);
+  if (v < 0n) {
+    throw new Error(`Negative value cannot be encoded as u64: ${value}`);
+  }
+  const out = new Uint8Array(8);
+  for (let i = 0; i < 8; i += 1) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  if (v !== 0n) {
+    throw new Error(`Value exceeds u64 range: ${value}`);
+  }
+  return out;
+}
+
+/**
+ * Byte-for-byte reconstruction of the contract's `build_order_message_v2`
+ * (see `Lunex/contracts/spot_settlement/lib.rs`). The attestor signs the
+ * blake2_256 of THIS exact payload; any divergence makes `ecdsa_recover`
+ * return a pubkey that does not match `attestor_pubkey`, reverting settlement.
+ *
+ * Layout (must match the contract exactly):
+ *   b"lunex:v2:spot-order\n"      (20 bytes, PREFIX_V2)
+ *   maker                          (32 bytes, AccountId)
+ *   base_token                     (32 bytes, AccountId)
+ *   quote_token                    (32 bytes, AccountId)
+ *   side                           (1 byte, 0=BUY 1=SELL)
+ *   price                          (16 bytes, u128 little-endian)
+ *   amount                         (16 bytes, u128 little-endian)
+ *   nonce                          (8 bytes, u64 little-endian)
+ *   expiry                         (8 bytes, u64 little-endian)
+ * filled_amount is INTENTIONALLY excluded — on-chain storage is canonical.
+ */
+export function buildOrderMessageV2(order: OnChainSignedOrder): Uint8Array {
+  const prefix = new TextEncoder().encode('lunex:v2:spot-order\n');
+  const maker = order.maker.toU8a();
+  const baseToken = order.base_token.toU8a();
+  const quoteToken = order.quote_token.toU8a();
+  if (maker.length !== 32 || baseToken.length !== 32 || quoteToken.length !== 32) {
+    throw new Error('AccountId encoding must be exactly 32 bytes');
+  }
+  const parts: Uint8Array[] = [
+    prefix,
+    maker,
+    baseToken,
+    quoteToken,
+    Uint8Array.of(order.side),
+    u128LeBytes(order.price),
+    u128LeBytes(order.amount),
+    u64LeBytes(order.nonce),
+    u64LeBytes(order.expiry),
+  ];
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const msg = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    msg.set(p, offset);
+    offset += p.length;
+  }
+  return msg;
+}
+
+/**
+ * The 32-byte hash the attestor signs: `blake2_256(build_order_message_v2)`.
+ * Mirrors `build_attestation_hash` in the contract.
+ */
+export function buildAttestationHash(order: OnChainSignedOrder): Uint8Array {
+  return blake2AsU8a(buildOrderMessageV2(order), 256);
+}
+
+/**
+ * Resolve the attestor's 32-byte secp256k1 seed from configuration. Accepts a
+ * `0x`-prefixed (or bare) 64-hex-char string. Returns null when no attestor is
+ * configured (settlement then stays fail-closed under enforced mode).
+ */
+export function resolveAttestorSeed(): Uint8Array | null {
+  const raw = (config.settlement.attestorSeed || '').trim();
+  if (!raw) {
+    return null;
+  }
+  const hex = raw.startsWith('0x') ? raw : `0x${raw}`;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(
+      'ATTESTOR_SEED must be a 32-byte (64 hex char) secp256k1 seed',
+    );
+  }
+  return hexToU8a(hex);
+}
+
+/**
+ * Derive the attestor secp256k1 keypair from its seed. The public key is
+ * returned in 33-byte compressed SEC1 form — exactly what
+ * `set_attestor_key(pubkey: [u8;33])` stores and what the contract's
+ * `ecdsa_recover` produces for comparison.
+ */
+export function attestorKeypairFromSeed(seed: Uint8Array): {
+  secretKey: Uint8Array;
+  publicKeyCompressed: Uint8Array;
+} {
+  const pair = secp256k1PairFromSeed(seed);
+  const publicKeyCompressed = secp256k1Compress(pair.publicKey);
+  if (publicKeyCompressed.length !== 33) {
+    throw new Error('Compressed attestor pubkey must be 33 bytes');
+  }
+  return { secretKey: pair.secretKey, publicKeyCompressed };
+}
+
+/**
+ * Produce the 65-byte recoverable ECDSA attestation (`r ‖ s ‖ v`, v∈{0,1})
+ * over `blake2_256(build_order_message_v2(order))`, signed with the attestor's
+ * secp256k1 secret key. The wasm signer operates on the 32-byte digest
+ * DIRECTLY (no second hash), matching `ink::env::ecdsa_recover` semantics.
+ */
+export function attestOrder(
+  order: OnChainSignedOrder,
+  attestorSecretKey: Uint8Array,
+): number[] {
+  const hash = buildAttestationHash(order);
+  const sig = wasmSecp256k1Sign(hash, attestorSecretKey);
+  if (sig.length !== 65) {
+    throw new Error(
+      `Attestation must be 65 bytes (r‖s‖v), got ${sig.length}`,
+    );
+  }
+  return Array.from(sig);
+}
+
 class SpotSettlementService {
   private api: ApiPromise | null = null;
   private contract: ContractPromise | null = null;
   private relayer: ReturnType<Keyring['addFromUri']> | null = null;
+  private attestorSecretKey: Uint8Array | null = null;
+  private attestorPublicKeyCompressed: Uint8Array | null = null;
   private settleMethodKey: string | null = null;
   private getBalanceMethodKey: string | null = null;
   private isNonceUsedMethodKey: string | null = null;
@@ -241,6 +412,28 @@ class SpotSettlementService {
 
       const keyring = new Keyring({ type: 'sr25519' });
       const relayer = keyring.addFromUri(config.blockchain.relayerSeed);
+
+      // Load the independent ECDSA attestor key (ADR-001 option c). When set,
+      // every settle_trade carries a per-order attestation the contract
+      // verifies via ecdsa_recover. Without it, settlement reverts under
+      // enforced mode (fail-closed) — see verify_order_signature in lib.rs.
+      const attestorSeed = resolveAttestorSeed();
+      if (attestorSeed) {
+        const { secretKey, publicKeyCompressed } =
+          attestorKeypairFromSeed(attestorSeed);
+        this.attestorSecretKey = secretKey;
+        this.attestorPublicKeyCompressed = publicKeyCompressed;
+        log.info(
+          { attestorPubkey: u8aToHex(publicKeyCompressed) },
+          '[SpotSettlement] Attestor key loaded; orders will carry ECDSA attestations',
+        );
+      } else {
+        this.attestorSecretKey = null;
+        this.attestorPublicKeyCompressed = null;
+        log.warn(
+          '[SpotSettlement] No ATTESTOR_SEED configured — settle_trade will REVERT under enforced signature mode',
+        );
+      }
       const contract = new ContractPromise(
         api as any,
         metadata as any,
@@ -540,8 +733,8 @@ class SpotSettlementService {
     pair: PairSettlementSnapshot,
     order: OrderSettlementSnapshot,
   ) {
-    return {
-      maker: order.makerAddress,
+    const signedOrder = {
+      maker: this.toUserAccountId(order.makerAddress),
       base_token: this.toAccountId(pair.baseToken, pair.isNativeBase),
       quote_token: this.toAccountId(pair.quoteToken, pair.isNativeQuote),
       side: order.side === 'BUY' ? 0 : 1,
@@ -557,7 +750,19 @@ class SpotSettlementService {
       // Off-chain verification is done in assertOrderTrustedSource() before
       // this call. See verify_order_signature() in spot_settlement/lib.rs.
       signature: signatureToBytes(order.signature),
+      // ECDSA attestation by the independent attestor over the canonical v2
+      // order hash (65 bytes r‖s‖v), filled in below once all field values
+      // are known. When enforced==true the contract recovers the pubkey and
+      // compares it with attestor_pubkey; a 65-zero placeholder (no attestor
+      // configured) always reverts under enforced mode.
+      attestation: new Array(65).fill(0) as number[],
     };
+    // Sign the FINAL on-chain field values — buildOrderMessageV2 reads the
+    // exact same maker/token/side/price/amount/nonce/expiry the contract sees.
+    if (this.attestorSecretKey) {
+      signedOrder.attestation = attestOrder(signedOrder, this.attestorSecretKey);
+    }
+    return signedOrder;
   }
 
   private async assertOrderTrustedSource(
