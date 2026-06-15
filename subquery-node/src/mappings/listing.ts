@@ -2,11 +2,16 @@ import { SubstrateEvent } from '@subql/types';
 import { ListingEvent } from '../types';
 import {
   makeEventId,
-  safeNum,
   getOrCreateDailyStats,
   dateToIsoDate,
 } from './utils';
-import { labelGuard } from './contractEvents';
+import {
+  labelGuard,
+  decodeTokenListed,
+  decodeFeeDistributed,
+  decodeLiquidityLocked,
+  decodeLiquidityUnlocked,
+} from './contractEvents';
 
 // ── ListingManager: TokenListed ────────────────────────────────
 export async function handleTokenListed(event: SubstrateEvent): Promise<void> {
@@ -20,16 +25,14 @@ export async function handleTokenListed(event: SubstrateEvent): Promise<void> {
   const raw = labelGuard(event, ['ListingManager::TokenListed']);
   if (!raw) return;
 
-  const args = event.event.data.toJSON() as Record<string, unknown>;
-  const owner = String(args.owner ?? signer ?? '');
-  const listingId =
-    args.listing_id !== undefined ? BigInt(String(args.listing_id)) : undefined;
-  const tokenAddress = String(args.token_address ?? '');
-  const pairAddress = args.pair_address ? String(args.pair_address) : undefined;
-  const tier = args.tier ? Number(args.tier) : undefined;
-  const lockId =
-    args.lock_id !== undefined ? BigInt(String(args.lock_id)) : undefined;
-  const listingFee = safeNum(args.listing_fee);
+  const decoded = decodeTokenListed(raw.payload);
+  if (!decoded) return;
+  const owner = decoded.owner || signer || '';
+  const listingId = decoded.listingId;
+  const tokenAddress = decoded.tokenAddress;
+  const pairAddress = decoded.pairAddress;
+  const tier = decoded.tier;
+  const lockId = decoded.lockId;
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx);
 
   const ev = ListingEvent.create({
@@ -50,10 +53,11 @@ export async function handleTokenListed(event: SubstrateEvent): Promise<void> {
     tokenAmount: undefined,
     unlockTimestamp: undefined,
     tier,
-    listingFee,
-    burnAmount: (listingFee * BigInt(50)) / BigInt(100),
-    treasuryAmount: (listingFee * BigInt(30)) / BigInt(100),
-    rewardsAmount: (listingFee * BigInt(20)) / BigInt(100),
+    // Fee split is emitted separately via FeeDistributed; not part of this event.
+    listingFee: undefined,
+    burnAmount: undefined,
+    treasuryAmount: undefined,
+    rewardsAmount: undefined,
   });
 
   await ev.save();
@@ -77,19 +81,14 @@ export async function handleLiquidityLocked(
   const raw = labelGuard(event, ['LiquidityLock::LiquidityLocked']);
   if (!raw) return;
 
-  const args = event.event.data.toJSON() as Record<string, unknown>;
-  const lockId =
-    args.lock_id !== undefined ? BigInt(String(args.lock_id)) : undefined;
-  const owner = String(args.owner ?? signer ?? '');
-  const pairAddress = args.pair_address ? String(args.pair_address) : undefined;
-  const lpTokenAddress = args.lp_token ? String(args.lp_token) : undefined;
-  const lpAmount = safeNum(args.lp_amount);
-  const lunesAmount = safeNum(args.lunes_amount);
-  const tokenAmount = safeNum(args.token_amount);
-  const tier = args.tier ? Number(args.tier) : undefined;
-  const unlockTs = args.unlock_timestamp
-    ? BigInt(String(args.unlock_timestamp))
-    : undefined;
+  const decoded = decodeLiquidityLocked(raw.payload);
+  if (!decoded) return;
+  const lockId = decoded.lockId;
+  const owner = decoded.owner || signer || '';
+  const pairAddress = decoded.pairAddress;
+  const lpAmount = decoded.lpAmount;
+  const tier = decoded.tier;
+  const unlockTs = decoded.unlockTimestamp;
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx);
 
@@ -105,10 +104,10 @@ export async function handleLiquidityLocked(
     owner,
     tokenAddress: undefined,
     pairAddress,
-    lpTokenAddress,
+    lpTokenAddress: undefined,
     lpAmount,
-    lunesAmount,
-    tokenAmount,
+    lunesAmount: undefined,
+    tokenAmount: undefined,
     unlockTimestamp: unlockTs,
     tier,
     listingFee: undefined,
@@ -120,7 +119,7 @@ export async function handleLiquidityLocked(
   await ev.save();
 
   const day = await getOrCreateDailyStats(dateToIsoDate(timestamp));
-  day.totalLunesLocked = (day.totalLunesLocked ?? BigInt(0)) + lunesAmount;
+  day.totalLunesLocked = (day.totalLunesLocked ?? BigInt(0)) + lpAmount;
   await day.save();
 }
 
@@ -138,12 +137,16 @@ export async function handleFeeDistributed(
   const raw = labelGuard(event, ['ListingManager::FeeDistributed']);
   if (!raw) return;
 
-  const args = event.event.data.toJSON() as Record<string, unknown>;
-  const owner = String(args.owner ?? signer ?? '');
-  const burnAmount = safeNum(args.burn_amount);
-  const treasuryAmount = safeNum(args.treasury_amount);
-  const rewardsAmount = safeNum(args.rewards_amount);
+  const decoded = decodeFeeDistributed(raw.payload);
+  if (!decoded) return;
+  const owner = signer ?? '';
+  // On-chain split is staking / treasury / rewards. There is no dedicated
+  // staking column, so the staking portion is stored in burnAmount.
+  const burnAmount = decoded.stakingAmount;
+  const treasuryAmount = decoded.treasuryAmount;
+  const rewardsAmount = decoded.rewardsAmount;
   const listingFee = burnAmount + treasuryAmount + rewardsAmount;
+  const listingId = decoded.listingId;
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx);
 
   const ev = ListingEvent.create({
@@ -153,10 +156,10 @@ export async function handleFeeDistributed(
     extrinsicHash,
     contractAddress: raw.contract,
     kind: 'FEE_DISTRIBUTED',
-    listingId: undefined,
+    listingId,
     lockId: undefined,
     owner,
-    tokenAddress: args.token_address ? String(args.token_address) : undefined,
+    tokenAddress: undefined,
     pairAddress: undefined,
     lpTokenAddress: undefined,
     lpAmount: undefined,
@@ -187,11 +190,11 @@ export async function handleLiquidityUnlocked(
   const raw = labelGuard(event, ['LiquidityLock::LiquidityUnlocked']);
   if (!raw) return;
 
-  const args = event.event.data.toJSON() as Record<string, unknown>;
-  const lockId =
-    args.lock_id !== undefined ? BigInt(String(args.lock_id)) : undefined;
-  const owner = String(args.owner ?? signer ?? '');
-  const lpAmount = safeNum(args.lp_amount);
+  const decoded = decodeLiquidityUnlocked(raw.payload);
+  if (!decoded) return;
+  const lockId = decoded.lockId;
+  const owner = decoded.owner || signer || '';
+  const lpAmount = decoded.lpAmount;
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx);
 
   const ev = ListingEvent.create({

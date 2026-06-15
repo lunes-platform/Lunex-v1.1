@@ -2,7 +2,6 @@ import { SubstrateEvent } from '@subql/types'
 import { SwapEvent, LiquidityEvent } from '../types'
 import {
   makeEventId,
-  safeNum,
   getOrCreateWalletSummary,
   getOrCreatePairStats,
   getOrCreateDailyStats,
@@ -12,6 +11,7 @@ import {
   readContractEmitted,
   decodeRouterSwap,
   decodePairSwap,
+  decodeRouterLiquidity,
   pairSymbolFromTokens,
   labelGuard,
 } from './contractEvents'
@@ -101,11 +101,12 @@ export async function handleRouterLiquidityAdded(event: SubstrateEvent): Promise
   const raw = labelGuard(event, ['RouterContract::LiquidityAdded'])
   if (!raw) return
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const provider = String(args.to ?? signer ?? '')
-  const amount0 = safeNum(args.amount_a)
-  const amount1 = safeNum(args.amount_b)
-  const pairSymbol = derivePairFromTwoTokens(args.token_a, args.token_b)
+  const decoded = decodeRouterLiquidity(raw.payload)
+  if (!decoded) return
+  const provider = decoded.to || signer || ''
+  const amount0 = decoded.amountA
+  const amount1 = decoded.amountB
+  const pairSymbol = pairSymbolFromTokens(decoded.tokenA, decoded.tokenB)
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -120,7 +121,7 @@ export async function handleRouterLiquidityAdded(event: SubstrateEvent): Promise
     pairSymbol,
     amount0,
     amount1,
-    lpTokens: safeNum(args.liquidity),
+    lpTokens: decoded.liquidity,
   })
 
   await ev.save()
@@ -153,11 +154,12 @@ export async function handleRouterLiquidityRemoved(event: SubstrateEvent): Promi
   const raw = labelGuard(event, ['RouterContract::LiquidityRemoved'])
   if (!raw) return
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const provider = String(args.to ?? signer ?? '')
-  const amount0 = safeNum(args.amount_a)
-  const amount1 = safeNum(args.amount_b)
-  const pairSymbol = derivePairFromTwoTokens(args.token_a, args.token_b)
+  const decoded = decodeRouterLiquidity(raw.payload)
+  if (!decoded) return
+  const provider = decoded.to || signer || ''
+  const amount0 = decoded.amountA
+  const amount1 = decoded.amountB
+  const pairSymbol = pairSymbolFromTokens(decoded.tokenA, decoded.tokenB)
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -172,7 +174,7 @@ export async function handleRouterLiquidityRemoved(event: SubstrateEvent): Promi
     pairSymbol,
     amount0,
     amount1,
-    lpTokens: safeNum(args.liquidity),
+    lpTokens: decoded.liquidity,
   })
 
   await ev.save()
@@ -255,11 +257,3 @@ export async function handlePairSwap(event: SubstrateEvent): Promise<void> {
   await day.save()
 }
 
-// ── Helpers ────────────────────────────────────────────────────
-
-function derivePairFromTwoTokens(tokenA: unknown, tokenB: unknown): string | undefined {
-  if (!tokenA || !tokenB) return undefined
-  const a = String(tokenA).slice(0, 8)
-  const b = String(tokenB).slice(0, 8)
-  return `${a}.../${b}...`
-}
