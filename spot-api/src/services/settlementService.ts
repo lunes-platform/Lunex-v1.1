@@ -634,7 +634,7 @@ class SpotSettlementService {
     let cursor = 0;
 
     const runner = async (): Promise<void> => {
-      while (true) {
+      while (cursor < items.length) {
         const index = cursor;
         cursor += 1;
         if (index >= items.length) return;

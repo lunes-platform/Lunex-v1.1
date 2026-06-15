@@ -759,7 +759,7 @@ describe('marginService hardening', () => {
   // These tests are the regression guard for that contract.
   // ───────────────────────────────────────────────────────────────
 
-  const liquidationOwner = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
+  const _liquidationOwner = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
   const thirdPartyLiquidator =
     '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty';
 
