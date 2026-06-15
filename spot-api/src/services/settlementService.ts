@@ -189,11 +189,20 @@ class SpotSettlementService {
   }
 
   isEnabled() {
-    return this.isConfigured();
+    // Master-switch: even when fully configured, settlement stays OFF unless
+    // SETTLEMENT_ENABLED is explicitly 'true' (default OFF if absent). This
+    // makes a coordinated restart safe — config can be staged without arming
+    // on-chain settlement.
+    return this.isConfigured() && process.env.SETTLEMENT_ENABLED === 'true';
   }
 
   async ensureReady() {
-    if (!this.isConfigured()) {
+    // Gate on isEnabled() (NOT isConfigured()): when SETTLEMENT_ENABLED!=true,
+    // the relayer must not connect and on-chain paths (settle_trade,
+    // cancel_order_for, nonce/balance reads) must short-circuit. Otherwise a
+    // fully-configured-but-disabled deployment would still fire on-chain cancel
+    // extrinsics per order cancellation. The master-switch must be complete.
+    if (!this.isEnabled()) {
       return false;
     }
 
@@ -314,6 +323,45 @@ class SpotSettlementService {
     return (this.contract.tx as Record<string, any>)[methodKey] || null;
   }
 
+  /**
+   * Gas limit for contract dry-runs (query.* simulation).
+   *
+   * The Lunes pallet-contracts rejects the polkadot.js sentinel `gasLimit: -1`
+   * with `contracts.OutOfGas` (module 24, error 0x02), which made every
+   * settle_trade / cancel_order_for / nonce / balance dry-run fail. Substrate
+   * expects an explicit WeightV2 ceiling on this chain. We pass a generous
+   * WeightV2 so the dry-run can run to completion and return an accurate
+   * `gasRequired`; the real extrinsic is then submitted with that measured
+   * `gasRequired` (with built-in client margin), not this ceiling.
+   *
+   * Proven on-chain: cancel_order_for with WeightV2{refTime:600e9,proofSize:8e6}
+   * dry-runs to {ok:{ok:null}}, whereas gasLimit:-1 returns OutOfGas.
+   */
+  private dryRunGasLimit() {
+    if (!this.api) throw new Error('Settlement API not initialized');
+    return this.api.registry.createType('WeightV2', {
+      refTime: 600_000_000_000n,
+      proofSize: 8_000_000n,
+    });
+  }
+
+  /**
+   * Gas limit for the REAL extrinsic, derived from the dry-run `gasRequired`
+   * plus a safety margin. `gasRequired` is the exact measured weight of the
+   * dry-run; on-chain execution can consume marginally more (storage growth,
+   * block-state differences), so we add +50% headroom to avoid OutOfGas on
+   * submit while still bounding the relayer's exposure.
+   */
+  private txGasLimit(gasRequired: {
+    refTime: { toBigInt(): bigint };
+    proofSize: { toBigInt(): bigint };
+  }) {
+    if (!this.api) throw new Error('Settlement API not initialized');
+    const refTime = (gasRequired.refTime.toBigInt() * 150n) / 100n;
+    const proofSize = (gasRequired.proofSize.toBigInt() * 150n) / 100n;
+    return this.api.registry.createType('WeightV2', { refTime, proofSize });
+  }
+
   async getVaultBalance(
     userAddress: string,
     tokenAddress: string,
@@ -327,7 +375,7 @@ class SpotSettlementService {
 
     const { output, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       this.toUserAccountId(userAddress),
       this.toAccountId(tokenAddress, isNative),
     );
@@ -353,7 +401,7 @@ class SpotSettlementService {
 
     const { output, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       this.toUserAccountId(userAddress),
       nonceToU64(nonce).toString(),
     );
@@ -379,7 +427,7 @@ class SpotSettlementService {
 
     const { output, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       this.toUserAccountId(userAddress),
       nonceToU64(nonce).toString(),
     );
@@ -485,7 +533,7 @@ class SpotSettlementService {
 
     const { gasRequired, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       makerOrder,
       takerOrder,
       fillAmount,
@@ -502,7 +550,7 @@ class SpotSettlementService {
       let unsub: (() => void) | undefined;
 
       txMethod(
-        { gasLimit: gasRequired, storageDepositLimit: null },
+        { gasLimit: this.txGasLimit(gasRequired), storageDepositLimit: null },
         makerOrder,
         takerOrder,
         fillAmount,
@@ -609,7 +657,7 @@ class SpotSettlementService {
 
     const { gasRequired, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       maker,
       nonceValue,
     );
@@ -624,7 +672,7 @@ class SpotSettlementService {
       let unsub: (() => void) | undefined;
 
       txMethod(
-        { gasLimit: gasRequired, storageDepositLimit: null },
+        { gasLimit: this.txGasLimit(gasRequired), storageDepositLimit: null },
         maker,
         nonceValue,
       )
