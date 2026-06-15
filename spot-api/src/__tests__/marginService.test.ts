@@ -31,6 +31,9 @@ const mockPrisma = {
   $transaction: jest.fn(async (callback: (tx: typeof mockTx) => unknown) =>
     callback(mockTx),
   ),
+  pair: {
+    findUnique: jest.fn(),
+  },
   trade: {
     findFirst: jest.fn(),
   },
@@ -120,6 +123,19 @@ describe('marginService hardening', () => {
     mockTx.marginLiquidation.create.mockReset();
 
     mockOrderbookManager.get.mockReset();
+
+    // openPosition now resolves pair + mark price OUTSIDE the interactive
+    // transaction (via the top-level prisma client) to avoid holding the
+    // transaction open on I/O. Delegate those read-only lookups to the
+    // tx-level mocks so existing tests that configure `mockTx.pair.findUnique`
+    // / `mockTx.trade.findFirst` keep working without per-test changes.
+    mockPrisma.pair.findUnique.mockReset();
+    mockPrisma.pair.findUnique.mockImplementation((...args: unknown[]) =>
+      mockTx.pair.findUnique(...args),
+    );
+    mockPrisma.trade.findFirst.mockImplementation((...args: unknown[]) =>
+      mockTx.trade.findFirst(...args),
+    );
   });
 
   function createFreshBook(
@@ -313,7 +329,20 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price stale for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
+
+    // Stale mark price must degrade to a CLIENT (4xx) error, never an opaque
+    // 500 / transaction timeout. Assert the thrown error is an ApiError 400.
+    await expect(
+      marginService.openPosition({
+        address: baseAccount.address,
+        pairSymbol: 'LUNES/USDT',
+        side: 'BUY',
+        collateralAmount: '100',
+        leverage: '2',
+        signature: 'sig',
+      }),
+    ).rejects.toMatchObject({ statusCode: 400, code: 'BAD_REQUEST' });
 
     expect(marginService.getPriceHealth('LUNES/USDT')).toEqual(
       expect.objectContaining({
@@ -326,9 +355,11 @@ describe('marginService hardening', () => {
           expect.objectContaining({
             pairSymbol: 'LUNES/USDT',
             status: 'UNHEALTHY',
-            totalFailures: 1,
-            consecutiveFailures: 1,
-            lastFailureReason: 'Mark price stale for LUNES/USDT',
+            totalFailures: 2,
+            consecutiveFailures: 2,
+            lastFailureReason: expect.stringContaining(
+              'Mark price unavailable for LUNES/USDT',
+            ),
           }),
         ],
       }),
@@ -438,7 +469,7 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price circuit breaker triggered for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
 
     expect(mockTx.marginPosition.create).not.toHaveBeenCalled();
   });
@@ -468,7 +499,7 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price circuit breaker triggered for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
 
     expect(mockLog.error).toHaveBeenCalledWith(
       expect.objectContaining({ event: 'margin.safe_mark_price_unavailable' }),
@@ -513,24 +544,26 @@ describe('marginService hardening', () => {
     });
     mockTx.marginAccount.findUnique.mockResolvedValue(baseAccount);
     mockTx.marginPosition.findMany.mockResolvedValue([]);
-    mockTx.trade.findFirst.mockResolvedValueOnce({
-      price: new Decimal('200'),
+    // Mark price is now resolved OUTSIDE the transaction via the top-level
+    // prisma client; drive the stale→fresh recovery sequence through it.
+    // Override the beforeEach delegation for this scenario.
+    mockPrisma.trade.findFirst.mockReset();
+    mockPrisma.trade.findFirst.mockResolvedValueOnce({
+      price: new Decimal('90'),
+      createdAt: new Date(Date.now() - 300_000),
+    });
+    mockPrisma.trade.findFirst.mockResolvedValueOnce({
+      price: new Decimal('100'),
       createdAt: new Date(Date.now() - 1_000),
     });
-    mockTx.trade.findFirst.mockResolvedValueOnce({
-      price: new Decimal('90'),
-      createdAt: new Date(Date.now() - 300_000),
-    });
-    mockPrisma.trade.findFirst.mockResolvedValue({
-      price: new Decimal('90'),
-      createdAt: new Date(Date.now() - 300_000),
-    });
-    mockOrderbookManager.get.mockReturnValue(freshBook);
     mockTx.marginAccount.update.mockResolvedValue(undefined);
     mockTx.marginPosition.create.mockResolvedValue(createdPosition);
     mockPrisma.marginPosition.update.mockResolvedValue(createdPosition);
     mockPrisma.marginAccount.findUnique.mockResolvedValue(baseAccount);
     mockPrisma.marginPosition.findMany.mockResolvedValue([]);
+
+    // First open: stale trade + no fresh book → degrade to a clear 4xx.
+    mockOrderbookManager.get.mockReturnValueOnce(undefined);
 
     await expect(
       marginService.openPosition({
@@ -541,7 +574,10 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price circuit breaker triggered for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
+
+    // Second open: fresh trade resolves → price health restores.
+    mockOrderbookManager.get.mockReturnValue(freshBook);
 
     await marginService.openPosition({
       address: baseAccount.address,
@@ -605,7 +641,7 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price stale for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
 
     await expect(
       marginService.openPosition({
@@ -616,7 +652,7 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price stale for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
 
     await expect(
       marginService.openPosition({
@@ -627,7 +663,7 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price stale for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
 
     expect(marginService.getPriceHealth('LUNES/USDT')).toEqual(
       expect.objectContaining({
@@ -684,7 +720,7 @@ describe('marginService hardening', () => {
         leverage: '2',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Mark price stale for LUNES/USDT');
+    ).rejects.toThrow('Mark price unavailable for LUNES/USDT');
 
     expect(
       marginService.getPriceHealth('LUNES/USDT').summary.trackedPairs,

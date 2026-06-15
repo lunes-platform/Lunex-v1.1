@@ -27,6 +27,7 @@ import { config } from '../config';
 import { decimalToNumber } from '../utils/helpers';
 import { orderbookManager } from '../utils/orderbook';
 import { log } from '../utils/logger';
+import { ApiError } from '../middleware/errors';
 
 const DEFAULT_COLLATERAL_TOKEN = 'USDT';
 const MIN_LEVERAGE = 1;
@@ -381,8 +382,9 @@ async function resolveReferencePriceWithClient(
           deviationBps !== null &&
           deviationBps > config.margin.maxTradeToBookDeviationBps
         ) {
-          throw new Error(
-            `Mark price circuit breaker triggered for ${pairSymbol}`,
+          throw ApiError.badRequest(
+            `Mark price unavailable for ${pairSymbol}: last trade deviates too far from book mid-price (circuit breaker). Wait for the spread to tighten before opening a position.`,
+            { pairSymbol, reason: 'CIRCUIT_BREAKER' },
           );
         }
       }
@@ -397,10 +399,16 @@ async function resolveReferencePriceWithClient(
     }
 
     if (tradeReference) {
-      throw new Error(`Mark price stale for ${pairSymbol}`);
+      throw ApiError.badRequest(
+        `Mark price unavailable for ${pairSymbol}: the most recent trade is stale and the order book has no fresh mid-price. Generate a recent trade or wait for book liquidity before opening a position.`,
+        { pairSymbol, reason: 'MARK_PRICE_STALE' },
+      );
     }
 
-    throw new Error(`Unable to determine safe mark price for ${pairSymbol}`);
+    throw ApiError.badRequest(
+      `Mark price unavailable for ${pairSymbol}: no recent trade and no fresh order-book mid-price. Generate a trade or wait for book liquidity before opening a position.`,
+      { pairSymbol, reason: 'MARK_PRICE_UNAVAILABLE' },
+    );
   } catch (error: unknown) {
     recordPriceFailure(
       pairSymbol,
@@ -411,17 +419,22 @@ async function resolveReferencePriceWithClient(
   }
 }
 
-async function getReferencePriceWithClient(
-  client: Prisma.TransactionClient,
+/**
+ * Resolve the safe mark price OUTSIDE of any interactive transaction.
+ *
+ * The mark-price lookup is a read-only query (last trade + in-memory book
+ * mid). Performing it inside `prisma.$transaction` kept an interactive
+ * transaction open while waiting on that I/O, which under load blew past
+ * the 5000ms interactive-transaction timeout (surfacing as a 500 on the
+ * `trade.findFirst` call). Resolving it up-front keeps the transaction
+ * short (writes + balance checks only) and lets a stale price degrade to a
+ * clear 4xx instead of an opaque timeout.
+ */
+async function resolveReferencePrice(
   pairId: string,
   pairSymbol: string,
-): Promise<number> {
-  const reference = await resolveReferencePriceWithClient(
-    client,
-    pairId,
-    pairSymbol,
-  );
-  return reference.price;
+): Promise<MarginPriceReference> {
+  return resolveReferencePriceWithClient(prisma, pairId, pairSymbol);
 }
 
 async function getOrCreateMarginAccountWithClient(
@@ -916,14 +929,24 @@ export const marginService = {
 
     assertPairNotOperationallyBlocked(input.pairSymbol);
 
+    // Resolve pair + safe mark price BEFORE opening the interactive
+    // transaction. Both are read-only; keeping them outside the transaction
+    // avoids holding it open on I/O (the root cause of the 5000ms
+    // interactive-transaction timeout / opaque 500) and lets a stale mark
+    // price surface as a clear 4xx via resolveReferencePrice.
+    const pair = await prisma.pair.findUnique({
+      where: { symbol: input.pairSymbol },
+    });
+    if (!pair || !pair.isActive) {
+      throw new Error(`Pair ${input.pairSymbol} not found or inactive`);
+    }
+
+    const entryPrice = (
+      await resolveReferencePrice(pair.id, input.pairSymbol)
+    ).price;
+
     const position = await prisma.$transaction(async (tx) => {
       const txAny = tx;
-      const pair = await tx.pair.findUnique({
-        where: { symbol: input.pairSymbol },
-      });
-      if (!pair || !pair.isActive) {
-        throw new Error(`Pair ${input.pairSymbol} not found or inactive`);
-      }
 
       const account = await getOrCreateMarginAccountWithClient(
         txAny,
@@ -934,11 +957,6 @@ export const marginService = {
       }
 
       const riskSnapshot = await getAccountRiskSnapshot(txAny, account);
-      const entryPrice = await getReferencePriceWithClient(
-        txAny,
-        pair.id,
-        input.pairSymbol,
-      );
       const notional = collateralAmount * leverage;
       const quantity = notional / entryPrice;
       const borrowedAmount = Math.max(notional - collateralAmount, 0);
