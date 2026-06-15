@@ -9,10 +9,41 @@
  * - Router deadline MUST be in milliseconds (chain uses ms timestamps)
  */
 
-import { ApiPromise, WsProvider } from '@polkadot/api'
-import { ContractPromise } from '@polkadot/api-contract'
+// Heavy @polkadot/* runtime is loaded lazily (dynamic import) so the
+// ~388 KB gzip polkadot chunk is NOT pulled into the eager app bundle.
+// Only TYPE imports are static (erased at build time, zero runtime cost).
+import type { ApiPromise } from '@polkadot/api'
+import type { ContractPromise } from '@polkadot/api-contract'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
-import { web3FromAddress } from '@polkadot/extension-dapp'
+
+// Cached lazily-imported constructors / functions.
+type PolkadotApiModule = typeof import('@polkadot/api')
+type PolkadotContractModule = typeof import('@polkadot/api-contract')
+type ExtensionDappModule = typeof import('@polkadot/extension-dapp')
+
+let apiModulePromise: Promise<PolkadotApiModule> | null = null
+let contractModulePromise: Promise<PolkadotContractModule> | null = null
+let extensionDappPromise: Promise<ExtensionDappModule> | null = null
+
+const loadApiModule = (): Promise<PolkadotApiModule> => {
+  if (!apiModulePromise) apiModulePromise = import('@polkadot/api')
+  return apiModulePromise
+}
+
+const loadContractModule = (): Promise<PolkadotContractModule> => {
+  if (!contractModulePromise)
+    contractModulePromise = import('@polkadot/api-contract')
+  return contractModulePromise
+}
+
+const web3FromAddress = async (
+  address: string
+): ReturnType<ExtensionDappModule['web3FromAddress']> => {
+  if (!extensionDappPromise)
+    extensionDappPromise = import('@polkadot/extension-dapp')
+  const mod = await extensionDappPromise
+  return mod.web3FromAddress(address)
+}
 
 import RouterABI from '../abis/Router.json'
 import FactoryABI from '../abis/Factory.json'
@@ -67,10 +98,29 @@ class ContractService {
   private isConnected = false
   private contracts: ContractAddresses | null = null
 
+  // Lazily-resolved @polkadot/api-contract ContractPromise constructor.
+  // Populated during connect() (after the dynamic import resolves) so that
+  // the synchronous this.newContract(...) call sites keep working.
+  private ContractPromiseCtor:
+    | PolkadotContractModule['ContractPromise']
+    | null = null
+
   // Contract Instances
   private routerContract: ContractPromise | null = null
   private factoryContract: ContractPromise | null = null
   private stakingContract: ContractPromise | null = null
+
+  /**
+   * Build a ContractPromise using the lazily-imported constructor.
+   * Safe to call after connect() has resolved (ctor is cached).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private newContract(api: ApiPromise, abi: any, address: string) {
+    if (!this.ContractPromiseCtor) {
+      throw new Error('Polkadot contract module not loaded yet')
+    }
+    return new this.ContractPromiseCtor(api, abi, address)
+  }
 
   /**
    * Initialize connection to the blockchain
@@ -81,6 +131,10 @@ class ContractService {
     }
 
     try {
+      const [{ ApiPromise, WsProvider }, { ContractPromise }] =
+        await Promise.all([loadApiModule(), loadContractModule()])
+      this.ContractPromiseCtor = ContractPromise
+
       const wsProvider = new WsProvider(NETWORKS[network])
       this.api = await ApiPromise.create({ provider: wsProvider })
 
@@ -114,21 +168,21 @@ class ContractService {
     this.contracts = addresses
     if (this.api) {
       if (this.isValidAddress(addresses.router)) {
-        this.routerContract = new ContractPromise(
+        this.routerContract = this.newContract(
           this.api,
           RouterABI as any,
           addresses.router
         )
       }
       if (this.isValidAddress(addresses.factory)) {
-        this.factoryContract = new ContractPromise(
+        this.factoryContract = this.newContract(
           this.api,
           FactoryABI as any,
           addresses.factory
         )
       }
       if (this.isValidAddress(addresses.staking)) {
-        this.stakingContract = new ContractPromise(
+        this.stakingContract = this.newContract(
           this.api,
           StakingABI as any,
           addresses.staking!
@@ -251,12 +305,12 @@ class ContractService {
   private getTokenContract(tokenAddress: string): ContractPromise | null {
     if (!this.api || !this.isValidAddress(tokenAddress)) return null
     // Use PairABI — it contains all PSP22 methods with correct selectors
-    return new ContractPromise(this.api, PairABI as any, tokenAddress)
+    return this.newContract(this.api, PairABI as any, tokenAddress)
   }
 
   private getWNativeContract(address: string): ContractPromise | null {
     if (!this.api || !this.isValidAddress(address)) return null
-    return new ContractPromise(this.api, WNativeABI as any, address)
+    return this.newContract(this.api, WNativeABI as any, address)
   }
 
   /**
@@ -533,7 +587,7 @@ class ContractService {
     if (!this.api) throw new Error('Not connected to blockchain')
     if (!this.isValidAddress(pairAddress)) return null
 
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
 
     try {
       const caller = pairAddress
@@ -576,7 +630,7 @@ class ContractService {
    */
   async getPairToken0(pairAddress: string): Promise<string | null> {
     if (!this.api || !this.isValidAddress(pairAddress)) return null
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.token0(pairAddress, {
         gasLimit: this.makeDryGas()
@@ -597,7 +651,7 @@ class ContractService {
    */
   async getPairToken1(pairAddress: string): Promise<string | null> {
     if (!this.api || !this.isValidAddress(pairAddress)) return null
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.token1(pairAddress, {
         gasLimit: this.makeDryGas()
@@ -618,7 +672,7 @@ class ContractService {
    */
   async getPairTotalSupply(pairAddress: string): Promise<string> {
     if (!this.api || !this.isValidAddress(pairAddress)) return '0'
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.totalSupply(pairAddress, {
         gasLimit: this.makeDryGas()
@@ -644,7 +698,7 @@ class ContractService {
     if (!reserves) return null
 
     if (!this.api || !this.isValidAddress(pairAddress)) return null
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     const { output } = await contract.query.totalSupply(pairAddress, {
       gasLimit: this.makeDryGas()
     })
