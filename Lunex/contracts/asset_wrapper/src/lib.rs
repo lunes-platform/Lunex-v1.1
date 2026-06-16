@@ -1610,10 +1610,7 @@ pub mod asset_wrapper_contract {
 
             // Non-admin confirm rejected.
             set_sender(accounts.bob);
-            assert_eq!(
-                wrapper.confirm_withdraw(0),
-                Err(WrapperError::Unauthorized)
-            );
+            assert_eq!(wrapper.confirm_withdraw(0), Err(WrapperError::Unauthorized));
         }
 
         #[ink::test]
