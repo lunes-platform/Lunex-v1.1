@@ -8,7 +8,8 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer,
+  type TooltipContentProps
 } from 'recharts'
 import strategyService, {
   Strategy,
@@ -373,7 +374,7 @@ const TooltipBox = styled.div`
   font-size: 12px;
 `
 
-function CustomTooltip({ active, payload }: any) {
+function CustomTooltip({ active, payload }: TooltipContentProps) {
   if (!active || !payload?.length) return null
   const p = payload[0].payload as StrategyPerformancePoint
   return (
@@ -714,7 +715,7 @@ const StrategyDetail: React.FC = () => {
                       chartMetric === 'roi' ? `${v.toFixed(1)}%` : fmtUSD(v)
                     }
                   />
-                  <Tooltip content={<CustomTooltip />} />
+                  <Tooltip content={CustomTooltip} />
                   <Area
                     type="monotone"
                     dataKey="displayValue"

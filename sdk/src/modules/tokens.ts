@@ -14,6 +14,7 @@ import {
   WrapParams,
   UnwrapParams,
   TransactionResult,
+  Pagination,
 } from '../types';
 import {
   formatAmountWithDecimals,
@@ -44,7 +45,7 @@ export class TokensModule {
     listed?: boolean;
     sort?: 'marketCap' | 'volume24h' | 'priceChange24h';
     order?: 'asc' | 'desc';
-  }): Promise<{ tokens: TokenWithDecimals[]; pagination: any }> {
+  }): Promise<{ tokens: TokenWithDecimals[]; pagination: Pagination }> {
     return this.http.get('/api/v1/tokens', options);
   }
 

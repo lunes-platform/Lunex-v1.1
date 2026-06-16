@@ -7,6 +7,7 @@ import PairInfoModal from './PairInfoModal'
 import ShareModal from './ShareModal'
 import AnalyticsModal from './AnalyticsModal'
 import { TOKENS } from '../../../config/contracts'
+import type { OrderbookLevel } from '../../../services/spotService'
 
 const MAX_SUPPLY = 6_000_000_000
 const WLUNES_ADDRESS = TOKENS.WLUNES
@@ -171,12 +172,12 @@ const PriceHeader: React.FC = () => {
 
   const bidVolume =
     orderbook?.bids?.reduce(
-      (sum: number, b: any) => sum + (Number(b.amount) || Number(b[1]) || 0),
+      (sum: number, b: OrderbookLevel) => sum + (Number(b.amount) || 0),
       0
     ) ?? 0
   const askVolume =
     orderbook?.asks?.reduce(
-      (sum: number, a: any) => sum + (Number(a.amount) || Number(a[1]) || 0),
+      (sum: number, a: OrderbookLevel) => sum + (Number(a.amount) || 0),
       0
     ) ?? 0
   const totalVolume = bidVolume + askVolume

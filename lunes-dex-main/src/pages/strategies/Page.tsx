@@ -793,7 +793,7 @@ const StrategyMarketplacePage: React.FC = () => {
           />
           <FilterSelect
             value={riskFilter}
-            onChange={e => setRiskFilter(e.target.value as any)}
+            onChange={e => setRiskFilter(e.target.value as StrategyRiskLevel | '')}
           >
             <option value="">All Risk Levels</option>
             <option value="LOW">Low Risk</option>
@@ -803,7 +803,7 @@ const StrategyMarketplacePage: React.FC = () => {
           </FilterSelect>
           <FilterSelect
             value={sortBy}
-            onChange={e => setSortBy(e.target.value as any)}
+            onChange={e => setSortBy(e.target.value as 'roi30d' | 'followersCount' | 'sharpeRatio' | 'totalVolume')}
           >
             <option value="roi30d">Sort: 30d ROI</option>
             <option value="followersCount">Sort: Followers</option>

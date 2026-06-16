@@ -5,6 +5,7 @@ import {
   type NextFunction,
 } from 'express';
 import { z } from 'zod';
+import type { ExecutionStatus } from '@prisma/client';
 import prisma from '../db';
 import { executionLayerService } from '../services/executionLayerService';
 import { agentAuth } from '../middleware/agentAuth';
@@ -178,7 +179,7 @@ router.get(
           req.agent!.id,
           strategyId,
           {
-            status: status as any,
+            status: status as ExecutionStatus | undefined,
             since: since ? new Date(since) : undefined,
             limit,
             offset,
@@ -190,7 +191,7 @@ router.get(
       const result = await executionLayerService.getAgentExecutionHistory(
         req.agent!.id,
         {
-          status: status as any,
+          status: status as ExecutionStatus | undefined,
           pairSymbol,
           since: since ? new Date(since) : undefined,
           limit,
