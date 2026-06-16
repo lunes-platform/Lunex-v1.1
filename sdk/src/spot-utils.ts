@@ -312,3 +312,27 @@ export function buildCopytradeConfirmWalletSignalSignMessage(input: {
     },
   });
 }
+
+/**
+ * Auth object passed by SDK consumers to authenticate read requests.
+ * All fields are optional — the module resolves missing fields by generating
+ * them on-the-fly and calling `signMessage` if a pre-signed signature is absent.
+ */
+export type SignedReadAuth = {
+  nonce?: string;
+  timestamp?: number;
+  signature?: string;
+  signMessage?: (message: string) => Promise<string>;
+};
+
+export function signedReadHeaders(signed: {
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}) {
+  return {
+    'X-Lunex-Nonce': signed.nonce,
+    'X-Lunex-Timestamp': String(signed.timestamp),
+    'X-Lunex-Signature': signed.signature,
+  };
+}

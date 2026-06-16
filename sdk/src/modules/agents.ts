@@ -2,6 +2,8 @@ import { HttpClient } from '../http-client';
 import {
   buildWalletActionSignMessage,
   createWalletActionMetadata,
+  SignedReadAuth,
+  signedReadHeaders,
 } from '../spot-utils';
 
 type SignedWalletAction = {
@@ -9,25 +11,6 @@ type SignedWalletAction = {
   timestamp: number;
   signature: string;
 };
-
-type SignedReadAuth = {
-  nonce?: string;
-  timestamp?: number;
-  signature?: string;
-  signMessage?: (message: string) => Promise<string>;
-};
-
-function signedReadHeaders(signed: {
-  nonce: string;
-  timestamp: number;
-  signature: string;
-}) {
-  return {
-    'X-Lunex-Nonce': signed.nonce,
-    'X-Lunex-Timestamp': String(signed.timestamp),
-    'X-Lunex-Signature': signed.signature,
-  };
-}
 
 export interface AgentProfile {
   id: string;

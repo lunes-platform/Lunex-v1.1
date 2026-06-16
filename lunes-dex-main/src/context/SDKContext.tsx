@@ -9,6 +9,7 @@ import React, {
   useMemo
 } from 'react'
 import { contractService } from '../services/contractService'
+import type { PairInfo } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
 import { normalizeReservesForPath } from '../utils/reserveUtils'
@@ -48,15 +49,6 @@ interface RemoveLiquidityParams {
   amountBMin: string
   to: string
   deadline: number
-}
-
-interface PairInfo {
-  address: string
-  token0: string
-  token1: string
-  reserve0: string
-  reserve1: string
-  totalSupply: string
 }
 
 interface TokenInfo {
