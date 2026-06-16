@@ -7,13 +7,16 @@
     "build": "subql build",
     "codegen": "subql codegen",
     "start:docker": "docker compose pull && docker compose up --remove-orphans",
-    "dev": "subql-node -f ."
+    "dev": "subql-node -f .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@subql/types": "3.15.0"
   },
   "devDependencies": {
     "@subql/cli": "6.6.2",
-    "typescript": "^5.0.0"
+    "@types/node": "^18.11.18",
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.6"
   }
 }
