@@ -384,12 +384,18 @@ export const socialService = {
     const isFollowing = Array.isArray(leader.follows)
       ? leader.follows.length > 0
       : false;
-    const analyticsSnapshotMap = await getAnalyticsSnapshotMap([leader.id]);
-    return formatLeader(leader, {
-      includeRelations: true,
-      isFollowing,
-      analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-    });
+    const [analyticsSnapshotMap, realFollowerCount] = await Promise.all([
+      getAnalyticsSnapshotMap([leader.id]),
+      prisma.leaderFollow.count({ where: { leaderId: leader.id } }),
+    ]);
+    return formatLeader(
+      { ...leader, followersCount: realFollowerCount },
+      {
+        includeRelations: true,
+        isFollowing,
+        analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
+      },
+    );
   },
 
   async getLeaderProfileByAddress(address: string, viewerAddress?: string) {
@@ -419,12 +425,18 @@ export const socialService = {
     const isFollowing = Array.isArray(leader.follows)
       ? leader.follows.length > 0
       : false;
-    const analyticsSnapshotMap = await getAnalyticsSnapshotMap([leader.id]);
-    return formatLeader(leader, {
-      includeRelations: true,
-      isFollowing,
-      analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-    });
+    const [analyticsSnapshotMap, realFollowerCount] = await Promise.all([
+      getAnalyticsSnapshotMap([leader.id]),
+      prisma.leaderFollow.count({ where: { leaderId: leader.id } }),
+    ]);
+    return formatLeader(
+      { ...leader, followersCount: realFollowerCount },
+      {
+        includeRelations: true,
+        isFollowing,
+        analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
+      },
+    );
   },
 
   async upsertLeaderProfile(input: UpsertLeaderProfileInput) {

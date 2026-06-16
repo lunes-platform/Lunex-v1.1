@@ -939,7 +939,13 @@ const Profile: React.FC = () => {
         ])
 
         if (isMounted) {
-          setTrader(nextTrader)
+          // The public reload has no viewer signature, so the backend
+          // returns isFollowing:false by default. Preserve the personalised
+          // follow state already known on the client so the 30s poll does not
+          // clobber a freshly-synced "Following" status back to false.
+          setTrader(prev =>
+            prev ? { ...nextTrader, isFollowing: prev.isFollowing } : nextTrader
+          )
           setLeaderFollowers(nextFollowers)
           setIdeaLikeCounts(
             nextTrader.ideas.reduce<Record<string, number>>((acc, idea) => {
