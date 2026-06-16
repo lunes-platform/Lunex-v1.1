@@ -4,15 +4,23 @@ import { useAppContext } from 'context/useContext'
 import Modal from 'components/modal'
 import * as S from './styles'
 import * as B from 'components/bases'
+import { computeLpFee, isQuoteReady } from './quoteUtils'
 
 type ConfirmSwapProps = {
   close: () => void
   confirm: () => void
+  minimumReceived?: string
+  priceImpact?: string
+  inputValue1?: string
+  inputAcronym?: string
+  outputAcronym?: string
 }
 
 const ConfirmSwap = ({ ...props }: ConfirmSwapProps) => {
   const { state } = useAppContext()
   const [isChecked, setIsChecked] = useState(false)
+  const quoteReady = isQuoteReady(props.minimumReceived, props.priceImpact)
+  const lpFee = computeLpFee(props.inputValue1 ?? '', 8)
 
   return (
     <Modal
@@ -61,8 +69,9 @@ const ConfirmSwap = ({ ...props }: ConfirmSwapProps) => {
           I accept the updated price
         </B.Checkbox>
         <B.Span textAlign="left" margin="16px 0 0">
-          Output is estimated from the current quote. Minimum received is
-          unavailable until the router returns a live quote.
+          {quoteReady
+            ? 'Output is estimated. You will receive at least the minimum shown, or the transaction will revert.'
+            : 'Output is estimated from the current quote. Minimum received is unavailable until the router returns a live quote.'}
         </B.Span>
       </B.Wrapper>
 
@@ -86,9 +95,14 @@ const ConfirmSwap = ({ ...props }: ConfirmSwapProps) => {
               {state.inputValue1} {state.selectedOption1?.acronym} per{' '}
               {state.selectedOption2?.acronym}
             </B.Paragraph>
-            <B.Span>Unavailable</B.Span>
-            <B.Span>Unavailable</B.Span>
-            <B.Span>Unavailable</B.Span>
+            <B.Span>
+              {props.minimumReceived || '—'} {props.outputAcronym || ''}
+            </B.Span>
+            <B.Span>{props.priceImpact || '—'}%</B.Span>
+            {/* LP fee = 0.3% of input — pair/lib.rs LP_FEE_SHARE=600 (60% of 0.5% total) */}
+            <B.Span>
+              {lpFee} {props.inputAcronym || ''}
+            </B.Span>
           </B.Wrapper>
         </S.Descriptions>
         <B.Wrapper
@@ -105,7 +119,11 @@ const ConfirmSwap = ({ ...props }: ConfirmSwapProps) => {
           >
             Cancel
           </B.Button>
-          <B.Button width="160px" disabled={!isChecked} onClick={props.confirm}>
+          <B.Button
+            width="160px"
+            disabled={!isChecked || !quoteReady}
+            onClick={props.confirm}
+          >
             Confirm Swap
           </B.Button>
         </B.Wrapper>

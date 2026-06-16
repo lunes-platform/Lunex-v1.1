@@ -315,7 +315,7 @@ const Home = () => {
             <span style={{ display: 'flex', alignItems: 'center' }}>
               Protocol Fee
               <Tooltip
-                content="0.5% total: 0.4% para provedores de liquidez, 0.05% para o protocolo (time) e 0.05% para stakers de LUNES."
+                content="0.5% total: 0.3% para provedores de liquidez, 0.1% para o protocolo (time) e 0.1% para stakers de LUNES."
                 position="right"
               />
             </span>
@@ -333,7 +333,7 @@ const Home = () => {
             >
               {priceImpact}%
             </span>
-            <span>0.4% LP + 0.05% Protocolo + 0.05% Stakers</span>
+            <span>0.3% LP + 0.1% Protocolo + 0.1% Stakers</span>
           </B.Wrapper>
         </S.Descriptions>
 
@@ -396,6 +396,11 @@ const Home = () => {
         <M.ConfirmSwap
           close={() => setModal('null')}
           confirm={() => setModal('waitingConfirmation')}
+          minimumReceived={minimumReceived}
+          priceImpact={priceImpact}
+          inputValue1={inputValue1}
+          inputAcronym={selectedOption1?.acronym}
+          outputAcronym={selectedOption2?.acronym}
         />
       )}
 
