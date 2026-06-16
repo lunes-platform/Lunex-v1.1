@@ -162,6 +162,10 @@ pub mod spot_settlement {
         /// or the recovered public key does not match the configured
         /// `attestor_pubkey`. See ADR-001 (option c, 2-of-2 attestation).
         AttestationInvalid,
+        /// Timelock for disabling enforcement has not expired yet.
+        EnforcementTimelockNotExpired,
+        /// execute_disable_enforcement called with no pending proposal.
+        NoPendingEnforcementDisable,
     }
 
     // ========================================
@@ -362,6 +366,13 @@ pub mod spot_settlement {
         /// Only the owner can set it, and every change emits
         /// `AttestorKeyChanged`.
         attestor_pubkey: Option<(u8, [u8; 32])>,
+        /// Deadline timestamp (ms) for a pending disable-enforcement proposal.
+        /// `None` means no proposal is active. Set by `propose_disable_enforcement`,
+        /// cleared by `execute_disable_enforcement` or `cancel_disable_enforcement`.
+        pending_enforcement_off: Option<u64>,
+        /// Minimum delay (ms) between proposing and executing a disable-enforcement
+        /// transition. Immutable after construction: 48 * 3_600_000 = 172_800_000 ms.
+        enforcement_timelock_ms: u64,
     }
 
     // ========================================
@@ -395,6 +406,8 @@ pub mod spot_settlement {
                 // No attestor key at deploy time: enforcement stays
                 // fail-closed until the owner registers one (ADR-001).
                 attestor_pubkey: None,
+                pending_enforcement_off: None,
+                enforcement_timelock_ms: 48 * 3_600_000,
             }
         }
 
@@ -1381,12 +1394,66 @@ pub mod spot_settlement {
             enforced: bool,
         ) -> Result<(), SpotError> {
             self.ensure_owner()?;
-            self.signature_verification_enforced = enforced;
+            if !enforced {
+                return Err(SpotError::EnforcementTimelockNotExpired)
+            }
+            self.signature_verification_enforced = true;
             self.env().emit_event(SignatureEnforcementChanged {
-                enforced,
+                enforced: true,
                 changed_by: self.env().caller(),
             });
             Ok(())
+        }
+
+        /// Begin the two-step disable-enforcement flow. Owner only.
+        /// Records `block_timestamp + enforcement_timelock_ms` as the execution
+        /// deadline in `pending_enforcement_off`. The proposal can be cancelled
+        /// at any time with `cancel_disable_enforcement`.
+        #[ink(message)]
+        pub fn propose_disable_enforcement(&mut self) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            self.pending_enforcement_off =
+                Some(self.env().block_timestamp() + self.enforcement_timelock_ms);
+            Ok(())
+        }
+
+        /// Cancel a pending disable-enforcement proposal. Owner only.
+        /// Clears `pending_enforcement_off`; a subsequent
+        /// `execute_disable_enforcement` will return `NoPendingEnforcementDisable`.
+        #[ink(message)]
+        pub fn cancel_disable_enforcement(&mut self) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            self.pending_enforcement_off = None;
+            Ok(())
+        }
+
+        /// Complete the two-step disable-enforcement flow. Owner only.
+        /// Requires an active proposal whose deadline has passed; sets
+        /// `signature_verification_enforced` to `false` and emits
+        /// `SignatureEnforcementChanged { enforced: false }`.
+        #[ink(message)]
+        pub fn execute_disable_enforcement(&mut self) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            let deadline = self
+                .pending_enforcement_off
+                .ok_or(SpotError::NoPendingEnforcementDisable)?;
+            if self.env().block_timestamp() < deadline {
+                return Err(SpotError::EnforcementTimelockNotExpired)
+            }
+            self.signature_verification_enforced = false;
+            self.pending_enforcement_off = None;
+            self.env().emit_event(SignatureEnforcementChanged {
+                enforced: false,
+                changed_by: self.env().caller(),
+            });
+            Ok(())
+        }
+
+        /// Returns the deadline timestamp (ms) for a pending
+        /// disable-enforcement proposal, or `None` if no proposal is active.
+        #[ink(message)]
+        pub fn pending_enforcement_off(&self) -> Option<u64> {
+            self.pending_enforcement_off
         }
 
         /// Split a 33-byte compressed SEC1 pubkey into its storage form
@@ -1556,10 +1623,14 @@ pub mod spot_settlement {
             let mut contract = SpotSettlement::new(treasury_id());
             // Settlement-logic tests run in EXPLICIT testnet mode: the
             // fail-closed signature gate (P0-1) is disabled by the owner
-            // (alice). Dedicated tests below cover the enforced default.
+            // (alice) via the B3 two-step timelock flow.
             contract
-                .set_signature_verification_enforced(false)
-                .expect("owner can disable the signature gate");
+                .propose_disable_enforcement()
+                .expect("owner proposes disable");
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(172_800_001);
+            contract
+                .execute_disable_enforcement()
+                .expect("owner executes disable after delay");
             // Give the contract some native balance for withdraw tests
             set_account_balance(get_contract_id(), 100_000_000_000);
             contract
@@ -1651,8 +1722,17 @@ pub mod spot_settlement {
             set_caller(accounts.alice);
             let mut contract = SpotSettlement::new(treasury_id());
 
+            // Propose the disable (emits nothing).
+            assert!(contract.propose_disable_enforcement().is_ok());
+            // Advance past the 48-hour deadline.
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                now + 172_800_001,
+            );
+
             let events_before = test::recorded_events().count();
-            assert!(contract.set_signature_verification_enforced(false).is_ok());
+            // Execute: this emits exactly one SignatureEnforcementChanged event.
+            assert!(contract.execute_disable_enforcement().is_ok());
             assert!(!contract.is_signature_verification_enforced());
 
             let events: Vec<_> = test::recorded_events().collect();
@@ -3342,6 +3422,167 @@ pub mod spot_settlement {
                 2_000_000_000
             );
             assert_eq!(contract.get_balance(accounts.charlie, native_token()), 0);
+        }
+
+        // ─── B3: Signature-Enforcement Toggle Timelock Tests ───
+
+        /// B3-T1a: Proves that after B3 lands, calling
+        /// `set_signature_verification_enforced(false)` directly returns
+        /// `EnforcementTimelockNotExpired`. This is the canonical RED test that
+        /// drives the entire B3 implementation.
+        #[ink::test]
+        fn test_disable_enforcement_direct_call_is_rejected() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            // Direct disable must now be rejected — no bypass path.
+            assert_eq!(
+                contract.set_signature_verification_enforced(false),
+                Err(SpotError::EnforcementTimelockNotExpired),
+            );
+            // Enforcement must remain ON (fail-closed).
+            assert!(contract.is_signature_verification_enforced());
+        }
+
+        /// B3-T1b: Proves the propose → apply-before-delay path reverts with
+        /// `EnforcementTimelockNotExpired`.
+        #[ink::test]
+        fn test_apply_disable_enforcement_before_delay_reverts() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            // Propose — must succeed.
+            assert!(contract.propose_disable_enforcement().is_ok());
+            // No time has passed: apply must revert.
+            assert_eq!(
+                contract.execute_disable_enforcement(),
+                Err(SpotError::EnforcementTimelockNotExpired),
+            );
+            // Enforcement still ON.
+            assert!(contract.is_signature_verification_enforced());
+        }
+
+        /// B3-T1c: After the 48-hour delay elapses, `execute_disable_enforcement`
+        /// flips enforcement to `false` and emits `SignatureEnforcementChanged`.
+        #[ink::test]
+        fn test_apply_disable_enforcement_after_delay_succeeds() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            // Propose.
+            assert!(contract.propose_disable_enforcement().is_ok());
+
+            // Advance the block timestamp past the 48-hour deadline.
+            // ENFORCEMENT_DISABLE_TIMELOCK_MS = 48 * 3_600_000 = 172_800_000 ms.
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                now + 172_800_001,
+            );
+
+            let events_before = test::recorded_events().count();
+            assert!(contract.execute_disable_enforcement().is_ok());
+            assert!(!contract.is_signature_verification_enforced());
+
+            // A `SignatureEnforcementChanged { enforced: false }` event must be emitted.
+            let events: Vec<_> = test::recorded_events().collect();
+            assert_eq!(events.len(), events_before + 1);
+            type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
+            let decoded =
+                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                    .expect("must decode SignatureEnforcementChanged");
+            match decoded {
+                Event::SignatureEnforcementChanged(e) => {
+                    assert!(!e.enforced);
+                    assert_eq!(e.changed_by, accounts.alice);
+                }
+                _ => panic!("expected SignatureEnforcementChanged event"),
+            }
+
+            // Pending state is cleared after execution.
+            assert_eq!(contract.pending_enforcement_off(), None);
+        }
+
+        /// B3-T1d: Re-enabling enforcement (true) remains immediate — no
+        /// timelock needed; tightening security is always safe.
+        #[ink::test]
+        fn test_enable_enforcement_is_still_immediate() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            // First disable via the correct two-step flow.
+            assert!(contract.propose_disable_enforcement().is_ok());
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                now + 172_800_001,
+            );
+            assert!(contract.execute_disable_enforcement().is_ok());
+            assert!(!contract.is_signature_verification_enforced());
+
+            // Re-enable must work immediately.
+            assert!(contract.set_signature_verification_enforced(true).is_ok());
+            assert!(contract.is_signature_verification_enforced());
+        }
+
+        /// B3-T1e: Only the owner can propose or execute the timelock.
+        #[ink::test]
+        fn test_non_owner_cannot_propose_or_execute_disable() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            // Non-owner propose attempt.
+            set_caller(accounts.bob);
+            assert_eq!(
+                contract.propose_disable_enforcement(),
+                Err(SpotError::AccessDenied),
+            );
+
+            // Owner proposes.
+            set_caller(accounts.alice);
+            assert!(contract.propose_disable_enforcement().is_ok());
+
+            // Non-owner execute attempt (even after delay).
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                now + 172_800_001,
+            );
+            set_caller(accounts.bob);
+            assert_eq!(
+                contract.execute_disable_enforcement(),
+                Err(SpotError::AccessDenied),
+            );
+            // Enforcement still ON.
+            assert!(contract.is_signature_verification_enforced());
+        }
+
+        /// B3-T1f: `cancel_disable_enforcement` clears the pending state;
+        /// subsequent execute must revert with `NoPendingEnforcementDisable`.
+        #[ink::test]
+        fn test_cancel_disable_enforcement_clears_pending() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            assert!(contract.propose_disable_enforcement().is_ok());
+            assert!(contract.pending_enforcement_off().is_some());
+
+            assert!(contract.cancel_disable_enforcement().is_ok());
+            assert_eq!(contract.pending_enforcement_off(), None);
+
+            // Execute after cancel with expired time must now return NoPendingEnforcementDisable.
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                now + 172_800_001,
+            );
+            assert_eq!(
+                contract.execute_disable_enforcement(),
+                Err(SpotError::NoPendingEnforcementDisable),
+            );
+            assert!(contract.is_signature_verification_enforced());
         }
     }
 }
