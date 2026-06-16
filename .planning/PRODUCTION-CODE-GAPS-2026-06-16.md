@@ -45,6 +45,17 @@ Custódia, trava de liquidez e settlement dependem hoje de atores off-chain conf
 - `src/app/(admin)/listings/pending/actions.ts:19` — `approveListing()` é **dead code**: nunca importado/chamado; o botão (`listing-actions.tsx:32`) é permanentemente `disabled`; nenhum dialog coleta o `ListingActivationProof`. **Nenhuma listagem pode ser aprovada pelo admin.** Fix: construir o dialog de prova e ligar ao `approveListing()`, ou assumir oficialmente o fluxo relayer-initiated e remover o botão morto.
 
 ### SubQuery (indexer) — corrompe gates de fundo
+
+> **[FALSE POSITIVE — 2026-06-16 characterization tests]** `LiquidityUnlocked`
+> has EXACTLY 3 fields: `lock_id (u64)`, `owner (AccountId)`, `lp_amount (u128)`.
+> There is NO `pairAddress` in this event (pairAddress only exists in
+> `LiquidityLocked`, a different 6-field event). The payload is 57 bytes:
+> [0]=variant, [1..9]=lock_id, [9..41]=owner, [41..57]=lp_amount. Offset 41 is
+> CORRECT. Applying the suggested "fix" (move lpAmount to 73, add pairAddress)
+> would read past the 57-byte payload boundary → readU128LE returns 0 → corrupts
+> the withdraw-finalization gate. DO NOT apply this fix.
+> Verified by: `subquery-node/src/__tests__/contractEvents.decoder.test.ts`.
+
 - `src/mappings/contractEvents.ts:443-458` + `listing.ts:195-217` — `decodeLiquidityUnlocked` lê `lpAmount` no **byte offset 41**, que cai dentro do campo `pairAddress` (32 bytes). Decodifica lixo (bigint na casa dos trilhões) e grava em `ListingEvent.lpAmount` + `totalLunesLocked`. Como a **finalização de withdraw depende de evidência finalizada de `LIQUIDITY_UNLOCKED`**, isso corrompe silenciosamente todo o gate de saque. Fix: auditar a struct real do evento ink!, ler `pairAddress` no offset 41 (+32) e `lpAmount` em 73 (+16); adicionar `pairAddress` ao tipo e à entidade.
 - `src/mappings/router.ts:236` — `handlePairSwap` grava `pairSymbol: contract.slice(0,12)+'...'` (stub). Todo swap AMM direto é indexado com símbolo corrompido e excluído do `PairStats` → métricas de volume erradas. Fix: resolver símbolo por `tokenIn/tokenOut` decodificados ou registry endereço→símbolo.
 
