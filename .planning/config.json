@@ -63,7 +63,7 @@
   "phase_naming": "sequential",
   "agent_skills": {},
   "features": {},
-  "resolve_model_ids": "omit",
+  "resolve_model_ids": false,
   "mode": "yolo",
   "granularity": "standard"
 }
