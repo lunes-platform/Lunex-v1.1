@@ -9,6 +9,28 @@ pub mod asset_wrapper_contract {
     use ink::storage::Mapping;
 
     // ========================================
+    // ESCROW WITHDRAWAL TYPES
+    // ========================================
+
+    /// Monotonically increasing identifier for an escrowed withdrawal.
+    pub type WithdrawalId = u64;
+
+    /// An escrowed withdrawal awaiting relayer confirmation or owner reclaim.
+    /// The tokens are physically transferred to the contract account at
+    /// request time; only `confirm_withdraw` burns them (reducing total
+    /// supply), and only `reclaim_withdraw` returns them to the owner.
+    #[derive(scale::Encode, scale::Decode, Clone)]
+    #[cfg_attr(
+        feature = "std",
+        derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
+    )]
+    pub struct PendingWithdrawal {
+        pub owner: AccountId,
+        pub amount: Balance,
+        pub deadline_block: u32,
+    }
+
+    // ========================================
     // PSP22 ASSET WRAPPER CONTRACT (SECURITY HARDENED)
     // ========================================
     //
@@ -80,12 +102,51 @@ pub mod asset_wrapper_contract {
     }
 
     /// Emitted when user requests withdrawal (burns PSP22, expects pallet-asset)
+    ///
+    /// DEPRECATED on the escrow path: kept DEFINED so existing SubQuery decoding
+    /// does not break, but it is NO LONGER EMITTED by `request_withdraw`. The
+    /// escrow path emits `WithdrawQueued` instead. Fail-safe: an un-updated
+    /// relayer watching this event simply stops delivering rather than
+    /// delivering against an immediately-burned balance. Remove only after the
+    /// SubQuery indexer is updated.
     #[ink(event)]
     pub struct WithdrawRequest {
         #[ink(topic)]
         pub from: AccountId,
         pub amount: Balance,
         pub asset_id: u32,
+    }
+
+    /// Emitted when a user escrows tokens for withdrawal. The relayer watches
+    /// this event, delivers the native pallet-asset off-chain, then calls
+    /// `confirm_withdraw(id)` BEFORE `deadline_block` to burn the escrow.
+    #[ink(event)]
+    pub struct WithdrawQueued {
+        #[ink(topic)]
+        pub owner: AccountId,
+        pub amount: Balance,
+        pub deadline_block: u32,
+        pub id: WithdrawalId,
+    }
+
+    /// Emitted when the admin (relayer) confirms a withdrawal: the escrowed
+    /// tokens held by the contract are burned and the record is closed.
+    #[ink(event)]
+    pub struct WithdrawConfirmed {
+        #[ink(topic)]
+        pub owner: AccountId,
+        pub amount: Balance,
+        pub id: WithdrawalId,
+    }
+
+    /// Emitted when the original requester reclaims escrowed tokens after the
+    /// deadline because the relayer never confirmed delivery.
+    #[ink(event)]
+    pub struct WithdrawReclaimed {
+        #[ink(topic)]
+        pub owner: AccountId,
+        pub amount: Balance,
+        pub id: WithdrawalId,
     }
 
     /// Emitted when admin is changed
@@ -131,6 +192,14 @@ pub mod asset_wrapper_contract {
         MintCapExceeded,
         /// Admin cannot be set to the same address
         AdminUnchanged,
+        /// No escrowed withdrawal exists for the given id
+        WithdrawalNotFound,
+        /// Reclaim attempted before the escrow deadline block
+        WithdrawalNotExpired,
+        /// Withdrawal already confirmed or reclaimed (double-process guard)
+        WithdrawalAlreadyProcessed,
+        /// Caller is not the original requester of this withdrawal
+        NotWithdrawalOwner,
     }
 
     // ========================================
@@ -163,6 +232,12 @@ pub mod asset_wrapper_contract {
         name: Option<String>,
         symbol: Option<String>,
         decimals: u8,
+        /// Escrowed withdrawals awaiting confirm/reclaim (B2 custody fix)
+        pending_withdrawals: Mapping<WithdrawalId, PendingWithdrawal>,
+        /// Next withdrawal id to allocate
+        next_withdrawal_id: WithdrawalId,
+        /// Blocks a requester must wait before reclaiming an unconfirmed escrow
+        reclaim_window_blocks: u32,
     }
 
     impl AssetWrapperContract {
@@ -198,6 +273,10 @@ pub mod asset_wrapper_contract {
                 name,
                 symbol,
                 decimals,
+                pending_withdrawals: Mapping::new(),
+                next_withdrawal_id: 0,
+                // ~48h @ 12s/block — admin-reconfigurable via set_reclaim_window
+                reclaim_window_blocks: 14400,
             }
         }
 
@@ -277,6 +356,12 @@ pub mod asset_wrapper_contract {
         #[ink(message)]
         pub fn is_deposit_processed(&self, deposit_ref: u64) -> bool {
             self.processed_deposits.get(deposit_ref).unwrap_or(false)
+        }
+
+        /// Returns the current reclaim window (in blocks) applied to new escrows
+        #[ink(message)]
+        pub fn reclaim_window_blocks(&self) -> u32 {
+            self.reclaim_window_blocks
         }
 
         // ========================================
@@ -377,6 +462,27 @@ pub mod asset_wrapper_contract {
             });
 
             Ok(())
+        }
+
+        /// STUB (RED phase): implemented in GREEN. Admin confirms an escrowed
+        /// withdrawal, burning the contract-held tokens and closing the record.
+        #[ink(message)]
+        pub fn confirm_withdraw(&mut self, _id: WithdrawalId) -> Result<(), WrapperError> {
+            Err(WrapperError::WithdrawalNotFound)
+        }
+
+        /// STUB (RED phase): implemented in GREEN. Original requester reclaims
+        /// escrowed tokens after the deadline if the relayer never confirmed.
+        #[ink(message)]
+        pub fn reclaim_withdraw(&mut self, _id: WithdrawalId) -> Result<(), WrapperError> {
+            Err(WrapperError::WithdrawalNotFound)
+        }
+
+        /// STUB (RED phase): implemented in GREEN. Admin reconfigures the
+        /// reclaim window applied to subsequent escrows.
+        #[ink(message)]
+        pub fn set_reclaim_window(&mut self, _blocks: u32) -> Result<(), WrapperError> {
+            Err(WrapperError::WithdrawalNotFound)
         }
 
         // ========================================
@@ -1226,6 +1332,178 @@ pub mod asset_wrapper_contract {
             assert_eq!(wrapper.total_minted(), 8000);
             assert_eq!(wrapper.total_withdrawn(), 1500);
             assert_eq!(wrapper.total_supply(), 6500);
+        }
+
+        // ========================================
+        // B2: ESCROW WITHDRAWAL LIFECYCLE
+        // ========================================
+
+        /// The contract's own account id, as seen inside unit tests.
+        fn contract_account() -> AccountId {
+            ink::env::test::callee::<DefaultEnvironment>()
+        }
+
+        fn advance_blocks(n: u32) {
+            for _ in 0..n {
+                ink::env::test::advance_block::<DefaultEnvironment>();
+            }
+        }
+
+        #[ink::test]
+        fn test_request_withdraw_escrows_not_burns() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+            wrapper.mint(accounts.bob, 1000).unwrap();
+
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(400).unwrap();
+
+            // Escrowed, not burned: bob's spendable balance dropped, but the
+            // contract account now holds the tokens and total_supply is intact.
+            assert_eq!(wrapper.balance_of(accounts.bob), 600);
+            assert_eq!(wrapper.balance_of(contract_account()), 400);
+            assert_eq!(wrapper.total_supply(), 1000);
+            assert_eq!(wrapper.total_withdrawn(), 0);
+        }
+
+        #[ink::test]
+        fn test_confirm_withdraw_burns_and_closes() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+            wrapper.mint(accounts.bob, 1000).unwrap();
+
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(400).unwrap();
+
+            // Admin confirms id 0 → escrow burned, supply down, record gone.
+            set_sender(accounts.alice);
+            wrapper.confirm_withdraw(0).unwrap();
+
+            assert_eq!(wrapper.balance_of(contract_account()), 0);
+            assert_eq!(wrapper.total_supply(), 600);
+            assert_eq!(wrapper.total_withdrawn(), 400);
+
+            // Second confirm of the same id fails — record is closed.
+            assert_eq!(
+                wrapper.confirm_withdraw(0),
+                Err(WrapperError::WithdrawalNotFound)
+            );
+        }
+
+        #[ink::test]
+        fn test_reclaim_after_deadline_returns_tokens() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+            wrapper.mint(accounts.bob, 1000).unwrap();
+
+            // Tiny reclaim window so few advances are needed.
+            wrapper.set_reclaim_window(2).unwrap();
+
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(400).unwrap();
+            assert_eq!(wrapper.balance_of(accounts.bob), 600);
+            assert_eq!(wrapper.balance_of(contract_account()), 400);
+
+            advance_blocks(3);
+
+            wrapper.reclaim_withdraw(0).unwrap();
+
+            // Tokens returned to owner; never burned.
+            assert_eq!(wrapper.balance_of(accounts.bob), 1000);
+            assert_eq!(wrapper.balance_of(contract_account()), 0);
+            assert_eq!(wrapper.total_supply(), 1000);
+            assert_eq!(wrapper.total_withdrawn(), 0);
+        }
+
+        #[ink::test]
+        fn test_reclaim_before_deadline_rejected() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+            wrapper.mint(accounts.bob, 1000).unwrap();
+            // Default window of 14400 blocks — far from current block.
+
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(400).unwrap();
+
+            assert_eq!(
+                wrapper.reclaim_withdraw(0),
+                Err(WrapperError::WithdrawalNotExpired)
+            );
+        }
+
+        #[ink::test]
+        fn test_reclaim_not_owner_rejected() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+            wrapper.mint(accounts.bob, 1000).unwrap();
+            wrapper.set_reclaim_window(2).unwrap();
+
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(400).unwrap();
+
+            advance_blocks(3);
+
+            // Charlie is not the requester.
+            set_sender(accounts.charlie);
+            assert_eq!(
+                wrapper.reclaim_withdraw(0),
+                Err(WrapperError::NotWithdrawalOwner)
+            );
+        }
+
+        #[ink::test]
+        fn test_confirm_not_admin_rejected() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+            wrapper.mint(accounts.bob, 1000).unwrap();
+
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(400).unwrap();
+
+            // Non-admin confirm rejected.
+            set_sender(accounts.bob);
+            assert_eq!(
+                wrapper.confirm_withdraw(0),
+                Err(WrapperError::Unauthorized)
+            );
+        }
+
+        #[ink::test]
+        fn test_set_reclaim_window_admin_only() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let mut wrapper = create_wrapper(accounts.alice);
+            wrapper.mint(accounts.bob, 1000).unwrap();
+
+            // Non-admin cannot reconfigure.
+            set_sender(accounts.bob);
+            assert_eq!(
+                wrapper.set_reclaim_window(50),
+                Err(WrapperError::Unauthorized)
+            );
+
+            // Admin reconfigures to 5 blocks.
+            set_sender(accounts.alice);
+            wrapper.set_reclaim_window(5).unwrap();
+            assert_eq!(wrapper.reclaim_window_blocks(), 5);
+
+            // A subsequent request uses the new window for its deadline:
+            // requesting at block B → reclaim rejected at B, allowed at B+5.
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(400).unwrap();
+            assert_eq!(
+                wrapper.reclaim_withdraw(0),
+                Err(WrapperError::WithdrawalNotExpired)
+            );
+            advance_blocks(5);
+            wrapper.reclaim_withdraw(0).unwrap();
+            assert_eq!(wrapper.balance_of(accounts.bob), 1000);
         }
     }
 }
