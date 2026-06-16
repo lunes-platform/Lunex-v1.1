@@ -132,8 +132,6 @@ export const CopyRiskConfigSchema = z.object({
   maxDrawdownPct: z.coerce.number().min(1).max(100).optional(),
 });
 
-export type CopyRiskConfigInput = z.infer<typeof CopyRiskConfigSchema>;
-
 export const FollowLeaderSchema = SignedWalletActionSchema.extend({
   address: z.string().min(3),
   copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
