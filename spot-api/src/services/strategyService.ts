@@ -428,7 +428,6 @@ export const strategyService = {
       followersCount: strategy.followersCount,
     });
 
-    // Update strategy performance fields + Agent reputation
     const [updated] = await Promise.all([
       prisma.strategy.update({
         where: { id: strategyId },

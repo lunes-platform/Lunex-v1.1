@@ -93,7 +93,6 @@ function checkRateLimit(
 ): { allowed: boolean; retryAfterMs?: number } {
   const limits = RATE_LIMITS_PER_TIER[tier] || RATE_LIMITS_PER_TIER[0];
 
-  // Check minute window
   const minuteKey = `min:${agentId}`;
   const minuteBucket = getRateBucket(minuteBuckets, minuteKey, 60_000);
   if (minuteBucket.count >= limits.maxPerMinute) {
@@ -101,7 +100,6 @@ function checkRateLimit(
     return { allowed: false, retryAfterMs: Math.max(retryAfter, 1000) };
   }
 
-  // Check hour window
   const hourKey = `hr:${agentId}`;
   const hourBucket = getRateBucket(hourBuckets, hourKey, 3_600_000);
   if (hourBucket.count >= limits.maxPerHour) {
@@ -378,7 +376,6 @@ export function botAnomalyGuard() {
     if (flags.length > 0) {
       const totalScore = accumulateAnomalyScore(req.agent.id, flags);
 
-      // Log anomalies (in production, persist to DB)
       log.warn(
         {
           agentId: req.agent.id,

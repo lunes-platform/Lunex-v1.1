@@ -92,12 +92,7 @@ export function subtractAmounts(a: string, b: string): string {
   return result < BigInt(0) ? '0' : result.toString();
 }
 
-/**
- * Multiply BigInt amount by number
- * @param amount - Amount
- * @param multiplier - Multiplier
- * @returns Product as string
- */
+/** Multiply a BigInt-encoded amount string by a floating-point multiplier; returns a string. */
 export function multiplyAmount(amount: string, multiplier: number): string {
   const result =
     (BigInt(amount) * BigInt(Math.floor(multiplier * 10000))) / BigInt(10000);

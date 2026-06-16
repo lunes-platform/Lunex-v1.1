@@ -146,9 +146,8 @@ const WalletList = styled.div`
   margin-bottom: 20px;
 `
 
-// Changed from styled.button to styled.div to avoid invalid <button> nesting:
-// WalletAction uses `as="button"` inside, so the outer element must not be a button.
-// Disabled state is replicated via aria-disabled + pointer-events for a11y parity.
+// Outer element is a div, not a button, to avoid invalid nested <button> elements.
+// Disabled state uses aria-disabled + pointer-events for a11y parity.
 const WalletCard = styled.div<{ $loading?: boolean; $disabled?: boolean }>`
   display: flex;
   align-items: center;

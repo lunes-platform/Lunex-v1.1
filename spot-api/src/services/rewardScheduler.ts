@@ -24,7 +24,6 @@ export const rewardScheduler = {
       '[RewardScheduler] Starting — will check hourly for distribution window',
     );
 
-    // Check every hour if it's time to distribute
     intervalId = setInterval(
       () => {
         this.checkAndDistribute();

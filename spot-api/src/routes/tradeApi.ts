@@ -184,7 +184,6 @@ router.post(
           checks: validation.checks,
         });
       }
-      // ──────────────────────────────────────────────────────────
 
       const nonce = `agent_${agent.id}_${Date.now()}`;
 
@@ -202,7 +201,6 @@ router.post(
 
       await recordAgentTrade(agent.id, parseFloat(parsed.data.amount));
 
-      // Update execution log with order id
       if (order?.id) {
         await executionLayerService
           .updateExecutionStatus(logId, {
@@ -275,7 +273,6 @@ router.post(
           checks: validation.checks,
         });
       }
-      // ──────────────────────────────────────────────────────────
 
       const nonce = `agent_${agent.id}_${Date.now()}`;
 
@@ -304,7 +301,6 @@ router.post(
           recentAvg,
         );
 
-        // Update execution log with order id
         await executionLayerService
           .updateExecutionStatus(logId, {
             status: 'EXECUTED',

@@ -363,7 +363,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
       const res = await spotApi.getUserOrders(walletAddress, auth)
       setUserOrders(res.orders)
     } catch {
-      // ignore
+      // silently skip — stale orders are non-critical; UI retains previous state
     }
   }, [walletAddress, isConnected, signReadAction])
 
@@ -377,7 +377,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
       const res = await spotApi.getUserTrades(walletAddress, auth)
       setUserTrades(res.trades)
     } catch {
-      // ignore
+      // silently skip — stale trades are non-critical; UI retains previous state
     }
   }, [walletAddress, isConnected, signReadAction])
 

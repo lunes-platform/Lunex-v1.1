@@ -1086,7 +1086,7 @@ class SocialIndexerService {
 
   // ── SubQuery primary source ────────────────────────────────────
   // When SUBQUERY_ENDPOINT is configured, pull events from SubQuery GraphQL
-  // instead of polling the blockchain directly. Much faster and more reliable.
+  // rather than polling the chain directly via Polkadot.js.
   private async syncFromSubquery(leaderAddresses: string[]): Promise<{
     indexedEvents: number;
     latestBlock: number;

@@ -269,7 +269,6 @@ class RebalancerService {
         });
         await asymmetricService.markRebalancedSuccess(strategy.id);
 
-        // Log success
         await prisma.asymmetricRebalanceLog.create({
           data: {
             strategyId: strategy.id,

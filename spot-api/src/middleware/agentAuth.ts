@@ -2,7 +2,6 @@ import type { Request, Response, NextFunction } from 'express';
 import { agentService } from '../services/agentService';
 import type { AgentApiKeyPermission } from '@prisma/client';
 
-// Extend Express Request to include agent context
 declare global {
   namespace Express {
     interface Request {
@@ -40,7 +39,6 @@ export function agentAuth(requiredPermissions?: AgentApiKeyPermission[]) {
         return res.status(401).json({ error: 'Invalid or expired API key' });
       }
 
-      // Check required permissions
       if (requiredPermissions?.length) {
         const hasAll = requiredPermissions.every((p) =>
           result.permissions.includes(p),

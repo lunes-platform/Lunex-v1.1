@@ -337,7 +337,7 @@ export const affiliateService = {
 
     const refereeAddresses = directs.map((d) => d.refereeAddress);
 
-    // B1 FIX: Batch all counts and earnings in 2 queries instead of 2×N
+    // Batch all counts and earnings in 2 queries to avoid N+1 over referees.
     const [subCountsRaw, earningsRaw] = await Promise.all([
       prisma.referral.groupBy({
         by: ['referrerAddress'],
