@@ -428,8 +428,18 @@ pub mod asset_wrapper_contract {
             Ok(())
         }
 
-        /// User requests withdrawal: burns PSP22 tokens and emits event
-        /// for the relayer to send pallet-asset tokens back.
+        /// User requests withdrawal: ESCROWS PSP22 tokens (transfer-to-self)
+        /// and emits `WithdrawQueued` for the relayer.
+        ///
+        /// B2 custody fix: tokens are NO LONGER burned here. They are
+        /// transferred into the contract's own account and held until the
+        /// relayer calls `confirm_withdraw` (burn) or the requester calls
+        /// `reclaim_withdraw` after the deadline. `total_withdrawn` is now
+        /// incremented at confirm time, not request time.
+        ///
+        /// Fail-safe: the legacy `WithdrawRequest` event is intentionally NOT
+        /// emitted on this path. An un-updated relayer therefore stops
+        /// delivering rather than delivering against an already-burned balance.
         #[ink(message)]
         pub fn request_withdraw(&mut self, amount: Balance) -> Result<(), WrapperError> {
             self.ensure_not_paused()?;
@@ -443,46 +453,121 @@ pub mod asset_wrapper_contract {
                 return Err(WrapperError::InsufficientBalance);
             }
 
-            let new_total_withdrawn = self
-                .total_withdrawn
-                .checked_add(amount)
+            let contract = self.env().account_id();
+
+            // Compute the reclaim deadline before mutating any state.
+            let deadline_block = self
+                .env()
+                .block_number()
+                .checked_add(self.reclaim_window_blocks)
                 .ok_or(WrapperError::Overflow)?;
 
-            // Burn the PSP22 tokens
-            self._burn(caller, amount)?;
+            // Allocate the next withdrawal id.
+            let id = self.next_withdrawal_id;
+            self.next_withdrawal_id = id.checked_add(1).ok_or(WrapperError::Overflow)?;
 
-            // Track total withdrawn
-            self.total_withdrawn = new_total_withdrawn;
+            // Escrow via transfer-to-self (caller != contract, so the
+            // SelfTransfer guard does not trip). total_supply is unchanged.
+            self._transfer(caller, contract, amount)?;
 
-            // Emit event for relayer to process
-            self.env().emit_event(WithdrawRequest {
-                from: caller,
+            self.pending_withdrawals.insert(
+                id,
+                &PendingWithdrawal {
+                    owner: caller,
+                    amount,
+                    deadline_block,
+                },
+            );
+
+            self.env().emit_event(WithdrawQueued {
+                owner: caller,
                 amount,
-                asset_id: self.asset_id,
+                deadline_block,
+                id,
             });
 
             Ok(())
         }
 
-        /// STUB (RED phase): implemented in GREEN. Admin confirms an escrowed
-        /// withdrawal, burning the contract-held tokens and closing the record.
+        /// Admin (relayer) confirms an escrowed withdrawal after delivering the
+        /// native pallet-asset off-chain. Burns the contract-held escrow,
+        /// increments `total_withdrawn`, and closes the record.
         #[ink(message)]
-        pub fn confirm_withdraw(&mut self, _id: WithdrawalId) -> Result<(), WrapperError> {
-            Err(WrapperError::WithdrawalNotFound)
+        pub fn confirm_withdraw(&mut self, id: WithdrawalId) -> Result<(), WrapperError> {
+            self.ensure_admin()?;
+            self.ensure_not_paused()?;
+
+            let withdrawal = self
+                .pending_withdrawals
+                .get(id)
+                .ok_or(WrapperError::WithdrawalNotFound)?;
+
+            // Preserve overflow safety: compute the new audit total BEFORE any
+            // state mutation so an overflow leaves the escrow record untouched.
+            let new_total_withdrawn = self
+                .total_withdrawn
+                .checked_add(withdrawal.amount)
+                .ok_or(WrapperError::Overflow)?;
+
+            // Burn the CONTRACT's escrowed tokens (not the owner's) — the owner
+            // no longer holds them under transfer-to-self escrow.
+            self._burn(self.env().account_id(), withdrawal.amount)?;
+
+            self.total_withdrawn = new_total_withdrawn;
+            self.pending_withdrawals.remove(id);
+
+            self.env().emit_event(WithdrawConfirmed {
+                owner: withdrawal.owner,
+                amount: withdrawal.amount,
+                id,
+            });
+
+            Ok(())
         }
 
-        /// STUB (RED phase): implemented in GREEN. Original requester reclaims
-        /// escrowed tokens after the deadline if the relayer never confirmed.
+        /// Original requester reclaims escrowed tokens after the deadline if the
+        /// relayer never confirmed delivery. Returns the escrow from the
+        /// contract account back to the owner and closes the record.
+        ///
+        /// Intentionally NOT pause-gated: a paused contract must never trap
+        /// user funds in escrow — users must always be able to recover after the
+        /// deadline.
         #[ink(message)]
-        pub fn reclaim_withdraw(&mut self, _id: WithdrawalId) -> Result<(), WrapperError> {
-            Err(WrapperError::WithdrawalNotFound)
+        pub fn reclaim_withdraw(&mut self, id: WithdrawalId) -> Result<(), WrapperError> {
+            let withdrawal = self
+                .pending_withdrawals
+                .get(id)
+                .ok_or(WrapperError::WithdrawalNotFound)?;
+
+            if self.env().caller() != withdrawal.owner {
+                return Err(WrapperError::NotWithdrawalOwner);
+            }
+
+            // At exactly deadline_block, reclaim is allowed.
+            if self.env().block_number() < withdrawal.deadline_block {
+                return Err(WrapperError::WithdrawalNotExpired);
+            }
+
+            self._transfer(self.env().account_id(), withdrawal.owner, withdrawal.amount)?;
+
+            self.pending_withdrawals.remove(id);
+
+            self.env().emit_event(WithdrawReclaimed {
+                owner: withdrawal.owner,
+                amount: withdrawal.amount,
+                id,
+            });
+
+            Ok(())
         }
 
-        /// STUB (RED phase): implemented in GREEN. Admin reconfigures the
-        /// reclaim window applied to subsequent escrows.
+        /// Admin reconfigures the reclaim window (in blocks) applied to
+        /// subsequent escrows. Default is 14400 (~48h @ 12s/block).
         #[ink(message)]
-        pub fn set_reclaim_window(&mut self, _blocks: u32) -> Result<(), WrapperError> {
-            Err(WrapperError::WithdrawalNotFound)
+        pub fn set_reclaim_window(&mut self, blocks: u32) -> Result<(), WrapperError> {
+            self.ensure_admin()?;
+            self.reclaim_window_blocks = blocks;
+            Ok(())
         }
 
         // ========================================
@@ -1105,7 +1190,19 @@ pub mod asset_wrapper_contract {
             let result = wrapper.request_withdraw(400);
             assert!(result.is_ok());
 
+            // B2: escrow semantics — bob's 400 moved to the contract, nothing
+            // burned yet, total_withdrawn untouched until confirm.
+            let contract = ink::env::test::callee::<DefaultEnvironment>();
             assert_eq!(wrapper.balance_of(accounts.bob), 600);
+            assert_eq!(wrapper.balance_of(contract), 400);
+            assert_eq!(wrapper.total_supply(), 1000);
+            assert_eq!(wrapper.total_withdrawn(), 0);
+
+            // Admin confirms id 0 → escrow burned, supply/withdrawn updated.
+            set_sender(accounts.alice);
+            wrapper.confirm_withdraw(0).unwrap();
+            assert_eq!(wrapper.balance_of(accounts.bob), 600);
+            assert_eq!(wrapper.balance_of(contract), 0);
             assert_eq!(wrapper.total_supply(), 600);
             assert_eq!(wrapper.total_withdrawn(), 400);
         }
@@ -1124,21 +1221,38 @@ pub mod asset_wrapper_contract {
         }
 
         #[ink::test]
-        fn test_failed_request_withdraw_overflow_does_not_burn() {
+        fn test_failed_confirm_withdraw_overflow_does_not_burn() {
             let accounts = default_accounts();
             set_sender(accounts.alice);
             let mut wrapper = create_wrapper(accounts.alice);
 
             wrapper.mint(accounts.bob, 100).unwrap();
+
+            // B2: total_withdrawn overflow now happens at CONFIRM, not request.
+            // The request escrows fine; the confirm must fail and leave all
+            // state untouched (escrow still held, record still present).
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(10).unwrap();
+
+            let contract = ink::env::test::callee::<DefaultEnvironment>();
+            assert_eq!(wrapper.balance_of(contract), 10);
+
             wrapper.total_withdrawn = u128::MAX;
 
-            set_sender(accounts.bob);
-            let result = wrapper.request_withdraw(10);
+            set_sender(accounts.alice);
+            let result = wrapper.confirm_withdraw(0);
 
             assert_eq!(result, Err(WrapperError::Overflow));
-            assert_eq!(wrapper.balance_of(accounts.bob), 100);
+            // Escrow untouched, supply unchanged, record still present.
+            assert_eq!(wrapper.balance_of(contract), 10);
+            assert_eq!(wrapper.balance_of(accounts.bob), 90);
             assert_eq!(wrapper.total_supply(), 100);
             assert_eq!(wrapper.total_withdrawn(), u128::MAX);
+            // Record still present → a retry after fixing the counter works.
+            wrapper.total_withdrawn = 0;
+            wrapper.confirm_withdraw(0).unwrap();
+            assert_eq!(wrapper.total_supply(), 90);
+            assert_eq!(wrapper.total_withdrawn(), 10);
         }
 
         #[ink::test]
@@ -1246,6 +1360,13 @@ pub mod asset_wrapper_contract {
 
             wrapper.mint(accounts.bob, 1000).unwrap();
 
+            // Escrow a withdrawal BEFORE pausing so we can prove reclaim works
+            // while paused (a paused contract must not trap escrowed funds).
+            wrapper.set_reclaim_window(2).unwrap();
+            set_sender(accounts.bob);
+            wrapper.request_withdraw(100).unwrap();
+
+            set_sender(accounts.alice);
             wrapper.pause().unwrap();
             assert!(wrapper.is_paused());
 
@@ -1270,8 +1391,18 @@ pub mod asset_wrapper_contract {
                 wrapper.mint_with_ref(accounts.charlie, 100, 999),
                 Err(WrapperError::Paused)
             );
+            // confirm_withdraw is also blocked while paused.
+            assert_eq!(wrapper.confirm_withdraw(0), Err(WrapperError::Paused));
+
+            // reclaim_withdraw is intentionally NOT pause-gated: after the
+            // deadline the owner recovers escrowed funds even while paused.
+            advance_blocks(3);
+            set_sender(accounts.bob);
+            wrapper.reclaim_withdraw(0).unwrap();
+            assert_eq!(wrapper.balance_of(accounts.bob), 1000);
 
             // Unpause restores operations
+            set_sender(accounts.alice);
             wrapper.unpause().unwrap();
             set_sender(accounts.bob);
             assert!(wrapper.transfer(accounts.charlie, 100, Vec::new()).is_ok());
@@ -1317,11 +1448,22 @@ pub mod asset_wrapper_contract {
                 .transfer_from(accounts.bob, accounts.charlie, 2000, Vec::new())
                 .unwrap();
 
-            // 5. Bob requests partial withdraw
+            // 5. Bob requests partial withdraw → ESCROW (no burn yet).
             set_sender(accounts.bob);
             wrapper.request_withdraw(1000).unwrap();
+            let contract = ink::env::test::callee::<DefaultEnvironment>();
             assert_eq!(wrapper.balance_of(accounts.bob), 2000);
+            assert_eq!(wrapper.balance_of(contract), 1000);
+            assert_eq!(wrapper.total_withdrawn(), 0); // not until confirm
+            assert_eq!(wrapper.total_supply(), 8000); // escrow, nothing burned
+
+            // 5b. Relayer delivers native asset off-chain, then confirms →
+            // escrow burned, total_withdrawn incremented.
+            set_sender(accounts.alice);
+            wrapper.confirm_withdraw(0).unwrap();
+            assert_eq!(wrapper.balance_of(contract), 0);
             assert_eq!(wrapper.total_withdrawn(), 1000);
+            assert_eq!(wrapper.total_supply(), 7000);
 
             // 6. Admin emergency burn
             set_sender(accounts.alice);
