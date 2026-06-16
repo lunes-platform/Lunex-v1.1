@@ -8,6 +8,7 @@ import ShareModal from './ShareModal'
 import AnalyticsModal from './AnalyticsModal'
 import { TOKENS } from '../../../config/contracts'
 import type { OrderbookLevel } from '../../../services/spotService'
+import { formatVolume, formatPrice } from './formatters'
 
 const MAX_SUPPLY = 6_000_000_000
 const WLUNES_ADDRESS = TOKENS.WLUNES
@@ -123,18 +124,6 @@ const ActionBtn = styled.button<{ isFav?: boolean }>`
   }
 `
 
-function formatVolume(vol: number): string {
-  if (vol >= 1_000_000) return (vol / 1_000_000).toFixed(2) + 'M'
-  if (vol >= 1_000) return (vol / 1_000).toFixed(0) + 'K'
-  return vol.toFixed(0)
-}
-
-function formatPrice(price: number): string {
-  if (price >= 1000) return price.toFixed(2)
-  if (price >= 1) return price.toFixed(4)
-  if (price >= 0.001) return price.toFixed(5)
-  return price.toFixed(8)
-}
 
 const PriceHeader: React.FC = () => {
   const { ticker, orderbook, selectedPair, walletAddress } = useSpot()

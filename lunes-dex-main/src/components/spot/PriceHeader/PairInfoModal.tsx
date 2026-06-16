@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import styled, { keyframes } from 'styled-components'
 import { useSpot } from 'context/SpotContext'
 import { spotApi } from '../../../services/spotService'
+import { formatVolume, formatPrice } from './formatters'
 
 const fadeIn = keyframes`
   from { opacity: 0; }
@@ -165,18 +166,6 @@ const LoadingText = styled.div`
   font-size: 13px;
 `
 
-function formatVolume(vol: number): string {
-  if (vol >= 1_000_000) return (vol / 1_000_000).toFixed(2) + 'M'
-  if (vol >= 1_000) return (vol / 1_000).toFixed(0) + 'K'
-  return vol.toFixed(0)
-}
-
-function formatPrice(price: number): string {
-  if (price >= 1000) return price.toFixed(2)
-  if (price >= 1) return price.toFixed(4)
-  if (price >= 0.001) return price.toFixed(5)
-  return price.toFixed(8)
-}
 
 function shortenAddress(addr: string): string {
   if (addr.length <= 12) return addr
