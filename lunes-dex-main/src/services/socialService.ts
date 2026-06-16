@@ -143,6 +143,11 @@ interface DepositToVaultInput {
   amount: string
   followerAddress: string
   token: string
+  // Optional risk-control parameters applied to the copy relationship.
+  copyMultiplier?: number
+  maxPerTradeUsdt?: number
+  stopLossPct?: number
+  maxDrawdownPct?: number
   nonce: string
   timestamp: number
   signature: string
@@ -424,6 +429,10 @@ export function buildCopytradeDepositMessage(input: {
   followerAddress: string
   token: string
   amount: string
+  copyMultiplier?: number
+  maxPerTradeUsdt?: number
+  stopLossPct?: number
+  maxDrawdownPct?: number
   nonce: string
   timestamp: number
 }) {
@@ -432,10 +441,16 @@ export function buildCopytradeDepositMessage(input: {
     address: input.followerAddress,
     nonce: input.nonce,
     timestamp: input.timestamp,
+    // Risk fields are signed when present (undefined ones are dropped by
+    // buildWalletActionMessage), so the backend can trust the parameters.
     fields: {
       leaderId: input.leaderId,
       token: input.token,
-      amount: input.amount
+      amount: input.amount,
+      copyMultiplier: input.copyMultiplier,
+      maxPerTradeUsdt: input.maxPerTradeUsdt,
+      stopLossPct: input.stopLossPct,
+      maxDrawdownPct: input.maxDrawdownPct
     }
   })
 }

@@ -117,8 +117,29 @@ export const SocialLeadersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+// Risk limits for the copy-engine. Reused by follow + deposit so the
+// frontend has a single, stable contract for risk configuration.
+//   copyMultiplier  : scales the copied position size (0.1x .. 10x).
+//   maxPerTradeUsdt : hard cap (in collateral/USDT) per copied trade.
+//   stopLossPct     : pause copy when vault loss exceeds this % of deposits.
+//   maxDrawdownPct  : pause copy when drawdown from peak exceeds this %.
+// copyMultiplier is optional on the wire; the copy-engine treats an absent
+// value as 1x (see readVaultRiskConfig). Range still enforced when present.
+export const CopyRiskConfigSchema = z.object({
+  copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
+  maxPerTradeUsdt: z.coerce.number().min(0).optional(),
+  stopLossPct: z.coerce.number().min(1).max(100).optional(),
+  maxDrawdownPct: z.coerce.number().min(1).max(100).optional(),
+});
+
+export type CopyRiskConfigInput = z.infer<typeof CopyRiskConfigSchema>;
+
 export const FollowLeaderSchema = SignedWalletActionSchema.extend({
   address: z.string().min(3),
+  copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
+  maxPerTradeUsdt: z.coerce.number().min(0).optional(),
+  stopLossPct: z.coerce.number().min(1).max(100).optional(),
+  maxDrawdownPct: z.coerce.number().min(1).max(100).optional(),
 });
 
 export const LeaderProfileByAddressSchema = z.object({
@@ -152,6 +173,10 @@ export const CopyVaultDepositSchema = SignedWalletActionSchema.extend({
   followerAddress: z.string().min(3),
   token: z.string().trim().min(2).max(32),
   amount: z.string().min(1),
+  copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
+  maxPerTradeUsdt: z.coerce.number().min(0).optional(),
+  stopLossPct: z.coerce.number().min(1).max(100).optional(),
+  maxDrawdownPct: z.coerce.number().min(1).max(100).optional(),
 });
 
 export const CopyVaultWithdrawSchema = SignedWalletActionSchema.extend({

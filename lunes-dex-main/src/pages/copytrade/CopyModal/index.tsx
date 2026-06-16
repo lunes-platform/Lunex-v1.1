@@ -37,6 +37,11 @@ const CopyModal: React.FC<CopyModalProps> = ({
   onConfirm
 }) => {
   const [amount, setAmount] = useState('')
+  // Risk-control inputs kept as strings so the fields can be left empty.
+  const [copyMultiplier, setCopyMultiplier] = useState('1')
+  const [maxPerTrade, setMaxPerTrade] = useState('')
+  const [stopLoss, setStopLoss] = useState('')
+  const [maxDrawdown, setMaxDrawdown] = useState('')
   const [withdrawShares, setWithdrawShares] = useState('')
   const [step, setStep] = useState<1 | 2>(1)
   const [loading, setLoading] = useState(false)
@@ -93,6 +98,10 @@ const CopyModal: React.FC<CopyModalProps> = ({
 
   useEffect(() => {
     setAmount('')
+    setCopyMultiplier('1')
+    setMaxPerTrade('')
+    setStopLoss('')
+    setMaxDrawdown('')
     setWithdrawShares('')
     setStep(1)
     setLoading(false)
@@ -111,6 +120,45 @@ const CopyModal: React.FC<CopyModalProps> = ({
     amount !== '' &&
     Number(amount) > availableBalance
 
+  // Range validation for the risk fields. Empty optional fields are valid;
+  // copyMultiplier is required (defaults to 1). Returns the first error message.
+  const riskError = ((): string => {
+    const mult = Number(copyMultiplier)
+    if (copyMultiplier === '' || !Number.isFinite(mult)) {
+      return 'Copy multiplier is required.'
+    }
+    if (mult < 0.1 || mult > 10) {
+      return 'Copy multiplier must be between 0.1 and 10.'
+    }
+    if (maxPerTrade !== '') {
+      const v = Number(maxPerTrade)
+      if (!Number.isFinite(v) || v < 0) {
+        return 'Max per trade must be 0 or greater.'
+      }
+    }
+    if (stopLoss !== '') {
+      const v = Number(stopLoss)
+      if (!Number.isFinite(v) || v < 1 || v > 100) {
+        return 'Stop-loss must be between 1 and 100%.'
+      }
+    }
+    if (maxDrawdown !== '') {
+      const v = Number(maxDrawdown)
+      if (!Number.isFinite(v) || v < 1 || v > 100) {
+        return 'Max drawdown must be between 1 and 100%.'
+      }
+    }
+    return ''
+  })()
+
+  // Build the optional risk payload (only include set/valid fields).
+  const buildRiskPayload = () => ({
+    copyMultiplier: Number(copyMultiplier),
+    maxPerTradeUsdt: maxPerTrade !== '' ? Number(maxPerTrade) : undefined,
+    stopLossPct: stopLoss !== '' ? Number(stopLoss) : undefined,
+    maxDrawdownPct: maxDrawdown !== '' ? Number(maxDrawdown) : undefined
+  })
+
   const handleAction = async () => {
     if (!amount || Number(amount) <= 0) return
     if (minDeposit > 0 && Number(amount) < minDeposit) {
@@ -123,6 +171,10 @@ const CopyModal: React.FC<CopyModalProps> = ({
           availableBalance ?? 0
         )} ${token}).`
       )
+      return
+    }
+    if (riskError) {
+      setError(riskError)
       return
     }
 
@@ -148,6 +200,7 @@ const CopyModal: React.FC<CopyModalProps> = ({
         return
       }
 
+      const risk = buildRiskPayload()
       const auth = createSignedActionMetadata()
       const signature = await signMessage(
         buildCopytradeDepositMessage({
@@ -155,6 +208,7 @@ const CopyModal: React.FC<CopyModalProps> = ({
           followerAddress: walletAddress,
           token,
           amount,
+          ...risk,
           nonce: auth.nonce,
           timestamp: auth.timestamp
         })
@@ -164,6 +218,7 @@ const CopyModal: React.FC<CopyModalProps> = ({
         followerAddress: walletAddress,
         token,
         amount,
+        ...risk,
         nonce: auth.nonce,
         timestamp: auth.timestamp,
         signature
@@ -371,6 +426,99 @@ const CopyModal: React.FC<CopyModalProps> = ({
           ) : null}
         </S.BalanceInfo>
 
+        <S.RiskSection>
+          <S.Label>Risk Controls</S.Label>
+          <S.InputHint>
+            Set how aggressively this leader trades on your behalf. Tighter
+            limits reduce risk but may skip larger moves.
+          </S.InputHint>
+          <S.RiskGrid>
+            <S.RiskField>
+              <S.LabelRow>
+                <S.Label as="span">Copy Multiplier</S.Label>
+                <S.Tooltip data-tip="Scales each copied trade size relative to the leader. 1 = same size, 2 = double, 0.5 = half. Range 0.1–10.">
+                  ?
+                </S.Tooltip>
+              </S.LabelRow>
+              <S.SmallInputWrapper>
+                <S.SmallInput
+                  type="number"
+                  min="0.1"
+                  max="10"
+                  step="0.1"
+                  placeholder="1"
+                  value={copyMultiplier}
+                  onChange={e => setCopyMultiplier(e.target.value)}
+                />
+                <S.SmallUnit>x</S.SmallUnit>
+              </S.SmallInputWrapper>
+            </S.RiskField>
+
+            <S.RiskField>
+              <S.LabelRow>
+                <S.Label as="span">Max Per Trade</S.Label>
+                <S.Tooltip data-tip="Optional cap on the notional size of any single copied trade. Leave empty for no cap.">
+                  ?
+                </S.Tooltip>
+              </S.LabelRow>
+              <S.SmallInputWrapper>
+                <S.SmallInput
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="No cap"
+                  value={maxPerTrade}
+                  onChange={e => setMaxPerTrade(e.target.value)}
+                />
+                <S.SmallUnit>USDT</S.SmallUnit>
+              </S.SmallInputWrapper>
+            </S.RiskField>
+
+            <S.RiskField>
+              <S.LabelRow>
+                <S.Label as="span">Stop-Loss</S.Label>
+                <S.Tooltip data-tip="Optional. Closes your position if it loses this percentage. Range 1–100%.">
+                  ?
+                </S.Tooltip>
+              </S.LabelRow>
+              <S.SmallInputWrapper>
+                <S.SmallInput
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="any"
+                  placeholder="Off"
+                  value={stopLoss}
+                  onChange={e => setStopLoss(e.target.value)}
+                />
+                <S.SmallUnit>%</S.SmallUnit>
+              </S.SmallInputWrapper>
+            </S.RiskField>
+
+            <S.RiskField>
+              <S.LabelRow>
+                <S.Label as="span">Max Drawdown</S.Label>
+                <S.Tooltip data-tip="Optional. Stops copying if your equity falls this percentage from its peak. Range 1–100%.">
+                  ?
+                </S.Tooltip>
+              </S.LabelRow>
+              <S.SmallInputWrapper>
+                <S.SmallInput
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="any"
+                  placeholder="Off"
+                  value={maxDrawdown}
+                  onChange={e => setMaxDrawdown(e.target.value)}
+                />
+                <S.SmallUnit>%</S.SmallUnit>
+              </S.SmallInputWrapper>
+            </S.RiskField>
+          </S.RiskGrid>
+          {riskError ? <S.ErrorBox>{riskError}</S.ErrorBox> : null}
+        </S.RiskSection>
+
         {hasPosition && position ? (
           <S.ManageSection>
             <S.Label>Withdraw Shares</S.Label>
@@ -444,7 +592,8 @@ const CopyModal: React.FC<CopyModalProps> = ({
               Number(amount) <= 0 ||
               loading ||
               Number(amount) < minDeposit ||
-              exceedsBalance
+              exceedsBalance ||
+              !!riskError
             }
             onClick={handleAction}
           >

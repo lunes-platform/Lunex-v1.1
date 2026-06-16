@@ -226,6 +226,14 @@ router.post(
           leaderId: req.params.leaderId,
           token: parsed.data.token,
           amount: parsed.data.amount,
+          // Risk limits are part of the FE-signed payload
+          // (buildCopytradeDepositMessage); they must be reconstructed here
+          // identically. buildWalletActionMessage drops undefined/null and
+          // sorts keys, so passing them through is symmetric with the FE.
+          copyMultiplier: parsed.data.copyMultiplier,
+          maxPerTradeUsdt: parsed.data.maxPerTradeUsdt,
+          stopLossPct: parsed.data.stopLossPct,
+          maxDrawdownPct: parsed.data.maxDrawdownPct,
         },
       });
       if (!auth.ok) return res.status(401).json({ error: auth.error });

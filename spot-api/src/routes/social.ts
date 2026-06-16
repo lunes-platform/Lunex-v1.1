@@ -481,6 +481,12 @@ router.post(
       const result = await socialService.followLeader(
         req.params.leaderId,
         parsed.data.address,
+        {
+          copyMultiplier: parsed.data.copyMultiplier,
+          maxPerTradeUsdt: parsed.data.maxPerTradeUsdt,
+          stopLossPct: parsed.data.stopLossPct,
+          maxDrawdownPct: parsed.data.maxDrawdownPct,
+        },
       );
       res.json(result);
     } catch (err) {

@@ -428,6 +428,11 @@ model CopyVault {
   minDeposit       Decimal         @default(10) @db.Decimal(36, 18)
   twapThreshold    Decimal         @default(50000) @db.Decimal(36, 18)
   maxSlippageBps   Int             @default(100)
+  // --- Copy-engine risk limits (RISK-BE) ---
+  copyMultiplier   Decimal         @default(1) @db.Decimal(36, 18) // scales copied position size (0.1..10)
+  maxPerTradeUsdt  Decimal?        @db.Decimal(36, 18) // optional hard cap per copied trade
+  stopLossPct      Decimal?        @db.Decimal(10, 4) // optional: pause copy when vault loss exceeds %
+  maxDrawdownPct   Decimal?        @db.Decimal(10, 4) // optional: pause copy when drawdown exceeds %
   contractAddress  String? // On-chain CopyVault ink! contract address
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt

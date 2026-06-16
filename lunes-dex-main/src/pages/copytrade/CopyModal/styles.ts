@@ -143,6 +143,114 @@ export const BalanceInfo = styled.div`
   }
 `
 
+export const RiskSection = styled.div`
+  border-top: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
+  margin: 4px 0 18px;
+  padding-top: 18px;
+`
+
+export const RiskGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 16px;
+  margin-bottom: 12px;
+
+  @media (max-width: 480px) {
+    grid-template-columns: 1fr;
+  }
+`
+
+export const RiskField = styled.div`
+  display: flex;
+  flex-direction: column;
+`
+
+export const LabelRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+`
+
+export const Tooltip = styled.span`
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
+  color: ${({ theme }) => theme.colors.themeColors[200]};
+  font-size: 10px;
+  font-weight: 700;
+  cursor: help;
+  font-family: 'Inter', sans-serif;
+
+  &:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: 220px;
+    white-space: normal;
+    background: ${({ theme }) => theme.colors.themeColors[800]};
+    color: #ffffff;
+    border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+    text-transform: none;
+    letter-spacing: normal;
+    z-index: 5;
+  }
+`
+
+export const SmallInputWrapper = styled.div`
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 12px;
+  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
+  background: ${({ theme }) => theme.colors.themeColors[600]};
+`
+
+export const SmallInput = styled.input`
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 48px 12px 14px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: #ffffff;
+  outline: none;
+
+  &::placeholder {
+    color: ${({ theme }) => theme.colors.themeColors[200]};
+  }
+
+  &:focus {
+    box-shadow: inset 0 0 0 1px ${({ theme }) => theme.colors.themeColors[800]};
+  }
+`
+
+export const SmallUnit = styled.span`
+  position: absolute;
+  right: 12px;
+  color: ${({ theme }) => theme.colors.themeColors[200]};
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+`
+
 export const WarningBox = styled.div`
   background: ${({ theme }) => theme.colors.themeColors[600]};
   border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
