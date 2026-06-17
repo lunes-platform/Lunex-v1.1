@@ -34,6 +34,8 @@ pub mod factory {
         ZeroAddress,
         /// Operação negada: pool abaixo da liquidez mínima exigida
         BelowMinimumLiquidity,
+        /// Falha ao configurar fee/rewards routing no par recém-criado (B4)
+        PairSetupFailed,
     }
 
     /// Constantes do contrato
@@ -59,6 +61,14 @@ pub mod factory {
         pair_contract_code_hash: ink::storage::Lazy<Hash>,
         /// Liquidez mínima exigida para ativar um pool (anti-spam, 0 = desabilitado)
         min_pool_liquidity: Balance,
+        /// (B4) Destino das taxas de protocolo, repassado a cada novo par em
+        /// `create_pair`. `None` = par criado sem fee routing (configurar via
+        /// `set_protocol_fee_to_global`). NÃO é passado no construtor de
+        /// propósito: o contrato de rewards é deployado DEPOIS da factory, então
+        /// estes endereços só são conhecidos pós-deploy (admin setter).
+        protocol_fee_to: Option<AccountId>,
+        /// (B4) Contrato de trading rewards, repassado a cada novo par.
+        trading_rewards_contract: Option<AccountId>,
     }
 
     impl Default for FactoryContract {
@@ -71,6 +81,8 @@ pub mod factory {
                 all_pairs_len: 0,
                 pair_contract_code_hash: ink::storage::Lazy::new(),
                 min_pool_liquidity: 0,
+                protocol_fee_to: None,
+                trading_rewards_contract: None,
             }
         }
     }
@@ -105,6 +117,8 @@ pub mod factory {
                 all_pairs_len: 0,
                 pair_contract_code_hash: ink::storage::Lazy::new(),
                 min_pool_liquidity: 0,
+                protocol_fee_to: None,
+                trading_rewards_contract: None,
             };
 
             // Initialize Lazy fields for gas optimization
@@ -287,7 +301,7 @@ pub mod factory {
             let factory_address = self.env().account_id();
 
             // Instanciar o contrato de par usando o code hash
-            let pair = PairContractRef::new(factory_address, token_0, token_1)
+            let mut pair = PairContractRef::new(factory_address, token_0, token_1)
                 .code_hash(code_hash)
                 .gas_limit(0)
                 .endowment(0)
@@ -295,6 +309,21 @@ pub mod factory {
                 .instantiate();
 
             let pair_address: AccountId = *pair.as_ref();
+
+            // (B4) Conectar o fee/rewards routing no par recém-criado. O guard
+            // `caller == factory` no par é satisfeito automaticamente: o chamador
+            // aqui É a factory. Atomicidade: o `?` aborta ANTES de registrar o
+            // par, então uma falha de setup não deixa par órfão registrado.
+            if let Some(fee_to) = self.protocol_fee_to {
+                pair
+                    .set_protocol_fee_to(fee_to)
+                    .map_err(|_| FactoryError::PairSetupFailed)?;
+            }
+            if let Some(rewards) = self.trading_rewards_contract {
+                pair
+                    .set_trading_rewards_contract(rewards)
+                    .map_err(|_| FactoryError::PairSetupFailed)?;
+            }
 
             // Registrar o novo par
             self.register_pair(token_0, token_1, pair_address);
@@ -355,6 +384,45 @@ pub mod factory {
             self.fee_to_setter = fee_to_setter;
             Ok(())
         }
+
+        // ── B4: fee/rewards routing globals ──────────────────────────────
+        // These are wired into every pair created AFTER they are set. Existing
+        // pairs are unaffected (retroactive patching needs a direct call on each
+        // pair). Guarded by the fee_to_setter, like the other fee admin ops.
+
+        /// Define o destino global das taxas de protocolo repassado a novos pares.
+        #[ink(message)]
+        pub fn set_protocol_fee_to_global(
+            &mut self,
+            fee_to: AccountId,
+        ) -> Result<(), FactoryError> {
+            self.ensure_caller_is_fee_setter()?;
+            self.protocol_fee_to = Some(fee_to);
+            Ok(())
+        }
+
+        /// Define o contrato global de trading rewards repassado a novos pares.
+        #[ink(message)]
+        pub fn set_trading_rewards_global(
+            &mut self,
+            rewards_contract: AccountId,
+        ) -> Result<(), FactoryError> {
+            self.ensure_caller_is_fee_setter()?;
+            self.trading_rewards_contract = Some(rewards_contract);
+            Ok(())
+        }
+
+        /// Retorna o destino global das taxas de protocolo (None = não configurado).
+        #[ink(message)]
+        pub fn get_protocol_fee_to_global(&self) -> Option<AccountId> {
+            self.protocol_fee_to
+        }
+
+        /// Retorna o contrato global de trading rewards (None = não configurado).
+        #[ink(message)]
+        pub fn get_trading_rewards_global(&self) -> Option<AccountId> {
+            self.trading_rewards_contract
+        }
     }
 
     /// Testes unitários
@@ -381,6 +449,45 @@ pub mod factory {
             assert_eq!(factory.fee_to_setter(), accounts.bob);
             assert_eq!(factory.pair_contract_code_hash(), Hash::default());
             assert_eq!(factory.all_pairs_length(), 0);
+        }
+
+        // ── B4: fee-routing globals (consumed by create_pair to wire each new
+        // pair's protocol_fee_to / trading_rewards_contract) ──
+
+        #[ink::test]
+        fn fee_routing_globals_default_none() {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            let factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
+            assert_eq!(factory.get_protocol_fee_to_global(), None);
+            assert_eq!(factory.get_trading_rewards_global(), None);
+        }
+
+        #[ink::test]
+        fn fee_setter_can_set_fee_routing_globals() {
+            let accounts = default_accounts();
+            set_sender(accounts.bob); // fee_to_setter
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
+            factory.set_protocol_fee_to_global(accounts.charlie).unwrap();
+            factory.set_trading_rewards_global(accounts.django).unwrap();
+            assert_eq!(factory.get_protocol_fee_to_global(), Some(accounts.charlie));
+            assert_eq!(factory.get_trading_rewards_global(), Some(accounts.django));
+        }
+
+        #[ink::test]
+        fn non_fee_setter_cannot_set_fee_routing_globals() {
+            let accounts = default_accounts();
+            set_sender(accounts.bob);
+            let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
+            set_sender(accounts.eve); // not the fee_to_setter
+            assert_eq!(
+                factory.set_protocol_fee_to_global(accounts.charlie),
+                Err(FactoryError::CallerIsNotFeeSetter)
+            );
+            assert_eq!(
+                factory.set_trading_rewards_global(accounts.django),
+                Err(FactoryError::CallerIsNotFeeSetter)
+            );
         }
 
         #[ink::test]
