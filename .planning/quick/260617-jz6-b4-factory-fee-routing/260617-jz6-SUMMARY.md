@@ -7,12 +7,12 @@ commits:
   - 5d283c4 fix(factory) wire routing into new pairs
   - c3f1716 fix(deploy) set factory fee-routing globals
   - f004176 test(onchain) B4 proof script (deferred run)
-onchain_proof: DEFERRED (dev stack down)
+onchain_proof: PROVEN ON-CHAIN (2026-06-17, lunes-nightly --dev node)
 ---
 
 # Quick Task 260617-jz6 — B4: Factory wires fee/rewards routing into new pairs (SUMMARY)
 
-**Status:** Code complete, committed & unit/WASM-verified. On-chain proof **DEFERRED**.
+**Status:** Code complete, committed, unit/WASM-verified **and PROVEN ON-CHAIN**.
 **Requirement:** B4 (`.planning/blockers-roadmap-2026-06-16/02-factory-revenue-bug.md`) — silent protocol-fee revenue loss.
 **Date:** 2026-06-17
 **Branch:** audit/production-readiness-2026-06-12
@@ -62,11 +62,26 @@ contract — a silent revenue-loss bug.
 |---|---|
 | `cargo test` (factory, rustup 1.85.0) | ✅ **13 passed; 0 failed** (incl. 3 new B4 tests) |
 | `cargo contract build --release` (factory) | ✅ `factory_contract.contract` produced (WASM) |
-| On-chain proof (`prove-b4-factory-fee-routing.ts`) | ⏸ **DEFERRED** — needs dev stack (`:9944` + postgres + spot-api) up; user-gated (the 2026-06-14 incident was a dev-chain wipe) |
+| On-chain proof (`prove-b4-factory-fee-routing.ts`) | ✅ **PROVEN ON-CHAIN** (2026-06-17, `lunes-nightly` 4.0.0-dev `--dev --tmp` node, ws://127.0.0.1:9944) |
+
+### On-chain proof detail (2026-06-17)
+
+Ran against a fresh `lunes-nightly --dev --tmp` node after `deploy-contracts.ts`
+(which uploaded pair code `0xbd4411df…` and live-executed the B4 deploy step 7:
+`factory.setProtocolFeeToGlobal` + `setTradingRewardsGlobal` ✅). Then
+`prove-b4-factory-fee-routing.ts`:
+
+- ✅ control: pair from **unconfigured** factory → `get_protocol_fee_to() == None` (old behavior reproduced)
+- ✅ pair from **configured** factory → `protocol_fee_to == fee_to global`
+- ✅ pair from **configured** factory → `trading_rewards_contract == rewards global`
+- Result line: `✅ B4 FACTORY FEE-ROUTING PROVEN ON-CHAIN`
+
+(Token slots in the proof use the deployed `wnative` + a valid dev AccountId
+placeholder — `create_pair`/pair ctor make no cross-contract call to the token
+addresses, so routing is exercised regardless of token liveness.)
 
 ## Follow-ups (user-gated)
 
-- Run the on-chain proof once the dev stack is intentionally brought up.
 - In production, set `protocol_fee_to` to the real treasury (deploy script uses
   the deployer as a local placeholder).
 - Pre-existing pairs need a per-pair admin call to retrofit routing (globals are
