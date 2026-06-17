@@ -114,7 +114,8 @@ async function main() {
   await txCall(alice, lock, 'createLock', [alice.address, bob, charlie, new BN(DECIMALS.toString()), new BN(DECIMALS.toString()), new BN(DECIMALS.toString()), new BN('1000'), 1], 'dummy create_lock (id 0)')
 
   // 4. listing_manager (lunes_token=psp22, lock, treasury/rewards/staking=Alice)
-  const mgrAddr = await deploy(alice, 'listing_manager', 'new', [psp22Addr, lockAddr, alice.address, alice.address, alice.address])
+  // listing_manager takes lunes_decimals (6th arg); the psp22 above is 12-dec.
+  const mgrAddr = await deploy(alice, 'listing_manager', 'new', [psp22Addr, lockAddr, alice.address, alice.address, alice.address, 12])
   const mgr = new ContractPromise(api as any, load('listing_manager'), mgrAddr)
 
   // 5. set_manager → listing_manager (B1 deploy-order requirement)
