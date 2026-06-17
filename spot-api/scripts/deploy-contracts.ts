@@ -4,7 +4,7 @@
  */
 
 import { ApiPromise, WsProvider, Keyring } from '@polkadot/api'
-import { CodePromise } from '@polkadot/api-contract'
+import { CodePromise, ContractPromise } from '@polkadot/api-contract'
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { blake2AsHex } from '@polkadot/util-crypto'
@@ -153,6 +153,31 @@ async function main() {
       alice.address,
       addresses.router,
     ])
+
+    // 7. (B4) Wire factory fee/rewards routing globals so every pair created
+    //    afterwards collects protocol fees and notifies the rewards contract.
+    //    Without this, create_pair leaves new pairs with None routing (silent
+    //    revenue loss). protocol_fee_to → deployer (treasury placeholder for
+    //    local; set a real treasury in prod).
+    console.log('\n  📦 7. Factory fee-routing globals (B4)')
+    {
+      const factoryAbi = loadContract('factory_contract')
+      const factory = new ContractPromise(api as any, factoryAbi, addresses.factory)
+      const gas = makeGas(api)
+      for (const [method, arg, label] of [
+        ['setProtocolFeeToGlobal', alice.address, 'protocol_fee_to'],
+        ['setTradingRewardsGlobal', addresses.rewards, 'trading_rewards'],
+      ] as const) {
+        await new Promise<void>((resolve, reject) => {
+          ;(factory.tx as any)[method]({ gasLimit: gas, storageDepositLimit: null }, arg)
+            .signAndSend(alice, ({ status, dispatchError }: any) => {
+              if (dispatchError) return reject(new Error(`${label}: ${dispatchError.toString()}`))
+              if (status.isFinalized) { console.log(`  ✅ factory.${method} → ${String(arg).slice(0, 12)}…`); resolve() }
+            })
+            .catch(reject)
+        })
+      }
+    }
 
   } catch (err: any) {
     fail(`Deploy falhou: ${err.message}`)
