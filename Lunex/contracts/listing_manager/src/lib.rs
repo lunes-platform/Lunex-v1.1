@@ -43,9 +43,9 @@ mod listing_manager {
     const DECIMALS: u128 = 1_000_000_000_000;
 
     // Listing fee per tier (in LUNES raw units)
-    const TIER1_FEE: Balance     = 1_000  * DECIMALS;
-    const TIER2_FEE: Balance     = 5_000  * DECIMALS;
-    const TIER3_FEE: Balance     = 20_000 * DECIMALS;
+    const TIER1_FEE: Balance = 1_000 * DECIMALS;
+    const TIER2_FEE: Balance = 5_000 * DECIMALS;
+    const TIER3_FEE: Balance = 20_000 * DECIMALS;
 
     // Minimum liquidity (LUNES side of the pool) per tier
     const TIER1_MIN_LIQ: Balance = 10_000 * DECIMALS;
@@ -53,14 +53,14 @@ mod listing_manager {
     const TIER3_MIN_LIQ: Balance = 50_000 * DECIMALS;
 
     // Lock duration in milliseconds per tier
-    const TIER1_LOCK_MS: u64 = 90  * 24 * 60 * 60 * 1_000;
+    const TIER1_LOCK_MS: u64 = 90 * 24 * 60 * 60 * 1_000;
     const TIER2_LOCK_MS: u64 = 120 * 24 * 60 * 60 * 1_000;
     const TIER3_LOCK_MS: u64 = 180 * 24 * 60 * 60 * 1_000;
 
     // Fee split basis points (out of 10_000)
-    const BPS_STAKING:  u128 = 2_000; // 20% → staking pool
+    const BPS_STAKING: u128 = 2_000; // 20% → staking pool
     const BPS_TREASURY: u128 = 5_000; // 50% → team revenue
-    const BPS_REWARDS:  u128 = 3_000; // 30% → rewards pool
+    const BPS_REWARDS: u128 = 3_000; // 30% → rewards pool
 
     // ── PSP22 Error (for cross-contract returns) ─────────────────────
 
@@ -75,6 +75,30 @@ mod listing_manager {
         SafeTransferCheckFailed(ink::prelude::string::String),
     }
 
+    // ── LiquidityLockError (local mirror for cross-contract decode) ──
+
+    /// Local mirror of `liquidity_lock::Error`, declared here so the inner
+    /// `Result<u64, _>` returned by `create_lock` can be SCALE-decoded WITHOUT
+    /// adding a contract dependency on the `liquidity_lock` crate.
+    ///
+    /// IMPORTANT: variants MUST stay in the SAME ORDER as
+    /// `liquidity_lock::Error` (Unauthorized, LockNotFound, LockNotExpired,
+    /// AlreadyWithdrawn, ZeroAmount, InvalidTier, TransferFailed) — SCALE
+    /// decodes enums by index, so the order is the wire contract. The value is
+    /// discarded (mapped to `Error::LockCreationFailed`); the mirror exists only
+    /// to make the inner Result decodable. Same technique as `PSP22Error` above.
+    #[derive(Debug, PartialEq, Eq, Encode, Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum LiquidityLockError {
+        Unauthorized,
+        LockNotFound,
+        LockNotExpired,
+        AlreadyWithdrawn,
+        ZeroAmount,
+        InvalidTier,
+        TransferFailed,
+    }
+
     // ── PSP22Ref — cross-contract call wrappers ──────────────────────
 
     /// Cross-contract call helpers for PSP22 tokens.
@@ -84,11 +108,7 @@ mod listing_manager {
     impl PSP22Ref {
         /// Transfer `amount` tokens from this contract to `to`.
         /// Requires this contract to hold sufficient balance.
-        fn transfer(
-            token: AccountId,
-            to: AccountId,
-            amount: Balance,
-        ) -> Result<()> {
+        fn transfer(token: AccountId, to: AccountId, amount: Balance) -> Result<()> {
             let data: ink::prelude::vec::Vec<u8> = ink::prelude::vec::Vec::new();
             build_call::<DefaultEnvironment>()
                 .call(token)
@@ -121,11 +141,13 @@ mod listing_manager {
                 .gas_limit(0)
                 .transferred_value(0)
                 .exec_input(
-                    ExecutionInput::new(Selector::new(ink::selector_bytes!("PSP22::transfer_from")))
-                        .push_arg(from)
-                        .push_arg(to)
-                        .push_arg(amount)
-                        .push_arg(data),
+                    ExecutionInput::new(Selector::new(ink::selector_bytes!(
+                        "PSP22::transfer_from"
+                    )))
+                    .push_arg(from)
+                    .push_arg(to)
+                    .push_arg(amount)
+                    .push_arg(data),
                 )
                 .returns::<core::result::Result<(), PSP22Error>>()
                 .try_invoke()
@@ -152,26 +174,26 @@ mod listing_manager {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
     pub struct ListingRecord {
-        pub id:              ListingId,
-        pub owner:           AccountId,
-        pub token_address:   AccountId,
-        pub pair_address:    AccountId,
-        pub lp_token:        AccountId,
-        pub lp_amount:       Balance,
+        pub id: ListingId,
+        pub owner: AccountId,
+        pub token_address: AccountId,
+        pub pair_address: AccountId,
+        pub lp_token: AccountId,
+        pub lp_amount: Balance,
         pub lunes_liquidity: Balance,
         pub token_liquidity: Balance,
-        pub tier:            u8,
-        pub lock_id:         u64,
-        pub status:          ListingStatus,
-        pub listed_at:       Timestamp,
+        pub tier: u8,
+        pub lock_id: u64,
+        pub status: ListingStatus,
+        pub listed_at: Timestamp,
     }
 
     #[derive(Debug, Clone, PartialEq, Encode, Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
     pub struct TierConfig {
-        pub listing_fee:      Balance,
-        pub min_lunes_liq:    Balance,
+        pub listing_fee: Balance,
+        pub min_lunes_liq: Balance,
         pub lock_duration_ms: u64,
     }
 
@@ -182,22 +204,22 @@ mod listing_manager {
 
     #[ink(storage)]
     pub struct ListingManager {
-        admin:           AccountId,
-        lunes_token:     AccountId,
-        liquidity_lock:  AccountId,
-        treasury:        AccountId,
-        rewards_pool:    AccountId,
-        staking_pool:    AccountId,
-        next_id:         ListingId,
-        listings:        Mapping<ListingId, ListingRecord>,
-        token_listing:   Mapping<AccountId, ListingId>,  // token → listing id
+        admin: AccountId,
+        lunes_token: AccountId,
+        liquidity_lock: AccountId,
+        treasury: AccountId,
+        rewards_pool: AccountId,
+        staking_pool: AccountId,
+        next_id: ListingId,
+        listings: Mapping<ListingId, ListingRecord>,
+        token_listing: Mapping<AccountId, ListingId>, // token → listing id
         total_collected: Balance,
-        total_staked:    Balance,
-        paused:          bool,
+        total_staked: Balance,
+        paused: bool,
         /// Atraso obrigatório para troca de admin (timelock)
-        timelock_delay:  u64,
+        timelock_delay: u64,
         /// Admin proposto (aguardando timelock)
-        pending_admin:   Option<AccountId>,
+        pending_admin: Option<AccountId>,
         /// Timestamp após o qual a mudança de admin pode ser executada
         admin_change_at: Timestamp,
     }
@@ -207,23 +229,23 @@ mod listing_manager {
     #[ink(event)]
     pub struct TokenListed {
         #[ink(topic)]
-        pub listing_id:    ListingId,
+        pub listing_id: ListingId,
         #[ink(topic)]
-        pub owner:         AccountId,
+        pub owner: AccountId,
         #[ink(topic)]
         pub token_address: AccountId,
-        pub pair_address:  AccountId,
-        pub tier:          u8,
-        pub lock_id:       u64,
-        pub listed_at:     Timestamp,
+        pub pair_address: AccountId,
+        pub tier: u8,
+        pub lock_id: u64,
+        pub listed_at: Timestamp,
     }
 
     #[ink(event)]
     pub struct AdminChangeProposed {
         #[ink(topic)]
         pub proposed_by: AccountId,
-        pub new_admin:   AccountId,
-        pub execute_at:  Timestamp,
+        pub new_admin: AccountId,
+        pub execute_at: Timestamp,
     }
 
     #[ink(event)]
@@ -237,9 +259,9 @@ mod listing_manager {
     pub struct ListingFeeCollected {
         #[ink(topic)]
         pub listing_id: ListingId,
-        pub payer:      AccountId,
-        pub amount:     Balance,
-        pub tier:       u8,
+        pub payer: AccountId,
+        pub amount: Balance,
+        pub tier: u8,
     }
 
     #[ink(event)]
@@ -252,10 +274,10 @@ mod listing_manager {
 
     #[ink(event)]
     pub struct FeeDistributed {
-        pub listing_id:      ListingId,
-        pub staking_amount:  Balance,
+        pub listing_id: ListingId,
+        pub staking_amount: Balance,
         pub treasury_amount: Balance,
-        pub rewards_amount:  Balance,
+        pub rewards_amount: Balance,
     }
 
     // ── Errors ───────────────────────────────────────────────────────
@@ -287,27 +309,27 @@ mod listing_manager {
     impl ListingManager {
         #[ink(constructor)]
         pub fn new(
-            lunes_token:    AccountId,
+            lunes_token: AccountId,
             liquidity_lock: AccountId,
-            treasury:       AccountId,
-            rewards_pool:   AccountId,
-            staking_pool:   AccountId,
+            treasury: AccountId,
+            rewards_pool: AccountId,
+            staking_pool: AccountId,
         ) -> Self {
             Self {
-                admin:           Self::env().caller(),
+                admin: Self::env().caller(),
                 lunes_token,
                 liquidity_lock,
                 treasury,
                 rewards_pool,
                 staking_pool,
-                next_id:         0,
-                listings:        Mapping::default(),
-                token_listing:   Mapping::default(),
+                next_id: 0,
+                listings: Mapping::default(),
+                token_listing: Mapping::default(),
                 total_collected: 0,
-                total_staked:    0,
-                paused:          false,
-                timelock_delay:  DEFAULT_TIMELOCK_DELAY_MS,
-                pending_admin:   None,
+                total_staked: 0,
+                paused: false,
+                timelock_delay: DEFAULT_TIMELOCK_DELAY_MS,
+                pending_admin: None,
                 admin_change_at: 0,
             }
         }
@@ -329,11 +351,11 @@ mod listing_manager {
         #[ink(message)]
         pub fn list_token(
             &mut self,
-            tier:            u8,
-            token_address:   AccountId,
-            pair_address:    AccountId,
-            lp_token:        AccountId,
-            lp_amount:       Balance,
+            tier: u8,
+            token_address: AccountId,
+            pair_address: AccountId,
+            lp_token: AccountId,
+            lp_amount: Balance,
             lunes_liquidity: Balance,
             token_liquidity: Balance,
         ) -> Result<ListingId> {
@@ -361,12 +383,7 @@ mod listing_manager {
 
             // ── Step 1: collect listing fee via PSP22 transfer_from ────
             // Caller must have approved `listing_fee` LUNES to this contract.
-            PSP22Ref::transfer_from(
-                self.lunes_token,
-                caller,
-                contract_addr,
-                cfg.listing_fee,
-            )?;
+            PSP22Ref::transfer_from(self.lunes_token, caller, contract_addr, cfg.listing_fee)?;
 
             self.total_collected = self.total_collected.saturating_add(cfg.listing_fee);
 
@@ -378,17 +395,20 @@ mod listing_manager {
             });
 
             // ── Step 2: calculate fee splits ─────────────────────────
-            let staking_amt = cfg.listing_fee
+            let staking_amt = cfg
+                .listing_fee
                 .checked_mul(BPS_STAKING)
                 .ok_or(Error::Overflow)?
                 .checked_div(10_000)
                 .ok_or(Error::Overflow)?;
-            let treasury_amt = cfg.listing_fee
+            let treasury_amt = cfg
+                .listing_fee
                 .checked_mul(BPS_TREASURY)
                 .ok_or(Error::Overflow)?
                 .checked_div(10_000)
                 .ok_or(Error::Overflow)?;
-            let rewards_amt = cfg.listing_fee
+            let rewards_amt = cfg
+                .listing_fee
                 .checked_mul(BPS_REWARDS)
                 .ok_or(Error::Overflow)?
                 .checked_div(10_000)
@@ -407,17 +427,46 @@ mod listing_manager {
 
             self.env().emit_event(FeeDistributed {
                 listing_id,
-                staking_amount:  staking_amt,
+                staking_amount: staking_amt,
                 treasury_amount: treasury_amt,
-                rewards_amount:  rewards_amt,
+                rewards_amount: rewards_amt,
             });
 
-            // ── Step 4: register lock ────────────────────────────────
-            // The caller must have transferred LP tokens to the LiquidityLock
-            // contract before calling list_token. The lock_id mirrors the
-            // listing_id for deterministic tracking. The off-chain relayer
-            // verifies LP transfer and calls create_lock on behalf of the user.
-            let lock_id: u64 = listing_id;
+            // ── Step 4: create the LP lock on-chain (B1) ─────────────
+            // Real cross-contract call to liquidity_lock::create_lock. The
+            // caller must have transferred LP tokens to the LiquidityLock
+            // contract beforehand, and this contract must be registered as the
+            // lock's manager (see README deployment order). The returned
+            // lock_id is the authoritative lock identifier and is used in
+            // Step 5 — it is NOT the listing_id.
+            //
+            // Atomicity: the `?` short-circuits on lock failure BEFORE any
+            // ListingRecord is inserted or TokenListed is emitted, so a failed
+            // lock can never leave an orphan Active listing.
+            //
+            // Decode uses the local LiquidityLockError mirror (no contract
+            // dependency); the error value is discarded — any failure (outer
+            // LangError or inner contract Err) maps to LockCreationFailed.
+            let lock_id: u64 = build_call::<DefaultEnvironment>()
+                .call(self.liquidity_lock)
+                .gas_limit(0)
+                .transferred_value(0)
+                .exec_input(
+                    ExecutionInput::new(Selector::new(ink::selector_bytes!("create_lock")))
+                        .push_arg(&caller)
+                        .push_arg(&pair_address)
+                        .push_arg(&lp_token)
+                        .push_arg(&lp_amount)
+                        .push_arg(&lunes_liquidity)
+                        .push_arg(&token_liquidity)
+                        .push_arg(&cfg.lock_duration_ms)
+                        .push_arg(&tier),
+                )
+                .returns::<core::result::Result<u64, LiquidityLockError>>()
+                .try_invoke()
+                .map_err(|_| Error::LockCreationFailed)? // env::Error (call dispatch)
+                .map_err(|_| Error::LockCreationFailed)? // LangError (ink message decode)
+                .map_err(|_| Error::LockCreationFailed)?; // LiquidityLockError (contract logic)
 
             // ── Step 5: save listing record ───────────────────────────
             let now = self.env().block_timestamp();
@@ -485,7 +534,10 @@ mod listing_manager {
         #[ink(message)]
         pub fn reject_listing(&mut self, listing_id: ListingId) -> Result<()> {
             self.ensure_admin()?;
-            let mut record = self.listings.get(listing_id).ok_or(Error::ListingNotFound)?;
+            let mut record = self
+                .listings
+                .get(listing_id)
+                .ok_or(Error::ListingNotFound)?;
             record.status = ListingStatus::Rejected;
             self.listings.insert(listing_id, &record);
             self.env().emit_event(ListingStatusChanged {
@@ -517,18 +569,18 @@ mod listing_manager {
         pub fn tier_config(&self, tier: u8) -> Result<TierConfig> {
             match tier {
                 1 => Ok(TierConfig {
-                    listing_fee:      TIER1_FEE,
-                    min_lunes_liq:    TIER1_MIN_LIQ,
+                    listing_fee: TIER1_FEE,
+                    min_lunes_liq: TIER1_MIN_LIQ,
                     lock_duration_ms: TIER1_LOCK_MS,
                 }),
                 2 => Ok(TierConfig {
-                    listing_fee:      TIER2_FEE,
-                    min_lunes_liq:    TIER2_MIN_LIQ,
+                    listing_fee: TIER2_FEE,
+                    min_lunes_liq: TIER2_MIN_LIQ,
                     lock_duration_ms: TIER2_LOCK_MS,
                 }),
                 3 => Ok(TierConfig {
-                    listing_fee:      TIER3_FEE,
-                    min_lunes_liq:    TIER3_MIN_LIQ,
+                    listing_fee: TIER3_FEE,
+                    min_lunes_liq: TIER3_MIN_LIQ,
                     lock_duration_ms: TIER3_LOCK_MS,
                 }),
                 _ => Err(Error::InvalidTier),
@@ -536,19 +588,29 @@ mod listing_manager {
         }
 
         #[ink(message)]
-        pub fn total_collected(&self) -> Balance { self.total_collected }
+        pub fn total_collected(&self) -> Balance {
+            self.total_collected
+        }
 
         #[ink(message)]
-        pub fn total_staked(&self) -> Balance { self.total_staked }
+        pub fn total_staked(&self) -> Balance {
+            self.total_staked
+        }
 
         #[ink(message)]
-        pub fn admin(&self) -> AccountId { self.admin }
+        pub fn admin(&self) -> AccountId {
+            self.admin
+        }
 
         #[ink(message)]
-        pub fn staking_pool(&self) -> AccountId { self.staking_pool }
+        pub fn staking_pool(&self) -> AccountId {
+            self.staking_pool
+        }
 
         #[ink(message)]
-        pub fn is_paused(&self) -> bool { self.paused }
+        pub fn is_paused(&self) -> bool {
+            self.paused
+        }
 
         // ── Guards ────────────────────────────────────────────────
 
@@ -575,7 +637,7 @@ mod listing_manager {
             self.ensure_admin()?;
             let now = self.env().block_timestamp();
             let execute_at = now.saturating_add(self.timelock_delay);
-            self.pending_admin   = Some(new_admin);
+            self.pending_admin = Some(new_admin);
             self.admin_change_at = execute_at;
             self.env().emit_event(AdminChangeProposed {
                 proposed_by: self.env().caller(),
@@ -595,9 +657,12 @@ mod listing_manager {
                 return Err(Error::TimelockNotExpired);
             }
             let old_admin = self.admin;
-            self.admin         = pending;
+            self.admin = pending;
             self.pending_admin = None;
-            self.env().emit_event(AdminChanged { old_admin, new_admin: pending });
+            self.env().emit_event(AdminChanged {
+                old_admin,
+                new_admin: pending,
+            });
             Ok(())
         }
 
@@ -622,6 +687,26 @@ mod listing_manager {
 
     #[cfg(test)]
     mod tests {
+        // ── Scope of off-chain unit coverage (B1 lock path) ──────────
+        //
+        // list_token's Step 4 lock-creation path (the cross-contract call to
+        // liquidity_lock::create_lock) is NOT reachable in these off-chain
+        // unit tests. In the ink! off-chain test env, list_token hits Step 1
+        // (PSP22Ref::transfer_from, a cross-contract call to a non-deployed
+        // address) BEFORE it ever reaches Step 4 — so both the create_lock
+        // SUCCESS path and the create_lock FAILURE (LockCreationFailed) path
+        // require BOTH contracts deployed and can only be proven by the
+        // ink-e2e harness (see the e2e module / README "E2E" section and the
+        // blocker spec .planning/.../01-lp-lock-not-enforced.md TDD note,
+        // lines 199-205).
+        //
+        // Therefore there is intentionally NO unit test that calls list_token
+        // end-to-end and asserts Err(LockCreationFailed): such a test would
+        // actually trip on TransferFailed at Step 1 and pass for the wrong
+        // reason (false green). The unit tests below cover only pre-Step-1
+        // pre-conditions (tier validation, duplicate guard, zero amounts,
+        // min-liquidity, paused gate). The lock happy path is proven by
+        // ink-e2e (Task 3 / Part B).
         use super::*;
         use ink::env::test;
 
@@ -645,8 +730,8 @@ mod listing_manager {
             let contract = make_contract();
 
             let t1 = contract.tier_config(1).unwrap();
-            assert_eq!(t1.listing_fee,      TIER1_FEE);
-            assert_eq!(t1.min_lunes_liq,    TIER1_MIN_LIQ);
+            assert_eq!(t1.listing_fee, TIER1_FEE);
+            assert_eq!(t1.min_lunes_liq, TIER1_MIN_LIQ);
             assert_eq!(t1.lock_duration_ms, TIER1_LOCK_MS);
 
             let t2 = contract.tier_config(2).unwrap();
@@ -716,22 +801,43 @@ mod listing_manager {
 
             // Zero lp_amount
             assert_eq!(
-                contract.list_token(1, accounts.frank, accounts.charlie, accounts.django,
-                    0, TIER1_MIN_LIQ, TIER1_MIN_LIQ),
+                contract.list_token(
+                    1,
+                    accounts.frank,
+                    accounts.charlie,
+                    accounts.django,
+                    0,
+                    TIER1_MIN_LIQ,
+                    TIER1_MIN_LIQ
+                ),
                 Err(Error::ZeroAmount)
             );
 
             // Zero lunes_liquidity
             assert_eq!(
-                contract.list_token(1, accounts.frank, accounts.charlie, accounts.django,
-                    TIER1_MIN_LIQ, 0, TIER1_MIN_LIQ),
+                contract.list_token(
+                    1,
+                    accounts.frank,
+                    accounts.charlie,
+                    accounts.django,
+                    TIER1_MIN_LIQ,
+                    0,
+                    TIER1_MIN_LIQ
+                ),
                 Err(Error::ZeroAmount)
             );
 
             // Zero token_liquidity
             assert_eq!(
-                contract.list_token(1, accounts.frank, accounts.charlie, accounts.django,
-                    TIER1_MIN_LIQ, TIER1_MIN_LIQ, 0),
+                contract.list_token(
+                    1,
+                    accounts.frank,
+                    accounts.charlie,
+                    accounts.django,
+                    TIER1_MIN_LIQ,
+                    TIER1_MIN_LIQ,
+                    0
+                ),
                 Err(Error::ZeroAmount)
             );
         }
@@ -746,8 +852,15 @@ mod listing_manager {
 
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.eve);
             let err = contract
-                .list_token(1, accounts.frank, accounts.charlie, accounts.django,
-                    TIER1_MIN_LIQ, TIER1_MIN_LIQ, TIER1_MIN_LIQ)
+                .list_token(
+                    1,
+                    accounts.frank,
+                    accounts.charlie,
+                    accounts.django,
+                    TIER1_MIN_LIQ,
+                    TIER1_MIN_LIQ,
+                    TIER1_MIN_LIQ,
+                )
                 .unwrap_err();
 
             assert_eq!(err, Error::ContractPaused);
@@ -757,17 +870,17 @@ mod listing_manager {
         fn fee_split_proportions_are_correct() {
             // Validates the math without cross-contract calls
             let fee = TIER1_FEE;
-            let staking  = fee.checked_mul(BPS_STAKING).unwrap()  / 10_000;
+            let staking = fee.checked_mul(BPS_STAKING).unwrap() / 10_000;
             let treasury = fee.checked_mul(BPS_TREASURY).unwrap() / 10_000;
-            let rewards  = fee.checked_mul(BPS_REWARDS).unwrap()  / 10_000;
+            let rewards = fee.checked_mul(BPS_REWARDS).unwrap() / 10_000;
 
             // 20% + 50% + 30% = 100%
             assert_eq!(staking + treasury + rewards, fee);
 
             // Individual checks
-            assert_eq!(staking,  200 * DECIMALS);  // 20% of 1000
-            assert_eq!(treasury, 500 * DECIMALS);  // 50% of 1000
-            assert_eq!(rewards,  300 * DECIMALS);  // 30% of 1000
+            assert_eq!(staking, 200 * DECIMALS); // 20% of 1000
+            assert_eq!(treasury, 500 * DECIMALS); // 50% of 1000
+            assert_eq!(rewards, 300 * DECIMALS); // 30% of 1000
         }
 
         #[ink::test]
@@ -778,9 +891,18 @@ mod listing_manager {
             // Non-admin cannot pause
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.eve);
             assert_eq!(contract.set_paused(true), Err(Error::Unauthorized));
-            assert_eq!(contract.set_treasury(accounts.eve), Err(Error::Unauthorized));
-            assert_eq!(contract.set_rewards_pool(accounts.eve), Err(Error::Unauthorized));
-            assert_eq!(contract.set_staking_pool(accounts.eve), Err(Error::Unauthorized));
+            assert_eq!(
+                contract.set_treasury(accounts.eve),
+                Err(Error::Unauthorized)
+            );
+            assert_eq!(
+                contract.set_rewards_pool(accounts.eve),
+                Err(Error::Unauthorized)
+            );
+            assert_eq!(
+                contract.set_staking_pool(accounts.eve),
+                Err(Error::Unauthorized)
+            );
         }
 
         #[ink::test]
@@ -804,7 +926,10 @@ mod listing_manager {
             contract.propose_admin_change(accounts.bob).unwrap();
 
             // Cannot execute before timelock
-            assert_eq!(contract.execute_admin_change(), Err(Error::TimelockNotExpired));
+            assert_eq!(
+                contract.execute_admin_change(),
+                Err(Error::TimelockNotExpired)
+            );
 
             // Advance time past the timelock
             test::advance_block::<ink::env::DefaultEnvironment>();
