@@ -268,9 +268,14 @@ async function main() {
   log('Step 3: Deploy ListingManager')
   log('─────────────────────────────────────────')
   const stakingPoolAddr = process.env.STAKING_POOL_ADDRESS || deployer.address
+  // Fee-token decimals. listing_manager scales tier fees/min-liq by 10^decimals,
+  // so this MUST match the actual decimals of `lunes_token` (WLUNES = 8). Set
+  // LUNES_DECIMALS to override for a different fee token.
+  const lunesDecimals = Number(process.env.LUNES_DECIMALS || '8')
 
   log(`Constructor args:`)
   log(`  lunes_token:    ${lunesTokenAddr}`)
+  log(`  lunes_decimals: ${lunesDecimals}`)
   log(`  liquidity_lock: ${lockResult.address}`)
   log(`  treasury:       ${treasuryAddr}`)
   log(`  rewards_pool:   ${rewardsPoolAddr}`)
@@ -282,7 +287,7 @@ async function main() {
     'ListingManager',
     managerBundle,
     'new',
-    [lunesTokenAddr, lockResult.address, treasuryAddr, rewardsPoolAddr, stakingPoolAddr],
+    [lunesTokenAddr, lockResult.address, treasuryAddr, rewardsPoolAddr, stakingPoolAddr, lunesDecimals],
   )
 
   // ── Step 4: Update LiquidityLock manager to ListingManager ─────

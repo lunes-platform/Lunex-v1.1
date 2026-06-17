@@ -253,18 +253,39 @@ async function main() {
   )
 
   // ── 2. ListingManager ──────────────────────────────────────────
+  // Query the fee token's ACTUAL decimals so listing_manager scales tier fees /
+  // min-liquidity correctly (the contract no longer hardcodes 12 — passing the
+  // real value avoids the historical 10_000x over/under-charge bug).
+  let lunesDecimals = 8
+  if (!DRY_RUN) {
+    const wnAbi = JSON.parse(fs.readFileSync(bundlePath('wnative_contract'), 'utf8'))
+    const wn = new ContractPromise(api as any, wnAbi, WLUNES_ADDRESS)
+    const { result, output } = await (wn.query.tokenDecimals as any)(
+      deployer.address,
+      { gasLimit: weightV2(api, GAS_CALL), storageDepositLimit: null },
+    )
+    if (result.isOk && output) {
+      let v: any = output.toJSON()
+      while (v && typeof v === 'object' && !Array.isArray(v) && 'ok' in v) v = v.ok
+      lunesDecimals = Number(v)
+    } else {
+      log(`  ⚠ could not query fee-token decimals; defaulting to ${lunesDecimals}`)
+    }
+  }
+
   log('\n── Step 2: ListingManager ──')
-  log(`  lunes_token   : ${WLUNES_ADDRESS}`)
-  log(`  liquidity_lock: ${results.liquidity_lock.address}`)
-  log(`  treasury      : ${treasury}`)
-  log(`  rewards_pool  : ${rewardsPool}`)
-  log(`  staking_pool  : ${stakingPool}`)
+  log(`  lunes_token    : ${WLUNES_ADDRESS}`)
+  log(`  lunes_decimals : ${lunesDecimals} (queried from fee token)`)
+  log(`  liquidity_lock : ${results.liquidity_lock.address}`)
+  log(`  treasury       : ${treasury}`)
+  log(`  rewards_pool   : ${rewardsPool}`)
+  log(`  staking_pool   : ${stakingPool}`)
 
   results.listing_manager = await deployContract(
     api, deployer, 'ListingManager',
     bundlePath('listing_manager'),
     'new',
-    [WLUNES_ADDRESS, results.liquidity_lock.address, treasury, rewardsPool, stakingPool],
+    [WLUNES_ADDRESS, results.liquidity_lock.address, treasury, rewardsPool, stakingPool, lunesDecimals],
   )
 
   // ── 2b. Update LiquidityLock.manager → ListingManager ─────────
