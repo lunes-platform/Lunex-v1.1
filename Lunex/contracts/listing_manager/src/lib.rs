@@ -39,18 +39,19 @@ mod listing_manager {
 
     // ── Constants ────────────────────────────────────────────────────
 
-    // Decimals: 1 LUNES = 1_000_000_000_000 (12 decimals, like Substrate native)
-    const DECIMALS: u128 = 1_000_000_000_000;
+    // Listing fee per tier, expressed in WHOLE LUNES units. The fee token's
+    // actual decimals are NOT assumed here: `lunes_decimals` is captured at
+    // construction and `scale()` converts whole units → raw token units at
+    // runtime. (Previously a hardcoded `DECIMALS = 1e12` over/under-charged
+    // whenever the fee token's decimals differed from 12 — e.g. 8-dec WLUNES.)
+    const TIER1_FEE_UNITS: u128 = 1_000;
+    const TIER2_FEE_UNITS: u128 = 5_000;
+    const TIER3_FEE_UNITS: u128 = 20_000;
 
-    // Listing fee per tier (in LUNES raw units)
-    const TIER1_FEE: Balance = 1_000 * DECIMALS;
-    const TIER2_FEE: Balance = 5_000 * DECIMALS;
-    const TIER3_FEE: Balance = 20_000 * DECIMALS;
-
-    // Minimum liquidity (LUNES side of the pool) per tier
-    const TIER1_MIN_LIQ: Balance = 10_000 * DECIMALS;
-    const TIER2_MIN_LIQ: Balance = 25_000 * DECIMALS;
-    const TIER3_MIN_LIQ: Balance = 50_000 * DECIMALS;
+    // Minimum liquidity (LUNES side of the pool) per tier, in WHOLE LUNES units.
+    const TIER1_MIN_LIQ_UNITS: u128 = 10_000;
+    const TIER2_MIN_LIQ_UNITS: u128 = 25_000;
+    const TIER3_MIN_LIQ_UNITS: u128 = 50_000;
 
     // Lock duration in milliseconds per tier
     const TIER1_LOCK_MS: u64 = 90 * 24 * 60 * 60 * 1_000;
@@ -206,6 +207,10 @@ mod listing_manager {
     pub struct ListingManager {
         admin: AccountId,
         lunes_token: AccountId,
+        /// Decimals of `lunes_token` (the fee token), captured at construction.
+        /// Tier fees/min-liquidity are scaled by 10^lunes_decimals at runtime so
+        /// the contract is correct for any fee-token decimal count (8, 12, …).
+        lunes_decimals: u8,
         liquidity_lock: AccountId,
         treasury: AccountId,
         rewards_pool: AccountId,
@@ -314,10 +319,12 @@ mod listing_manager {
             treasury: AccountId,
             rewards_pool: AccountId,
             staking_pool: AccountId,
+            lunes_decimals: u8,
         ) -> Self {
             Self {
                 admin: Self::env().caller(),
                 lunes_token,
+                lunes_decimals,
                 liquidity_lock,
                 treasury,
                 rewards_pool,
@@ -565,26 +572,30 @@ mod listing_manager {
             self.token_listing.contains(token)
         }
 
+        /// Scale a WHOLE-LUNES amount to the fee token's raw units using the
+        /// `lunes_decimals` captured at construction. Checked throughout so an
+        /// absurd decimals value surfaces as `Error::Overflow` instead of
+        /// silently wrapping (contract uses `#[warn(clippy::arithmetic_side_effects)]`).
+        fn scale(&self, whole_units: u128) -> Result<Balance> {
+            let factor = 10u128
+                .checked_pow(self.lunes_decimals as u32)
+                .ok_or(Error::Overflow)?;
+            whole_units.checked_mul(factor).ok_or(Error::Overflow)
+        }
+
         #[ink(message)]
         pub fn tier_config(&self, tier: u8) -> Result<TierConfig> {
-            match tier {
-                1 => Ok(TierConfig {
-                    listing_fee: TIER1_FEE,
-                    min_lunes_liq: TIER1_MIN_LIQ,
-                    lock_duration_ms: TIER1_LOCK_MS,
-                }),
-                2 => Ok(TierConfig {
-                    listing_fee: TIER2_FEE,
-                    min_lunes_liq: TIER2_MIN_LIQ,
-                    lock_duration_ms: TIER2_LOCK_MS,
-                }),
-                3 => Ok(TierConfig {
-                    listing_fee: TIER3_FEE,
-                    min_lunes_liq: TIER3_MIN_LIQ,
-                    lock_duration_ms: TIER3_LOCK_MS,
-                }),
-                _ => Err(Error::InvalidTier),
-            }
+            let (fee_units, min_liq_units, lock_ms) = match tier {
+                1 => (TIER1_FEE_UNITS, TIER1_MIN_LIQ_UNITS, TIER1_LOCK_MS),
+                2 => (TIER2_FEE_UNITS, TIER2_MIN_LIQ_UNITS, TIER2_LOCK_MS),
+                3 => (TIER3_FEE_UNITS, TIER3_MIN_LIQ_UNITS, TIER3_LOCK_MS),
+                _ => return Err(Error::InvalidTier),
+            };
+            Ok(TierConfig {
+                listing_fee: self.scale(fee_units)?,
+                min_lunes_liq: self.scale(min_liq_units)?,
+                lock_duration_ms: lock_ms,
+            })
         }
 
         #[ink(message)]
@@ -714,15 +725,15 @@ mod listing_manager {
             test::default_accounts::<ink::env::DefaultEnvironment>()
         }
 
+        // Legacy default: 12-decimal fee token (preserves pre-fix magnitudes).
+        const D12: u128 = 1_000_000_000_000;
+        // Scaled tier-1 amounts at the legacy 12-dec scale, used as generic
+        // "valid amount" inputs by the pre-condition tests below.
+        const TIER1_FEE: Balance = TIER1_FEE_UNITS * D12;
+        const TIER1_MIN_LIQ: Balance = TIER1_MIN_LIQ_UNITS * D12;
+
         fn make_contract() -> ListingManager {
-            let accounts = default_accounts();
-            ListingManager::new(
-                accounts.alice,   // lunes_token
-                accounts.bob,     // liquidity_lock
-                accounts.charlie, // treasury
-                accounts.django,  // rewards_pool
-                accounts.eve,     // staking_pool
-            )
+            make_contract_with_decimals(12)
         }
 
         #[ink::test]
@@ -730,18 +741,69 @@ mod listing_manager {
             let contract = make_contract();
 
             let t1 = contract.tier_config(1).unwrap();
-            assert_eq!(t1.listing_fee, TIER1_FEE);
-            assert_eq!(t1.min_lunes_liq, TIER1_MIN_LIQ);
+            assert_eq!(t1.listing_fee, TIER1_FEE_UNITS * D12);
+            assert_eq!(t1.min_lunes_liq, TIER1_MIN_LIQ_UNITS * D12);
             assert_eq!(t1.lock_duration_ms, TIER1_LOCK_MS);
 
             let t2 = contract.tier_config(2).unwrap();
-            assert_eq!(t2.listing_fee, TIER2_FEE);
+            assert_eq!(t2.listing_fee, TIER2_FEE_UNITS * D12);
 
             let t3 = contract.tier_config(3).unwrap();
-            assert_eq!(t3.listing_fee, TIER3_FEE);
+            assert_eq!(t3.listing_fee, TIER3_FEE_UNITS * D12);
 
             assert_eq!(contract.tier_config(0), Err(Error::InvalidTier));
             assert_eq!(contract.tier_config(4), Err(Error::InvalidTier));
+        }
+
+        fn make_contract_with_decimals(decimals: u8) -> ListingManager {
+            let accounts = default_accounts();
+            ListingManager::new(
+                accounts.alice,
+                accounts.bob,
+                accounts.charlie,
+                accounts.django,
+                accounts.eve,
+                decimals,
+            )
+        }
+
+        #[ink::test]
+        fn tier_config_scales_fee_by_lunes_decimals_8() {
+            // WLUNES is an 8-decimal PSP22; the fee must scale to 8 decimals,
+            // not the old hardcoded 12 (which would 10_000x-overcharge).
+            let c = make_contract_with_decimals(8);
+            let t1 = c.tier_config(1).unwrap();
+            assert_eq!(t1.listing_fee, 1_000 * 100_000_000); // 1_000 * 10^8
+            assert_eq!(t1.min_lunes_liq, 10_000 * 100_000_000);
+        }
+
+        #[ink::test]
+        fn tier_config_scales_fee_by_lunes_decimals_12() {
+            // 12-decimal fee token preserves the legacy magnitude.
+            let c = make_contract_with_decimals(12);
+            assert_eq!(
+                c.tier_config(1).unwrap().listing_fee,
+                1_000 * 1_000_000_000_000
+            );
+            assert_eq!(
+                c.tier_config(2).unwrap().listing_fee,
+                5_000 * 1_000_000_000_000
+            );
+            assert_eq!(
+                c.tier_config(3).unwrap().listing_fee,
+                20_000 * 1_000_000_000_000
+            );
+            assert_eq!(
+                c.tier_config(3).unwrap().min_lunes_liq,
+                50_000 * 1_000_000_000_000
+            );
+        }
+
+        #[ink::test]
+        fn tier_config_scales_fee_by_lunes_decimals_6() {
+            let c = make_contract_with_decimals(6);
+            assert_eq!(c.tier_config(2).unwrap().listing_fee, 5_000 * 1_000_000);
+            // 5_000 * 10^6
         }
 
         #[ink::test]
@@ -878,9 +940,9 @@ mod listing_manager {
             assert_eq!(staking + treasury + rewards, fee);
 
             // Individual checks
-            assert_eq!(staking, 200 * DECIMALS); // 20% of 1000
-            assert_eq!(treasury, 500 * DECIMALS); // 50% of 1000
-            assert_eq!(rewards, 300 * DECIMALS); // 30% of 1000
+            assert_eq!(staking, 200 * D12); // 20% of 1000 (12-dec scale)
+            assert_eq!(treasury, 500 * D12); // 50% of 1000
+            assert_eq!(rewards, 300 * D12); // 30% of 1000
         }
 
         #[ink::test]
