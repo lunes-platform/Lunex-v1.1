@@ -260,20 +260,26 @@ impl WNativeRef {
             .map_err(|_| ink::env::Error::CalleeTrapped)
     }
 
-    /// Transfere WNative tokens
+    /// Transfere WNative tokens. WLUNES is a PSP22 token, so its `transfer`
+    /// uses the PSP22 selector (0xdb20f9f5) and takes a third `data: Vec<u8>`
+    /// argument. Using the default `transfer` selector with only (to, amount)
+    /// traps the callee, which surfaced as InsufficientOutputAmount in the
+    /// native swap path (swap_exact_native_for_tokens).
     pub fn transfer(
         wnative: AccountId,
         to: AccountId,
         amount: Balance,
     ) -> Result<(), ink::env::Error> {
+        let data: ink::prelude::vec::Vec<u8> = ink::prelude::vec::Vec::new();
         build_call::<DefaultEnvironment>()
             .call(wnative)
             .gas_limit(0)
             .transferred_value(0)
             .exec_input(
-                ExecutionInput::new(Selector::new(ink::selector_bytes!("transfer")))
+                ExecutionInput::new(Selector::new(ink::selector_bytes!("PSP22::transfer")))
                     .push_arg(to)
-                    .push_arg(amount),
+                    .push_arg(amount)
+                    .push_arg(data),
             )
             .returns::<Result<(), ()>>()
             .try_invoke()
