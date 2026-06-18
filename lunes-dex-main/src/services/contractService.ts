@@ -51,6 +51,7 @@ import PairABI from '../abis/Pair.json'
 import WNativeABI from '../abis/WNative.json'
 import StakingABI from '../abis/Staking.json'
 import { CONTRACTS } from '../config/contracts'
+import { isValidSubstrateAddress } from '../utils/address'
 import { normalizeReservesForPath } from '../utils/reserveUtils'
 
 // Network configuration — env vars override defaults so local dev node is used automatically
@@ -507,6 +508,11 @@ class ContractService {
     if (!this.api || !this.factoryContract) {
       throw new Error('Not connected or contracts not set')
     }
+    // Both legs must be valid AccountIds before they hit the contract layer,
+    // otherwise createType throws "Invalid base58" instead of returning "no pair".
+    if (!isValidSubstrateAddress(tokenA) || !isValidSubstrateAddress(tokenB)) {
+      return null
+    }
 
     try {
       const caller = tokenA // any valid address
@@ -740,6 +746,10 @@ class ContractService {
       throw new Error('Not connected or contracts not set')
     }
     if (path.length < 2) return null
+    // Guard against the native sentinel / unconfigured token addresses reaching
+    // createType('AccountId', …), which throws "Invalid base58". A bad address
+    // means there is simply no pair → surface as null (insufficient liquidity).
+    if (!path.every((addr) => isValidSubstrateAddress(addr))) return null
 
     try {
       const caller = path[0]
@@ -1060,6 +1070,421 @@ class ContractService {
       })
     } catch (error) {
       console.error('Error removing liquidity:', error)
+      throw error
+    }
+  }
+
+  // ========================================
+  // Native (LUNES) Router Methods
+  // ========================================
+  //
+  // LUNES is the native coin; pools trade the WLUNES wrapper. These methods let
+  // the user transact in native LUNES directly — the Router wraps/unwraps
+  // internally. The native amount rides as the call `value` on payable methods
+  // (no PSP22 approval for the native leg).
+
+  /**
+   * Swap an exact amount of native LUNES for tokens.
+   * ABI label: swap_exact_native_for_tokens → JS: swapExactNativeForTokens
+   * The native amount is the call value (not a positional arg). No approval.
+   */
+  async swapExactNativeForTokens(
+    amountIn: string,
+    amountOutMin: string,
+    path: string[],
+    to: string,
+    deadline: number,
+    account: InjectedAccountWithMeta
+  ): Promise<string | null> {
+    if (!this.api || !this.routerContract) {
+      throw new Error('Not connected or contracts not set')
+    }
+
+    try {
+      const injector = await web3FromAddress(account.address)
+      const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
+
+      const { gasRequired } =
+        await this.routerContract.query.swapExactNativeForTokens(
+          account.address,
+          { gasLimit: this.makeDryGas(), value: amountIn },
+          amountOutMin,
+          path,
+          to,
+          deadlineMs
+        )
+
+      return await new Promise((resolve, reject) => {
+        if (!this.routerContract) {
+          reject(new Error('Router not initialized'))
+          return
+        }
+        this.routerContract.tx
+          .swapExactNativeForTokens(
+            {
+              gasLimit: gasRequired,
+              storageDepositLimit: null,
+              value: amountIn
+            },
+            amountOutMin,
+            path,
+            to,
+            deadlineMs
+          )
+          .signAndSend(
+            account.address,
+            { signer: injector.signer },
+            (result: any) => {
+              if (result.dispatchError) {
+                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+              } else if (result.status.isFinalized) {
+                resolve(result.txHash.toHex())
+              }
+            }
+          )
+          .catch(reject)
+      })
+    } catch (error) {
+      console.error('Error executing native swap:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Swap an exact amount of tokens for native LUNES.
+   * ABI label: swap_exact_tokens_for_native → JS: swapExactTokensForNative
+   * Approves the input token (path[0]) before swapping.
+   */
+  async swapExactTokensForNative(
+    amountIn: string,
+    amountOutMin: string,
+    path: string[],
+    to: string,
+    deadline: number,
+    account: InjectedAccountWithMeta
+  ): Promise<string | null> {
+    if (!this.api || !this.routerContract) {
+      throw new Error('Not connected or contracts not set')
+    }
+
+    try {
+      const injector = await web3FromAddress(account.address)
+      const contracts = this.contracts
+      if (!contracts) throw new Error('Contracts not initialized')
+
+      const currentAllowance = await this.getAllowance(
+        path[0],
+        account.address,
+        contracts.router
+      )
+      const approved =
+        BigInt(currentAllowance) >= BigInt(amountIn) ||
+        (await this.approveToken(path[0], contracts.router, amountIn, account))
+      if (!approved) throw new Error('Failed to approve token')
+
+      const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
+
+      const { gasRequired } =
+        await this.routerContract.query.swapExactTokensForNative(
+          account.address,
+          { gasLimit: this.makeDryGas() },
+          amountIn,
+          amountOutMin,
+          path,
+          to,
+          deadlineMs
+        )
+
+      return await new Promise((resolve, reject) => {
+        if (!this.routerContract) {
+          reject(new Error('Router not initialized'))
+          return
+        }
+        this.routerContract.tx
+          .swapExactTokensForNative(
+            { gasLimit: gasRequired, storageDepositLimit: null },
+            amountIn,
+            amountOutMin,
+            path,
+            to,
+            deadlineMs
+          )
+          .signAndSend(
+            account.address,
+            { signer: injector.signer },
+            (result: any) => {
+              if (result.dispatchError) {
+                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+              } else if (result.status.isFinalized) {
+                resolve(result.txHash.toHex())
+              }
+            }
+          )
+          .catch(reject)
+      })
+    } catch (error) {
+      console.error('Error executing tokens-for-native swap:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Add liquidity with native LUNES + a token.
+   * ABI label: add_liquidity_native → JS: addLiquidityNative
+   * The native amount is the call value. Approves the token leg only.
+   */
+  async addLiquidityNative(
+    token: string,
+    amountTokenDesired: string,
+    amountNativeDesired: string,
+    amountTokenMin: string,
+    amountNativeMin: string,
+    to: string,
+    deadline: number,
+    account: InjectedAccountWithMeta
+  ): Promise<string | null> {
+    if (!this.api || !this.routerContract) {
+      throw new Error('Not connected or contracts not set')
+    }
+
+    try {
+      const injector = await web3FromAddress(account.address)
+      const contracts = this.contracts
+      if (!contracts) throw new Error('Contracts not initialized')
+
+      const allowance = await this.getAllowance(
+        token,
+        account.address,
+        contracts.router
+      )
+      if (BigInt(allowance) < BigInt(amountTokenDesired)) {
+        await this.approveToken(
+          token,
+          contracts.router,
+          amountTokenDesired,
+          account
+        )
+      }
+
+      const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
+
+      const { gasRequired, output: dryOutput } =
+        await this.routerContract.query.addLiquidityNative(
+          account.address,
+          { gasLimit: this.makeDryGas(), value: amountNativeDesired },
+          token,
+          amountTokenDesired,
+          amountTokenMin,
+          amountNativeMin,
+          to,
+          deadlineMs
+        )
+
+      if (dryOutput) {
+        const dryJson = (dryOutput as any).toJSON?.() as any
+        const dryErr = dryJson?.err ?? dryJson?.Err
+        if (dryErr !== undefined && dryErr !== null) {
+          const errName =
+            typeof dryErr === 'string' ? dryErr : JSON.stringify(dryErr)
+          throw new Error(`addLiquidityNative reverteria na chain: ${errName}`)
+        }
+      }
+
+      return await new Promise((resolve, reject) => {
+        if (!this.routerContract) {
+          reject(new Error('Router not initialized'))
+          return
+        }
+        this.routerContract.tx
+          .addLiquidityNative(
+            {
+              gasLimit: gasRequired,
+              storageDepositLimit: null,
+              value: amountNativeDesired
+            },
+            token,
+            amountTokenDesired,
+            amountTokenMin,
+            amountNativeMin,
+            to,
+            deadlineMs
+          )
+          .signAndSend(
+            account.address,
+            { signer: injector.signer },
+            (result: any) => {
+              if (result.dispatchError) {
+                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+              } else if (result.status.isFinalized) {
+                resolve(result.txHash.toHex())
+              }
+            }
+          )
+          .catch(reject)
+      })
+    } catch (error) {
+      console.error('Error adding native liquidity:', error)
+      throw error
+    }
+  }
+
+  /**
+   * Remove liquidity from a native (WLUNES/token) pair, receiving native LUNES.
+   * ABI label: remove_liquidity_native → JS: removeLiquidityNative
+   * Like removeLiquidity, the LP-token approval is handled by the caller
+   * (SDKContext) to avoid a nonce race from a second signAndSend here.
+   */
+  async removeLiquidityNative(
+    token: string,
+    liquidity: string,
+    amountTokenMin: string,
+    amountNativeMin: string,
+    to: string,
+    deadline: number,
+    account: InjectedAccountWithMeta
+  ): Promise<string | null> {
+    if (!this.api || !this.routerContract) {
+      throw new Error('Not connected or contracts not set')
+    }
+
+    try {
+      const injector = await web3FromAddress(account.address)
+      const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
+
+      const { gasRequired } =
+        await this.routerContract.query.removeLiquidityNative(
+          account.address,
+          { gasLimit: this.makeDryGas() },
+          token,
+          liquidity,
+          amountTokenMin,
+          amountNativeMin,
+          to,
+          deadlineMs
+        )
+
+      return await new Promise((resolve, reject) => {
+        if (!this.routerContract) {
+          reject(new Error('Router not initialized'))
+          return
+        }
+        this.routerContract.tx
+          .removeLiquidityNative(
+            { gasLimit: gasRequired, storageDepositLimit: null },
+            token,
+            liquidity,
+            amountTokenMin,
+            amountNativeMin,
+            to,
+            deadlineMs
+          )
+          .signAndSend(
+            account.address,
+            { signer: injector.signer },
+            (result: any) => {
+              if (result.dispatchError) {
+                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+              } else if (result.status.isFinalized) {
+                resolve(result.txHash.toHex())
+              }
+            }
+          )
+          .catch(reject)
+      })
+    } catch (error) {
+      console.error('Error removing native liquidity:', error)
+      throw error
+    }
+  }
+
+  // ========================================
+  // WNative Wrap / Unwrap (1:1, no fee)
+  // ========================================
+
+  /** Wrap native LUNES into WLUNES 1:1 (WNative.deposit, value = amount). */
+  async wrapNative(
+    amount: string,
+    account: InjectedAccountWithMeta
+  ): Promise<string | null> {
+    if (!this.api) throw new Error('Not connected to blockchain')
+    const waddr = this.contracts?.wnative || ''
+    const contract = this.getWNativeContract(waddr)
+    if (!contract) throw new Error('WNative contract not available')
+
+    try {
+      const injector = await web3FromAddress(account.address)
+
+      const { gasRequired } = await contract.query.deposit(account.address, {
+        gasLimit: this.makeDryGas(),
+        value: amount
+      })
+
+      return await new Promise((resolve, reject) => {
+        contract.tx
+          .deposit({
+            gasLimit: gasRequired,
+            storageDepositLimit: null,
+            value: amount
+          })
+          .signAndSend(
+            account.address,
+            { signer: injector.signer },
+            (result: any) => {
+              if (result.dispatchError) {
+                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+              } else if (result.status.isFinalized) {
+                resolve(result.txHash.toHex())
+              }
+            }
+          )
+          .catch(reject)
+      })
+    } catch (error) {
+      console.error('Error wrapping native:', error)
+      throw error
+    }
+  }
+
+  /** Unwrap WLUNES back to native LUNES 1:1 (WNative.withdraw(amount)). */
+  async unwrapNative(
+    amount: string,
+    account: InjectedAccountWithMeta
+  ): Promise<string | null> {
+    if (!this.api) throw new Error('Not connected to blockchain')
+    const waddr = this.contracts?.wnative || ''
+    const contract = this.getWNativeContract(waddr)
+    if (!contract) throw new Error('WNative contract not available')
+
+    try {
+      const injector = await web3FromAddress(account.address)
+
+      const { gasRequired } = await contract.query.withdraw(
+        account.address,
+        { gasLimit: this.makeDryGas() },
+        amount
+      )
+
+      return await new Promise((resolve, reject) => {
+        contract.tx
+          .withdraw(
+            { gasLimit: gasRequired, storageDepositLimit: null },
+            amount
+          )
+          .signAndSend(
+            account.address,
+            { signer: injector.signer },
+            (result: any) => {
+              if (result.dispatchError) {
+                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+              } else if (result.status.isFinalized) {
+                resolve(result.txHash.toHex())
+              }
+            }
+          )
+          .catch(reject)
+      })
+    } catch (error) {
+      console.error('Error unwrapping native:', error)
       throw error
     }
   }
