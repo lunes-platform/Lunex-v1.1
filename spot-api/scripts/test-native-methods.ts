@@ -219,13 +219,8 @@ async function main() {
   }
 
   // ── 6. removeLiquidityNative (→ receive LUNES) ────────────────────────────
-  // KNOWN-OPEN (contract bug, not cross-contract selector/args): the router's
-  // remove_liquidity_internal returns an amount_token ~256x the LUSDT it
-  // actually received from burn, so the subsequent token-leg transfer exceeds
-  // the router's balance and reverts. Diagnosed via the dry-run exposing
-  // (router_bal, amount_token). Kept non-fatal so the 5 working paths still pass.
   section('6. removeLiquidityNative — burn LP, receive native LUNES')
-  try {
+  {
     const lpBal = await balanceOf(pair, alice.address)
     const burn = lpBal / 4n // remove a quarter
     await send(
@@ -251,11 +246,9 @@ async function main() {
     const lpAfter = await balanceOf(pair, alice.address)
     if (lpBal - lpAfter !== burn) throw new Error('LP not burned correctly')
     ok(`LP -${burn} burned, received native LUNES ✓`)
-  } catch (e: any) {
-    console.log(`  ⚠️  KNOWN-OPEN removeLiquidityNative reverts: ${e.message}`)
   }
 
-  console.log('\n  ✅ NATIVE METHODS ON-CHAIN: 5/6 PASS (removeLiquidityNative open)\n')
+  console.log('\n  🎉 NATIVE METHODS ON-CHAIN: ALL 6 PASS\n')
   await api.disconnect()
 }
 

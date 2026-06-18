@@ -99,7 +99,11 @@ impl PairRef {
             .map_err(|_| ink::env::Error::CalleeTrapped)
     }
 
-    /// Chama burn no pair
+    /// Chama burn no pair.
+    /// O pair retorna `Result<(Balance, Balance), PairError>`; decodificar como
+    /// tupla nua consome o byte discriminante do `Ok` dentro do primeiro u128,
+    /// deslocando o valor em 8 bits (×256). Decodificar o Result corretamente
+    /// (terceiro map_err desfaz a camada interna) devolve os amounts reais.
     pub fn burn(pair: AccountId, to: AccountId) -> Result<(Balance, Balance), ink::env::Error> {
         build_call::<DefaultEnvironment>()
             .call(pair)
@@ -108,8 +112,9 @@ impl PairRef {
             .exec_input(
                 ExecutionInput::new(Selector::new(ink::selector_bytes!("burn"))).push_arg(to),
             )
-            .returns::<(Balance, Balance)>()
+            .returns::<Result<(Balance, Balance), ()>>()
             .try_invoke()
+            .map_err(|_| ink::env::Error::CalleeTrapped)?
             .map_err(|_| ink::env::Error::CalleeTrapped)?
             .map_err(|_| ink::env::Error::CalleeTrapped)
     }
