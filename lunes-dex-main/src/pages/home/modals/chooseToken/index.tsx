@@ -25,11 +25,16 @@ export type ChooseTokenProps = {
 const ChooseToken = ({ close, onSelect, tokens }: ChooseTokenProps) => {
   const [searchToken, setSearchToken] = useState('')
 
-  const searchItems = tokens.filter(
-    i =>
-      i.token.toLowerCase().indexOf(searchToken?.toLowerCase()) !== -1 ||
-      i.acronym.toLowerCase().indexOf(searchToken?.toLowerCase()) !== -1
-  )
+  const query = searchToken?.toLowerCase() ?? ''
+  const searchItems = tokens.filter(i => {
+    // Market-standard UX: the wrapped token (WLUNES) is hidden from the default
+    // list but revealed once the user explicitly searches for it.
+    if (!query) return i.acronym.toUpperCase() !== 'WLUNES'
+    return (
+      i.token.toLowerCase().indexOf(query) !== -1 ||
+      i.acronym.toLowerCase().indexOf(query) !== -1
+    )
+  })
 
   return (
     <Modal

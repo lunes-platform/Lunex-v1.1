@@ -1,3 +1,5 @@
+import { LUNES_TOKEN } from '../../../../utils/nativeToken'
+
 const TOKEN_ADDRESSES = {
   WLUNES:
     process.env.REACT_APP_TOKEN_WLUNES ||
@@ -82,12 +84,33 @@ const allTokens: Token[] = [
 // Token sem endereço configurado no env não pode aparecer na UI: selecioná-lo
 // produziria queries/aprovações contra address vazio, falhando de forma
 // confusa. Filtrar aqui é fail-closed e o warn aponta a env var que falta.
-const tokens: Token[] = allTokens.filter((t) => {
+const configuredTokens: Token[] = allTokens.filter((t) => {
   if (t.address) return true
   console.warn(
     `[tokenRegistry] ${t.acronym} sem endereço configurado (REACT_APP_TOKEN_${t.acronym}) — removido da lista de tokens`
   )
   return false
 })
+
+// Market-standard native/wrapped UX (ETH/WETH on Uniswap): the native coin
+// (LUNES) is the primary, default-listed asset; the wrapped token (WLUNES) is
+// hidden from the default list but stays reachable via search so Wrap/Unwrap
+// and Spot funding remain possible.
+const isWlunesEntry = (t: Token): boolean =>
+  t.acronym.toUpperCase() === 'WLUNES'
+
+/** Default selectable list: native LUNES first, WLUNES omitted. */
+const tokens: Token[] = [
+  LUNES_TOKEN,
+  ...configuredTokens.filter((t) => !isWlunesEntry(t))
+]
+
+/** Full list including WLUNES — used by the token selector's search so the
+ *  wrapped token can still be found and selected when explicitly searched. */
+export const searchableTokens: Token[] = [
+  LUNES_TOKEN,
+  ...configuredTokens.filter((t) => !isWlunesEntry(t)),
+  ...configuredTokens.filter(isWlunesEntry)
+]
 
 export default tokens

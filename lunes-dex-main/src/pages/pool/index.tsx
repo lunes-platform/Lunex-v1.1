@@ -8,6 +8,7 @@ import TradeSubNav from '../../components/tradeSubNav'
 import TokenIcon from '../../components/TokenIcon'
 import { TOKENS, LP_TOKEN_DECIMALS } from '../../config/contracts'
 import { useToast } from '../../components/feedback/ToastProvider'
+import { NATIVE_SENTINEL, isLunes } from '../../utils/nativeToken'
 
 const ProBanner = styled.button`
   display: flex;
@@ -64,6 +65,15 @@ const ProBannerArrow = styled.span`
 `
 
 const availableTokens = [
+  {
+    // Native LUNES is the primary, default LP asset; the Router wraps it to
+    // WLUNES internally (add_liquidity_native). WLUNES stays selectable below.
+    address: NATIVE_SENTINEL,
+    symbol: 'LUNES',
+    name: 'Lunes',
+    decimals: 8,
+    icon: '/img/lunes.svg'
+  },
   {
     address: TOKENS.WLUNES,
     symbol: 'WLUNES',
@@ -421,6 +431,8 @@ const Pool: React.FC = () => {
   const [showTokenSelectA, setShowTokenSelectA] = useState(false)
   const [showTokenSelectB, setShowTokenSelectB] = useState(false)
   const [lpAmountToRemove, setLpAmountToRemove] = useState('')
+  // Receive-as choice when one side is native: LUNES (default) or WLUNES.
+  const [receiveAsNative, setReceiveAsNative] = useState(true)
   const [balanceA, setBalanceA] = useState<string | null>(null)
   const [balanceB, setBalanceB] = useState<string | null>(null)
 
@@ -450,8 +462,10 @@ const Pool: React.FC = () => {
       setBalanceA(null)
       return
     }
-    sdk
-      .getTokenBalance(liquidity.tokenA.address, sdk.walletAddress)
+    const fetchA = isLunes(liquidity.tokenA)
+      ? sdk.getNativeBalance(sdk.walletAddress)
+      : sdk.getTokenBalance(liquidity.tokenA.address, sdk.walletAddress)
+    fetchA
       .then(raw =>
         setBalanceA(sdk.formatAmount(raw, liquidity.tokenA!.decimals))
       )
@@ -463,8 +477,10 @@ const Pool: React.FC = () => {
       setBalanceB(null)
       return
     }
-    sdk
-      .getTokenBalance(liquidity.tokenB.address, sdk.walletAddress)
+    const fetchB = isLunes(liquidity.tokenB)
+      ? sdk.getNativeBalance(sdk.walletAddress)
+      : sdk.getTokenBalance(liquidity.tokenB.address, sdk.walletAddress)
+    fetchB
       .then(raw =>
         setBalanceB(sdk.formatAmount(raw, liquidity.tokenB!.decimals))
       )
@@ -494,7 +510,10 @@ const Pool: React.FC = () => {
   const handleRemoveLiquidity = async () => {
     if (!lpAmountToRemove) return
     toast.info('Aguardando confirmação da aprovação...')
-    const success = await liquidity.removeLiquidity(lpAmountToRemove)
+    const success = await liquidity.removeLiquidity(
+      lpAmountToRemove,
+      receiveAsNative
+    )
     if (success) {
       toast.success('Liquidity removed successfully')
       setLpAmountToRemove('')
@@ -714,6 +733,29 @@ const Pool: React.FC = () => {
                   )}
                 </span>
               </InfoRow>
+            </PoolInfoContainer>
+          )}
+
+          {/* Receive-as toggle — only when one side is native LUNES */}
+          {(isLunes(liquidity.tokenA) || isLunes(liquidity.tokenB)) && (
+            <PoolInfoContainer>
+              <InfoRow>
+                <span>Receive native side as</span>
+              </InfoRow>
+              <TabContainer>
+                <Tab
+                  active={receiveAsNative}
+                  onClick={() => setReceiveAsNative(true)}
+                >
+                  LUNES
+                </Tab>
+                <Tab
+                  active={!receiveAsNative}
+                  onClick={() => setReceiveAsNative(false)}
+                >
+                  WLUNES
+                </Tab>
+              </TabContainer>
             </PoolInfoContainer>
           )}
 

@@ -7,10 +7,13 @@ import FooterTag from 'components/FooterTag'
 import TradeSubNav from '../../components/tradeSubNav'
 //Modals
 import * as M from './modals'
-import tokens from './modals/chooseToken/tokenRegistry'
+import tokens, {
+  searchableTokens
+} from './modals/chooseToken/tokenRegistry'
 import useSelectOptions from 'hooks/useSelectOptions'
 import { Option } from 'context/useContext'
 import { useSDK } from '../../context/SDKContext'
+import { classifyTrade, isLunes, toRoutingAddress } from '../../utils/nativeToken'
 
 const Home = () => {
   // SDK Integration
@@ -78,17 +81,35 @@ const Home = () => {
     try {
       const decimals = selectedOption1.decimals || 8
       const amountInWei = sdk.parseAmount(inputValue1, decimals)
+      const outputDecimals = selectedOption2.decimals || 8
 
+      // LUNES <-> WLUNES is a 1:1 wrap/unwrap — no pool, no quote, no slippage.
+      const trade = classifyTrade(selectedOption1, selectedOption2)
+      if (trade.kind === 'wrap' || trade.kind === 'unwrap') {
+        setQuote({
+          amountOut: amountInWei,
+          executionPrice: '1',
+          priceImpact: '0',
+          minimumReceived: amountInWei
+        })
+        setOutputAmount(inputValue1)
+        setInputValue2(inputValue1)
+        setPriceImpact('0')
+        setMinimumReceived(inputValue1)
+        return
+      }
+
+      // Pools trade WLUNES/X — route the native sentinel through the WLUNES
+      // address so the quote hits the real pair.
       const quoteResult = await sdk.getQuote(
         amountInWei,
-        [selectedOption1.address, selectedOption2.address],
+        [toRoutingAddress(selectedOption1), toRoutingAddress(selectedOption2)],
         decimals,
-        selectedOption2.decimals || 8
+        outputDecimals
       )
 
       if (quoteResult) {
         setQuote(quoteResult)
-        const outputDecimals = selectedOption2.decimals || 8
         setOutputAmount(sdk.formatAmount(quoteResult.amountOut, outputDecimals))
         setPriceImpact(quoteResult.priceImpact || '0')
         setMinimumReceived(
@@ -116,16 +137,13 @@ const Home = () => {
 
       const balances: { [key: string]: string } = {}
       for (const token of tokens) {
-        if (token.address) {
-          const balance = await sdk.getTokenBalance(
-            token.address,
-            sdk.walletAddress
-          )
-          balances[token.address] = sdk.formatAmount(
-            balance,
-            token.decimals || 8
-          )
-        }
+        if (!token.address) continue
+        // LUNES is the native coin — read the on-chain account balance, not a
+        // PSP22 balanceOf (its sentinel address has no token contract).
+        const balance = isLunes(token)
+          ? await sdk.getNativeBalance(sdk.walletAddress)
+          : await sdk.getTokenBalance(token.address, sdk.walletAddress)
+        balances[token.address] = sdk.formatAmount(balance, token.decimals || 8)
       }
       setTokenBalances(balances)
     }
@@ -154,15 +172,26 @@ const Home = () => {
     try {
       const decimals = selectedOption1.decimals || 8
       const amountInWei = sdk.parseAmount(inputValue1, decimals)
-      const amountOutMinWei = sdk.calculateMinAmount(quote.amountOut, slippage)
+      const trade = classifyTrade(selectedOption1, selectedOption2)
+      // Wrap/unwrap is 1:1 — the "min out" is exactly the input.
+      const amountOutMinWei =
+        trade.kind === 'wrap' || trade.kind === 'unwrap'
+          ? amountInWei
+          : sdk.calculateMinAmount(quote.amountOut, slippage)
       const deadlineTs = sdk.calculateDeadline(deadline)
 
       const success = await sdk.executeSwap({
         amountIn: amountInWei,
         amountOutMin: amountOutMinWei,
-        path: [selectedOption1.address, selectedOption2.address],
+        // Pools trade WLUNES/X — pass routing addresses, never the native sentinel.
+        path: [
+          toRoutingAddress(selectedOption1),
+          toRoutingAddress(selectedOption2)
+        ],
         to: sdk.walletAddress,
-        deadline: deadlineTs
+        deadline: deadlineTs,
+        fromToken: selectedOption1,
+        toToken: selectedOption2
       })
 
       if (success) {
@@ -187,6 +216,18 @@ const Home = () => {
     setDeadline(newDeadline)
     setModal('null')
   }
+
+  // LUNES<->WLUNES is a wrap/unwrap action, not a swap — relabel the button.
+  const tradeKind =
+    selectedOption1 && selectedOption2
+      ? classifyTrade(selectedOption1, selectedOption2).kind
+      : 'swap'
+  const actionLabel =
+    tradeKind === 'wrap'
+      ? 'Wrap'
+      : tradeKind === 'unwrap'
+        ? 'Unwrap'
+        : 'Swap tokens'
 
   return (
     <B.Container height="100vh" padding="80px 8px">
@@ -371,14 +412,14 @@ const Home = () => {
                 ? 'Enter an amount'
                 : !quote
                   ? 'Loading quote...'
-                  : 'Swap tokens'}
+                  : actionLabel}
         </B.Button>
       </S.Box>
       <FooterTag />
 
       {modal === 'chooseToken' && (
         <M.ChooseToken
-          tokens={tokens}
+          tokens={searchableTokens}
           onSelect={handleSelectOption}
           close={() => setModal('null')}
         />

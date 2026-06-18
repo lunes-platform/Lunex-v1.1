@@ -13,6 +13,10 @@ import type { PairInfo } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
 import { normalizeReservesForPath } from '../utils/reserveUtils'
+import { classifyTrade } from '../utils/nativeToken'
+
+/** Minimal token shape needed to classify a trade (native vs wrapped). */
+type TradeToken = { acronym?: string; address?: string; isNative?: boolean }
 
 interface Quote {
   amountOut: string
@@ -28,6 +32,10 @@ interface SwapParams {
   path: string[]
   to: string
   deadline: number
+  // Optional display tokens; when present the swap is classified into a native
+  // swap / wrap / unwrap and routed to the matching Router/WNative call.
+  fromToken?: TradeToken
+  toToken?: TradeToken
 }
 
 interface LiquidityParams {
@@ -39,6 +47,9 @@ interface LiquidityParams {
   amountBMin: string
   to: string
   deadline: number
+  // When the user adds native LUNES, which side it is. The opposite side is the
+  // PSP22 token leg; the native amount rides as the call value (add_liquidity_native).
+  nativeSide?: 'A' | 'B'
 }
 
 interface RemoveLiquidityParams {
@@ -49,6 +60,9 @@ interface RemoveLiquidityParams {
   amountBMin: string
   to: string
   deadline: number
+  // When set, that side is withdrawn as native LUNES (remove_liquidity_native).
+  // Undefined keeps the default behaviour: both sides out as PSP22 (WLUNES).
+  receiveNativeSide?: 'A' | 'B'
 }
 
 interface TokenInfo {
@@ -130,6 +144,7 @@ interface SDKContextState {
   // Funções de Token
   getTokenInfo: (address: string) => Promise<TokenInfo | null>
   getTokenBalance: (token: string, account: string) => Promise<string>
+  getNativeBalance: (account: string) => Promise<string>
 
   // Utilitários
   formatAmount: (amount: string, decimals: number) => string
@@ -490,39 +505,64 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       setError(null)
 
       try {
-        // 1. Check Allowance
-        const tokenIn = params.path[0]
-        const routerAddress = CONTRACT_ADDRESSES.router
+        // Classify the trade from the display tokens (LUNES vs WLUNES vs other).
+        // Each branch's contractService method owns its own approval, so there
+        // is no generic pre-approve here (a duplicate approve would waste a
+        // nonce and risk a "bad signature" race).
+        const trade =
+          params.fromToken && params.toToken
+            ? classifyTrade(params.fromToken, params.toToken)
+            : ({
+                kind: 'swap',
+                method: 'swapExactTokensForTokens',
+                needsApprove: true
+              } as const)
 
-        const allowance = await contractService.getAllowance(
-          tokenIn,
-          walletAddress,
-          routerAddress
-        )
-        const amountInBN = BigInt(params.amountIn)
-        const allowanceBN = BigInt(allowance)
+        let txHash: string | null = null
 
-        if (allowanceBN < amountInBN) {
-          if (process.env.NODE_ENV !== 'production')
-            console.log('Insufficient allowance. Approving...')
-          const approved = await contractService.approveToken(
-            tokenIn,
-            routerAddress,
-            params.amountIn, // Approve exact amount or infinite? Using exact for safety
+        if (trade.kind === 'wrap') {
+          // LUNES → WLUNES: 1:1 deposit, no Router, no slippage.
+          txHash = await contractService.wrapNative(
+            params.amountIn,
             currentAccount
           )
-          if (!approved) throw new Error('Token approval failed')
+        } else if (trade.kind === 'unwrap') {
+          // WLUNES → LUNES: 1:1 withdraw.
+          txHash = await contractService.unwrapNative(
+            params.amountIn,
+            currentAccount
+          )
+        } else if (trade.method === 'swapExactNativeForTokens') {
+          // LUNES → token: native rides as call value, no token approval.
+          txHash = await contractService.swapExactNativeForTokens(
+            params.amountIn,
+            params.amountOutMin,
+            params.path,
+            params.to,
+            params.deadline,
+            currentAccount
+          )
+        } else if (trade.method === 'swapExactTokensForNative') {
+          // token → LUNES: contractService approves the input token internally.
+          txHash = await contractService.swapExactTokensForNative(
+            params.amountIn,
+            params.amountOutMin,
+            params.path,
+            params.to,
+            params.deadline,
+            currentAccount
+          )
+        } else {
+          // token → token: approves path[0] internally.
+          txHash = await contractService.swapExactTokensForTokens(
+            params.amountIn,
+            params.amountOutMin,
+            params.path,
+            params.to,
+            params.deadline,
+            currentAccount
+          )
         }
-
-        // 2. Execute Swap
-        const txHash = await contractService.swapExactTokensForTokens(
-          params.amountIn,
-          params.amountOutMin,
-          params.path,
-          params.to,
-          params.deadline,
-          currentAccount
-        )
 
         if (process.env.NODE_ENV !== 'production')
           console.log('Swap executed! Tx Hash:', txHash)
@@ -557,6 +597,40 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       try {
         const routerAddress = CONTRACT_ADDRESSES.router
+
+        // Native add: only the token leg needs approval; the native amount is
+        // attached as the call value by addLiquidityNative (which approves the
+        // token leg internally).
+        if (params.nativeSide) {
+          const tokenAddr =
+            params.nativeSide === 'A' ? params.tokenB : params.tokenA
+          const tokenDesired =
+            params.nativeSide === 'A'
+              ? params.amountBDesired
+              : params.amountADesired
+          const tokenMin =
+            params.nativeSide === 'A' ? params.amountBMin : params.amountAMin
+          const nativeDesired =
+            params.nativeSide === 'A'
+              ? params.amountADesired
+              : params.amountBDesired
+          const nativeMin =
+            params.nativeSide === 'A' ? params.amountAMin : params.amountBMin
+
+          const txHash = await contractService.addLiquidityNative(
+            tokenAddr,
+            tokenDesired,
+            nativeDesired,
+            tokenMin,
+            nativeMin,
+            params.to,
+            params.deadline,
+            currentAccount
+          )
+          if (process.env.NODE_ENV !== 'production')
+            console.log('Native liquidity added! Tx Hash:', txHash)
+          return true
+        }
 
         // 1. Check/Approve Token A
         const allowanceA = await contractService.getAllowance(
@@ -652,17 +726,40 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
           )
         }
 
-        // 3. Execute Remove
-        const txHash = await contractService.removeLiquidity(
-          params.tokenA,
-          params.tokenB,
-          params.liquidity,
-          params.amountAMin,
-          params.amountBMin,
-          params.to,
-          params.deadline,
-          currentAccount
-        )
+        // 3. Execute Remove — native variant returns one side as LUNES.
+        let txHash: string | null
+        if (params.receiveNativeSide) {
+          const tokenAddr =
+            params.receiveNativeSide === 'A' ? params.tokenB : params.tokenA
+          const tokenMin =
+            params.receiveNativeSide === 'A'
+              ? params.amountBMin
+              : params.amountAMin
+          const nativeMin =
+            params.receiveNativeSide === 'A'
+              ? params.amountAMin
+              : params.amountBMin
+          txHash = await contractService.removeLiquidityNative(
+            tokenAddr,
+            params.liquidity,
+            tokenMin,
+            nativeMin,
+            params.to,
+            params.deadline,
+            currentAccount
+          )
+        } else {
+          txHash = await contractService.removeLiquidity(
+            params.tokenA,
+            params.tokenB,
+            params.liquidity,
+            params.amountAMin,
+            params.amountBMin,
+            params.to,
+            params.deadline,
+            currentAccount
+          )
+        }
 
         if (process.env.NODE_ENV !== 'production')
           console.log('Liquidity removed! Tx Hash:', txHash)
@@ -935,6 +1032,19 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
+  // Obter Balance nativo (LUNES) — saldo da conta na chain, em plancks (raw)
+  const getNativeBalance = async (account: string): Promise<string> => {
+    try {
+      if (!contractService.getIsConnected()) {
+        await contractService.connect(NETWORK)
+      }
+      return await contractService.getNativeBalance(account)
+    } catch (err) {
+      console.error('Error getting native balance:', err)
+      return '0'
+    }
+  }
+
   // Utilitários
   const formatAmount = (amount: string, decimals: number): string => {
     if (!amount) return '0'
@@ -1022,6 +1132,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       getListingStats,
       getTokenInfo,
       getTokenBalance,
+      getNativeBalance,
       formatAmount,
       parseAmount,
       calculateDeadline,

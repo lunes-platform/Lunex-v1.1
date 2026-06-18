@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSDK, parseBlockchainError } from '../context/SDKContext'
 import { humanPrice } from '../utils/reserveUtils'
 import { LP_TOKEN_DECIMALS } from '../config/contracts'
+import { isLunes, toRoutingAddress } from '../utils/nativeToken'
 
 interface Token {
   address: string
@@ -40,7 +41,7 @@ interface UseLiquidityReturn {
   setAmountB: (amount: string) => void
   setSlippage: (slippage: number) => void
   addLiquidity: () => Promise<boolean>
-  removeLiquidity: (lpAmount: string) => Promise<boolean>
+  removeLiquidity: (lpAmount: string, receiveNative?: boolean) => Promise<boolean>
   refreshPoolInfo: () => Promise<void>
 }
 
@@ -68,7 +69,11 @@ const useLiquidity = (): UseLiquidityReturn => {
     setError(null)
 
     try {
-      const pairInfo = await sdk.getPairInfo(tokenA.address, tokenB.address)
+      // Pools trade WLUNES/X — route the native sentinel to the WLUNES address
+      // so pair lookups (and price math) hit the real on-chain pair.
+      const routedA = toRoutingAddress(tokenA)
+      const routedB = toRoutingAddress(tokenB)
+      const pairInfo = await sdk.getPairInfo(routedA, routedB)
 
       if (pairInfo) {
         // Calcular preços e share
@@ -97,19 +102,19 @@ const useLiquidity = (): UseLiquidityReturn => {
 
         if (reserve0 > BigInt(0) && reserve1 > BigInt(0) && tokenA && tokenB) {
           const pairToken0 =
-            (await sdk.getPairToken0(pairInfo.address)) ?? tokenA.address
+            (await sdk.getPairToken0(pairInfo.address)) ?? routedA
           const decimals0 =
-            pairToken0.toLowerCase() === tokenA.address.toLowerCase()
+            pairToken0.toLowerCase() === routedA.toLowerCase()
               ? tokenA.decimals
               : tokenB.decimals
           const decimals1 =
-            pairToken0.toLowerCase() === tokenA.address.toLowerCase()
+            pairToken0.toLowerCase() === routedA.toLowerCase()
               ? tokenB.decimals
               : tokenA.decimals
 
           token0Price = humanPrice(
             pairToken0,
-            tokenA.address,
+            routedA,
             pairInfo.reserve0,
             pairInfo.reserve1,
             decimals0,
@@ -117,7 +122,7 @@ const useLiquidity = (): UseLiquidityReturn => {
           ).toString()
           token1Price = humanPrice(
             pairToken0,
-            tokenB.address,
+            routedB,
             pairInfo.reserve0,
             pairInfo.reserve1,
             decimals0,
@@ -192,15 +197,24 @@ const useLiquidity = (): UseLiquidityReturn => {
       const amountBMin = sdk.calculateMinAmount(amountBWei, slippage)
       const deadline = sdk.calculateDeadline(20)
 
+      // Route the native sentinel to WLUNES and flag which side is native so
+      // the SDK uses add_liquidity_native (native amount attached as value).
+      const nativeSide = isLunes(tokenA)
+        ? 'A'
+        : isLunes(tokenB)
+          ? 'B'
+          : undefined
+
       const result = await sdk.addLiquidity({
-        tokenA: tokenA.address,
-        tokenB: tokenB.address,
+        tokenA: toRoutingAddress(tokenA),
+        tokenB: toRoutingAddress(tokenB),
         amountADesired: amountAWei,
         amountBDesired: amountBWei,
         amountAMin,
         amountBMin,
         to: sdk.walletAddress,
-        deadline
+        deadline,
+        nativeSide
       })
 
       if (result) {
@@ -222,7 +236,7 @@ const useLiquidity = (): UseLiquidityReturn => {
 
   // Remover liquidez
   const removeLiquidity = useCallback(
-    async (lpAmount: string): Promise<boolean> => {
+    async (lpAmount: string, receiveNative = true): Promise<boolean> => {
       if (!tokenA || !tokenB || !lpAmount || !poolInfo) {
         setError('Invalid parameters')
         return false
@@ -260,14 +274,27 @@ const useLiquidity = (): UseLiquidityReturn => {
           slippage
         )
 
+        // If a side is native LUNES and the user opted to receive native,
+        // withdraw that side as LUNES (remove_liquidity_native); otherwise both
+        // sides come out as PSP22 (WLUNES).
+        const aIsNative = isLunes(tokenA)
+        const bIsNative = isLunes(tokenB)
+        const receiveNativeSide =
+          receiveNative && aIsNative
+            ? 'A'
+            : receiveNative && bIsNative
+              ? 'B'
+              : undefined
+
         const result = await sdk.removeLiquidity({
-          tokenA: tokenA.address,
-          tokenB: tokenB.address,
+          tokenA: toRoutingAddress(tokenA),
+          tokenB: toRoutingAddress(tokenB),
           liquidity: lpAmountRaw,
           amountAMin,
           amountBMin,
           to: sdk.walletAddress,
-          deadline
+          deadline,
+          receiveNativeSide
         })
 
         if (result) {
