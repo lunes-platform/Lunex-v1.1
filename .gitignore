@@ -20,6 +20,12 @@ build/
 .env
 .env.backup*
 **/.env.backup*
+.env.bak*
+**/.env.bak*
+.env.*-bak
+**/.env.*-bak
+.env.wave*-bak
+**/.env.wave*-bak
 .env.local
 .env.development
 .env.production
@@ -68,6 +74,18 @@ docker/ssl/
 coverage/
 .nyc_output/
 *.lcov
+
+# ── QA screenshots / test artifacts (local only) ──
+*-shots*/
+**/lunex-test-shots/
+**/lunex-test-reports/
+.tmp-snap.txt
+.tmp-*
+
+# ── Local backups & deploy state (not for VCS) ──
+*.bak.*
+**/*.bak.*
+deployment/remaining-deploy-*.json
 
 # ── Miscellaneous ──
 *.tgz
