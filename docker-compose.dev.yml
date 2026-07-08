@@ -141,21 +141,35 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       LUNES_WS_URL: ws://host.docker.internal:9944
-      START_BLOCK: "1"
+      # LUNES_START_BLOCK comes from env_file (docker/.env.docker).
+      # Set to chain_head-50 when the node runs without --state-pruning=archive.
     volumes:
       - ./subquery-node:/app
     command:
       - -f=/app
       - --db-schema=subquery
+      # Catch-up tuning: workers parallelize fetch+process so a single WS
+      # endpoint is not hammered sequentially (which caused the connection
+      # pool to suspend the only endpoint -> restart loop). Larger batch
+      # reduces round-trips to the dev node.
+      # Block FETCH (not processing) is the bottleneck against the single dev
+      # WS endpoint. workers=2 parallelizes fetch without over-subscribing the
+      # one socket (workers=4+ risks the "all endpoints suspended" restart loop
+      # that the original batch-size=5 setup hit). batch-size=20 cuts round-trips.
+      - --batch-size=20
       - --workers=2
-      - --batch-size=50
-      - --unfinalized-blocks=true
+      # Per-block sandbox timeout. A handler that queries on-chain state over
+      # the single dev WS can exceed the 30s I first tried; give it ample room.
+      - --timeout=1800
+      # historical stays disabled: forward-only is healthy, rewinds already
+      # done, and enabling it would force a full reindex from scratch.
+      - --historical=false
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/ready"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 60s
+      retries: 15
+      start_period: 90s
     ports:
       - "3010:3000"
 

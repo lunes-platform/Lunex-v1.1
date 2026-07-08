@@ -67,19 +67,22 @@ async function main() {
   // Deployed contracts on the local testnet (PSP22)
   const LUSDT =
     process.env.LUSDT_ADDRESS ||
-    '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf';
+    '5Egj7551Wf9MmA4eyA33nVSVdekjR9e1QVjFYmneW4jHcxgt';
+  const WLUNES =
+    process.env.WLUNES_ADDRESS ||
+    '5FukBZsPyFqDf6VbfZ9Q3FJ5dRNJ5EPYYosZdFNiTUthjAGq';
   const LBTC =
     process.env.LBTC_ADDRESS ||
-    '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg';
+    '5Cnc1LKaLZdmLVYiqkUbewgZavAXxxjDR24SWbzQf7QoP4bw';
   const LETH =
     process.env.LETH_ADDRESS ||
-    '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS';
+    '5E6cx5MP9sPSYtLyjWtXFgzMRtAhKLerrghjL8idcywR8Fpe';
   const GMC =
     process.env.GMC_ADDRESS ||
-    '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ';
+    '5FnUADEruNksYXSxv87ppXTFgoHkjMcxWM4ZsqT5VuCV2MYM';
   const LUP =
     process.env.LUP_ADDRESS ||
-    '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3';
+    '5FW8HdYha25JwzdMcdBy9dgW7uwNwxbhv4R1h6o5V8k3fqzu';
   const LEANDRO_SANDER_ADDRESS =
     process.env.LEADER_LEANDRO_SANDER_ADDRESS ||
     '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
@@ -100,6 +103,19 @@ async function main() {
       baseDecimals: 8,
       quoteDecimals: 6,
       isNativeBase: true,
+      isNativeQuote: false,
+      makerFeeBps: 10,
+      takerFeeBps: 25,
+    },
+    {
+      symbol: 'WLUNES/LUSDT',
+      baseToken: WLUNES,
+      quoteToken: LUSDT,
+      baseName: 'WLUNES',
+      quoteName: 'LUSDT',
+      baseDecimals: 8,
+      quoteDecimals: 6,
+      isNativeBase: false,
       isNativeQuote: false,
       makerFeeBps: 10,
       takerFeeBps: 25,
