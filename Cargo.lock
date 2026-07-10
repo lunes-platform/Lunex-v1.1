@@ -4862,6 +4862,7 @@ dependencies = [
  "ink",
  "parity-scale-codec",
  "scale-info",
+ "secp256k1 0.27.0",
 ]
 
 [[package]]

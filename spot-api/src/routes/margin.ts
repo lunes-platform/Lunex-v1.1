@@ -9,6 +9,7 @@ import {
   MarginLiquidatePositionSchema,
 } from '../utils/validation';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -28,7 +29,10 @@ const MarginOverviewReadSchema = z.object({
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = MarginOverviewReadSchema.safeParse(req.query);
+    const parsed = MarginOverviewReadSchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success) {
       return res
         .status(400)

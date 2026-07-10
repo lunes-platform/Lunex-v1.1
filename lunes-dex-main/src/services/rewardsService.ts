@@ -1,10 +1,9 @@
 import {
   buildWalletActionMessage,
-  createSignedActionMetadata
+  createSignedActionMetadata,
+  signedAuthHeaders
 } from '../utils/signing'
-
-const REWARDS_API_URL =
-  process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
+import { SPOT_API_URL } from '../config/api'
 
 export interface TradingRewardEntry {
   id: string
@@ -71,7 +70,7 @@ export interface RewardRankingsResponse {
 }
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${REWARDS_API_URL}${path}`, {
+  const response = await fetch(`${SPOT_API_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(options?.headers ?? {})
@@ -152,14 +151,10 @@ const rewardsApi = {
       address,
       signMessage
     )
-    const query = toQueryString({
-      address,
-      nonce: auth.nonce,
-      timestamp: auth.timestamp,
-      signature: auth.signature
-    })
+    const query = toQueryString({ address })
     const data = await fetchApi<{ pending: PendingTradingRewardsSummary }>(
-      `/api/v1/rewards/pending${query}`
+      `/api/v1/rewards/pending${query}`,
+      { headers: signedAuthHeaders(auth) }
     )
 
     return data.pending

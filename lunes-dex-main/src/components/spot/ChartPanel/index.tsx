@@ -41,12 +41,25 @@ const Controls = styled.div`
   gap: 4px;
   padding: 10px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+
+  /* Prevent timeframe buttons from overlapping on narrow viewports:
+     scroll horizontally within the toolbar instead of clipping. */
+  @media (max-width: 900px) {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
 `
 
 const TfButton = styled.button<{ active?: boolean }>`
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
+  flex-shrink: 0;
   font-size: 12px;
   font-weight: 600;
   font-family: 'Space Grotesk', sans-serif;
@@ -192,10 +205,6 @@ const LINE_COLORS = {
   stopLoss: '#FF4B55' // Red
 }
 
-const DEFAULT_ENTRY = 0.02345
-const DEFAULT_TP = 0.025
-const DEFAULT_SL = 0.022
-
 const OfflineBanner = styled.div`
   position: absolute;
   inset: 0;
@@ -229,9 +238,9 @@ const ChartPanel: React.FC = () => {
   const [isOffline, setIsOffline] = useState(false)
   const [noData, setNoData] = useState(false)
   const [tradeLines, setTradeLines] = useState<TradeLines>({
-    entry: { enabled: false, price: DEFAULT_ENTRY },
-    takeProfit: { enabled: false, price: DEFAULT_TP },
-    stopLoss: { enabled: false, price: DEFAULT_SL }
+    entry: { enabled: false, price: 0 },
+    takeProfit: { enabled: false, price: 0 },
+    stopLoss: { enabled: false, price: 0 }
   })
   const { selectedPair } = useSpot()
 
@@ -260,9 +269,11 @@ const ChartPanel: React.FC = () => {
       }
       // API online but no trades executed yet
       return { data: [], offline: false }
-    } catch {
-      // API unreachable — show offline banner
-      return { data: [], offline: true }
+    } catch (err) {
+      // Só falha de rede (fetch lança TypeError) significa API offline.
+      // Resposta HTTP de erro (ex.: 404 par não cadastrado) = API online,
+      // sem dados para este par — senão o banner mente o diagnóstico.
+      return { data: [], offline: err instanceof TypeError }
     }
   }, [selectedPair, activeTimeframe])
 
@@ -375,7 +386,7 @@ const ChartPanel: React.FC = () => {
     // Helper to create a price line
     const lines: any[] = []
 
-    if (tradeLines.entry.enabled) {
+    if (tradeLines.entry.enabled && tradeLines.entry.price > 0) {
       const line = series.createPriceLine({
         price: tradeLines.entry.price,
         color: LINE_COLORS.entry,
@@ -387,7 +398,7 @@ const ChartPanel: React.FC = () => {
       lines.push(line)
     }
 
-    if (tradeLines.takeProfit.enabled) {
+    if (tradeLines.takeProfit.enabled && tradeLines.takeProfit.price > 0) {
       const line = series.createPriceLine({
         price: tradeLines.takeProfit.price,
         color: LINE_COLORS.takeProfit,
@@ -399,7 +410,7 @@ const ChartPanel: React.FC = () => {
       lines.push(line)
     }
 
-    if (tradeLines.stopLoss.enabled) {
+    if (tradeLines.stopLoss.enabled && tradeLines.stopLoss.price > 0) {
       const line = series.createPriceLine({
         price: tradeLines.stopLoss.price,
         color: LINE_COLORS.stopLoss,
@@ -441,9 +452,9 @@ const ChartPanel: React.FC = () => {
 
   const clearAll = useCallback(() => {
     setTradeLines({
-      entry: { enabled: false, price: DEFAULT_ENTRY },
-      takeProfit: { enabled: false, price: DEFAULT_TP },
-      stopLoss: { enabled: false, price: DEFAULT_SL }
+      entry: { enabled: false, price: 0 },
+      takeProfit: { enabled: false, price: 0 },
+      stopLoss: { enabled: false, price: 0 }
     })
   }, [])
 
@@ -518,7 +529,7 @@ const ChartPanel: React.FC = () => {
               lineColor={LINE_COLORS.entry}
               type="number"
               step={0.00001}
-              value={tradeLines.entry.price}
+              value={tradeLines.entry.price || ''}
               onChange={e => updatePrice('entry', e.target.value)}
             />
           )}
@@ -537,7 +548,7 @@ const ChartPanel: React.FC = () => {
               lineColor={LINE_COLORS.takeProfit}
               type="number"
               step={0.00001}
-              value={tradeLines.takeProfit.price}
+              value={tradeLines.takeProfit.price || ''}
               onChange={e => updatePrice('takeProfit', e.target.value)}
             />
           )}
@@ -556,7 +567,7 @@ const ChartPanel: React.FC = () => {
               lineColor={LINE_COLORS.stopLoss}
               type="number"
               step={0.00001}
-              value={tradeLines.stopLoss.price}
+              value={tradeLines.stopLoss.price || ''}
               onChange={e => updatePrice('stopLoss', e.target.value)}
             />
           )}
@@ -604,7 +615,7 @@ const ChartPanel: React.FC = () => {
                 <line x1="12" y1="20" x2="12.01" y2="20" />
               </svg>
             </OfflineIcon>
-            Chart data unavailable — spot-api offline
+            Chart data unavailable — cannot reach spot-api
           </OfflineBanner>
         )}
         {noData && !isOffline && (

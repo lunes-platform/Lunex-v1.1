@@ -38,6 +38,23 @@ jest.mock('../services/settlementService', () => ({
   settlementService: mockSettlementService,
 }));
 
+const mockAffiliateService = {
+  distributeSpotTradeCommissions: jest.fn(),
+};
+
+jest.mock('../services/affiliateService', () => ({
+  affiliateService: mockAffiliateService,
+}));
+
+jest.mock('../utils/logger', () => ({
+  log: {
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 import { tradeSettlementService } from '../services/tradeSettlementService';
 
 describe('tradeSettlementService', () => {
@@ -230,7 +247,9 @@ describe('tradeSettlementService', () => {
         where: expect.objectContaining({
           // Prisma.DbNull is a sentinel object — assert presence of the filter
           // without checking its identity (the test runs without the real client).
-          settlementPayload: expect.objectContaining({ not: expect.anything() }),
+          settlementPayload: expect.objectContaining({
+            not: expect.anything(),
+          }),
           OR: expect.any(Array),
         }),
       }),
@@ -243,5 +262,62 @@ describe('tradeSettlementService', () => {
         }),
       }),
     ]);
+  });
+
+  describe('post-settlement affiliate hook (Task 2)', () => {
+    function arrangeAttempt(results: Array<{ tradeId: string; status: string; txHash?: string; error?: string }>) {
+      mockSettlementService.isEnabled.mockReturnValue(true);
+      mockPrisma.trade.updateMany.mockResolvedValue({ count: results.length });
+      mockPrisma.trade.findUnique.mockResolvedValue({
+        id: 'trade-1',
+        settlementAttempts: 1,
+      });
+      mockPrisma.trade.update.mockResolvedValue({ id: 'trade-1' });
+      mockSettlementService.settleTrades.mockResolvedValue(results);
+    }
+
+    it('credits affiliate commissions only for SETTLED trade ids', async () => {
+      arrangeAttempt([
+        { tradeId: 'trade-1', status: 'SETTLED', txHash: '0xabc' },
+        { tradeId: 'trade-2', status: 'FAILED', error: 'x' },
+        { tradeId: 'trade-3', status: 'SKIPPED' },
+      ]);
+      mockAffiliateService.distributeSpotTradeCommissions.mockResolvedValue(undefined);
+
+      await tradeSettlementService.processNewTradeSettlements([
+        baseInput,
+        { ...baseInput, tradeId: 'trade-2' },
+        { ...baseInput, tradeId: 'trade-3' },
+      ]);
+
+      expect(
+        mockAffiliateService.distributeSpotTradeCommissions,
+      ).toHaveBeenCalledWith(['trade-1']);
+    });
+
+    it('does not call the hook when no result is SETTLED', async () => {
+      arrangeAttempt([{ tradeId: 'trade-1', status: 'FAILED', error: 'x' }]);
+
+      await tradeSettlementService.processNewTradeSettlements([baseInput]);
+
+      expect(
+        mockAffiliateService.distributeSpotTradeCommissions,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not break settlement when the affiliate hook rejects', async () => {
+      arrangeAttempt([{ tradeId: 'trade-1', status: 'SETTLED', txHash: '0xabc' }]);
+      mockAffiliateService.distributeSpotTradeCommissions.mockRejectedValue(
+        new Error('affiliate down'),
+      );
+
+      const result = await tradeSettlementService.processNewTradeSettlements([
+        baseInput,
+      ]);
+
+      expect(result).toEqual([
+        { tradeId: 'trade-1', status: 'SETTLED', txHash: '0xabc' },
+      ]);
+    });
   });
 });

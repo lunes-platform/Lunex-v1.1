@@ -16,7 +16,6 @@ scale-info = { version = "2.3", default-features = false, features = ["derive"],
 [lib]
 name = "pair_contract"
 path = "lib.rs"
-crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["std"]

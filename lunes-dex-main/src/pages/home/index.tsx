@@ -7,8 +7,7 @@ import FooterTag from 'components/FooterTag'
 import TradeSubNav from '../../components/tradeSubNav'
 //Modals
 import * as M from './modals'
-//Mocks
-import tokens from './modals/chooseToken/mock'
+import tokens from './modals/chooseToken/tokenRegistry'
 import useSelectOptions from 'hooks/useSelectOptions'
 import { Option } from 'context/useContext'
 import { useSDK } from '../../context/SDKContext'
@@ -80,10 +79,12 @@ const Home = () => {
       const decimals = selectedOption1.decimals || 8
       const amountInWei = sdk.parseAmount(inputValue1, decimals)
 
-      const quoteResult = await sdk.getQuote(amountInWei, [
-        selectedOption1.address,
-        selectedOption2.address
-      ])
+      const quoteResult = await sdk.getQuote(
+        amountInWei,
+        [selectedOption1.address, selectedOption2.address],
+        decimals,
+        selectedOption2.decimals || 8
+      )
 
       if (quoteResult) {
         setQuote(quoteResult)
@@ -215,6 +216,9 @@ const Home = () => {
                 : '0'}
             </S.Details>
             <B.Input
+              id="swap-from-amount"
+              name="swapFromAmount"
+              aria-label="Amount to swap from"
               placeholder="0"
               height="112px"
               sizeInput="24px"
@@ -245,6 +249,9 @@ const Home = () => {
                 : '0'}
             </S.Details>
             <B.Input
+              id="swap-to-amount"
+              name="swapToAmount"
+              aria-label="Estimated amount to receive"
               placeholder="0"
               height="112px"
               sizeInput="24px"

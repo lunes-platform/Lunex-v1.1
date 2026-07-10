@@ -13,6 +13,7 @@ import marginRouter from '../../routes/margin';
 import affiliateRouter from '../../routes/affiliate';
 import agentsRouter from '../../routes/agents';
 import rewardsRouter from '../../routes/rewards';
+import balancesRouter from '../../routes/balances';
 import asymmetricRouter from '../../routes/asymmetric';
 import { marginService } from '../../services/marginService';
 
@@ -33,6 +34,7 @@ app.use('/api/v1/margin', marginRouter);
 app.use('/api/v1/affiliate', affiliateRouter);
 app.use('/api/v1/agents', agentsRouter);
 app.use('/api/v1/rewards', rewardsRouter);
+app.use('/api/v1/balances', balancesRouter);
 app.use('/api/v1/asymmetric', asymmetricRouter);
 
 app.get('/health', (_req, res) => {

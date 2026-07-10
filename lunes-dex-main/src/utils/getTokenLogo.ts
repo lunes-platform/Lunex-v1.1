@@ -18,7 +18,8 @@ const KNOWN_LOGOS: Record<string, string> = {
   LUSDT: '/img/lusdt.svg',
   GMC: '/img/gmc.svg',
   LETH: '/img/leth.svg',
-  LBTC: '/img/lbtc.svg'
+  LBTC: '/img/lbtc.svg',
+  LUP: '/img/lup.svg'
 }
 
 /**

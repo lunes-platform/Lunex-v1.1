@@ -1,9 +1,9 @@
 import {
   buildWalletActionMessage,
-  createSignedActionMetadata
+  createSignedActionMetadata,
+  signedAuthHeaders
 } from '../utils/signing'
-
-const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
+import { SPOT_API_URL } from '../config/api'
 
 export type StrategyType =
   | 'COPYTRADE'
@@ -80,7 +80,7 @@ async function apiRequest<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(`${SPOT_API_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options
   })
@@ -260,7 +260,8 @@ const strategyService = {
       signMessage
     )
     const data = await apiRequest<{ followed: Array<{ strategy: any }> }>(
-      `/api/v1/strategies/followed/${address}?nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+      `/api/v1/strategies/followed/${encodeURIComponent(address)}`,
+      { headers: signedAuthHeaders(auth) }
     )
     return data.followed.map(f => normalize(f.strategy))
   },

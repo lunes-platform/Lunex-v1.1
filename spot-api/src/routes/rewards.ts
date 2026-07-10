@@ -2,6 +2,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import { rewardDistributionService } from '../services/rewardDistributionService';
 import { rewardScheduler } from '../services/rewardScheduler';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -69,7 +70,10 @@ router.get(
   '/pending',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = SignedReadSchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success) {
         return res
           .status(400)
@@ -100,7 +104,10 @@ router.get(
   '/history',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = SignedReadSchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success) {
         return res
           .status(400)

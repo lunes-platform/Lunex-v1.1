@@ -660,6 +660,14 @@ const AsymmetricPool: React.FC = () => {
   }
 
   const handleDeploy = async () => {
+    // Guard: prevent double-submit — if a deploy is already in progress, bail early.
+    if (
+      deployState.step !== 'idle' &&
+      deployState.step !== 'done' &&
+      deployState.step !== 'error'
+    ) {
+      return
+    }
     const result = await deploy({
       baseToken: process.env.REACT_APP_TOKEN_WLUNES || '',
       quoteToken: process.env.REACT_APP_TOKEN_LUSDT || '',
@@ -1108,6 +1116,11 @@ const AsymmetricPool: React.FC = () => {
             </Button>
           ) : (
             <Button
+              disabled={
+                deployState.step !== 'idle' &&
+                deployState.step !== 'done' &&
+                deployState.step !== 'error'
+              }
               onClick={() => {
                 resetDeploy()
                 setShowDeployModal(true)
@@ -1218,7 +1231,15 @@ const AsymmetricPool: React.FC = () => {
                   <strong>{Math.round(sellParams.k * 0.5)}</strong>
                 </DeployModalNote>
                 <RowButtons>
-                  <Button style={{ flex: 1 }} onClick={handleDeploy}>
+                  <Button
+                    style={{ flex: 1 }}
+                    disabled={
+                      deployState.step !== 'idle' &&
+                      deployState.step !== 'done' &&
+                      deployState.step !== 'error'
+                    }
+                    onClick={handleDeploy}
+                  >
                     Confirm & Deploy
                   </Button>
                   <Button

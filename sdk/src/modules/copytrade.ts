@@ -29,6 +29,18 @@ type SignedReadAuth = {
   signMessage?: (message: string) => Promise<string>;
 };
 
+function signedReadHeaders(signed: {
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}) {
+  return {
+    'X-Lunex-Nonce': signed.nonce,
+    'X-Lunex-Timestamp': String(signed.timestamp),
+    'X-Lunex-Signature': signed.signature,
+  };
+}
+
 export class CopytradeModule {
   constructor(private http: HttpClient) {}
 
@@ -100,10 +112,8 @@ export class CopytradeModule {
       '/api/v1/copytrade/positions',
       {
         address,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       },
+      { headers: signedReadHeaders(signed) },
     );
     return response.positions;
   }
@@ -125,10 +135,8 @@ export class CopytradeModule {
       {
         address,
         limit,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       },
+      { headers: signedReadHeaders(signed) },
     );
     return response.activity;
   }

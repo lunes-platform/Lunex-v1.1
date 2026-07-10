@@ -126,12 +126,7 @@ const ConnectWallet: React.FC = () => {
                   </TokenInfo>
                   <TokenAmount>
                     <span className="amount">{fullBalance}</span>
-                    <span className="usd">
-                      ≈ $
-                      {(Number(balance) * 0.045).toLocaleString(undefined, {
-                        maximumFractionDigits: 2
-                      })}
-                    </span>
+                    <span className="usd">USD price unavailable</span>
                   </TokenAmount>
                 </BalanceRow>
 
@@ -144,8 +139,8 @@ const ConnectWallet: React.FC = () => {
                     </div>
                   </TokenInfo>
                   <TokenAmount>
-                    <span className="amount">0.00</span>
-                    <span className="usd">≈ $0.00</span>
+                    <span className="amount">Unavailable</span>
+                    <span className="usd">Connect token balance source</span>
                   </TokenAmount>
                 </BalanceRow>
               </BalanceList>

@@ -1676,7 +1676,9 @@ const DevelopersSection = () => (
         <tr>
           <td>Cancel order</td>
           <td>
-            <InlineCode>lunex-cancel:{'<orderId>'}</InlineCode>
+            <InlineCode>
+              lunex-auth:orders.cancel + orderId + nonce + timestamp
+            </InlineCode>
           </td>
         </tr>
         <tr>

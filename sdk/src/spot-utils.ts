@@ -67,8 +67,21 @@ export function buildSpotOrderSignMessage(input: {
   return `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}:${normalizeWalletActionValue(input.timestamp)}`;
 }
 
-export function buildSpotCancelSignMessage(orderId: string): string {
-  return `lunex-cancel:${orderId}`;
+export function buildSpotCancelSignMessage(input: {
+  address: string;
+  orderId: string;
+  nonce: string;
+  timestamp: number | string;
+}): string {
+  return buildWalletActionSignMessage({
+    action: 'orders.cancel',
+    address: input.address,
+    nonce: input.nonce,
+    timestamp: input.timestamp,
+    fields: {
+      orderId: input.orderId,
+    },
+  });
 }
 
 export function buildSocialFollowSignMessage(input: {

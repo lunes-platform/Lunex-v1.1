@@ -2,8 +2,8 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache openssl
-COPY package.json ./
-RUN npm install --production=false
+COPY package*.json ./
+RUN npm ci --include=dev
 COPY . .
 RUN npx prisma generate
 RUN npm run build
@@ -24,7 +24,7 @@ COPY --from=builder --chown=lunex:lunex /app/package.json ./
 COPY --from=builder --chown=lunex:lunex /app/prisma ./prisma
 COPY --from=builder --chown=lunex:lunex /app/abis ./abis
 # Pre-create writable directories used at runtime
-RUN mkdir -p /app/public/tokens /app/uploads && chown -R lunex:lunex /app/public /app/uploads
+RUN mkdir -p /app/public/tokens /app/uploads /app/.state && chown -R lunex:lunex /app/public /app/uploads /app/.state
 
 USER lunex
 EXPOSE 4000 4001

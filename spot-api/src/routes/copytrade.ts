@@ -2,6 +2,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { copytradeService } from '../services/copytradeService';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -81,7 +82,10 @@ router.get(
   '/positions',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = SignedReadSchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success) {
         return res
           .status(400)
@@ -109,7 +113,10 @@ router.get(
   '/activity',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = SignedReadSchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success) {
         return res
           .status(400)
@@ -219,6 +226,14 @@ router.post(
           leaderId: req.params.leaderId,
           token: parsed.data.token,
           amount: parsed.data.amount,
+          // Risk limits are part of the FE-signed payload
+          // (buildCopytradeDepositMessage); they must be reconstructed here
+          // identically. buildWalletActionMessage drops undefined/null and
+          // sorts keys, so passing them through is symmetric with the FE.
+          copyMultiplier: parsed.data.copyMultiplier,
+          maxPerTradeUsdt: parsed.data.maxPerTradeUsdt,
+          stopLossPct: parsed.data.stopLossPct,
+          maxDrawdownPct: parsed.data.maxDrawdownPct,
         },
       });
       if (!auth.ok) return res.status(401).json({ error: auth.error });

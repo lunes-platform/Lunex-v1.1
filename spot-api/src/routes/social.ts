@@ -2,6 +2,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import { socialService } from '../services/socialService';
 import { socialAnalyticsService } from '../services/socialAnalyticsService';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -29,12 +30,16 @@ const COPYTRADE_DEPRECATION_RESPONSE = {
   },
 };
 
+// BUG-03 fix: viewerAddress is optional context for personalising public read
+// responses (e.g. isFollowing). When the caller omits the address or provides
+// an address without a valid read-signature, we silently fall back to
+// unauthenticated public data instead of blocking with 400/401.
 async function getVerifiedViewerAddress(
   req: Request,
-  res: Response,
+  _res: Response,
   action: string,
   fields?: Record<string, string>,
-) {
+): Promise<string | undefined> {
   const viewerAddress =
     typeof req.query.viewerAddress === 'string'
       ? req.query.viewerAddress
@@ -48,14 +53,14 @@ async function getVerifiedViewerAddress(
       timestamp: z.coerce.number().int().positive(),
       signature: z.string().min(8),
     })
-    .safeParse(req.query);
+    .safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
 
-  if (!parsed.success) {
-    res
-      .status(400)
-      .json({ error: 'Validation failed', details: parsed.error.issues });
-    return null;
-  }
+  // Signature fields are missing or malformed — serve public data without
+  // the personalised isFollowing context rather than blocking the request.
+  if (!parsed.success) return undefined;
 
   const auth = await verifyWalletReadSignature({
     action,
@@ -65,23 +70,29 @@ async function getVerifiedViewerAddress(
     signature: parsed.data.signature,
     fields,
   });
-  if (!auth.ok) {
-    res.status(401).json({ error: auth.error });
-    return null;
-  }
+
+  // Invalid signature — fall back to public data, do not block.
+  if (!auth.ok) return undefined;
 
   return parsed.data.viewerAddress;
 }
 
 // ─── Analytics ──────────────────────────────────────────────────
 
+// Public read: operational pipeline status only (indexer enabled/ready,
+// counters, latest indexed event). No user-identifiable or financial data is
+// exposed here, so it is served unauthenticated per the "Read public data:
+// None" auth matrix. The frontend polls this every 30s to render a status
+// badge; gating it behind requireAdmin produced a permanent 401 + console
+// noise. Mutating analytics ops (recompute, resync-followers) remain
+// requireAdmin below. Response is the status object directly (no envelope) to
+// match the frontend PipelineStatus contract.
 router.get(
   '/analytics/status',
-  requireAdmin,
   async (_req: Request, res: Response, next: NextFunction) => {
     try {
       const analytics = await socialAnalyticsService.getPipelineStatus();
-      res.json({ analytics });
+      res.json(analytics);
     } catch (err) {
       next(err);
     }
@@ -185,7 +196,10 @@ router.get(
           timestamp: z.coerce.number().int().positive(),
           signature: z.string().min(8),
         })
-        .safeParse(req.query);
+        .safeParse({
+          ...req.query,
+          ...getSignedAuthInput(req),
+        });
       if (!parsed.success) {
         return res
           .status(400)
@@ -227,7 +241,6 @@ router.get(
           address: parsed.data.address,
         },
       );
-      if (viewerAddress === null) return;
       const leader = await socialService.getLeaderProfileByAddress(
         parsed.data.address,
         viewerAddress,
@@ -251,7 +264,6 @@ router.get(
           leaderId: req.params.leaderId,
         },
       );
-      if (viewerAddress === null) return;
       const leader = await socialService.getLeaderProfile(
         req.params.leaderId,
         viewerAddress,
@@ -469,6 +481,12 @@ router.post(
       const result = await socialService.followLeader(
         req.params.leaderId,
         parsed.data.address,
+        {
+          copyMultiplier: parsed.data.copyMultiplier,
+          maxPerTradeUsdt: parsed.data.maxPerTradeUsdt,
+          stopLossPct: parsed.data.stopLossPct,
+          maxDrawdownPct: parsed.data.maxDrawdownPct,
+        },
       );
       res.json(result);
     } catch (err) {

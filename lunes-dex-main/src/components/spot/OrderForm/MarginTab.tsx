@@ -143,6 +143,33 @@ const ActionButton = styled.button<{ tone?: 'buy' | 'sell' | 'neutral' }>`
   }
 `
 
+const DirToggle = styled.div`
+  display: flex;
+  gap: 6px;
+`
+
+const DirBtn = styled.button<{ tone: 'long' | 'short'; active?: boolean }>`
+  flex: 1;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: ${({ tone, active }) =>
+    active
+      ? tone === 'long'
+        ? '#00C076'
+        : '#FF4B55'
+      : tone === 'long'
+        ? 'rgba(0,192,118,0.1)'
+        : 'rgba(255,75,85,0.1)'};
+  color: ${({ tone, active }) =>
+    active ? '#ffffff' : tone === 'long' ? '#00C076' : '#FF4B55'};
+  border: 1px solid
+    ${({ tone }) => (tone === 'long' ? 'rgba(0,192,118,0.3)' : 'rgba(255,75,85,0.3)')};
+`
+
 const PositionCard = styled.div`
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -223,6 +250,16 @@ export const MarginTab: React.FC<MarginTabProps> = ({
   const [withdrawAmount, setWithdrawAmount] = useState('50')
   const [collateralAmount, setCollateralAmount] = useState('100')
   const [leverage, setLeverage] = useState('3')
+  // Local position direction, seeded from the parent Buy/Sell toggle but
+  // independently switchable here (Long/Short).
+  const [direction, setDirection] = useState<'long' | 'short'>(
+    side === 'buy' ? 'long' : 'short'
+  )
+
+  // Keep local direction in sync when the parent Buy/Sell toggle changes.
+  useEffect(() => {
+    setDirection(side === 'buy' ? 'long' : 'short')
+  }, [side])
 
   const loadOverview = useCallback(async () => {
     if (!walletAddress) {
@@ -246,12 +283,6 @@ export const MarginTab: React.FC<MarginTabProps> = ({
     })
     setOverview(nextOverview)
   }, [walletAddress, signMessage])
-
-  useEffect(() => {
-    loadOverview().catch((err: Error) => {
-      setError(err.message)
-    })
-  }, [loadOverview])
 
   const withWallet = useCallback(async () => {
     if (walletAddress) return walletAddress
@@ -332,7 +363,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
     await submitAction(async () => {
       const address = await withWallet()
       if (!address) return
-      const orderSide = side === 'buy' ? 'BUY' : 'SELL'
+      const orderSide = direction === 'long' ? 'BUY' : 'SELL'
       const signedAction = createSignedActionMetadata()
       const signature = await signMessage(
         buildMarginOpenPositionSignMessage({
@@ -360,10 +391,10 @@ export const MarginTab: React.FC<MarginTabProps> = ({
     })
   }, [
     collateralAmount,
+    direction,
     leverage,
     loadOverview,
     selectedPair,
-    side,
     signMessage,
     submitAction,
     withWallet
@@ -446,6 +477,21 @@ export const MarginTab: React.FC<MarginTabProps> = ({
         </Box>
       ) : null}
 
+      {walletAddress ? (
+        <ActionButton
+          type="button"
+          onClick={() => {
+            loadOverview().catch((err: Error) => {
+              setError(err.message)
+            })
+          }}
+          disabled={isLoading}
+          tone="neutral"
+        >
+          Load Margin Overview
+        </ActionButton>
+      ) : null}
+
       <Grid>
         <Card>
           <Label>Available Collateral</Label>
@@ -495,6 +541,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               onChange={event => setDepositAmount(event.target.value)}
               placeholder="100"
               type="number"
+              aria-label="Deposit collateral amount in USDT"
             />
           </Field>
           <Field>
@@ -504,6 +551,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               onChange={event => setWithdrawAmount(event.target.value)}
               placeholder="50"
               type="number"
+              aria-label="Withdraw collateral amount in USDT"
             />
           </Field>
         </Row>
@@ -526,11 +574,32 @@ export const MarginTab: React.FC<MarginTabProps> = ({
         <Row>
           <Field>
             <FieldLabel>Pair</FieldLabel>
-            <Input value={selectedPair} readOnly />
+            <Input value={selectedPair} readOnly aria-label="Trading pair" />
           </Field>
           <Field>
             <FieldLabel>Direction</FieldLabel>
-            <Input value={side === 'buy' ? 'Long' : 'Short'} readOnly />
+            <DirToggle>
+              <DirBtn
+                type="button"
+                tone="long"
+                active={direction === 'long'}
+                onClick={() => setDirection('long')}
+                aria-label="Long position"
+                aria-pressed={direction === 'long'}
+              >
+                Long
+              </DirBtn>
+              <DirBtn
+                type="button"
+                tone="short"
+                active={direction === 'short'}
+                onClick={() => setDirection('short')}
+                aria-label="Short position"
+                aria-pressed={direction === 'short'}
+              >
+                Short
+              </DirBtn>
+            </DirToggle>
           </Field>
         </Row>
         <Row>
@@ -541,6 +610,7 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               onChange={event => setCollateralAmount(event.target.value)}
               type="number"
               placeholder="100"
+              aria-label="Position collateral in USDT"
             />
           </Field>
           <Field>
@@ -553,15 +623,16 @@ export const MarginTab: React.FC<MarginTabProps> = ({
               max="7.9"
               step="0.1"
               placeholder="3"
+              aria-label="Leverage multiplier"
             />
           </Field>
         </Row>
         <ActionButton
           onClick={handleOpenPosition}
           disabled={isLoading}
-          tone={side === 'buy' ? 'buy' : 'sell'}
+          tone={direction === 'long' ? 'buy' : 'sell'}
         >
-          {side === 'buy' ? 'Open Long' : 'Open Short'}
+          {direction === 'long' ? 'Open Long' : 'Open Short'}
         </ActionButton>
       </Section>
 

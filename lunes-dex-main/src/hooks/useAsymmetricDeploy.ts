@@ -18,6 +18,7 @@ import {
   buildAsymmetricCreateStrategySignMessage,
   createSignedActionMetadata
 } from '../utils/signing'
+import { toPlancks } from '../utils/plancks'
 
 const API_BASE =
   process.env.REACT_APP_SPOT_API_URL ||
@@ -64,21 +65,6 @@ export interface DeployState {
   contractAddress: string | null
   strategyId: string | null
   error: string | null
-}
-
-const PLANCKS_PER_UNIT = 1_000_000_000_000n // 10^12
-
-function toPlancks(units: string, decimals = 12): string {
-  try {
-    const [intPart, fracPart = ''] = units.split('.')
-    const padded = fracPart.padEnd(decimals, '0').slice(0, decimals)
-    return (
-      BigInt(intPart) * PLANCKS_PER_UNIT +
-      BigInt(padded || '0')
-    ).toString()
-  } catch {
-    return '0'
-  }
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────

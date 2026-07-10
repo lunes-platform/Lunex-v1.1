@@ -9,16 +9,49 @@
  * - Router deadline MUST be in milliseconds (chain uses ms timestamps)
  */
 
-import { ApiPromise, WsProvider } from '@polkadot/api'
-import { ContractPromise } from '@polkadot/api-contract'
+// Heavy @polkadot/* runtime is loaded lazily (dynamic import) so the
+// ~388 KB gzip polkadot chunk is NOT pulled into the eager app bundle.
+// Only TYPE imports are static (erased at build time, zero runtime cost).
+import type { ApiPromise } from '@polkadot/api'
+import type { ContractPromise } from '@polkadot/api-contract'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
-import { web3FromAddress } from '@polkadot/extension-dapp'
+
+// Cached lazily-imported constructors / functions.
+type PolkadotApiModule = typeof import('@polkadot/api')
+type PolkadotContractModule = typeof import('@polkadot/api-contract')
+type ExtensionDappModule = typeof import('@polkadot/extension-dapp')
+
+let apiModulePromise: Promise<PolkadotApiModule> | null = null
+let contractModulePromise: Promise<PolkadotContractModule> | null = null
+let extensionDappPromise: Promise<ExtensionDappModule> | null = null
+
+const loadApiModule = (): Promise<PolkadotApiModule> => {
+  if (!apiModulePromise) apiModulePromise = import('@polkadot/api')
+  return apiModulePromise
+}
+
+const loadContractModule = (): Promise<PolkadotContractModule> => {
+  if (!contractModulePromise)
+    contractModulePromise = import('@polkadot/api-contract')
+  return contractModulePromise
+}
+
+const web3FromAddress = async (
+  address: string
+): ReturnType<ExtensionDappModule['web3FromAddress']> => {
+  if (!extensionDappPromise)
+    extensionDappPromise = import('@polkadot/extension-dapp')
+  const mod = await extensionDappPromise
+  return mod.web3FromAddress(address)
+}
 
 import RouterABI from '../abis/Router.json'
 import FactoryABI from '../abis/Factory.json'
 import PairABI from '../abis/Pair.json'
 import WNativeABI from '../abis/WNative.json'
 import StakingABI from '../abis/Staking.json'
+import { CONTRACTS } from '../config/contracts'
+import { normalizeReservesForPath } from '../utils/reserveUtils'
 
 // Network configuration — env vars override defaults so local dev node is used automatically
 const NETWORKS = {
@@ -55,18 +88,39 @@ export interface PairInfo {
   totalSupply: string
 }
 
-// Dry-run gas limit (conservative)
-const DRY_GAS = { refTime: BigInt('50000000000'), proofSize: BigInt('1000000') }
+// Dry-run gas limit. proofSize precisa ser generoso (5M) porque swaps passam
+// por chamadas cross-contract aninhadas (router→factory→pair→psp22); 1M causava
+// ContractTrapped (module 24, 0x02000000) no dry-run do swap.
+const DRY_GAS = { refTime: BigInt('500000000000'), proofSize: BigInt('5000000') }
 
 class ContractService {
   private api: ApiPromise | null = null
   private isConnected = false
   private contracts: ContractAddresses | null = null
 
+  // Lazily-resolved @polkadot/api-contract ContractPromise constructor.
+  // Populated during connect() (after the dynamic import resolves) so that
+  // the synchronous this.newContract(...) call sites keep working.
+  private ContractPromiseCtor:
+    | PolkadotContractModule['ContractPromise']
+    | null = null
+
   // Contract Instances
   private routerContract: ContractPromise | null = null
   private factoryContract: ContractPromise | null = null
   private stakingContract: ContractPromise | null = null
+
+  /**
+   * Build a ContractPromise using the lazily-imported constructor.
+   * Safe to call after connect() has resolved (ctor is cached).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private newContract(api: ApiPromise, abi: any, address: string) {
+    if (!this.ContractPromiseCtor) {
+      throw new Error('Polkadot contract module not loaded yet')
+    }
+    return new this.ContractPromiseCtor(api, abi, address)
+  }
 
   /**
    * Initialize connection to the blockchain
@@ -77,11 +131,23 @@ class ContractService {
     }
 
     try {
+      const [{ ApiPromise, WsProvider }, { ContractPromise }] =
+        await Promise.all([loadApiModule(), loadContractModule()])
+      this.ContractPromiseCtor = ContractPromise
+
       const wsProvider = new WsProvider(NETWORKS[network])
       this.api = await ApiPromise.create({ provider: wsProvider })
 
       await this.api.isReady
       this.isConnected = true
+
+      // Contract addresses may have been registered (via setContracts) before
+      // connect() ran — e.g. at SDK boot, where connect() is now deferred until
+      // first real use. The ContractPromise instances can only be built once
+      // this.api exists, so (re)build them here from the stored addresses.
+      if (this.contracts) {
+        this.setContracts(this.contracts)
+      }
 
       console.log(`Connected to ${network}: ${NETWORKS[network]}`)
       return true
@@ -110,21 +176,21 @@ class ContractService {
     this.contracts = addresses
     if (this.api) {
       if (this.isValidAddress(addresses.router)) {
-        this.routerContract = new ContractPromise(
+        this.routerContract = this.newContract(
           this.api,
           RouterABI as any,
           addresses.router
         )
       }
       if (this.isValidAddress(addresses.factory)) {
-        this.factoryContract = new ContractPromise(
+        this.factoryContract = this.newContract(
           this.api,
           FactoryABI as any,
           addresses.factory
         )
       }
       if (this.isValidAddress(addresses.staking)) {
-        this.stakingContract = new ContractPromise(
+        this.stakingContract = this.newContract(
           this.api,
           StakingABI as any,
           addresses.staking!
@@ -149,6 +215,30 @@ class ContractService {
   private makeDryGas(): any {
     if (!this.api) throw new Error('Not connected')
     return this.api.registry.createType('WeightV2', DRY_GAS)
+  }
+
+  /**
+   * Unwrap nested ink Result envelopes from output.toJSON().
+   * Messages that return `Result<T, E>` produce two layers:
+   * `{ ok: { ok: <value> } }` (MessageResult wraps the function Result).
+   * Returns the innermost scalar, or null if any layer is `Err`.
+   */
+  private unwrapResult(json: unknown): unknown {
+    let v: unknown = json
+    while (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>
+      if ('err' in o || 'Err' in o) return null
+      if ('ok' in o) {
+        v = o.ok
+        continue
+      }
+      if ('Ok' in o) {
+        v = o.Ok
+        continue
+      }
+      break
+    }
+    return v
   }
 
   /**
@@ -223,12 +313,12 @@ class ContractService {
   private getTokenContract(tokenAddress: string): ContractPromise | null {
     if (!this.api || !this.isValidAddress(tokenAddress)) return null
     // Use PairABI — it contains all PSP22 methods with correct selectors
-    return new ContractPromise(this.api, PairABI as any, tokenAddress)
+    return this.newContract(this.api, PairABI as any, tokenAddress)
   }
 
   private getWNativeContract(address: string): ContractPromise | null {
     if (!this.api || !this.isValidAddress(address)) return null
-    return new ContractPromise(this.api, WNativeABI as any, address)
+    return this.newContract(this.api, WNativeABI as any, address)
   }
 
   /**
@@ -323,11 +413,21 @@ class ContractService {
         return j?.ok ?? j
       }
 
+      // decimals errado distorce todos os valores do token em ordens de
+      // magnitude — nunca fabricar um default; sem decimals, não há TokenInfo.
+      const rawDecimals = Number(extract(decimalsQ))
+      if (!Number.isFinite(rawDecimals) || rawDecimals < 0) {
+        console.error(
+          `Token decimals unavailable for ${tokenAddress} — refusing to fabricate metadata`
+        )
+        return null
+      }
+
       return {
         address: tokenAddress,
         name: String(extract(nameQ) ?? 'Unknown'),
         symbol: String(extract(symbolQ) ?? '???'),
-        decimals: Number(extract(decimalsQ) ?? 12),
+        decimals: rawDecimals,
         totalSupply: String(extract(supplyQ) ?? '0').replace(/,/g, '')
       }
     } catch (error) {
@@ -374,7 +474,13 @@ class ContractService {
             (result: any) => {
               if (result.dispatchError) {
                 reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
+              } else if (result.status.isFinalized) {
+                // Wait for finalization (not just isInBlock) so the nonce is
+                // fully committed on-chain before any subsequent signAndSend
+                // call reads accountNextIndex. Resolving at isInBlock caused a
+                // nonce race on the second remove-liquidity cycle: the approve
+                // nonce hadn't propagated yet when the remove tx was signed,
+                // producing "1010: Invalid Transaction: bad signature".
                 resolve()
               }
             }
@@ -434,9 +540,8 @@ class ContractService {
   async allPairsLength(): Promise<number> {
     if (!this.api || !this.factoryContract) return 0
     try {
-      const FACTORY_ADDR =
-        process.env.REACT_APP_FACTORY_CONTRACT ||
-        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
+      const FACTORY_ADDR = CONTRACTS.FACTORY
+      if (!FACTORY_ADDR) return 0
       const { result, output } =
         await this.factoryContract.query.allPairsLength(FACTORY_ADDR, {
           gasLimit: this.makeDryGas()
@@ -458,9 +563,8 @@ class ContractService {
   async allPairs(index: number): Promise<string | null> {
     if (!this.api || !this.factoryContract) return null
     try {
-      const FACTORY_ADDR =
-        process.env.REACT_APP_FACTORY_CONTRACT ||
-        '5D7pe8YhnMpdBHnVobrPooomnM1ikgRJ4vDRyfcppFonCuK2'
+      const FACTORY_ADDR = CONTRACTS.FACTORY
+      if (!FACTORY_ADDR) return null
       const { result, output } = await this.factoryContract.query.allPairs(
         FACTORY_ADDR,
         { gasLimit: this.makeDryGas() },
@@ -491,7 +595,7 @@ class ContractService {
     if (!this.api) throw new Error('Not connected to blockchain')
     if (!this.isValidAddress(pairAddress)) return null
 
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
 
     try {
       const caller = pairAddress
@@ -534,7 +638,7 @@ class ContractService {
    */
   async getPairToken0(pairAddress: string): Promise<string | null> {
     if (!this.api || !this.isValidAddress(pairAddress)) return null
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.token0(pairAddress, {
         gasLimit: this.makeDryGas()
@@ -555,7 +659,7 @@ class ContractService {
    */
   async getPairToken1(pairAddress: string): Promise<string | null> {
     if (!this.api || !this.isValidAddress(pairAddress)) return null
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.token1(pairAddress, {
         gasLimit: this.makeDryGas()
@@ -576,7 +680,7 @@ class ContractService {
    */
   async getPairTotalSupply(pairAddress: string): Promise<string> {
     if (!this.api || !this.isValidAddress(pairAddress)) return '0'
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     try {
       const { result, output } = await contract.query.totalSupply(pairAddress, {
         gasLimit: this.makeDryGas()
@@ -602,7 +706,7 @@ class ContractService {
     if (!reserves) return null
 
     if (!this.api || !this.isValidAddress(pairAddress)) return null
-    const contract = new ContractPromise(this.api, PairABI as any, pairAddress)
+    const contract = this.newContract(this.api, PairABI as any, pairAddress)
     const { output } = await contract.query.totalSupply(pairAddress, {
       gasLimit: this.makeDryGas()
     })
@@ -646,18 +750,33 @@ class ContractService {
       const reserves = await this.getReserves(pairAddress)
       if (!reserves) return null
 
+      // BUG-01 FIX: pair stores reserves in canonical order (token0 < token1 by
+      // address). We must swap them when path[0] is the canonical token_1 so that
+      // reserve_in corresponds to the token being sold and reserve_out to the token
+      // being bought — matching the router contract's expectation.
+      const pairToken0 = await this.getPairToken0(pairAddress)
+      const { reserveIn, reserveOut } = normalizeReservesForPath(
+        pairToken0 ?? path[0],
+        path[0],
+        reserves.reserve0,
+        reserves.reserve1,
+      )
+
       // Use router.get_amount_out(amount_in, reserve_in, reserve_out)
       const { result, output } = await this.routerContract.query.getAmountOut(
         caller,
         { gasLimit: this.makeDryGas() },
         amountIn,
-        reserves.reserve0,
-        reserves.reserve1
+        reserveIn.toString(),
+        reserveOut.toString()
       )
 
       if (result.isOk && output) {
-        const json = output.toJSON() as any
-        const amountOut = (json?.ok ?? json ?? '0').toString().replace(/,/g, '')
+        // get_amount_out retorna Result<Balance,RouterError> → dupla camada
+        // de Result no toJSON; unwrapResult desce até o Balance (ou null em Err).
+        const inner = this.unwrapResult(output.toJSON())
+        if (inner === null || inner === undefined) return null
+        const amountOut = inner.toString().replace(/,/g, '')
         return [amountIn, amountOut]
       }
       return null
@@ -890,16 +1009,12 @@ class ContractService {
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
-      const pairAddress = await this.getPair(tokenA, tokenB)
-      if (pairAddress) {
-        await this.approveToken(
-          pairAddress,
-          contracts.router,
-          liquidity,
-          account
-        )
-      }
-
+      // NOTE: approve is intentionally NOT performed here.
+      // SDKContext.removeLiquidity already handles the allowance check and
+      // calls approveToken before invoking this method. Doing a second approve
+      // here would (a) waste gas, (b) consume an extra nonce immediately before
+      // the removeLiquidity signAndSend, producing a nonce race that causes
+      // "1010: Invalid Transaction: bad signature" on repeated remove calls.
       const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
 
       const { gasRequired } = await this.routerContract.query.removeLiquidity(

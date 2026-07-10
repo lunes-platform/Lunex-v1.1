@@ -48,6 +48,18 @@ type SignedReadAuth = {
   signMessage?: (message: string) => Promise<string>;
 };
 
+function signedReadHeaders(signed: {
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}) {
+  return {
+    'X-Lunex-Nonce': signed.nonce,
+    'X-Lunex-Timestamp': String(signed.timestamp),
+    'X-Lunex-Signature': signed.signature,
+  };
+}
+
 export class OrdersModule {
   constructor(private http: HttpClient) {}
 
@@ -68,8 +80,13 @@ export class OrdersModule {
     return buildSpotOrderSignMessage(input);
   }
 
-  buildCancelSignMessage(orderId: string): string {
-    return buildSpotCancelSignMessage(orderId);
+  buildCancelSignMessage(input: {
+    address: string;
+    orderId: string;
+    nonce: string;
+    timestamp: number;
+  }): string {
+    return buildSpotCancelSignMessage(input);
   }
 
   async prepareSignedOrder(
@@ -134,11 +151,21 @@ export class OrdersModule {
   async prepareSignedCancelOrder(
     input: PrepareSignedCancelOrderInput,
   ): Promise<CancelSpotOrderInput> {
+    const metadata = createWalletActionMetadata();
+    const nonce = input.nonce || metadata.nonce;
+    const timestamp = input.timestamp ?? metadata.timestamp;
     const signature = await input.signMessage(
-      buildSpotCancelSignMessage(input.orderId),
+      buildSpotCancelSignMessage({
+        address: input.makerAddress,
+        orderId: input.orderId,
+        nonce,
+        timestamp,
+      }),
     );
     return {
       makerAddress: input.makerAddress,
+      nonce,
+      timestamp,
       signature,
     };
   }
@@ -226,10 +253,8 @@ export class OrdersModule {
         status: params.status,
         limit: params.limit,
         offset: params.offset,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       },
+      { headers: signedReadHeaders(signed) },
     );
     return response.orders;
   }
@@ -256,10 +281,8 @@ export class OrdersModule {
         address: params.address,
         limit: params.limit,
         offset: params.offset,
-        nonce: signed.nonce,
-        timestamp: signed.timestamp,
-        signature: signed.signature,
       },
+      { headers: signedReadHeaders(signed) },
     );
     return response.trades;
   }

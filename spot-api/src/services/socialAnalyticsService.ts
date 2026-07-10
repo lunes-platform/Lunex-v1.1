@@ -41,6 +41,9 @@ type IndexedEventRecord = {
 };
 
 function getAnalyticsDb() {
+  // TODO(types): typing this client surfaces a pre-existing bug — agent.update
+  // writes fields (e.g. `roi`) that do not exist on the Agent model. Requires a
+  // logic/schema fix before the cast can be removed.
   const db = prisma as any;
   if (
     typeof db.socialIndexedEvent?.findMany !== 'function' ||

@@ -12,7 +12,10 @@ module.exports = {
   },
   plugins: ['@typescript-eslint'],
   extends: ['eslint:recommended'],
-  ignorePatterns: ['dist/**', 'node_modules/**', 'examples/**'],
+  // __tests__ fica fora do parser type-aware porque tsconfig.json exclui
+  // testes do build (removeComments/declarations); os testes são validados
+  // pelo próprio jest/ts-jest.
+  ignorePatterns: ['dist/**', 'node_modules/**', 'examples/**', '**/__tests__/**'],
   rules: {
     'no-undef': 'off',
     'no-unused-vars': 'off',

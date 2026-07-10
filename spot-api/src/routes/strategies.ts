@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { strategyService } from '../services/strategyService';
 import { agentAuth, optionalAgentAuth } from '../middleware/agentAuth';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -199,7 +200,10 @@ router.get(
   '/followed/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = FollowedQuerySchema.safeParse(req.query);
+      const parsed = FollowedQuerySchema.safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success) {
         return res
           .status(400)

@@ -1,14 +1,17 @@
 import { ApiPromise, WsProvider } from '@polkadot/api';
 
 /**
- * 🕵️ SENTINEL BOT - LUNEX DEX
- * 
- * Este script serve como um exemplo de monitoramento ativo de segurança.
- * Ele escuta eventos na rede e alerta sobre anomalias em tempo real.
- * 
- * Usabilidade:
- * - Rodar em um servidor separado.
- * - Conectar a um serviço de alerta (Discord, Slack, SMS).
+ * 🕵️ SENTINEL BOT - LUNEX DEX — PROTÓTIPO INCOMPLETO, NÃO É COBERTURA DE SEGURANÇA
+ *
+ * ⚠️ ESTADO REAL: hoje este script SÓ loga `ExtrinsicFailed` no console.
+ * A detecção de swaps suspeitos/anomalias é pseudo-código comentado (sem
+ * decodificação de ABI, sem thresholds aplicados, sem integração de alerta).
+ * NÃO conte com ele como monitoramento ativo — a observabilidade real do
+ * sistema é o stack Prometheus/Alertmanager (docker/alert-rules.yml).
+ *
+ * Para promovê-lo a ferramenta real seria preciso: decodificar eventos com as
+ * ABIs dos contratos, aplicar os THRESHOLDS abaixo, e enviar para um canal de
+ * alerta (Slack/PagerDuty) — ver backlog na auditoria 2026-06-12.
  */
 
 const LUNES_WS_URL = 'ws://127.0.0.1:9944'; // Ajustar para testnet/mainnet

@@ -1,6 +1,12 @@
 import { SubstrateEvent } from '@subql/types'
 import { SpotSettlementEvent } from '../types'
-import { makeEventId, safeNum } from './utils'
+import { makeEventId } from './utils'
+import {
+  labelGuard,
+  decodeSpotTransfer,
+  decodeTradeSettled,
+  pairSymbolFromTokens,
+} from './contractEvents'
 
 // ─── spot_settlement: Deposit ──────────────────────────────────────────────
 export async function handleSpotDeposit(event: SubstrateEvent): Promise<void> {
@@ -9,10 +15,18 @@ export async function handleSpotDeposit(event: SubstrateEvent): Promise<void> {
   const timestamp = block.timestamp ?? new Date()
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const account = String(args.depositor ?? args.account ?? '')
-  const token = args.token ? String(args.token) : undefined
-  const amount = safeNum(args.amount)
+  // Discriminate by ink! string topic; bail on any non-Deposit event.
+  const raw = labelGuard(event, [
+    'SpotSettlement::DepositNative',
+    'SpotSettlement::DepositPSP22',
+  ])
+  if (!raw) return
+
+  const decoded = decodeSpotTransfer(raw.payload, raw.label.endsWith('PSP22'))
+  if (!decoded) return
+  const account = decoded.user
+  const token = decoded.token
+  const amount = decoded.amount
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -21,7 +35,7 @@ export async function handleSpotDeposit(event: SubstrateEvent): Promise<void> {
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'DEPOSIT',
     account,
     counterparty: undefined,
@@ -43,10 +57,18 @@ export async function handleSpotWithdraw(event: SubstrateEvent): Promise<void> {
   const timestamp = block.timestamp ?? new Date()
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const account = String(args.withdrawer ?? args.account ?? '')
-  const token = args.token ? String(args.token) : undefined
-  const amount = safeNum(args.amount)
+  // Discriminate by ink! string topic; bail on any non-Withdraw event.
+  const raw = labelGuard(event, [
+    'SpotSettlement::WithdrawNative',
+    'SpotSettlement::WithdrawPSP22',
+  ])
+  if (!raw) return
+
+  const decoded = decodeSpotTransfer(raw.payload, raw.label.endsWith('PSP22'))
+  if (!decoded) return
+  const account = decoded.user
+  const token = decoded.token
+  const amount = decoded.amount
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -55,7 +77,7 @@ export async function handleSpotWithdraw(event: SubstrateEvent): Promise<void> {
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'WITHDRAW',
     account,
     counterparty: undefined,
@@ -80,14 +102,17 @@ export async function handleSpotSettled(event: SubstrateEvent): Promise<void> {
   const timestamp = block.timestamp ?? new Date()
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const maker = String(args.maker ?? '')
-  const taker = String(args.taker ?? '')
-  const pairSymbol = args.pair ? String(args.pair) : undefined
-  const price = safeNum(args.price)
-  const size = safeNum(args.size)
-  const side = args.maker_side ? String(args.maker_side) : undefined
-  const fee = safeNum(args.fee)
+  // Discriminate by ink! string topic; bail on any non-TradeSettled event.
+  const raw = labelGuard(event, ['SpotSettlement::TradeSettled'])
+  if (!raw) return
+
+  const decoded = decodeTradeSettled(raw.payload)
+  if (!decoded) return
+  const maker = decoded.maker
+  const taker = decoded.taker
+  const pairSymbol = pairSymbolFromTokens(decoded.baseToken, decoded.quoteToken)
+  const price = decoded.price
+  const size = decoded.amount
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -96,17 +121,17 @@ export async function handleSpotSettled(event: SubstrateEvent): Promise<void> {
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'SETTLED',
     account: maker,
     counterparty: taker,
-    token: undefined,
-    amount: undefined,
+    token: decoded.baseToken,
+    amount: decoded.amount,
     pairSymbol,
     price,
     size,
-    side,
-    fee,
+    side: undefined,
+    fee: undefined,
   })
   await ev.save()
 }

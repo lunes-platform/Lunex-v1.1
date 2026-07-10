@@ -22,12 +22,13 @@ import { Decimal } from '@prisma/client/runtime/library';
  * @module marginService
  */
 import prisma from '../db';
+import { Prisma } from '@prisma/client';
 import { config } from '../config';
 import { decimalToNumber } from '../utils/helpers';
 import { orderbookManager } from '../utils/orderbook';
 import { log } from '../utils/logger';
+import { ApiError } from '../middleware/errors';
 
-const prismaAny = prisma as any;
 const DEFAULT_COLLATERAL_TOKEN = 'USDT';
 const MIN_LEVERAGE = 1;
 const MAX_LEVERAGE = 10;
@@ -342,7 +343,7 @@ function getPriceHealthSnapshot(pairSymbol?: string) {
 }
 
 async function resolveReferencePriceWithClient(
-  client: any,
+  client: Prisma.TransactionClient,
   pairId: string,
   pairSymbol: string,
 ): Promise<MarginPriceReference> {
@@ -381,8 +382,9 @@ async function resolveReferencePriceWithClient(
           deviationBps !== null &&
           deviationBps > config.margin.maxTradeToBookDeviationBps
         ) {
-          throw new Error(
-            `Mark price circuit breaker triggered for ${pairSymbol}`,
+          throw ApiError.badRequest(
+            `Mark price unavailable for ${pairSymbol}: last trade deviates too far from book mid-price (circuit breaker). Wait for the spread to tighten before opening a position.`,
+            { pairSymbol, reason: 'CIRCUIT_BREAKER' },
           );
         }
       }
@@ -397,31 +399,46 @@ async function resolveReferencePriceWithClient(
     }
 
     if (tradeReference) {
-      throw new Error(`Mark price stale for ${pairSymbol}`);
+      throw ApiError.badRequest(
+        `Mark price unavailable for ${pairSymbol}: the most recent trade is stale and the order book has no fresh mid-price. Generate a recent trade or wait for book liquidity before opening a position.`,
+        { pairSymbol, reason: 'MARK_PRICE_STALE' },
+      );
     }
 
-    throw new Error(`Unable to determine safe mark price for ${pairSymbol}`);
-  } catch (error: any) {
-    recordPriceFailure(pairSymbol, error.message, now);
+    throw ApiError.badRequest(
+      `Mark price unavailable for ${pairSymbol}: no recent trade and no fresh order-book mid-price. Generate a trade or wait for book liquidity before opening a position.`,
+      { pairSymbol, reason: 'MARK_PRICE_UNAVAILABLE' },
+    );
+  } catch (error: unknown) {
+    recordPriceFailure(
+      pairSymbol,
+      error instanceof Error ? error.message : String(error),
+      now,
+    );
     throw error;
   }
 }
 
-async function getReferencePriceWithClient(
-  client: any,
+/**
+ * Resolve the safe mark price OUTSIDE of any interactive transaction.
+ *
+ * The mark-price lookup is a read-only query (last trade + in-memory book
+ * mid). Performing it inside `prisma.$transaction` kept an interactive
+ * transaction open while waiting on that I/O, which under load blew past
+ * the 5000ms interactive-transaction timeout (surfacing as a 500 on the
+ * `trade.findFirst` call). Resolving it up-front keeps the transaction
+ * short (writes + balance checks only) and lets a stale price degrade to a
+ * clear 4xx instead of an opaque timeout.
+ */
+async function resolveReferencePrice(
   pairId: string,
   pairSymbol: string,
-): Promise<number> {
-  const reference = await resolveReferencePriceWithClient(
-    client,
-    pairId,
-    pairSymbol,
-  );
-  return reference.price;
+): Promise<MarginPriceReference> {
+  return resolveReferencePriceWithClient(prisma, pairId, pairSymbol);
 }
 
 async function getOrCreateMarginAccountWithClient(
-  client: any,
+  client: Prisma.TransactionClient,
   address: string,
 ) {
   let account = (await client.marginAccount.findUnique({
@@ -442,7 +459,7 @@ async function getOrCreateMarginAccountWithClient(
 }
 
 async function getOrCreateMarginAccount(address: string) {
-  return getOrCreateMarginAccountWithClient(prismaAny, address);
+  return getOrCreateMarginAccountWithClient(prisma, address);
 }
 
 function formatPosition(
@@ -492,7 +509,7 @@ function formatPositionWithPriceMetadata(
 }
 
 async function refreshPositionWithClient(
-  client: any,
+  client: Prisma.TransactionClient,
   position: MarginPositionRecord,
 ): Promise<FormattedMarginPosition> {
   if (position.status !== 'OPEN') {
@@ -539,11 +556,11 @@ async function refreshPositionWithClient(
 async function refreshPosition(
   position: MarginPositionRecord,
 ): Promise<FormattedMarginPosition> {
-  return refreshPositionWithClient(prismaAny, position);
+  return refreshPositionWithClient(prisma, position);
 }
 
 async function getAccountRiskSnapshot(
-  client: any,
+  client: Prisma.TransactionClient,
   account: MarginAccountRecord,
 ) {
   const openPositions = (await client.marginPosition.findMany({
@@ -585,7 +602,7 @@ async function getAccountRiskSnapshot(
 async function getAccountPositions(
   accountId: string,
 ): Promise<FormattedMarginPosition[]> {
-  const positions = (await prismaAny.marginPosition.findMany({
+  const positions = (await prisma.marginPosition.findMany({
     where: { accountId },
     orderBy: { openedAt: 'desc' },
   })) as MarginPositionRecord[];
@@ -779,7 +796,7 @@ export const marginService = {
       throw new Error('Collateral amount must be positive');
 
     const updated = await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const account = await getOrCreateMarginAccountWithClient(
         txAny,
         input.address,
@@ -829,7 +846,7 @@ export const marginService = {
       throw new Error('Collateral amount must be positive');
 
     const updated = await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const account = await getOrCreateMarginAccountWithClient(
         txAny,
         input.address,
@@ -912,14 +929,24 @@ export const marginService = {
 
     assertPairNotOperationallyBlocked(input.pairSymbol);
 
+    // Resolve pair + safe mark price BEFORE opening the interactive
+    // transaction. Both are read-only; keeping them outside the transaction
+    // avoids holding it open on I/O (the root cause of the 5000ms
+    // interactive-transaction timeout / opaque 500) and lets a stale mark
+    // price surface as a clear 4xx via resolveReferencePrice.
+    const pair = await prisma.pair.findUnique({
+      where: { symbol: input.pairSymbol },
+    });
+    if (!pair || !pair.isActive) {
+      throw new Error(`Pair ${input.pairSymbol} not found or inactive`);
+    }
+
+    const entryPrice = (
+      await resolveReferencePrice(pair.id, input.pairSymbol)
+    ).price;
+
     const position = await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
-      const pair = await tx.pair.findUnique({
-        where: { symbol: input.pairSymbol },
-      });
-      if (!pair || !pair.isActive) {
-        throw new Error(`Pair ${input.pairSymbol} not found or inactive`);
-      }
+      const txAny = tx;
 
       const account = await getOrCreateMarginAccountWithClient(
         txAny,
@@ -930,11 +957,6 @@ export const marginService = {
       }
 
       const riskSnapshot = await getAccountRiskSnapshot(txAny, account);
-      const entryPrice = await getReferencePriceWithClient(
-        txAny,
-        pair.id,
-        input.pairSymbol,
-      );
       const notional = collateralAmount * leverage;
       const quantity = notional / entryPrice;
       const borrowedAmount = Math.max(notional - collateralAmount, 0);
@@ -1008,7 +1030,7 @@ export const marginService = {
 
   async closePosition(positionId: string, address: string) {
     await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const position = (await txAny.marginPosition.findUnique({
         where: { id: positionId },
         include: { account: true },
@@ -1063,7 +1085,7 @@ export const marginService = {
     let ownerAddress = '';
 
     await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
+      const txAny = tx;
       const position = (await txAny.marginPosition.findUnique({
         where: { id: positionId },
         include: { account: true },

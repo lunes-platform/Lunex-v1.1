@@ -17,6 +17,10 @@ import prisma from '../db';
 import { ListingTier, ListingStatus, LockStatus } from '@prisma/client';
 import { log } from '../utils/logger';
 import { registerToken } from './tokenRegistryService';
+import {
+  verifyListingActivationProof,
+  verifyListingUnlockProof,
+} from './listingProofService';
 
 // ── Tier parameters ───────────────────────────────────────────────
 
@@ -127,13 +131,6 @@ export async function createListing(input: CreateListingInput) {
     throw new Error(`Token ${input.tokenAddress} is already listed`);
   }
 
-  const unlockAt = new Date(Date.now() + cfg.lockMs);
-
-  // LP fields are auto-generated: pool creation happens on-chain
-  const lpTokenAddress = input.lpTokenAddress || 'pending-pool-creation';
-  const lpAmount = input.lpAmount || '0';
-  const pairAddress = input.pairAddress || 'pending-pool-creation';
-
   const listing = await prisma.tokenListing.create({
     data: {
       ownerAddress: input.ownerAddress,
@@ -141,28 +138,13 @@ export async function createListing(input: CreateListingInput) {
       tokenName: input.tokenName,
       tokenSymbol: input.tokenSymbol,
       tokenDecimals: input.tokenDecimals ?? 18,
-      pairAddress,
       tier: cfg.tier,
       status: ListingStatus.PENDING,
       listingFee: cfg.listingFee.toFixed(18),
       lunesLiquidity: input.lunesLiquidity,
       tokenLiquidity: input.tokenLiquidity,
-      lpAmount,
       txHash: input.txHash,
       logoURI: input.logoURI ?? null,
-      liquidityLock: {
-        create: {
-          ownerAddress: input.ownerAddress,
-          pairAddress,
-          lpTokenAddress,
-          lpAmount,
-          lunesLocked: input.lunesLiquidity,
-          tokenLocked: input.tokenLiquidity,
-          tier: cfg.tier,
-          status: LockStatus.LOCKED,
-          unlockAt,
-        },
-      },
     },
     include: { liquidityLock: true },
   });
@@ -182,17 +164,93 @@ export async function createListing(input: CreateListingInput) {
 }
 
 export type ActivateListingInput = {
-  onChainListingId?: number;
-  pairAddress?: string;
-  lpTokenAddress?: string;
-  lpAmount?: string;
-  txHash?: string;
+  onChainListingId: number;
+  onChainLockId: number;
+  pairAddress: string;
+  lpTokenAddress: string;
+  lpAmount: string;
+  txHash: string;
 };
+
+function isMissingProofValue(value: unknown) {
+  return value === undefined || value === null || String(value).trim() === '';
+}
+
+function parsePositiveDecimal(value: string, field: string) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    throw new Error(`${field} must be a positive decimal string`);
+  }
+  return numeric;
+}
+
+function validateActivationProof(
+  input: Partial<ActivateListingInput>,
+): asserts input is ActivateListingInput {
+  const required: Array<keyof ActivateListingInput> = [
+    'onChainListingId',
+    'onChainLockId',
+    'pairAddress',
+    'lpTokenAddress',
+    'lpAmount',
+    'txHash',
+  ];
+  const missing = required.filter((field) => isMissingProofValue(input[field]));
+  if (missing.length > 0) {
+    throw new Error(
+      `On-chain listing proof is required before activation: missing ${missing.join(
+        ', ',
+      )}`,
+    );
+  }
+
+  const onChainListingId = input.onChainListingId;
+  if (
+    typeof onChainListingId !== 'number' ||
+    !Number.isInteger(onChainListingId) ||
+    onChainListingId < 0
+  ) {
+    throw new Error('onChainListingId must be a non-negative integer');
+  }
+  const onChainLockId = input.onChainLockId;
+  if (
+    typeof onChainLockId !== 'number' ||
+    !Number.isInteger(onChainLockId) ||
+    onChainLockId < 0
+  ) {
+    throw new Error('onChainLockId must be a non-negative integer');
+  }
+  parsePositiveDecimal(String(input.lpAmount), 'lpAmount');
+}
 
 export async function activateListing(
   listingId: string,
-  input: ActivateListingInput = {},
+  input: ActivateListingInput,
 ) {
+  validateActivationProof(input);
+  const existing = await prisma.tokenListing.findUnique({
+    where: { id: listingId },
+    include: { liquidityLock: true },
+  });
+  if (!existing) throw new Error('Listing not found');
+  if (existing.status !== ListingStatus.PENDING) {
+    throw new Error(`Listing must be PENDING before activation`);
+  }
+
+  const cfg = TIER_CONFIG[existing.tier];
+  const unlockAt = new Date(Date.now() + cfg.lockMs);
+
+  await verifyListingActivationProof({
+    ownerAddress: existing.ownerAddress,
+    tokenAddress: existing.tokenAddress,
+    tierNumber: cfg.tierNumber,
+    onChainListingId: input.onChainListingId,
+    onChainLockId: input.onChainLockId,
+    pairAddress: input.pairAddress,
+    lpAmount: input.lpAmount,
+    txHash: input.txHash,
+  });
+
   const listing = await prisma.tokenListing.update({
     where: { id: listingId },
     data: {
@@ -206,19 +264,34 @@ export async function activateListing(
     include: { liquidityLock: true },
   });
 
-  // Update the liquidity lock with real on-chain pool data
-  if (
-    listing.liquidityLock &&
-    (input.pairAddress || input.lpTokenAddress || input.lpAmount)
-  ) {
+  if (listing.liquidityLock) {
     await prisma.liquidityLock.update({
       where: { id: listing.liquidityLock.id },
       data: {
-        ...(input.pairAddress ? { pairAddress: input.pairAddress } : {}),
-        ...(input.lpTokenAddress
-          ? { lpTokenAddress: input.lpTokenAddress }
-          : {}),
-        ...(input.lpAmount ? { lpAmount: input.lpAmount } : {}),
+        pairAddress: input.pairAddress,
+        lpTokenAddress: input.lpTokenAddress,
+        lpAmount: input.lpAmount,
+        status: LockStatus.LOCKED,
+        unlockAt,
+        onChainLockId: input.onChainLockId,
+        txHashLock: input.txHash,
+      },
+    });
+  } else {
+    await prisma.liquidityLock.create({
+      data: {
+        listingId: listing.id,
+        ownerAddress: listing.ownerAddress,
+        pairAddress: input.pairAddress,
+        lpTokenAddress: input.lpTokenAddress,
+        lpAmount: input.lpAmount,
+        lunesLocked: listing.lunesLiquidity,
+        tokenLocked: listing.tokenLiquidity,
+        tier: listing.tier,
+        status: LockStatus.LOCKED,
+        unlockAt,
+        onChainLockId: input.onChainLockId,
+        txHashLock: input.txHash,
       },
     });
   }
@@ -333,6 +406,9 @@ export async function withdrawLock(
   ownerAddress: string,
   txHash?: string,
 ) {
+  if (isMissingProofValue(txHash)) {
+    throw new Error('Finalized on-chain withdraw txHash is required');
+  }
   const lock = await prisma.liquidityLock.findUnique({ where: { id: lockId } });
   if (!lock) throw new Error('Lock not found');
   if (lock.ownerAddress !== ownerAddress) throw new Error('Not the lock owner');
@@ -342,8 +418,49 @@ export async function withdrawLock(
     throw new Error(`Lock expires at ${lock.unlockAt.toISOString()}`);
   }
 
+  await verifyListingUnlockProof({
+    ownerAddress,
+    onChainLockId: lock.onChainLockId,
+    lpAmount: lock.lpAmount.toString(),
+    txHash: txHash!,
+  });
+
   return prisma.liquidityLock.update({
     where: { id: lockId },
+    data: {
+      status: LockStatus.WITHDRAWN,
+      withdrawnAt: new Date(),
+      txHashUnlock: txHash,
+    },
+  });
+}
+
+export async function finalizeWithdrawLockByOnChainId(
+  onChainLockId: number,
+  ownerAddress: string,
+  txHash: string,
+) {
+  if (isMissingProofValue(txHash)) {
+    throw new Error('Finalized on-chain withdraw txHash is required');
+  }
+
+  const lock = await prisma.liquidityLock.findFirst({
+    where: { onChainLockId },
+  });
+  if (!lock) throw new Error('Lock not found');
+  if (lock.ownerAddress !== ownerAddress) throw new Error('Not the lock owner');
+  if (lock.status === LockStatus.WITHDRAWN)
+    throw new Error('Already withdrawn');
+
+  await verifyListingUnlockProof({
+    ownerAddress,
+    onChainLockId,
+    lpAmount: lock.lpAmount.toString(),
+    txHash,
+  });
+
+  return prisma.liquidityLock.update({
+    where: { id: lock.id },
     data: {
       status: LockStatus.WITHDRAWN,
       withdrawnAt: new Date(),

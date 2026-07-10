@@ -65,6 +65,10 @@ export const config = {
       process.env.FACTORY_CONTRACT_METADATA_PATH || './abis/Factory.json',
   },
 
+  bridge: {
+    adminSeed: process.env.BRIDGE_ADMIN_SEED || '',
+  },
+
   // Admin secret for protected admin routes (pair registration, etc.)
   adminSecret:
     process.env.ADMIN_SECRET ||
@@ -75,6 +79,13 @@ export const config = {
       process.env.SETTLEMENT_RETRY_INTERVAL_MS || '10000',
       10,
     ),
+    // Independent ECDSA attestor secp256k1 seed (32-byte / 64-hex-char).
+    // The attestor signs blake2_256(build_order_message_v2(order)); the
+    // contract recovers the pubkey via ecdsa_recover and compares it with
+    // the on-chain attestor_pubkey (ADR-001 option c, 2-of-2: relayer +
+    // attestor). MUST live on a separate host/secret from RELAYER_SEED in
+    // production (Doppler). Empty => no attestations => reverts under enforced.
+    attestorSeed: process.env.ATTESTOR_SEED || '',
   },
 
   socialAnalytics: {

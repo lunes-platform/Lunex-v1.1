@@ -471,7 +471,7 @@ const CreateStrategyModal: React.FC<Props> = ({
           <Label>Agent API Key *</Label>
           <Input
             type="password"
-            placeholder="lx_…"
+            placeholder="lnx_…"
             value={form.apiKey}
             onChange={set('apiKey')}
             autoComplete="off"

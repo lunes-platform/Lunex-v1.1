@@ -4,11 +4,14 @@ import type {
   LeaderFollower,
   Trader
 } from '../pages/social/types'
+import {
+  buildWalletActionMessage,
+  createSignedActionMetadata,
+  signedAuthHeaders
+} from '../utils/signing'
+import { SPOT_API_URL } from '../config/api'
 
-const SOCIAL_API_URL =
-  process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
-
-let signedActionNonceCounter = 0
+export { buildWalletActionMessage, createSignedActionMetadata }
 
 interface LeaderApiResponse {
   id: string
@@ -140,6 +143,11 @@ interface DepositToVaultInput {
   amount: string
   followerAddress: string
   token: string
+  // Optional risk-control parameters applied to the copy relationship.
+  copyMultiplier?: number
+  maxPerTradeUsdt?: number
+  stopLossPct?: number
+  maxDrawdownPct?: number
   nonce: string
   timestamp: number
   signature: string
@@ -275,7 +283,7 @@ export interface LeaderApiKeyResult {
 }
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${SOCIAL_API_URL}${path}`, {
+  const response = await fetch(`${SPOT_API_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(options?.headers ?? {})
@@ -306,53 +314,6 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
 
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return {} as T
-}
-
-function normalizeSignedValue(
-  value: string | number | boolean | Array<string | number> | undefined | null
-) {
-  if (Array.isArray(value)) {
-    return value.join(',')
-  }
-
-  if (typeof value === 'boolean') {
-    return value ? 'true' : 'false'
-  }
-
-  return value == null ? '' : String(value)
-}
-
-export function createSignedActionMetadata() {
-  signedActionNonceCounter = (signedActionNonceCounter + 1) % 1000
-  return {
-    nonce: `${Date.now()}${signedActionNonceCounter.toString().padStart(3, '0')}`,
-    timestamp: Date.now()
-  }
-}
-
-export function buildWalletActionMessage(input: {
-  action: string
-  address: string
-  nonce: string
-  timestamp: number | string
-  fields?: Record<
-    string,
-    string | number | boolean | Array<string | number> | undefined | null
-  >
-}) {
-  const lines = [`lunex-auth:${input.action}`, `address:${input.address}`]
-
-  const orderedFields = Object.entries(input.fields ?? {})
-    .filter(([, value]) => value !== undefined && value !== null)
-    .sort(([left], [right]) => left.localeCompare(right))
-
-  for (const [key, value] of orderedFields) {
-    lines.push(`${key}:${normalizeSignedValue(value)}`)
-  }
-
-  lines.push(`nonce:${input.nonce}`)
-  lines.push(`timestamp:${normalizeSignedValue(input.timestamp)}`)
-  return lines.join('\n')
 }
 
 export function buildFollowLeaderMessage(input: {
@@ -468,6 +429,10 @@ export function buildCopytradeDepositMessage(input: {
   followerAddress: string
   token: string
   amount: string
+  copyMultiplier?: number
+  maxPerTradeUsdt?: number
+  stopLossPct?: number
+  maxDrawdownPct?: number
   nonce: string
   timestamp: number
 }) {
@@ -476,10 +441,16 @@ export function buildCopytradeDepositMessage(input: {
     address: input.followerAddress,
     nonce: input.nonce,
     timestamp: input.timestamp,
+    // Risk fields are signed when present (undefined ones are dropped by
+    // buildWalletActionMessage), so the backend can trust the parameters.
     fields: {
       leaderId: input.leaderId,
       token: input.token,
-      amount: input.amount
+      amount: input.amount,
+      copyMultiplier: input.copyMultiplier,
+      maxPerTradeUsdt: input.maxPerTradeUsdt,
+      stopLossPct: input.stopLossPct,
+      maxDrawdownPct: input.maxDrawdownPct
     }
   })
 }
@@ -638,6 +609,7 @@ export const socialApi = {
     signMessage?: (message: string) => Promise<string>
   ): Promise<Trader> {
     let query = toQueryString({ viewerAddress })
+    let headers: HeadersInit | undefined
     if (viewerAddress && signMessage) {
       const metadata = createSignedActionMetadata()
       const signature = await signMessage(
@@ -649,15 +621,15 @@ export const socialApi = {
           fields: { leaderId }
         })
       )
-      query = toQueryString({
-        viewerAddress,
+      headers = signedAuthHeaders({
         nonce: metadata.nonce,
         timestamp: metadata.timestamp,
         signature
       })
     }
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
-      `/api/v1/social/leaders/${leaderId}${query}`
+      `/api/v1/social/leaders/${leaderId}${query}`,
+      headers ? { headers } : undefined
     )
     return mapTrader(data.leader)
   },
@@ -668,6 +640,7 @@ export const socialApi = {
     signMessage?: (message: string) => Promise<string>
   ): Promise<Trader> {
     let query = toQueryString({ address, viewerAddress })
+    let headers: HeadersInit | undefined
     if (viewerAddress && signMessage) {
       const metadata = createSignedActionMetadata()
       const signature = await signMessage(
@@ -679,16 +652,15 @@ export const socialApi = {
           fields: { address }
         })
       )
-      query = toQueryString({
-        address,
-        viewerAddress,
+      headers = signedAuthHeaders({
         nonce: metadata.nonce,
         timestamp: metadata.timestamp,
         signature
       })
     }
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
-      `/api/v1/social/leaders/by-address${query}`
+      `/api/v1/social/leaders/by-address${query}`,
+      headers ? { headers } : undefined
     )
     return mapTrader(data.leader)
   },
@@ -809,14 +781,10 @@ export const socialApi = {
     address: string,
     auth: SignedAddressActionInput
   ): Promise<CopytradePosition[]> {
-    const query = toQueryString({
-      address,
-      nonce: auth.nonce,
-      timestamp: auth.timestamp,
-      signature: auth.signature
-    })
+    const query = toQueryString({ address })
     const data = await fetchApi<{ positions: CopytradePosition[] }>(
-      `/api/v1/copytrade/positions${query}`
+      `/api/v1/copytrade/positions${query}`,
+      { headers: signedAuthHeaders(auth) }
     )
     return data.positions
   },
@@ -826,15 +794,10 @@ export const socialApi = {
     auth: SignedAddressActionInput,
     limit = 20
   ): Promise<CopytradeActivityItem[]> {
-    const query = toQueryString({
-      address,
-      limit,
-      nonce: auth.nonce,
-      timestamp: auth.timestamp,
-      signature: auth.signature
-    })
+    const query = toQueryString({ address, limit })
     const data = await fetchApi<{ activity: CopytradeActivityItem[] }>(
-      `/api/v1/copytrade/activity${query}`
+      `/api/v1/copytrade/activity${query}`,
+      { headers: signedAuthHeaders(auth) }
     )
     return data.activity
   },

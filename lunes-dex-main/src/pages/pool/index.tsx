@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import styled from 'styled-components'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import PageLayout from '../../components/layout'
 import useLiquidity from '../../hooks/useLiquidity'
 import { useSDK } from '../../context/SDKContext'
 import TradeSubNav from '../../components/tradeSubNav'
 import TokenIcon from '../../components/TokenIcon'
+import { TOKENS, LP_TOKEN_DECIMALS } from '../../config/contracts'
+import { useToast } from '../../components/feedback/ToastProvider'
 
 const ProBanner = styled.button`
   display: flex;
@@ -61,63 +63,50 @@ const ProBannerArrow = styled.span`
   color: ${({ theme }) => theme.colors.themeColors[200]};
 `
 
-// Real deployed token addresses
 const availableTokens = [
   {
-    address:
-      process.env.REACT_APP_TOKEN_WLUNES ||
-      '5HRAv1VDeWkLnmkZAjgo6oigU5179nUDBgjKX4u5wztM7tTo',
+    address: TOKENS.WLUNES,
     symbol: 'WLUNES',
     name: 'Wrapped Lunes',
     decimals: 8,
     icon: '/img/lunes.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LUSDT ||
-      '5CdLQGeA89rffQrfckqB8cX3qQkMauszo7rqt5QaNYChsXsf',
+    address: TOKENS.LUSDT,
     symbol: 'LUSDT',
     name: 'Lunes USD',
     decimals: 6,
     icon: '/img/lusdt.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LBTC ||
-      '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg',
+    address: TOKENS.LBTC,
     symbol: 'LBTC',
     name: 'Lunes BTC',
     decimals: 8,
     icon: '/img/lbtc.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LETH ||
-      '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS',
+    address: TOKENS.LETH,
     symbol: 'LETH',
     name: 'Lunes ETH',
     decimals: 8,
     icon: '/img/leth.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_GMC ||
-      '5CfB22jZ43hkK5ZPhaaVk9wefMgTnERsawE8e9urdkMNEMRJ',
+    address: TOKENS.GMC,
     symbol: 'GMC',
     name: 'GameCoin',
     decimals: 8,
     icon: '/img/gmc.svg'
   },
   {
-    address:
-      process.env.REACT_APP_TOKEN_LUP ||
-      '5ELQTeXGvjijzJ7zUtTtLmm6rf44ogMnFBsT7tfYzDuzuvW3',
+    address: TOKENS.LUP,
     symbol: 'LUP',
     name: 'Lunex Protocol',
     decimals: 8,
     icon: '/img/lup.svg'
   }
-]
+].filter(token => token.address)
 
 const TabContainer = styled.div`
   display: flex;
@@ -193,6 +182,7 @@ const InputRow = styled.div`
 
 const Input = styled.input`
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   font-family: 'Space Grotesk', sans-serif;
@@ -221,6 +211,7 @@ const TokenButton = styled.button`
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
   background: ${({ theme }) => theme.colors.themeColors[400]};
   border: none;
   border-radius: 16px;
@@ -422,7 +413,9 @@ const TokenItem = styled.div`
 const Pool: React.FC = () => {
   const sdk = useSDK()
   const liquidity = useLiquidity()
+  const toast = useToast()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
 
   const [activeTab, setActiveTab] = useState<'add' | 'remove'>('add')
   const [showTokenSelectA, setShowTokenSelectA] = useState(false)
@@ -430,6 +423,27 @@ const Pool: React.FC = () => {
   const [lpAmountToRemove, setLpAmountToRemove] = useState('')
   const [balanceA, setBalanceA] = useState<string | null>(null)
   const [balanceB, setBalanceB] = useState<string | null>(null)
+
+  // BUG-02 FIX: pre-fill tokens from ?tokenA=...&tokenB=... query params
+  // (set by the /pools Deposit button)
+  useEffect(() => {
+    const addrA = searchParams.get('tokenA')
+    const addrB = searchParams.get('tokenB')
+    if (addrA && !liquidity.tokenA) {
+      const found = availableTokens.find(
+        t => t.address.toLowerCase() === addrA.toLowerCase()
+      )
+      if (found) liquidity.setTokenA(found)
+    }
+    if (addrB && !liquidity.tokenB) {
+      const found = availableTokens.find(
+        t => t.address.toLowerCase() === addrB.toLowerCase()
+      )
+      if (found) liquidity.setTokenB(found)
+    }
+    // Run only once on mount (searchParams is stable on first render)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!sdk.walletAddress || !liquidity.tokenA) {
@@ -471,16 +485,21 @@ const Pool: React.FC = () => {
   const handleAddLiquidity = async () => {
     const success = await liquidity.addLiquidity()
     if (success) {
-      alert('Liquidity added successfully!')
+      toast.success('Liquidity added successfully')
+    } else {
+      toast.error(liquidity.error || 'Failed to add liquidity')
     }
   }
 
   const handleRemoveLiquidity = async () => {
     if (!lpAmountToRemove) return
+    toast.info('Aguardando confirmação da aprovação...')
     const success = await liquidity.removeLiquidity(lpAmountToRemove)
     if (success) {
-      alert('Liquidity removed successfully!')
+      toast.success('Liquidity removed successfully')
       setLpAmountToRemove('')
+    } else {
+      toast.error(liquidity.error || 'Failed to remove liquidity')
     }
   }
 
@@ -551,7 +570,7 @@ const Pool: React.FC = () => {
                 ) : (
                   'Select'
                 )}
-                <img src="/img/arrow-down.svg" alt="Select" />
+                <img src="/img/arrow-down.svg" alt="Select" width={16} height={16} />
               </TokenButton>
             </InputRow>
           </InputContainer>
@@ -588,7 +607,7 @@ const Pool: React.FC = () => {
                 ) : (
                   'Select'
                 )}
-                <img src="/img/arrow-down.svg" alt="Select" />
+                <img src="/img/arrow-down.svg" alt="Select" width={16} height={16} />
               </TokenButton>
             </InputRow>
           </InputContainer>
@@ -678,7 +697,8 @@ const Pool: React.FC = () => {
                   {calculateExpectedAmount(
                     lpAmountToRemove,
                     liquidity.poolInfo.reserve0,
-                    liquidity.poolInfo.totalSupply
+                    liquidity.poolInfo.totalSupply,
+                    liquidity.tokenA?.decimals ?? 6
                   )}
                 </span>
               </InfoRow>
@@ -689,7 +709,8 @@ const Pool: React.FC = () => {
                   {calculateExpectedAmount(
                     lpAmountToRemove,
                     liquidity.poolInfo.reserve1,
-                    liquidity.poolInfo.totalSupply
+                    liquidity.poolInfo.totalSupply,
+                    liquidity.tokenB?.decimals ?? 8
                   )}
                 </span>
               </InfoRow>
@@ -782,18 +803,25 @@ const Pool: React.FC = () => {
 }
 
 // Helper function
+// LP token tem 8 casas; escala o valor humano para raw e formata a saída
+// na escala do token recebido (antes mostrava raw com LP não escalado).
 const calculateExpectedAmount = (
   lpAmount: string,
   reserve: string,
-  totalSupply: string
+  totalSupply: string,
+  tokenDecimals: number
 ): string => {
   try {
-    const lp = BigInt(lpAmount)
+    const lpFloat = parseFloat(lpAmount)
+    if (!isFinite(lpFloat) || lpFloat <= 0) return '0'
+    const lp = BigInt(Math.round(lpFloat * 10 ** LP_TOKEN_DECIMALS))
     const res = BigInt(reserve)
     const total = BigInt(totalSupply)
     if (total === BigInt(0)) return '0'
-    const result = (lp * res) / total
-    return result.toString()
+    const raw = (lp * res) / total
+    return (Number(raw) / 10 ** tokenDecimals).toLocaleString('en-US', {
+      maximumFractionDigits: 6,
+    })
   } catch {
     return '0'
   }

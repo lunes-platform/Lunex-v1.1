@@ -19,6 +19,7 @@ jobs:
     outputs:
       spot_api:    ${{ steps.filter.outputs.spot_api }}
       frontend:    ${{ steps.filter.outputs.frontend }}
+      admin:       ${{ steps.filter.outputs.admin }}
       sdk:         ${{ steps.filter.outputs.sdk }}
       mcp:         ${{ steps.filter.outputs.mcp }}
       subquery:    ${{ steps.filter.outputs.subquery }}
@@ -35,6 +36,8 @@ jobs:
               - 'spot-api/**'
             frontend:
               - 'lunes-dex-main/**'
+            admin:
+              - 'lunex-admin/**'
             sdk:
               - 'sdk/**'
             mcp:
@@ -79,6 +82,25 @@ jobs:
         working-directory: lunes-dex-main
       - run: npx tsc --noEmit
         working-directory: lunes-dex-main
+
+  typecheck-admin:
+    name: Typecheck admin
+    needs: changes
+    if: needs.changes.outputs.admin == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+        working-directory: lunex-admin
+      - run: npx prisma generate
+        working-directory: lunex-admin
+      - run: npx tsc --noEmit
+        working-directory: lunex-admin
+      - run: npm run lint --if-present
+        working-directory: lunex-admin
 
   typecheck-sdk:
     name: Typecheck SDK
@@ -212,6 +234,7 @@ jobs:
       - changes
       - typecheck-api
       - typecheck-frontend
+      - typecheck-admin
       - typecheck-sdk
       - typecheck-mcp
       - quality-api
@@ -227,6 +250,7 @@ jobs:
           RESULTS=(
             "${{ needs.typecheck-api.result }}"
             "${{ needs.typecheck-frontend.result }}"
+            "${{ needs.typecheck-admin.result }}"
             "${{ needs.typecheck-sdk.result }}"
             "${{ needs.typecheck-mcp.result }}"
             "${{ needs.quality-api.result }}"

@@ -2,12 +2,19 @@ import { SubstrateEvent } from '@subql/types'
 import { SwapEvent, LiquidityEvent } from '../types'
 import {
   makeEventId,
-  safeNum,
   getOrCreateWalletSummary,
   getOrCreatePairStats,
   getOrCreateDailyStats,
   dateToIsoDate,
 } from './utils'
+import {
+  readContractEmitted,
+  decodeRouterSwap,
+  decodePairSwap,
+  decodeRouterLiquidity,
+  pairSymbolFromTokens,
+  labelGuard,
+} from './contractEvents'
 
 // ── Router: Swap ───────────────────────────────────────────────
 export async function handleRouterSwap(event: SubstrateEvent): Promise<void> {
@@ -17,15 +24,24 @@ export async function handleRouterSwap(event: SubstrateEvent): Promise<void> {
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
+  // Every handler is wired to contracts.ContractEmitted, so each fires for
+  // every contract event. Discriminate by the ink! string topic and bail out
+  // for anything that isn't a Router Swap.
+  const raw = readContractEmitted(event)
+  if (!raw || raw.label !== 'RouterContract::Swap') return
 
-  const trader = String(args.sender ?? signer ?? '')
-  const recipient = args.to ? String(args.to) : undefined
-  const path = args.path ? JSON.stringify(args.path) : undefined
-  const amountIn = safeNum(args.amount_in)
-  const amountOut = safeNum(args.amount_out)
+  const decoded = decodeRouterSwap(raw.payload)
+  if (!decoded) return
 
-  const pairSymbol = derivePairFromPath(args.path)
+  const trader = decoded.sender || signer || ''
+  const recipient = decoded.to || undefined
+  const path = decoded.path.length > 0 ? JSON.stringify(decoded.path) : undefined
+  const amountIn = decoded.amountIn
+  const amountOut = decoded.amountOut
+
+  const tokenIn = decoded.path[0]
+  const tokenOut = decoded.path[decoded.path.length - 1]
+  const pairSymbol = pairSymbolFromTokens(tokenIn, tokenOut)
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -34,15 +50,15 @@ export async function handleRouterSwap(event: SubstrateEvent): Promise<void> {
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     contractKind: 'router',
     trader,
     recipient,
     pairSymbol,
     amountIn,
     amountOut,
-    tokenIn: extractFirstAddress(args.path),
-    tokenOut: extractLastAddress(args.path),
+    tokenIn,
+    tokenOut,
     path,
   })
 
@@ -81,11 +97,16 @@ export async function handleRouterLiquidityAdded(event: SubstrateEvent): Promise
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const provider = String(args.to ?? signer ?? '')
-  const amount0 = safeNum(args.amount_a)
-  const amount1 = safeNum(args.amount_b)
-  const pairSymbol = derivePairFromTwoTokens(args.token_a, args.token_b)
+  // Discriminate by ink! string topic; bail on any non-LiquidityAdded event.
+  const raw = labelGuard(event, ['RouterContract::LiquidityAdded'])
+  if (!raw) return
+
+  const decoded = decodeRouterLiquidity(raw.payload)
+  if (!decoded) return
+  const provider = decoded.to || signer || ''
+  const amount0 = decoded.amountA
+  const amount1 = decoded.amountB
+  const pairSymbol = pairSymbolFromTokens(decoded.tokenA, decoded.tokenB)
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -94,13 +115,13 @@ export async function handleRouterLiquidityAdded(event: SubstrateEvent): Promise
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'ADD',
     provider,
     pairSymbol,
     amount0,
     amount1,
-    lpTokens: safeNum(args.liquidity),
+    lpTokens: decoded.liquidity,
   })
 
   await ev.save()
@@ -129,11 +150,16 @@ export async function handleRouterLiquidityRemoved(event: SubstrateEvent): Promi
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const provider = String(args.to ?? signer ?? '')
-  const amount0 = safeNum(args.amount_a)
-  const amount1 = safeNum(args.amount_b)
-  const pairSymbol = derivePairFromTwoTokens(args.token_a, args.token_b)
+  // Discriminate by ink! string topic; bail on any non-LiquidityRemoved event.
+  const raw = labelGuard(event, ['RouterContract::LiquidityRemoved'])
+  if (!raw) return
+
+  const decoded = decodeRouterLiquidity(raw.payload)
+  if (!decoded) return
+  const provider = decoded.to || signer || ''
+  const amount0 = decoded.amountA
+  const amount1 = decoded.amountB
+  const pairSymbol = pairSymbolFromTokens(decoded.tokenA, decoded.tokenB)
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -142,13 +168,13 @@ export async function handleRouterLiquidityRemoved(event: SubstrateEvent): Promi
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'REMOVE',
     provider,
     pairSymbol,
     amount0,
     amount1,
-    lpTokens: safeNum(args.liquidity),
+    lpTokens: decoded.liquidity,
   })
 
   await ev.save()
@@ -181,19 +207,17 @@ export async function handlePairSwap(event: SubstrateEvent): Promise<void> {
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
+  // Discriminate by ink! string topic; bail on any non-Pair-Swap event.
+  const raw = readContractEmitted(event)
+  if (!raw || raw.label !== 'PairContract::Swap') return
 
-  // Uniswap V2 Swap event fields
-  const sender = String(args.sender ?? signer ?? '')
-  const to = args.to ? String(args.to) : undefined
-  const amount0In = safeNum(args.amount0In ?? args.amount_0_in)
-  const amount1In = safeNum(args.amount1In ?? args.amount_1_in)
-  const amount0Out = safeNum(args.amount0Out ?? args.amount_0_out)
-  const amount1Out = safeNum(args.amount1Out ?? args.amount_1_out)
+  const decoded = decodePairSwap(raw.payload)
+  if (!decoded) return
 
-  // Determine effective in/out (one of each pair will be 0)
-  const amountIn = amount0In > BigInt(0) ? amount0In : amount1In
-  const amountOut = amount0Out > BigInt(0) ? amount0Out : amount1Out
+  const sender = decoded.sender || signer || ''
+  const to = decoded.to || undefined
+  const amountIn = decoded.amountIn
+  const amountOut = decoded.amountOut
 
   if (!sender) return
 
@@ -204,11 +228,12 @@ export async function handlePairSwap(event: SubstrateEvent): Promise<void> {
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     contractKind: 'pair',
     trader: sender,
     recipient: to,
-    pairSymbol: undefined, // pair contract address is the section; symbol resolved offline
+    // pair contract address is the emitter; per-pair symbol resolved offline
+    pairSymbol: raw.contract.slice(0, 12) + '...',
     amountIn,
     amountOut,
     tokenIn: undefined,
@@ -232,28 +257,3 @@ export async function handlePairSwap(event: SubstrateEvent): Promise<void> {
   await day.save()
 }
 
-// ── Helpers ────────────────────────────────────────────────────
-
-function derivePairFromPath(path: unknown): string | undefined {
-  if (!Array.isArray(path) || path.length < 2) return undefined
-  const first = String(path[0]).slice(0, 8)
-  const last = String(path[path.length - 1]).slice(0, 8)
-  return `${first}.../${last}...`
-}
-
-function derivePairFromTwoTokens(tokenA: unknown, tokenB: unknown): string | undefined {
-  if (!tokenA || !tokenB) return undefined
-  const a = String(tokenA).slice(0, 8)
-  const b = String(tokenB).slice(0, 8)
-  return `${a}.../${b}...`
-}
-
-function extractFirstAddress(path: unknown): string | undefined {
-  if (!Array.isArray(path) || path.length === 0) return undefined
-  return String(path[0])
-}
-
-function extractLastAddress(path: unknown): string | undefined {
-  if (!Array.isArray(path) || path.length === 0) return undefined
-  return String(path[path.length - 1])
-}

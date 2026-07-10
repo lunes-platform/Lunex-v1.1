@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { cryptoWaitReady, signatureVerify } from '@polkadot/util-crypto';
 import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 import prisma from '../db';
 import { config } from '../config';
 import { log } from '../utils/logger';
@@ -51,6 +52,121 @@ function ensurePairRoute(pairSymbol: string, route?: string[]): string[] {
 }
 
 const EPSILON = 1e-9;
+
+// ============================================================================
+// Copy-engine risk limits (RISK-BE)
+// ----------------------------------------------------------------------------
+// copyMultiplier  : scales the copied position size (0.1x .. 10x).
+// maxPerTradeUsdt : hard cap (collateral/USDT) per copied trade.
+// stopLossPct     : pause copy when vault loss vs deposits exceeds this %.
+// maxDrawdownPct  : pause copy when drawdown from peak equity exceeds this %.
+// ============================================================================
+
+type RiskConfigInput = {
+  copyMultiplier?: number;
+  maxPerTradeUsdt?: number;
+  stopLossPct?: number;
+  maxDrawdownPct?: number;
+};
+
+type VaultRiskConfig = {
+  copyMultiplier: number;
+  maxPerTradeUsdt: number | null;
+  stopLossPct: number | null;
+  maxDrawdownPct: number | null;
+};
+
+// Builds the Prisma update payload for risk columns from a request input.
+// Only includes fields that were actually provided so partial updates are safe.
+function buildRiskConfigUpdate(input: RiskConfigInput): Record<string, unknown> {
+  const data: Record<string, unknown> = {};
+  if (input.copyMultiplier != null) {
+    data.copyMultiplier = toDecimal(input.copyMultiplier);
+  }
+  if (input.maxPerTradeUsdt != null) {
+    data.maxPerTradeUsdt = toDecimal(input.maxPerTradeUsdt);
+  }
+  if (input.stopLossPct != null) {
+    data.stopLossPct = new Decimal(input.stopLossPct.toString());
+  }
+  if (input.maxDrawdownPct != null) {
+    data.maxDrawdownPct = new Decimal(input.maxDrawdownPct.toString());
+  }
+  return data;
+}
+
+// Reads the persisted risk config off a vault record, applying defaults.
+function readVaultRiskConfig(vault: {
+  copyMultiplier?: { toString(): string } | number | null;
+  maxPerTradeUsdt?: { toString(): string } | number | null;
+  stopLossPct?: { toString(): string } | number | null;
+  maxDrawdownPct?: { toString(): string } | number | null;
+}): VaultRiskConfig {
+  const multiplier =
+    vault.copyMultiplier != null ? decimalToNumber(vault.copyMultiplier) : 1;
+  return {
+    copyMultiplier: multiplier > 0 ? multiplier : 1,
+    maxPerTradeUsdt:
+      vault.maxPerTradeUsdt != null
+        ? decimalToNumber(vault.maxPerTradeUsdt)
+        : null,
+    stopLossPct:
+      vault.stopLossPct != null ? decimalToNumber(vault.stopLossPct) : null,
+    maxDrawdownPct:
+      vault.maxDrawdownPct != null
+        ? decimalToNumber(vault.maxDrawdownPct)
+        : null,
+  };
+}
+
+// Applies copyMultiplier (scale) then maxPerTradeUsdt (cap) to a requested
+// copied position size. Returns the effective amount the copy-engine should use.
+function applyCopyRiskToAmount(
+  requestedAmountIn: number,
+  risk: VaultRiskConfig,
+): number {
+  let amount = requestedAmountIn * risk.copyMultiplier;
+  if (risk.maxPerTradeUsdt != null && amount > risk.maxPerTradeUsdt) {
+    amount = risk.maxPerTradeUsdt;
+  }
+  return amount;
+}
+
+// Evaluates stop-loss / max-drawdown gates against current vault economics.
+// Returns whether the copy should be halted and a human-readable reason.
+// vaultEquity   : current marked equity of the vault.
+// totalDeposits : lifetime net deposits (cost basis for stop-loss).
+// peakEquity    : high-water equity ever reached (basis for drawdown).
+function evaluateRiskGate(params: {
+  risk: VaultRiskConfig;
+  vaultEquity: number;
+  totalDeposits: number;
+  peakEquity: number;
+}): { halt: boolean; reason?: string } {
+  const { risk, vaultEquity, totalDeposits, peakEquity } = params;
+
+  if (risk.stopLossPct != null && totalDeposits > 0) {
+    const lossPct = ((totalDeposits - vaultEquity) / totalDeposits) * 100;
+    if (lossPct >= risk.stopLossPct - EPSILON) {
+      return {
+        halt: true,
+        reason: `stopLoss breached: loss ${lossPct.toFixed(2)}% >= ${risk.stopLossPct}%`,
+      };
+    }
+  }
+
+  if (risk.maxDrawdownPct != null && peakEquity > 0) {
+    const drawdownPct = ((peakEquity - vaultEquity) / peakEquity) * 100;
+    if (drawdownPct >= risk.maxDrawdownPct - EPSILON) {
+      return {
+        halt: true,
+        reason: `maxDrawdown breached: drawdown ${drawdownPct.toFixed(2)}% >= ${risk.maxDrawdownPct}%`,
+      };
+    }
+  }
+
+  return { halt: false };
+}
 
 function estimateSignalQuoteNotional(params: {
   side: 'BUY' | 'SELL';
@@ -164,12 +280,14 @@ type WalletContinuationRepo = {
 function getWalletContinuationRepo(
   client: unknown,
 ): WalletContinuationRepo | null {
-  const repo = (client as any)?.copyTradeWalletContinuation;
+  const repo = (
+    client as { copyTradeWalletContinuation?: WalletContinuationRepo } | null
+  )?.copyTradeWalletContinuation;
   if (!repo || typeof repo !== 'object') return null;
   if (typeof repo.create !== 'function') return null;
   if (typeof repo.findUnique !== 'function') return null;
   if (typeof repo.update !== 'function') return null;
-  return repo as WalletContinuationRepo;
+  return repo;
 }
 
 const API_KEY_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -405,13 +523,7 @@ function buildLiveExecutionSlice(
 }
 
 async function resolveOpenTradeNotional(
-  client: {
-    copyTradeSignal: {
-      findFirst: (args: Record<string, unknown>) => Promise<{
-        amountIn: { toString(): string } | null;
-      } | null>;
-    };
-  },
+  client: Prisma.TransactionClient,
   input: {
     leaderId: string;
     pairSymbol: string;
@@ -487,10 +599,32 @@ async function maybeExecuteVaultSignal(params: {
     ('requiresWalletSignature' in routedExecution &&
       routedExecution.requiresWalletSignature)
   ) {
-    const continuation: WalletAssistedSignalContinuation | null =
+    // Fail-closed: intent sem minAmountOut válido (> 0) não vira continuation —
+    // minAmountOut 0 entregaria um swap sem proteção de slippage para o
+    // seguidor assinar (exposição a sandwich/MEV).
+    const intentMinAmountOut =
       'contractCallIntent' in routedExecution &&
       routedExecution.contractCallIntent &&
       typeof routedExecution.contractCallIntent === 'object'
+        ? Number((routedExecution.contractCallIntent as any).minAmountOut)
+        : Number.NaN;
+    const intentHasSlippageProtection =
+      Number.isFinite(intentMinAmountOut) && intentMinAmountOut > 0;
+    if (
+      'contractCallIntent' in routedExecution &&
+      routedExecution.contractCallIntent &&
+      !intentHasSlippageProtection
+    ) {
+      log.error(
+        { leaderId: params.leaderId, vaultId: params.vault.id },
+        '[Copytrade] contractCallIntent sem minAmountOut válido — continuation descartada (fail-closed)',
+      );
+    }
+    const continuation: WalletAssistedSignalContinuation | null =
+      'contractCallIntent' in routedExecution &&
+      routedExecution.contractCallIntent &&
+      typeof routedExecution.contractCallIntent === 'object' &&
+      intentHasSlippageProtection
         ? {
             executedVia: 'ASYMMETRIC',
             requiresWalletSignature: true,
@@ -504,9 +638,7 @@ async function maybeExecuteVaultSignal(params: {
               ),
               side: params.input.side,
               amountIn: params.amountIn,
-              minAmountOut: Number(
-                (routedExecution.contractCallIntent as any).minAmountOut ?? 0,
-              ),
+              minAmountOut: intentMinAmountOut,
               makerAddress: String(
                 (routedExecution.contractCallIntent as any).makerAddress ??
                   params.vault.contractAddress,
@@ -750,6 +882,7 @@ export const copytradeService = {
       minDeposit: decimalToNumber(vault.minDeposit),
       twapThreshold: decimalToNumber(vault.twapThreshold),
       maxSlippageBps: vault.maxSlippageBps,
+      riskConfig: readVaultRiskConfig(vault),
       leader: {
         id: vault.leader.id,
         name: vault.leader.name,
@@ -790,6 +923,7 @@ export const copytradeService = {
       minDeposit: decimalToNumber(vault.minDeposit),
       twapThreshold: decimalToNumber(vault.twapThreshold),
       maxSlippageBps: vault.maxSlippageBps,
+      riskConfig: readVaultRiskConfig(vault),
       leader: {
         id: vault.leader.id,
         name: vault.leader.name,
@@ -936,6 +1070,8 @@ export const copytradeService = {
             totalEquity: { increment: toDecimal(amount) },
             totalShares: { increment: toDecimal(sharesMinted) },
             totalDeposits: { increment: toDecimal(amount) },
+            // Persist copy-engine risk limits provided at deposit time.
+            ...buildRiskConfigUpdate(input),
           },
         });
 
@@ -1140,9 +1276,15 @@ export const copytradeService = {
       orderBy: { createdAt: 'desc' },
     });
 
-    const requestedAmountIn = toNumber(input.amountIn);
+    // --- Copy-engine risk limits (RISK-BE) ---
+    // Scale the leader's position by copyMultiplier and cap by maxPerTradeUsdt
+    // before the vault replicates the trade. The risk config is persisted on
+    // the vault (set at follow/deposit time).
+    const risk = readVaultRiskConfig(vault);
+    const leaderAmountIn = toNumber(input.amountIn);
+    const requestedAmountIn = applyCopyRiskToAmount(leaderAmountIn, risk);
     const requestedAmountOutMin = toNumber(input.amountOutMin);
-    if (requestedAmountIn <= 0) {
+    if (leaderAmountIn <= 0 || requestedAmountIn <= 0) {
       throw new Error('amountIn must be > 0');
     }
     if (requestedAmountOutMin <= 0) {
@@ -1171,6 +1313,37 @@ export const copytradeService = {
     );
     const openTrade =
       positionEffect === 'CLOSE' ? latestMatchingOpenTrade : null;
+
+    // Stop-loss / max-drawdown gate: halt copying new exposure when the vault
+    // has breached its configured loss/drawdown thresholds. Only blocks opens —
+    // closes (de-risking) are always allowed. When breached, the vault is
+    // PAUSED so no further leader signals replicate until manually re-activated.
+    if (positionEffect === 'OPEN') {
+      const vaultEquityNow = decimalToNumber(vault.totalEquity);
+      const totalDepositsNow = decimalToNumber(vault.totalDeposits);
+      const peakEquityNow = Math.max(
+        vaultEquityNow,
+        totalDepositsNow,
+        decimalToNumber(vault.totalWithdrawals) + vaultEquityNow,
+      );
+      const gate = evaluateRiskGate({
+        risk,
+        vaultEquity: vaultEquityNow,
+        totalDeposits: totalDepositsNow,
+        peakEquity: peakEquityNow,
+      });
+      if (gate.halt) {
+        await prisma.copyVault.update({
+          where: { id: vault.id },
+          data: { status: 'PAUSED' },
+        });
+        log.warn(
+          { leaderId, vaultId: vault.id, reason: gate.reason },
+          '[Copytrade] Risk gate halted copy and paused vault',
+        );
+        throw new Error(`Copy halted by risk limits: ${gate.reason}`);
+      }
+    }
 
     if (positionEffect === 'OPEN') {
       const latestMarketPrice = latestPairTrade
@@ -1247,10 +1420,15 @@ export const copytradeService = {
         ? toNumber(input.executionPrice)
         : 0;
     }
+    if (executionPrice <= 0 && latestPairTrade) {
+      executionPrice = decimalToNumber(latestPairTrade.price);
+    }
     if (executionPrice <= 0) {
-      executionPrice = latestPairTrade
-        ? decimalToNumber(latestPairTrade.price)
-        : requestedAmountIn / Math.max(requestedAmountOutMin, 1);
+      // Nunca fabricar preço a partir de amountOutMin: é um floor de slippage,
+      // não um preço — PnL e performance fee sairiam de um número inventado.
+      throw new Error(
+        'Cannot record signal: no execution price source available (no live execution, no provided price and no market trades for this pair)',
+      );
     }
 
     const effectiveAmountIn =
@@ -1281,7 +1459,7 @@ export const copytradeService = {
       });
 
     const openTradeNotional = openTrade
-      ? await resolveOpenTradeNotional(prisma as any, {
+      ? await resolveOpenTradeNotional(prisma, {
           leaderId,
           pairSymbol: input.pairSymbol,
           openingSide: openTrade.side,
@@ -1322,7 +1500,7 @@ export const copytradeService = {
             route,
             maxSlippageBps: effectiveSlippageBps,
             status: isPendingWalletSignature
-              ? ('PENDING_WALLET_SIGNATURE' as any)
+              ? 'PENDING_WALLET_SIGNATURE'
               : liveExecution
                 ? 'EXECUTED'
                 : executionSlices.length > 1
@@ -1590,7 +1768,7 @@ export const copytradeService = {
           entryPrice: openTrade.entryPrice,
           exitPrice: executionPrice,
         });
-        const openTradeNotional = await resolveOpenTradeNotional(tx as any, {
+        const openTradeNotional = await resolveOpenTradeNotional(tx, {
           leaderId,
           pairSymbol: signal.pairSymbol,
           openingSide: openTrade.side,

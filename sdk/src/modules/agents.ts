@@ -17,6 +17,18 @@ type SignedReadAuth = {
   signMessage?: (message: string) => Promise<string>;
 };
 
+function signedReadHeaders(signed: {
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}) {
+  return {
+    'X-Lunex-Nonce': signed.nonce,
+    'X-Lunex-Timestamp': String(signed.timestamp),
+    'X-Lunex-Signature': signed.signature,
+  };
+}
+
 export interface AgentProfile {
   id: string;
   walletAddress: string;
@@ -169,11 +181,11 @@ export class AgentsModule {
       auth,
     });
 
-    return this.http.get(`/api/v1/agents/by-wallet/${walletAddress}`, {
-      nonce: signed.nonce,
-      timestamp: signed.timestamp,
-      signature: signed.signature,
-    });
+    return this.http.get(
+      `/api/v1/agents/by-wallet/${walletAddress}`,
+      undefined,
+      { headers: signedReadHeaders(signed) },
+    );
   }
 
   async list(filters?: {

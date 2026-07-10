@@ -1,9 +1,9 @@
 /**
  * Spot API Service — REST + WebSocket client for the Lunex Spot Orderbook backend.
  */
+import { signedAuthHeaders } from '../utils/signing'
+import { SPOT_API_URL } from '../config/api'
 
-const SPOT_API_URL =
-  process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 const SPOT_WS_URL = process.env.REACT_APP_SPOT_WS_URL || 'ws://localhost:4001'
 
 // ─── Types ───
@@ -325,11 +325,11 @@ export const spotApi = {
   async cancelOrder(
     orderId: string,
     makerAddress: string,
-    signature: string
+    auth: SignedActionAuth
   ): Promise<{ order: SpotOrder }> {
     return await fetchApi<{ order: SpotOrder }>(`/api/v1/orders/${orderId}`, {
       method: 'DELETE',
-      body: JSON.stringify({ makerAddress, signature })
+      body: JSON.stringify({ makerAddress, ...auth })
     })
   },
 
@@ -342,9 +342,11 @@ export const spotApi = {
   ): Promise<{ orders: SpotOrder[] }> {
     let url = `/api/v1/orders?makerAddress=${encodeURIComponent(
       makerAddress
-    )}&limit=${limit}&offset=${offset}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
-    if (status) url += `&status=${status}`
-    return await fetchApi<{ orders: SpotOrder[] }>(url)
+    )}&limit=${limit}&offset=${offset}`
+    if (status) url += `&status=${encodeURIComponent(status)}`
+    return await fetchApi<{ orders: SpotOrder[] }>(url, {
+      headers: signedAuthHeaders(auth)
+    })
   },
 
   // ─── Trades ───
@@ -366,7 +368,8 @@ export const spotApi = {
     return await fetchApi<{ trades: SpotTrade[] }>(
       `/api/v1/trades?address=${encodeURIComponent(
         address
-      )}&limit=${limit}&offset=${offset}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+      )}&limit=${limit}&offset=${offset}`,
+      { headers: signedAuthHeaders(auth) }
     )
   },
 
@@ -389,7 +392,8 @@ export const spotApi = {
     auth: SignedActionAuth
   ): Promise<string[]> {
     const data = await fetchApi<{ favorites: string[] }>(
-      `/api/v1/user/${encodeURIComponent(address)}/favorites?nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+      `/api/v1/user/${encodeURIComponent(address)}/favorites`,
+      { headers: signedAuthHeaders(auth) }
     )
     return data.favorites
   },

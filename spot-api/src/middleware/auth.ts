@@ -101,8 +101,26 @@ export function buildSpotOrderMessage(input: SpotOrderMessageInput) {
 
 export { consumeNonce, isNonceUsed, markNonceUsed };
 
-export function buildSpotCancelMessage(orderId: string) {
-  return `lunex-cancel:${orderId}`;
+function firstSignedValue(value: unknown): unknown {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export function getSignedAuthInput(
+  req: {
+    get(name: string): string | undefined;
+    query?: Record<string, unknown>;
+    body?: Record<string, unknown>;
+  },
+  fallbackSource: 'query' | 'body' = 'query',
+) {
+  const fallback = req[fallbackSource] ?? {};
+  return {
+    nonce: req.get('X-Lunex-Nonce') ?? firstSignedValue(fallback.nonce),
+    timestamp:
+      req.get('X-Lunex-Timestamp') ?? firstSignedValue(fallback.timestamp),
+    signature:
+      req.get('X-Lunex-Signature') ?? firstSignedValue(fallback.signature),
+  };
 }
 
 function normalizeSignedValue(

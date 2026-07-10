@@ -2,8 +2,14 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ApiPromise, Keyring, WsProvider } from '@polkadot/api';
 import { ContractPromise } from '@polkadot/api-contract';
-import { cryptoWaitReady } from '@polkadot/util-crypto';
-import { hexToU8a, isHex } from '@polkadot/util';
+import {
+  cryptoWaitReady,
+  secp256k1PairFromSeed,
+  secp256k1Compress,
+  blake2AsU8a,
+} from '@polkadot/util-crypto';
+import { secp256k1Sign as wasmSecp256k1Sign } from '@polkadot/wasm-crypto';
+import { hexToU8a, isHex, u8aToHex } from '@polkadot/util';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import {
@@ -168,16 +174,195 @@ function nonceToU64(nonce: string) {
   return parsed;
 }
 
+/**
+ * Shape of the on-chain `SignedOrder` payload AFTER `toSignedOrder()` has
+ * converted DB values into contract-native representations: `maker`,
+ * `base_token`, `quote_token` are Substrate `AccountId` codec instances (32
+ * bytes), `side` is 0|1, and `price`/`amount`/`nonce`/`expiry` are decimal
+ * strings already scaled to the smallest unit (u128 / u64).
+ */
+type OnChainSignedOrder = {
+  maker: { toU8a(): Uint8Array };
+  base_token: { toU8a(): Uint8Array };
+  quote_token: { toU8a(): Uint8Array };
+  side: number;
+  price: string;
+  amount: string;
+  nonce: string;
+  expiry: string;
+  signature: number[];
+};
+
+function u128LeBytes(value: string): Uint8Array {
+  let v = BigInt(value);
+  if (v < 0n) {
+    throw new Error(`Negative balance cannot be encoded as u128: ${value}`);
+  }
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i += 1) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  if (v !== 0n) {
+    throw new Error(`Balance exceeds u128 range: ${value}`);
+  }
+  return out;
+}
+
+function u64LeBytes(value: string): Uint8Array {
+  let v = BigInt(value);
+  if (v < 0n) {
+    throw new Error(`Negative value cannot be encoded as u64: ${value}`);
+  }
+  const out = new Uint8Array(8);
+  for (let i = 0; i < 8; i += 1) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  if (v !== 0n) {
+    throw new Error(`Value exceeds u64 range: ${value}`);
+  }
+  return out;
+}
+
+/**
+ * Byte-for-byte reconstruction of the contract's `build_order_message_v2`
+ * (see `Lunex/contracts/spot_settlement/lib.rs`). The attestor signs the
+ * blake2_256 of THIS exact payload; any divergence makes `ecdsa_recover`
+ * return a pubkey that does not match `attestor_pubkey`, reverting settlement.
+ *
+ * Layout (must match the contract exactly):
+ *   b"lunex:v2:spot-order\n"      (20 bytes, PREFIX_V2)
+ *   maker                          (32 bytes, AccountId)
+ *   base_token                     (32 bytes, AccountId)
+ *   quote_token                    (32 bytes, AccountId)
+ *   side                           (1 byte, 0=BUY 1=SELL)
+ *   price                          (16 bytes, u128 little-endian)
+ *   amount                         (16 bytes, u128 little-endian)
+ *   nonce                          (8 bytes, u64 little-endian)
+ *   expiry                         (8 bytes, u64 little-endian)
+ * filled_amount is INTENTIONALLY excluded — on-chain storage is canonical.
+ */
+export function buildOrderMessageV2(order: OnChainSignedOrder): Uint8Array {
+  const prefix = new TextEncoder().encode('lunex:v2:spot-order\n');
+  const maker = order.maker.toU8a();
+  const baseToken = order.base_token.toU8a();
+  const quoteToken = order.quote_token.toU8a();
+  if (maker.length !== 32 || baseToken.length !== 32 || quoteToken.length !== 32) {
+    throw new Error('AccountId encoding must be exactly 32 bytes');
+  }
+  const parts: Uint8Array[] = [
+    prefix,
+    maker,
+    baseToken,
+    quoteToken,
+    Uint8Array.of(order.side),
+    u128LeBytes(order.price),
+    u128LeBytes(order.amount),
+    u64LeBytes(order.nonce),
+    u64LeBytes(order.expiry),
+  ];
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const msg = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    msg.set(p, offset);
+    offset += p.length;
+  }
+  return msg;
+}
+
+/**
+ * The 32-byte hash the attestor signs: `blake2_256(build_order_message_v2)`.
+ * Mirrors `build_attestation_hash` in the contract.
+ */
+export function buildAttestationHash(order: OnChainSignedOrder): Uint8Array {
+  return blake2AsU8a(buildOrderMessageV2(order), 256);
+}
+
+/**
+ * Resolve the attestor's 32-byte secp256k1 seed from configuration. Accepts a
+ * `0x`-prefixed (or bare) 64-hex-char string. Returns null when no attestor is
+ * configured (settlement then stays fail-closed under enforced mode).
+ */
+export function resolveAttestorSeed(): Uint8Array | null {
+  const raw = (config.settlement.attestorSeed || '').trim();
+  if (!raw) {
+    return null;
+  }
+  const hex = raw.startsWith('0x') ? raw : `0x${raw}`;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(
+      'ATTESTOR_SEED must be a 32-byte (64 hex char) secp256k1 seed',
+    );
+  }
+  return hexToU8a(hex);
+}
+
+/**
+ * Derive the attestor secp256k1 keypair from its seed. The public key is
+ * returned in 33-byte compressed SEC1 form — exactly what
+ * `set_attestor_key(pubkey: [u8;33])` stores and what the contract's
+ * `ecdsa_recover` produces for comparison.
+ */
+export function attestorKeypairFromSeed(seed: Uint8Array): {
+  secretKey: Uint8Array;
+  publicKeyCompressed: Uint8Array;
+} {
+  const pair = secp256k1PairFromSeed(seed);
+  const publicKeyCompressed = secp256k1Compress(pair.publicKey);
+  if (publicKeyCompressed.length !== 33) {
+    throw new Error('Compressed attestor pubkey must be 33 bytes');
+  }
+  return { secretKey: pair.secretKey, publicKeyCompressed };
+}
+
+/**
+ * Produce the 65-byte recoverable ECDSA attestation (`r ‖ s ‖ v`, v∈{0,1})
+ * over `blake2_256(build_order_message_v2(order))`, signed with the attestor's
+ * secp256k1 secret key. The wasm signer operates on the 32-byte digest
+ * DIRECTLY (no second hash), matching `ink::env::ecdsa_recover` semantics.
+ */
+export function attestOrder(
+  order: OnChainSignedOrder,
+  attestorSecretKey: Uint8Array,
+): number[] {
+  const hash = buildAttestationHash(order);
+  const sig = wasmSecp256k1Sign(hash, attestorSecretKey);
+  if (sig.length !== 65) {
+    throw new Error(
+      `Attestation must be 65 bytes (r‖s‖v), got ${sig.length}`,
+    );
+  }
+  return Array.from(sig);
+}
+
 class SpotSettlementService {
   private api: ApiPromise | null = null;
   private contract: ContractPromise | null = null;
   private relayer: ReturnType<Keyring['addFromUri']> | null = null;
+  private attestorSecretKey: Uint8Array | null = null;
+  private attestorPublicKeyCompressed: Uint8Array | null = null;
   private settleMethodKey: string | null = null;
   private getBalanceMethodKey: string | null = null;
   private isNonceUsedMethodKey: string | null = null;
   private isNonceCancelledMethodKey: string | null = null;
   private cancelOrderForMethodKey: string | null = null;
   private initPromise: Promise<boolean> | null = null;
+
+  // Relayer nonce pipeline. settle_trade is submitted concurrently (throttled
+  // by MAX_SETTLE_CONCURRENCY) instead of serialized one-per-finalized-block.
+  // polkadot.js `signAndSend(account, cb)` resolves the nonce lazily via
+  // `system.accountNextIndex`, which does NOT account for not-yet-included
+  // in-flight extrinsics — so N parallel submissions would all grab the SAME
+  // nonce and the node would drop all but one. We therefore manage the nonce
+  // explicitly: seed once from chain, then hand out monotonically increasing
+  // values guarded by a single-flight async lock so each in-flight extrinsic
+  // gets a distinct nonce. This preserves custody-grade correctness — each
+  // trade still produces exactly one settle_trade extrinsic; the contract's
+  // `used_nonces` guard (NonceAlreadyUsed) remains the idempotency backstop.
+  private nextRelayerNonce: bigint | null = null;
+  private nonceLock: Promise<void> = Promise.resolve();
 
   private isConfigured() {
     return Boolean(
@@ -189,11 +374,20 @@ class SpotSettlementService {
   }
 
   isEnabled() {
-    return this.isConfigured();
+    // Master-switch: even when fully configured, settlement stays OFF unless
+    // SETTLEMENT_ENABLED is explicitly 'true' (default OFF if absent). This
+    // makes a coordinated restart safe — config can be staged without arming
+    // on-chain settlement.
+    return this.isConfigured() && process.env.SETTLEMENT_ENABLED === 'true';
   }
 
   async ensureReady() {
-    if (!this.isConfigured()) {
+    // Gate on isEnabled() (NOT isConfigured()): when SETTLEMENT_ENABLED!=true,
+    // the relayer must not connect and on-chain paths (settle_trade,
+    // cancel_order_for, nonce/balance reads) must short-circuit. Otherwise a
+    // fully-configured-but-disabled deployment would still fire on-chain cancel
+    // extrinsics per order cancellation. The master-switch must be complete.
+    if (!this.isEnabled()) {
       return false;
     }
 
@@ -218,6 +412,28 @@ class SpotSettlementService {
 
       const keyring = new Keyring({ type: 'sr25519' });
       const relayer = keyring.addFromUri(config.blockchain.relayerSeed);
+
+      // Load the independent ECDSA attestor key (ADR-001 option c). When set,
+      // every settle_trade carries a per-order attestation the contract
+      // verifies via ecdsa_recover. Without it, settlement reverts under
+      // enforced mode (fail-closed) — see verify_order_signature in lib.rs.
+      const attestorSeed = resolveAttestorSeed();
+      if (attestorSeed) {
+        const { secretKey, publicKeyCompressed } =
+          attestorKeypairFromSeed(attestorSeed);
+        this.attestorSecretKey = secretKey;
+        this.attestorPublicKeyCompressed = publicKeyCompressed;
+        log.info(
+          { attestorPubkey: u8aToHex(publicKeyCompressed) },
+          '[SpotSettlement] Attestor key loaded; orders will carry ECDSA attestations',
+        );
+      } else {
+        this.attestorSecretKey = null;
+        this.attestorPublicKeyCompressed = null;
+        log.warn(
+          '[SpotSettlement] No ATTESTOR_SEED configured — settle_trade will REVERT under enforced signature mode',
+        );
+      }
       const contract = new ContractPromise(
         api as any,
         metadata as any,
@@ -260,6 +476,10 @@ class SpotSettlementService {
       this.api = api;
       this.contract = contract;
       this.relayer = relayer;
+      // Seed the relayer nonce pipeline from chain on (re)connect. Any
+      // previously cached value is discarded so a reconnect re-syncs with the
+      // node's view and never reuses a stale nonce.
+      this.nextRelayerNonce = null;
       this.settleMethodKey = settleMethodKey;
       this.getBalanceMethodKey = getBalanceMethodKey;
       this.isNonceUsedMethodKey = isNonceUsedMethodKey;
@@ -314,6 +534,122 @@ class SpotSettlementService {
     return (this.contract.tx as Record<string, any>)[methodKey] || null;
   }
 
+  /**
+   * Gas limit for contract dry-runs (query.* simulation).
+   *
+   * The Lunes pallet-contracts rejects the polkadot.js sentinel `gasLimit: -1`
+   * with `contracts.OutOfGas` (module 24, error 0x02), which made every
+   * settle_trade / cancel_order_for / nonce / balance dry-run fail. Substrate
+   * expects an explicit WeightV2 ceiling on this chain. We pass a generous
+   * WeightV2 so the dry-run can run to completion and return an accurate
+   * `gasRequired`; the real extrinsic is then submitted with that measured
+   * `gasRequired` (with built-in client margin), not this ceiling.
+   *
+   * Proven on-chain: cancel_order_for with WeightV2{refTime:600e9,proofSize:8e6}
+   * dry-runs to {ok:{ok:null}}, whereas gasLimit:-1 returns OutOfGas.
+   */
+  private dryRunGasLimit() {
+    if (!this.api) throw new Error('Settlement API not initialized');
+    return this.api.registry.createType('WeightV2', {
+      refTime: 600_000_000_000n,
+      proofSize: 8_000_000n,
+    });
+  }
+
+  /**
+   * Gas limit for the REAL extrinsic, derived from the dry-run `gasRequired`
+   * plus a safety margin. `gasRequired` is the exact measured weight of the
+   * dry-run; on-chain execution can consume marginally more (storage growth,
+   * block-state differences), so we add +50% headroom to avoid OutOfGas on
+   * submit while still bounding the relayer's exposure.
+   */
+  private txGasLimit(gasRequired: {
+    refTime: { toBigInt(): bigint };
+    proofSize: { toBigInt(): bigint };
+  }) {
+    if (!this.api) throw new Error('Settlement API not initialized');
+    const refTime = (gasRequired.refTime.toBigInt() * 150n) / 100n;
+    const proofSize = (gasRequired.proofSize.toBigInt() * 150n) / 100n;
+    return this.api.registry.createType('WeightV2', { refTime, proofSize });
+  }
+
+  /**
+   * Max number of settle_trade extrinsics kept in flight simultaneously.
+   * Bounds the relayer's exposure and protects the node's tx-pool from being
+   * flooded. Configurable via MAX_SETTLE_CONCURRENCY (default 8). Clamped to
+   * [1, 64] so a misconfiguration can never serialize (0) or flood the chain.
+   */
+  private settleConcurrency() {
+    const raw = parseInt(process.env.MAX_SETTLE_CONCURRENCY || '8', 10);
+    if (!Number.isFinite(raw) || raw < 1) return 1;
+    return Math.min(raw, 64);
+  }
+
+  /**
+   * Hands out a distinct, monotonically increasing relayer nonce for each
+   * in-flight extrinsic. Seeds lazily from `system.accountNextIndex` on first
+   * use after (re)connect, then increments locally. Serialized by a
+   * single-flight async lock so concurrent callers can never observe the same
+   * value (the seeding RPC await is a yield point, hence the lock).
+   */
+  private async nextNonce(): Promise<bigint> {
+    if (!this.api || !this.relayer) {
+      throw new Error('Settlement API not initialized');
+    }
+
+    let release!: () => void;
+    const prev = this.nonceLock;
+    this.nonceLock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await prev;
+
+    try {
+      if (this.nextRelayerNonce === null) {
+        const onChain = await this.api.rpc.system.accountNextIndex(
+          this.relayer.address,
+        );
+        this.nextRelayerNonce = BigInt(onChain.toString());
+      }
+      const nonce = this.nextRelayerNonce;
+      this.nextRelayerNonce = nonce + 1n;
+      return nonce;
+    } finally {
+      release();
+    }
+  }
+
+  /**
+   * Runs `worker` over `items` with at most `limit` concurrent invocations,
+   * returning results in input order. Used to pipeline settle_trade
+   * submissions without serializing on finality (one-per-block) or flooding
+   * the node with the entire batch at once.
+   */
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    limit: number,
+    worker: (item: T, index: number) => Promise<R>,
+  ): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let cursor = 0;
+
+    const runner = async (): Promise<void> => {
+      while (cursor < items.length) {
+        const index = cursor;
+        cursor += 1;
+        if (index >= items.length) return;
+        results[index] = await worker(items[index], index);
+      }
+    };
+
+    const pool = Array.from(
+      { length: Math.min(limit, items.length) },
+      () => runner(),
+    );
+    await Promise.all(pool);
+    return results;
+  }
+
   async getVaultBalance(
     userAddress: string,
     tokenAddress: string,
@@ -327,7 +663,7 @@ class SpotSettlementService {
 
     const { output, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       this.toUserAccountId(userAddress),
       this.toAccountId(tokenAddress, isNative),
     );
@@ -353,7 +689,7 @@ class SpotSettlementService {
 
     const { output, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       this.toUserAccountId(userAddress),
       nonceToU64(nonce).toString(),
     );
@@ -379,7 +715,7 @@ class SpotSettlementService {
 
     const { output, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       this.toUserAccountId(userAddress),
       nonceToU64(nonce).toString(),
     );
@@ -397,8 +733,8 @@ class SpotSettlementService {
     pair: PairSettlementSnapshot,
     order: OrderSettlementSnapshot,
   ) {
-    return {
-      maker: order.makerAddress,
+    const signedOrder = {
+      maker: this.toUserAccountId(order.makerAddress),
       base_token: this.toAccountId(pair.baseToken, pair.isNativeBase),
       quote_token: this.toAccountId(pair.quoteToken, pair.isNativeQuote),
       side: order.side === 'BUY' ? 0 : 1,
@@ -414,7 +750,19 @@ class SpotSettlementService {
       // Off-chain verification is done in assertOrderTrustedSource() before
       // this call. See verify_order_signature() in spot_settlement/lib.rs.
       signature: signatureToBytes(order.signature),
+      // ECDSA attestation by the independent attestor over the canonical v2
+      // order hash (65 bytes r‖s‖v), filled in below once all field values
+      // are known. When enforced==true the contract recovers the pubkey and
+      // compares it with attestor_pubkey; a 65-zero placeholder (no attestor
+      // configured) always reverts under enforced mode.
+      attestation: new Array(65).fill(0) as number[],
     };
+    // Sign the FINAL on-chain field values — buildOrderMessageV2 reads the
+    // exact same maker/token/side/price/amount/nonce/expiry the contract sees.
+    if (this.attestorSecretKey) {
+      signedOrder.attestation = attestOrder(signedOrder, this.attestorSecretKey);
+    }
+    return signedOrder;
   }
 
   private async assertOrderTrustedSource(
@@ -485,7 +833,7 @@ class SpotSettlementService {
 
     const { gasRequired, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       makerOrder,
       takerOrder,
       fillAmount,
@@ -498,11 +846,18 @@ class SpotSettlementService {
       );
     }
 
+    // Acquire an explicit, distinct relayer nonce immediately before submit.
+    // Without this, concurrent settle_trade submissions (pipeline mode) would
+    // share a lazily-resolved nonce and the node would silently drop all but
+    // one. With it, each in-flight extrinsic is uniquely sequenced; the
+    // contract's used_nonces guard still rejects any genuine replay.
+    const relayerNonce = await this.nextNonce();
+
     const txPromise = new Promise<string>((resolve, reject) => {
       let unsub: (() => void) | undefined;
 
       txMethod(
-        { gasLimit: gasRequired, storageDepositLimit: null },
+        { gasLimit: this.txGasLimit(gasRequired), storageDepositLimit: null },
         makerOrder,
         takerOrder,
         fillAmount,
@@ -510,6 +865,7 @@ class SpotSettlementService {
       )
         .signAndSend(
           this.relayer!,
+          { nonce: relayerNonce },
           (txResult: {
             status: { isInBlock: boolean; isFinalized: boolean };
             dispatchError?: { toString(): string };
@@ -538,47 +894,70 @@ class SpotSettlementService {
         .catch(reject);
     });
 
-    return withTxTimeout(`settle_trade:${input.tradeId}`, txPromise);
+    // If this submission fails (dispatch error, broadcast failure, or
+    // timeout), the nonce we reserved may never be consumed on-chain, which
+    // would leave a gap and stall every subsequent settle_trade. Invalidate
+    // the cached counter so the next nextNonce() re-seeds from the node's
+    // authoritative accountNextIndex. The contract's used_nonces guard makes
+    // any accidental re-submission of an already-settled trade a no-op revert.
+    return withTxTimeout(`settle_trade:${input.tradeId}`, txPromise).catch(
+      (err) => {
+        this.invalidateNonce();
+        throw err;
+      },
+    );
+  }
+
+  /**
+   * Drops the cached relayer nonce so the next acquisition re-seeds from
+   * chain. Serialized through the same lock as nextNonce so it cannot race a
+   * concurrent acquisition.
+   */
+  private invalidateNonce() {
+    this.nonceLock = this.nonceLock.then(() => {
+      this.nextRelayerNonce = null;
+    });
   }
 
   async settleTrades(
     inputs: TradeSettlementInput[],
   ): Promise<SettlementResult[]> {
-    const settlements: SettlementResult[] = [];
-
-    for (const input of inputs) {
-      try {
-        const txHash = await this.submitSettlement(input);
-        if (txHash) {
-          settlements.push({
-            tradeId: input.tradeId,
-            status: 'SETTLED',
-            txHash,
-          });
-        } else {
-          settlements.push({
+    // Pipeline mode: submit up to settleConcurrency() settle_trade extrinsics
+    // concurrently instead of serializing one-per-finalized-block. Results are
+    // collected in input order. Each trade still maps to exactly one extrinsic
+    // with a distinct relayer nonce, so no trade is ever settled twice (the
+    // on-chain used_nonces guard is the final idempotency backstop), and a
+    // single failure is isolated to its own result without blocking siblings.
+    return this.mapWithConcurrency(
+      inputs,
+      this.settleConcurrency(),
+      async (input): Promise<SettlementResult> => {
+        try {
+          const txHash = await this.submitSettlement(input);
+          if (txHash) {
+            return { tradeId: input.tradeId, status: 'SETTLED', txHash };
+          }
+          return {
             tradeId: input.tradeId,
             status: 'FAILED',
             error: 'Settlement service unavailable',
-          });
+          };
+        } catch (error) {
+          log.error(
+            { err: error, tradeId: input.tradeId },
+            '[SpotSettlement] Failed to settle trade',
+          );
+          return {
+            tradeId: input.tradeId,
+            status: 'FAILED',
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Unknown settlement failure',
+          };
         }
-      } catch (error) {
-        log.error(
-          { err: error, tradeId: input.tradeId },
-          '[SpotSettlement] Failed to settle trade',
-        );
-        settlements.push({
-          tradeId: input.tradeId,
-          status: 'FAILED',
-          error:
-            error instanceof Error
-              ? error.message
-              : 'Unknown settlement failure',
-        });
-      }
-    }
-
-    return settlements;
+      },
+    );
   }
 
   async cancelOrderFor(
@@ -609,7 +988,7 @@ class SpotSettlementService {
 
     const { gasRequired, result } = await queryMethod(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       maker,
       nonceValue,
     );
@@ -624,7 +1003,7 @@ class SpotSettlementService {
       let unsub: (() => void) | undefined;
 
       txMethod(
-        { gasLimit: gasRequired, storageDepositLimit: null },
+        { gasLimit: this.txGasLimit(gasRequired), storageDepositLimit: null },
         maker,
         nonceValue,
       )

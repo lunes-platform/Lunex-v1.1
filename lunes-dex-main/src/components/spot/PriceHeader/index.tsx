@@ -6,11 +6,10 @@ import contractService from '../../../services/contractService'
 import PairInfoModal from './PairInfoModal'
 import ShareModal from './ShareModal'
 import AnalyticsModal from './AnalyticsModal'
+import { TOKENS } from '../../../config/contracts'
 
 const MAX_SUPPLY = 6_000_000_000
-const WLUNES_ADDRESS =
-  process.env.REACT_APP_TOKEN_WLUNES ||
-  '5HRAhbbqPdBSB4WBKM2JYxrEDwE5FbsajJcAMcPHjqNgKiA'
+const WLUNES_ADDRESS = TOKENS.WLUNES
 const LUNES_DECIMALS = 8
 
 const Wrapper = styled.div`

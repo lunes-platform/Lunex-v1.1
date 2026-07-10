@@ -4,6 +4,7 @@ import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { agentAuth } from '../middleware/agentAuth';
 import {
+  getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -296,7 +297,7 @@ async function buildCanonicalStatusResponse(strategyId: string) {
   const liveAvailable = Boolean(buyCurve && sellCurve);
   const liveState: StrategyLiveStateOutput = {
     available: liveAvailable,
-    reason: liveAvailable ? null : reason ?? 'LIVE_STATE_UNAVAILABLE',
+    reason: liveAvailable ? null : (reason ?? 'LIVE_STATE_UNAVAILABLE'),
     source: liveAvailable ? 'on-chain' : 'unavailable',
     checkedAt,
     managerAddress,
@@ -336,7 +337,10 @@ router.get(
 router.get(
   '/strategies',
   handleAsync(async (req, res) => {
-    const parsed = ListStrategiesReadSchema.safeParse(req.query);
+    const parsed = ListStrategiesReadSchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success) {
       return send(
         res,
@@ -425,7 +429,10 @@ router.post(
 router.get(
   '/strategies/:id',
   handleAsync(async (req, res) => {
-    const parsed = StrategyReadSchema.safeParse(req.query);
+    const parsed = StrategyReadSchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success) {
       return send(
         res,
@@ -534,7 +541,10 @@ router.patch(
 router.get(
   '/strategies/:id/logs',
   handleAsync(async (req, res) => {
-    const parsed = StrategyLogsReadSchema.safeParse(req.query);
+    const parsed = StrategyLogsReadSchema.safeParse({
+      ...req.query,
+      ...getSignedAuthInput(req),
+    });
     if (!parsed.success) {
       return send(
         res,

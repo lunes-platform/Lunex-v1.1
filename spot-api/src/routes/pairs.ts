@@ -5,8 +5,20 @@ import { factoryService } from '../services/factoryService';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import { requireAdmin } from '../middleware/adminGuard';
+import { withTxTimeout, TxTimeoutError } from '../utils/txWithTimeout';
 
 const router = Router();
+
+// Hard bound for ticker DB work so the endpoint never hangs the /spot header.
+// Aggregation over a high-volume 24h window is computed in-DB (not in Node);
+// when the DB is healthy this resolves well under 1s. If the host is heavily
+// contended (e.g. a volume burst saturating CPU) we bail out at this bound and
+// return a coherent zero/null payload (HTTP 200, degraded:true) instead of
+// leaving the request — and the market header — pending indefinitely.
+const TICKER_DB_TIMEOUT_MS = 3_000;
+
+const toNum = (v: unknown): number =>
+  v == null ? 0 : parseFloat(v.toString());
 
 // ─── Public routes ───────────────────────────────────────────────
 
@@ -31,34 +43,67 @@ router.get(
       if (!pair) return res.status(404).json({ error: 'Pair not found' });
 
       const since = new Date(Date.now() - 86_400_000);
-      const trades = await prisma.trade.findMany({
-        where: { pairId: pair.id, createdAt: { gte: since } },
-        orderBy: { createdAt: 'desc' },
-      });
-
+      const where = { pairId: pair.id, createdAt: { gte: since } };
       const book = orderbookManager.get(symbol);
-      const lastPrice =
-        trades.length > 0 ? parseFloat(trades[0].price.toString()) : 0;
-      const firstPrice =
-        trades.length > 0
-          ? parseFloat(trades[trades.length - 1].price.toString())
-          : 0;
-      const high24h =
-        trades.length > 0
-          ? Math.max(...trades.map((t) => parseFloat(t.price.toString())))
-          : 0;
-      const low24h =
-        trades.length > 0
-          ? Math.min(...trades.map((t) => parseFloat(t.price.toString())))
-          : 0;
-      const volume24h = trades.reduce(
-        (sum, t) => sum + parseFloat(t.amount.toString()),
-        0,
-      );
-      const quoteVolume24h = trades.reduce(
-        (sum, t) => sum + parseFloat(t.quoteAmount.toString()),
-        0,
-      );
+
+      let lastPrice = 0;
+      let firstPrice = 0;
+      let high24h = 0;
+      let low24h = 0;
+      let volume24h = 0;
+      let quoteVolume24h = 0;
+      let tradeCount = 0;
+      let degraded = false;
+
+      // Compute 24h stats in the database instead of pulling every trade row
+      // into Node (a high-volume window can be tens of thousands of rows, which
+      // previously hung the request and stalled the /spot market header).
+      try {
+        const [agg, newest, oldest] = await withTxTimeout(
+          'ticker-24h-stats',
+          Promise.all([
+            prisma.trade.aggregate({
+              where,
+              _count: { _all: true },
+              _max: { price: true },
+              _min: { price: true },
+              _sum: { amount: true, quoteAmount: true },
+            }),
+            prisma.trade.findFirst({
+              where,
+              orderBy: { createdAt: 'desc' },
+              select: { price: true },
+            }),
+            prisma.trade.findFirst({
+              where,
+              orderBy: { createdAt: 'asc' },
+              select: { price: true },
+            }),
+          ]),
+          TICKER_DB_TIMEOUT_MS,
+        );
+
+        tradeCount = agg._count?._all ?? 0;
+        high24h = toNum(agg._max?.price);
+        low24h = toNum(agg._min?.price);
+        volume24h = toNum(agg._sum?.amount);
+        quoteVolume24h = toNum(agg._sum?.quoteAmount);
+        lastPrice = toNum(newest?.price);
+        firstPrice = toNum(oldest?.price);
+      } catch (err) {
+        // Never hang the header: on slow/contended DB, return a coherent
+        // zero payload (HTTP 200) and flag it as degraded.
+        if (err instanceof TxTimeoutError) {
+          degraded = true;
+          log.warn(
+            { symbol, timeoutMs: TICKER_DB_TIMEOUT_MS },
+            '[Pairs] Ticker 24h stats timed out — returning degraded payload',
+          );
+        } else {
+          throw err;
+        }
+      }
+
       const change24h =
         firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : 0;
 
@@ -70,10 +115,11 @@ router.get(
         volume24h,
         quoteVolume24h,
         change24h: parseFloat(change24h.toFixed(2)),
-        tradeCount: trades.length,
+        tradeCount,
         bestBid: book?.getBestBid() ?? null,
         bestAsk: book?.getBestAsk() ?? null,
         spread: book?.getSpread() ?? null,
+        degraded,
       });
     } catch (err) {
       next(err);

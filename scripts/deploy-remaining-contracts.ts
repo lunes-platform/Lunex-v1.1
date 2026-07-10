@@ -34,8 +34,19 @@ import * as path from 'path'
 // ── Config ────────────────────────────────────────────────────────
 
 const WS_URL    = process.env.LUNES_WS_URL   || 'wss://sandbox.lunes.io/ws'
-const SEED      = process.env.RELAYER_SEED   || '//Alice'
+// //Alice nunca é fallback implícito: exige opt-in explícito para dev local.
+const SEED =
+  process.env.RELAYER_SEED ||
+  (process.env.ALLOW_DEV_ALICE === 'true' ? '//Alice' : '')
 const DRY_RUN   = process.env.DRY_RUN === 'true'
+
+if (!SEED) {
+  console.error(
+    'RELAYER_SEED é obrigatório. Para dev local com a conta //Alice, ' +
+      'exporte ALLOW_DEV_ALICE=true explicitamente.',
+  )
+  process.exit(1)
+}
 
 const ROOT_DIR      = path.resolve(__dirname, '..')
 const TARGET_INK    = path.join(ROOT_DIR, 'target', 'ink')

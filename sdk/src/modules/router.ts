@@ -7,64 +7,88 @@ import {
   SwapExactOutParams,
   TransactionResult,
 } from '../types';
+import { EndpointNotAvailableError } from '../errors';
 
 export class RouterModule {
   constructor(private http: HttpClient) {}
 
   /**
    * Get a quote for a swap
-   * @param amountIn - Input amount
-   * @param path - Array of token addresses
+   * @param _amountIn - Input amount
+   * @param _path - Array of token addresses
    * @returns Quote with price impact and route
+   * @deprecated spot-api does not expose `/router/*` endpoints (this call
+   * always returned HTTP 404). The REST quote endpoint is
+   * `GET /api/v1/route/quote` and uses a different contract
+   * (`pairSymbol`, `side`, `amountIn`) that is incompatible with this
+   * token-address-path signature. Path-based AMM quoting is an on-chain
+   * router-contract read. Always throws
+   * {@link EndpointNotAvailableError}.
    */
-  async getQuote(amountIn: string, path: string[]): Promise<Quote> {
-    return this.http.get('/router/quote', {
-      amountIn,
-      path: JSON.stringify(path),
-    });
+  async getQuote(_amountIn: string, _path: string[]): Promise<Quote> {
+    throw new EndpointNotAvailableError(
+      'router.getQuote',
+      'path-based AMM quoting is an on-chain router-contract read. For REST quotes use GET /api/v1/route/quote?pairSymbol=...&side=BUY|SELL&amountIn=... (different contract, keyed by pair symbol).',
+    );
   }
 
   /**
    * Add liquidity to a pair
-   * @param params - Liquidity parameters
+   * @param _params - Liquidity parameters
    * @returns Transaction result with amounts and liquidity tokens
+   * @deprecated spot-api does not expose `/router/*` endpoints (this call
+   * always returned HTTP 404). Adding liquidity is an on-chain
+   * transaction (`add_liquidity` on the router contract) that must be
+   * signed by the user's wallet. Always throws
+   * {@link EndpointNotAvailableError}.
    */
-  async addLiquidity(params: LiquidityParams): Promise<
+  async addLiquidity(_params: LiquidityParams): Promise<
     TransactionResult & {
       amountA: string;
       amountB: string;
       liquidity: string;
     }
   > {
-    return this.http.post('/router/add-liquidity', {
-      ...params,
-      gasLimit: params.gasLimit || '500000000000',
-    });
+    throw new EndpointNotAvailableError(
+      'router.addLiquidity',
+      'adding liquidity is an on-chain transaction (add_liquidity on the router contract) that must be signed by the wallet via @polkadot/api-contract.',
+    );
   }
 
   /**
    * Remove liquidity from a pair
-   * @param params - Remove liquidity parameters
+   * @param _params - Remove liquidity parameters
    * @returns Transaction result with removed amounts
+   * @deprecated spot-api does not expose `/router/*` endpoints (this call
+   * always returned HTTP 404). Removing liquidity is an on-chain
+   * transaction (`remove_liquidity` on the router contract) that must be
+   * signed by the user's wallet. Always throws
+   * {@link EndpointNotAvailableError}.
    */
-  async removeLiquidity(params: RemoveLiquidityParams): Promise<
+  async removeLiquidity(_params: RemoveLiquidityParams): Promise<
     TransactionResult & {
       amountA: string;
       amountB: string;
     }
   > {
-    return this.http.post('/router/remove-liquidity', {
-      ...params,
-      gasLimit: params.gasLimit || '500000000000',
-    });
+    throw new EndpointNotAvailableError(
+      'router.removeLiquidity',
+      'removing liquidity is an on-chain transaction (remove_liquidity on the router contract) that must be signed by the wallet via @polkadot/api-contract.',
+    );
   }
 
   /**
    * Swap exact tokens for tokens
-   * @param params - Swap parameters
+   * @param _params - Swap parameters
    * @returns Transaction result with amounts and price impact
+   * @deprecated spot-api does not expose `/router/*` endpoints (this call
+   * always returned HTTP 404). Path-based AMM swaps are on-chain router
+   * transactions signed by the user's wallet. The REST swap endpoint is
+   * `POST /api/v1/route/swap` (agent API key; `pairSymbol`/`side`
+   * payload — see `sdk.agents`), which is incompatible with this
+   * signature. Always throws {@link EndpointNotAvailableError}.
    */
-  async swapExactTokensForTokens(params: SwapExactInParams): Promise<
+  async swapExactTokensForTokens(_params: SwapExactInParams): Promise<
     TransactionResult & {
       amountIn: string;
       amountOut: string;
@@ -72,27 +96,33 @@ export class RouterModule {
       executionPrice: string;
     }
   > {
-    return this.http.post('/router/swap-exact-in', {
-      ...params,
-      gasLimit: params.gasLimit || '500000000000',
-    });
+    throw new EndpointNotAvailableError(
+      'router.swapExactTokensForTokens',
+      'path-based AMM swaps are on-chain router transactions signed by the wallet. For REST swaps use POST /api/v1/route/swap (agent API key, pairSymbol/side payload — see sdk.agents).',
+    );
   }
 
   /**
    * Swap tokens for exact tokens
-   * @param params - Swap parameters
+   * @param _params - Swap parameters
    * @returns Transaction result with amounts
+   * @deprecated spot-api does not expose `/router/*` endpoints (this call
+   * always returned HTTP 404). Path-based AMM swaps are on-chain router
+   * transactions signed by the user's wallet. The REST swap endpoint is
+   * `POST /api/v1/route/swap` (agent API key; `pairSymbol`/`side`
+   * payload — see `sdk.agents`), which is incompatible with this
+   * signature. Always throws {@link EndpointNotAvailableError}.
    */
-  async swapTokensForExactTokens(params: SwapExactOutParams): Promise<
+  async swapTokensForExactTokens(_params: SwapExactOutParams): Promise<
     TransactionResult & {
       amountIn: string;
       amountOut: string;
     }
   > {
-    return this.http.post('/router/swap-exact-out', {
-      ...params,
-      gasLimit: params.gasLimit || '500000000000',
-    });
+    throw new EndpointNotAvailableError(
+      'router.swapTokensForExactTokens',
+      'path-based AMM swaps are on-chain router transactions signed by the wallet. For REST swaps use POST /api/v1/route/swap (agent API key, pairSymbol/side payload — see sdk.agents).',
+    );
   }
 
   /**

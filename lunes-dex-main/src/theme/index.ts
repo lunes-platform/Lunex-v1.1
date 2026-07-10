@@ -64,7 +64,7 @@ const themes: DefaultTheme = {
 
     themeColors: {
       100: '#FFFFFF',
-      200: '#8A8A8E',
+      200: '#9A9A9E',
       300: '#47474A',
       400: '#2A2A2C',
       500: '#1A1A1A',

@@ -137,6 +137,8 @@ type ListingEvent @entity {
   extrinsicHash: String         @index
   contractAddress: String!      @index
   kind: String!                 # TOKEN_LISTED | LIQUIDITY_LOCKED | LIQUIDITY_UNLOCKED | FEE_DISTRIBUTED
+  listingId: BigInt             @index
+  lockId: BigInt                @index
   owner: String!                @index
   tokenAddress: String          @index
   pairAddress: String

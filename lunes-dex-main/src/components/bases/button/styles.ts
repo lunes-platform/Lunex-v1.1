@@ -1,5 +1,5 @@
 import styled, { css } from 'styled-components'
-import { ButtonProps } from '.'
+import type { ButtonProps } from '.'
 
 export const Button = styled.button<Partial<ButtonProps>>`
   ${({ ...props }) => css`

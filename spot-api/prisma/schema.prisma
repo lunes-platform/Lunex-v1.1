@@ -428,6 +428,11 @@ model CopyVault {
   minDeposit       Decimal         @default(10) @db.Decimal(36, 18)
   twapThreshold    Decimal         @default(50000) @db.Decimal(36, 18)
   maxSlippageBps   Int             @default(100)
+  // --- Copy-engine risk limits (RISK-BE) ---
+  copyMultiplier   Decimal         @default(1) @db.Decimal(36, 18) // scales copied position size (0.1..10)
+  maxPerTradeUsdt  Decimal?        @db.Decimal(36, 18) // optional hard cap per copied trade
+  stopLossPct      Decimal?        @db.Decimal(10, 4) // optional: pause copy when vault loss exceeds %
+  maxDrawdownPct   Decimal?        @db.Decimal(10, 4) // optional: pause copy when drawdown exceeds %
   contractAddress  String? // On-chain CopyVault ink! contract address
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
@@ -782,6 +787,17 @@ model AffiliateCommission {
 
   batch AffiliatePayoutBatch? @relation(fields: [batchId], references: [id])
 
+  // Idempotency: one commission per (sourceTrade, fee payer, beneficiary, level).
+  // sourceAddr is part of the key on purpose — taker-fee and maker-fee
+  // distributions for the same trade are distinct events with distinct
+  // sourceAddr, so both must be allowed. Postgres treats NULLs as distinct,
+  // so rows with sourceTradeId = null (MARGIN / tradeId-less calls) are
+  // unaffected. Documented side-effect: self-trade (maker == taker) credits
+  // only the first of the two distributions — desirable anti wash-trading.
+  // Explicit `map` is mandatory: the Prisma default name exceeds Postgres'
+  // 63-char identifier limit, and both Prisma schemas must point at the same
+  // physical index name to avoid drift.
+  @@unique([sourceTradeId, sourceAddr, beneficiaryAddr, level], map: "AffiliateCommission_source_dedup_key")
   @@index([beneficiaryAddr, isPaid])
   @@index([sourceAddr, createdAt])
   @@index([batchId])
@@ -1252,6 +1268,7 @@ model UserReward {
 
   rewardWeek RewardWeek @relation(fields: [rewardWeekId], references: [id])
 
+  @@unique([rewardWeekId, walletAddress, rewardType])
   @@index([walletAddress, claimed])
   @@index([rewardWeekId])
   @@index([payoutStatus])

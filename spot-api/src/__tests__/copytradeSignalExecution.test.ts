@@ -321,6 +321,78 @@ describe('copytradeService.createSignal Option B', () => {
     expect(tx.copyTradeWalletContinuation.create).toHaveBeenCalledTimes(1);
   });
 
+  it('drops the wallet-assisted continuation when contractCallIntent lacks slippage protection (minAmountOut)', async () => {
+    const tx = createSignalTxMocks();
+    (mockPrisma.$transaction as jest.Mock).mockImplementation(
+      async (callback: any) => callback(tx),
+    );
+
+    mockRouterService.executeViaRouter.mockResolvedValue({
+      executedVia: 'ASYMMETRIC',
+      success: true,
+      requiresWalletSignature: true,
+      contractCallIntent: {
+        contractAddress: '5Fasym',
+        method: 'swap',
+        side: 'SELL',
+        amountIn: 100,
+        // minAmountOut ausente: intent sem proteção de slippage NÃO pode
+        // virar continuation com minAmountOut 0 para o seguidor assinar.
+        makerAddress: '5Fvault',
+        nonce: 'copytrade_vault_vault-1_1700000000000',
+        agentId: 'leader-1',
+      },
+      message: 'needs wallet signature',
+    } as any);
+
+    const result = await copytradeService.createSignal('leader-1', {
+      pairSymbol: 'LUNES/USDT',
+      side: 'SELL',
+      positionEffect: 'OPEN',
+      signalMode: 'AUTO',
+      source: 'API',
+      amountIn: '100',
+      amountOutMin: '380',
+      maxSlippageBps: 100,
+    });
+
+    expect(result).toMatchObject({
+      signalId: 'signal-1',
+      signalModeResolved: 'JOURNAL',
+      executedVia: null,
+      orderId: null,
+      walletAssistedContinuation: null,
+    });
+    expect(tx.copyTradeWalletContinuation.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects the signal when no real price source exists (never fabricates executionPrice from amountOutMin)', async () => {
+    const tx = createSignalTxMocks();
+    (mockPrisma.$transaction as jest.Mock).mockImplementation(
+      async (callback: any) => callback(tx),
+    );
+    // Sem execução live, sem preço informado e sem trades no par:
+    (mockPrisma.trade.findFirst as jest.Mock).mockResolvedValue(null);
+    mockRouterService.executeViaRouter.mockRejectedValue(
+      new Error('route execution unavailable'),
+    );
+
+    await expect(
+      copytradeService.createSignal('leader-1', {
+        pairSymbol: 'LUNES/USDT',
+        side: 'SELL',
+        positionEffect: 'OPEN',
+        signalMode: 'AUTO',
+        source: 'API',
+        amountIn: '100',
+        amountOutMin: '380',
+        maxSlippageBps: 100,
+      }),
+    ).rejects.toThrow(/price/i);
+
+    expect(tx.copyTradeSignal?.create ?? jest.fn()).not.toHaveBeenCalled();
+  });
+
   it('falls back to journaling when AUTO live execution errors at runtime', async () => {
     const tx = createSignalTxMocks();
     (mockPrisma.$transaction as jest.Mock).mockImplementation(

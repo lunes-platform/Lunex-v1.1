@@ -11,6 +11,7 @@ import {
   recordOrderCancelled,
 } from '../services/botSandbox';
 import { executionLayerService } from '../services/executionLayerService';
+import { settlementService } from '../services/settlementService';
 import prisma from '../db';
 import { log } from '../utils/logger';
 
@@ -151,6 +152,14 @@ router.post(
 
       const agent = req.agent!;
       await validateTradeLimits(agent, parsed.data.amount);
+
+      if (settlementService.isEnabled()) {
+        return res.status(409).json({
+          error:
+            'Agent spot swaps require delegated settlement authorization before on-chain settlement can be used',
+          code: 'SYNTHETIC_SIGNATURE_SETTLEMENT_BLOCKED',
+        });
+      }
 
       // ── Execution Layer: validate + log ────────────────────────
       const strategyId =

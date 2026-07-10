@@ -261,7 +261,12 @@ const EmptyState = styled.div`
 `
 
 const OrderBook: React.FC = () => {
-  const { orderbook, recentTrades: spotTrades, isConnected } = useSpot()
+  const {
+    orderbook,
+    recentTrades: spotTrades,
+    isConnected,
+    setSelectedPrice
+  } = useSpot()
   const [viewMode, setViewMode] = useState<ViewMode>('book')
   const [precision, setPrecision] = useState<PrecisionLevel>(5)
 
@@ -345,6 +350,7 @@ const OrderBook: React.FC = () => {
         {viewMode === 'book' && (
           <PrecisionSelect
             value={precision}
+            aria-label="Order book price precision"
             onChange={e =>
               setPrecision(Number(e.target.value) as PrecisionLevel)
             }
@@ -378,6 +384,16 @@ const OrderBook: React.FC = () => {
                       key={i}
                       side="ask"
                       depth={(o.total / maxAsk) * 100}
+                      role="button"
+                      tabIndex={0}
+                      title="Click to use this price"
+                      onClick={() => setSelectedPrice(o.price)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          setSelectedPrice(o.price)
+                        }
+                      }}
                     >
                       <PriceText side="ask">
                         {o.price.toFixed(precision)}
@@ -400,7 +416,21 @@ const OrderBook: React.FC = () => {
               {/* BIDS */}
               <BidSection>
                 {groupedBids.slice(0, 22).map((o, i) => (
-                  <OrderRow key={i} side="bid" depth={(o.total / maxBid) * 100}>
+                  <OrderRow
+                    key={i}
+                    side="bid"
+                    depth={(o.total / maxBid) * 100}
+                    role="button"
+                    tabIndex={0}
+                    title="Click to use this price"
+                    onClick={() => setSelectedPrice(o.price)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setSelectedPrice(o.price)
+                      }
+                    }}
+                  >
                     <PriceText side="bid">
                       {o.price.toFixed(precision)}
                     </PriceText>

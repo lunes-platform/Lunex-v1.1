@@ -53,6 +53,41 @@ function resolveTier(stakedAmount: number): {
   return { tier, limits: STAKING_TIERS[tier] };
 }
 
+// ─── On-Chain Stake Verification (fail-closed) ───────────────────
+//
+// SECURITY: verifyStake() credits an agent's trading tier. The tier MUST be
+// derived from the *on-chain* staked balance, never from the user-supplied
+// `amount`/`txHash` recorded at recordStake() time. To keep this verifiable in
+// isolation (and to avoid coupling the service to a live chain connection) the
+// chain lookup is injected. When no verifier is wired (the default), verifyStake
+// REFUSES to credit the tier — fail-closed — so an unverified stake can never
+// silently upgrade an agent.
+
+export interface StakeChainVerifier {
+  /** Whether a real chain connection is available for verification. */
+  isConfigured(): boolean;
+  /**
+   * Returns the total staked amount (in LUNES) currently held on-chain for the
+   * given account, or null when no stake exists / it cannot be read.
+   */
+  getOnChainStakeAmount(walletAddress: string): Promise<number | null>;
+}
+
+// Default verifier is unconfigured: verifyStake() will fail-closed until a real
+// on-chain verifier is injected via setStakeChainVerifier().
+let stakeChainVerifier: StakeChainVerifier | null = null;
+
+/**
+ * Inject (or clear, with null) the on-chain stake verifier. Passing null
+ * restores the fail-closed default. Used by bootstrap to wire the real chain
+ * client, and by tests to supply a stub.
+ */
+export function setStakeChainVerifier(
+  verifier: StakeChainVerifier | null,
+): void {
+  stakeChainVerifier = verifier;
+}
+
 // ─── API Key Helpers ────────────────────────────────────────────
 
 function generateApiKey(): { raw: string; prefix: string; hash: string } {
@@ -285,8 +320,12 @@ export const agentService = {
   },
 
   /**
-   * Confirm a stake after on-chain verification succeeds (called by admin/relayer).
-   * Only THEN does the agent's tier upgrade take effect.
+   * Confirm a stake AFTER verifying it on-chain (called by admin/relayer).
+   *
+   * SECURITY (fail-closed): the tier is credited from the on-chain staked
+   * balance, never from the user-supplied `amount`/`txHash`. If no on-chain
+   * verifier is configured, verification is rejected and the stake remains in
+   * PENDING_VERIFICATION — an unverified stake can never upgrade the tier.
    */
   async verifyStake(stakeId: string) {
     const stake = await prisma.agentStake.findUnique({
@@ -298,9 +337,37 @@ export const agentService = {
       throw new Error(`Stake is already in status ${stake.status}`);
     }
 
-    const newTotal =
-      parseFloat(stake.agent.stakedAmount.toString()) +
-      parseFloat(stake.amount.toString());
+    // Fail-closed: refuse to credit anything without a real chain connection.
+    if (!stakeChainVerifier || !stakeChainVerifier.isConfigured()) {
+      throw new Error(
+        'On-chain verification is not available — refusing to credit tier. ' +
+          'Stake remains PENDING_VERIFICATION until the chain can be queried.',
+      );
+    }
+
+    // Query the chain for the account's authoritative staked balance.
+    const onChainAmount = await stakeChainVerifier.getOnChainStakeAmount(
+      stake.agent.walletAddress,
+    );
+    if (onChainAmount === null || onChainAmount === undefined) {
+      throw new Error(
+        'On-chain stake not found for this account — could not be verified. ' +
+          'Tier not credited.',
+      );
+    }
+
+    // The recorded (user-supplied) amount must be backed by the chain. If the
+    // chain shows less than what was recorded, the recorded amount is forged.
+    const recordedAmount = parseFloat(stake.amount.toString());
+    if (onChainAmount + 1e-9 < recordedAmount) {
+      throw new Error(
+        `Recorded stake amount (${recordedAmount}) does not match on-chain ` +
+          `staked balance (${onChainAmount}) — refusing to credit tier (possible forged amount).`,
+      );
+    }
+
+    // Tier is derived from the AUTHORITATIVE on-chain balance, not user input.
+    const newTotal = onChainAmount;
     const { tier, limits } = resolveTier(newTotal);
 
     await prisma.$transaction([

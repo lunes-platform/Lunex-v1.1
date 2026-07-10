@@ -82,7 +82,7 @@ function toFloat(value: unknown): number {
 
 // ─── Service ─────────────────────────────────────────────────────────────────
 
-const db = prisma as any;
+const db = prisma;
 
 export const rewardDistributionService = {
   // ─── Week Helpers ────────────────────────────────────────────────────────
@@ -144,7 +144,8 @@ export const rewardDistributionService = {
 
   summarizeDbBackedWeekRewards(
     rewards: Array<{
-      rewardType: RewardType;
+      // Schema persists rewardType as String; comparison below scopes it.
+      rewardType: string;
       amount: unknown;
       payoutStatus?: string | null;
       claimed?: boolean | null;
@@ -327,7 +328,7 @@ export const rewardDistributionService = {
       vaults.map((vault) => [vault.leaderId, toFloat(vault.totalEquity)]),
     );
     const analyticsSnapshotMap = new Map(
-      analyticsSnapshots.map((snapshot: any) => [snapshot.leaderId, snapshot]),
+      analyticsSnapshots.map((snapshot) => [snapshot.leaderId, snapshot]),
     );
 
     const normalizedLeaders = leaders.map((leader) => {
@@ -886,6 +887,38 @@ export const rewardDistributionService = {
         continue;
       }
 
+      // Idempotency claim: persist the reward record BEFORE moving money.
+      // The @@unique([rewardWeekId, walletAddress, rewardType]) constraint makes
+      // this the durable lock — if a concurrent run already inserted the row,
+      // create throws P2002 and we skip the transfer entirely. A crash between
+      // this create and the transfer leaves a PENDING record that blocks a
+      // re-pay on the next run (findFirst above returns it).
+      let rewardRecordId: string;
+      try {
+        const created = await db.userReward.create({
+          data: {
+            rewardWeekId: weekId,
+            walletAddress: reward.address,
+            amount: new Decimal(reward.amount.toString()),
+            rewardType: 'LEADER',
+            rank: reward.rank,
+            txHash: null,
+            payoutStatus: 'PENDING',
+            payoutError: null,
+          },
+        });
+        rewardRecordId = created.id;
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code === 'P2002') {
+          log.warn(
+            { address: reward.address },
+            '[Rewards] Leader reward already claimed concurrently — skipping payout',
+          );
+          continue;
+        }
+        throw err;
+      }
+
       if (payoutEnabled) {
         const payoutResult = await rewardPayoutService.transferNative(
           reward.address,
@@ -904,21 +937,17 @@ export const rewardDistributionService = {
             '[Rewards] Leader payout failed',
           );
         }
-      }
 
-      // Persist to DB
-      await db.userReward.create({
-        data: {
-          rewardWeekId: weekId,
-          walletAddress: reward.address,
-          amount: new Decimal(reward.amount.toString()),
-          rewardType: 'LEADER',
-          rank: reward.rank,
-          txHash: reward.txHash,
-          payoutStatus: payoutEnabled ? reward.status : 'PENDING',
-          payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
-        },
-      });
+        // Record the payout outcome on the already-claimed record.
+        await db.userReward.update({
+          where: { id: rewardRecordId },
+          data: {
+            txHash: reward.txHash,
+            payoutStatus: reward.status,
+            payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
+          },
+        });
+      }
     }
 
     return rewards;
@@ -1006,6 +1035,33 @@ export const rewardDistributionService = {
         continue;
       }
 
+      // Idempotency claim BEFORE moving money — see distributeLeaderRewards.
+      let rewardRecordId: string;
+      try {
+        const created = await db.userReward.create({
+          data: {
+            rewardWeekId: weekId,
+            walletAddress: reward.address,
+            amount: new Decimal(reward.amount.toString()),
+            rewardType: 'TRADER',
+            rank: reward.rank,
+            txHash: null,
+            payoutStatus: 'PENDING',
+            payoutError: null,
+          },
+        });
+        rewardRecordId = created.id;
+      } catch (err: unknown) {
+        if ((err as { code?: string }).code === 'P2002') {
+          log.warn(
+            { address: reward.address },
+            '[Rewards] Trader reward already claimed concurrently — skipping payout',
+          );
+          continue;
+        }
+        throw err;
+      }
+
       if (payoutEnabled) {
         const result = await rewardPayoutService.transferNative(
           reward.address,
@@ -1024,20 +1080,16 @@ export const rewardDistributionService = {
             '[Rewards] Trader payout failed',
           );
         }
-      }
 
-      await db.userReward.create({
-        data: {
-          rewardWeekId: weekId,
-          walletAddress: reward.address,
-          amount: new Decimal(reward.amount.toString()),
-          rewardType: 'TRADER',
-          rank: reward.rank,
-          txHash: reward.txHash,
-          payoutStatus: payoutEnabled ? reward.status : 'PENDING',
-          payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
-        },
-      });
+        await db.userReward.update({
+          where: { id: rewardRecordId },
+          data: {
+            txHash: reward.txHash,
+            payoutStatus: reward.status,
+            payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
+          },
+        });
+      }
     }
 
     return rewards;
@@ -1091,16 +1143,16 @@ export const rewardDistributionService = {
       orderBy: { createdAt: 'desc' },
     });
     const dbBackedRewards = rewards.filter(
-      (r: any) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
+      (r) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
     );
 
     const leaderTotal = dbBackedRewards
-      .filter((r: any) => r.rewardType === 'LEADER')
-      .reduce((sum: number, r: any) => sum + toFloat(r.amount), 0);
+      .filter((r) => r.rewardType === 'LEADER')
+      .reduce((sum, r) => sum + toFloat(r.amount), 0);
 
     const traderTotal = dbBackedRewards
-      .filter((r: any) => r.rewardType === 'TRADER')
-      .reduce((sum: number, r: any) => sum + toFloat(r.amount), 0);
+      .filter((r) => r.rewardType === 'TRADER')
+      .reduce((sum, r) => sum + toFloat(r.amount), 0);
 
     return {
       total: leaderTotal + traderTotal,
@@ -1108,7 +1160,7 @@ export const rewardDistributionService = {
       traderRewards: traderTotal,
       stakerRewards: 0,
       stakerClaimMode: 'on-chain',
-      entries: dbBackedRewards.map((r: any) => ({
+      entries: dbBackedRewards.map((r) => ({
         id: r.id,
         amount: toFloat(r.amount),
         type: r.rewardType,
@@ -1138,7 +1190,7 @@ export const rewardDistributionService = {
       },
     });
     const dbBackedPending = pending.filter(
-      (r: any) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
+      (r) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
     );
 
     if (dbBackedPending.length === 0) {
@@ -1146,7 +1198,7 @@ export const rewardDistributionService = {
     }
 
     const totalAmount = dbBackedPending.reduce(
-      (sum: number, r: any) => sum + toFloat(r.amount),
+      (sum, r) => sum + toFloat(r.amount),
       0,
     );
 
@@ -1188,10 +1240,10 @@ export const rewardDistributionService = {
       take: limit,
     });
     const dbBackedRewards = rewards.filter(
-      (r: any) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
+      (r) => r.rewardType === 'LEADER' || r.rewardType === 'TRADER',
     );
 
-    return dbBackedRewards.map((r: any) => ({
+    return dbBackedRewards.map((r) => ({
       id: r.id,
       amount: toFloat(r.amount),
       type: r.rewardType,
@@ -1225,7 +1277,7 @@ export const rewardDistributionService = {
       },
     });
 
-    return weeks.map((week: any) => {
+    return weeks.map((week) => {
       const rewardPoolAmount = toFloat(week.rewardPoolAmount);
       const leaderPoolAmount = toFloat(week.leaderPoolAmount);
       const stakerPoolAmount = toFloat(week.stakerPoolAmount);

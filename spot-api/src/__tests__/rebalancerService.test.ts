@@ -1,29 +1,29 @@
-import { rebalancerService } from '../services/rebalancerService'
+import { rebalancerService } from '../services/rebalancerService';
 
 describe('rebalancerService.isManagedByRelayer', () => {
   afterEach(() => {
-    jest.restoreAllMocks()
-  })
+    jest.restoreAllMocks();
+  });
 
   it('returns true when manager address matches relayer address', async () => {
-    jest.spyOn(rebalancerService, 'getManager').mockResolvedValue('5Fmanager')
+    jest.spyOn(rebalancerService, 'getManager').mockResolvedValue('5Fmanager');
     jest
       .spyOn(rebalancerService, 'getRelayerAddress')
-      .mockResolvedValue('5Fmanager')
+      .mockResolvedValue('5Fmanager');
 
     await expect(rebalancerService.isManagedByRelayer('5Fpair')).resolves.toBe(
-      true
-    )
-  })
+      true,
+    );
+  });
 
   it('returns false when manager is unset or mismatched', async () => {
-    jest.spyOn(rebalancerService, 'getManager').mockResolvedValue(null)
+    jest.spyOn(rebalancerService, 'getManager').mockResolvedValue(null);
     jest
       .spyOn(rebalancerService, 'getRelayerAddress')
-      .mockResolvedValue('5Frelayer')
+      .mockResolvedValue('5Frelayer');
 
     await expect(rebalancerService.isManagedByRelayer('5Fpair')).resolves.toBe(
-      false
-    )
-  })
-})
+      false,
+    );
+  });
+});

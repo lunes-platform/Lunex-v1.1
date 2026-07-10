@@ -12,6 +12,10 @@ import OrderHistory from 'components/spot/OrderHistory'
 // 8pt grid, clear visual hierarchy, no overlap
 // ──────────────────────────────────────────────────────────────
 
+// Breakpoint below which the desktop 3-column terminal collapses into a
+// single vertical, scrollable stack for tablet/mobile.
+const MOBILE = '900px'
+
 const Page = styled.div`
   display: flex;
   flex-direction: column;
@@ -20,6 +24,13 @@ const Page = styled.div`
   background: #0d0d0d;
   padding-top: 64px; /* match header height */
   box-sizing: border-box;
+
+  @media (max-width: ${MOBILE}) {
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
 `
 
 const PairBar = styled.div`
@@ -31,6 +42,12 @@ const PairBar = styled.div`
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   flex-shrink: 0;
   min-height: 48px;
+
+  @media (max-width: ${MOBILE}) {
+    flex-wrap: wrap;
+    gap: 8px;
+    row-gap: 8px;
+  }
 `
 
 const Content = styled.div`
@@ -38,6 +55,12 @@ const Content = styled.div`
   flex: 1;
   min-height: 0;
   overflow: hidden;
+
+  @media (max-width: ${MOBILE}) {
+    flex-direction: column;
+    flex: none;
+    overflow: visible;
+  }
 `
 
 /* ─── Left column: Chart + Bottom Orders ─── */
@@ -53,6 +76,12 @@ const ChartArea = styled.div`
   min-height: 0;
   background: #121212;
   border-right: 1px solid rgba(255, 255, 255, 0.06);
+
+  @media (max-width: ${MOBILE}) {
+    flex: none;
+    height: 360px;
+    border-right: none;
+  }
 `
 
 const BottomTabs = styled.div`
@@ -62,6 +91,10 @@ const BottomTabs = styled.div`
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   border-right: 1px solid rgba(255, 255, 255, 0.06);
   overflow: hidden;
+
+  @media (max-width: ${MOBILE}) {
+    border-right: none;
+  }
 `
 
 /* ─── Middle column: Order Book ─── */
@@ -73,6 +106,13 @@ const MiddleCol = styled.div`
   overflow: hidden;
   display: flex;
   flex-direction: column;
+
+  @media (max-width: ${MOBILE}) {
+    width: 100%;
+    border-right: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    height: 320px;
+  }
 `
 
 /* ─── Right column: Order Form ─── */
@@ -97,6 +137,12 @@ const RightCol = styled.div`
   &::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.1);
     border-radius: 4px;
+  }
+
+  @media (max-width: ${MOBILE}) {
+    width: 100%;
+    overflow-y: visible;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
   }
 `
 

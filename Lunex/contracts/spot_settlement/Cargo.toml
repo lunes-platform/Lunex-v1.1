@@ -10,6 +10,12 @@ ink = { version = "4.3.0", default-features = false }
 scale = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2.3", default-features = false, features = ["derive"], optional = true }
 
+[dev-dependencies]
+# Same crate/version the ink! 4.3 off-chain engine (ink_engine) uses for its
+# real `ecdsa_recover` implementation. Used only to generate deterministic
+# ECDSA attestation test vectors (ADR-001, option c). Never compiled to WASM.
+secp256k1 = { version = "0.27", features = ["recovery"] }
+
 [lib]
 name = "spot_settlement_contract"
 path = "lib.rs"

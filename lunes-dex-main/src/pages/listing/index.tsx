@@ -787,12 +787,12 @@ export const Listing: React.FC = () => {
   }
 
   const MAX_LOGO_SIZE = 200 * 1024 // 200 KB
-  const ACCEPTED_TYPES = ['image/svg+xml', 'image/png', 'image/webp']
+  const ACCEPTED_TYPES = ['image/png', 'image/webp']
 
   const validateAndSetLogo = useCallback((file: File) => {
     setLogoError(null)
     if (!ACCEPTED_TYPES.includes(file.type)) {
-      setLogoError('Only SVG, PNG and WebP files accepted.')
+      setLogoError('Only PNG and WebP files accepted.')
       return
     }
     if (file.size > MAX_LOGO_SIZE) {
@@ -1044,8 +1044,9 @@ export const Listing: React.FC = () => {
       <FeeBox>
         <FeeTitle>Liquidity to Deposit</FeeTitle>
         <SectionSubtitle style={{ marginTop: 0, marginBottom: 14 }}>
-          The system will automatically create the TOKEN/LUNES pool and lock
-          liquidity for {tier.lockDays} days.
+          This application records the liquidity you intend to provide. Pool
+          creation and liquidity locking are completed only after finalized
+          on-chain confirmation.
         </SectionSubtitle>
         <FormGrid>
           <FormGroup>
@@ -1131,14 +1132,14 @@ export const Listing: React.FC = () => {
               </DropZoneIcon>
               <DropZoneText>Drag & drop or click to upload</DropZoneText>
               <DropZoneHint>
-                SVG, PNG or WebP — max 200KB — 256×256 recommended
+                PNG or WebP — max 200KB — 256×256 recommended
               </DropZoneHint>
             </>
           )}
           <input
             ref={logoInputRef}
             type="file"
-            accept=".svg,.png,.webp,image/svg+xml,image/png,image/webp"
+            accept=".png,.webp,image/png,image/webp"
             style={{ display: 'none' }}
             onChange={handleLogoSelect}
           />
@@ -1288,26 +1289,26 @@ export const Listing: React.FC = () => {
       <LockBox>
         <LockTitle>What Happens After Submit</LockTitle>
         <LockRow>
-          <span>1. Listing fee deducted</span>
-          <span>{tier.listingFee.toLocaleString()} LUNES</span>
+          <span>1. Application recorded</span>
+          <span>Pending review</span>
         </LockRow>
         <LockRow>
-          <span>2. Pool created automatically</span>
-          <span>{form.tokenSymbol || 'TOKEN'} / LUNES</span>
+          <span>2. On-chain proof required</span>
+          <span>Fee + liquidity + lock</span>
         </LockRow>
         <LockRow>
-          <span>3. Liquidity deposited</span>
+          <span>3. Intended LUNES liquidity</span>
           <span>
             {parseFloat(form.lunesLiquidity || '0').toLocaleString()} LUNES
           </span>
         </LockRow>
         <LockRow>
-          <span>4. LP tokens locked until</span>
-          <span>{unlockDate.toLocaleDateString()}</span>
+          <span>4. Lock period after activation</span>
+          <span>{tier.lockDays} days</span>
         </LockRow>
         <LockRow>
           <span>5. Token visible on DEX</span>
-          <span>✓</span>
+          <span>After finalized activation</span>
         </LockRow>
       </LockBox>
 
@@ -1349,21 +1350,21 @@ export const Listing: React.FC = () => {
                   <polyline points="9 12 12 15 16 10" stroke="#00ff88" />
                 </svg>
               </SuccessIcon>
-              <SuccessTitle>Token Listed!</SuccessTitle>
+              <SuccessTitle>Listing Application Submitted</SuccessTitle>
               <SuccessText>
                 <strong>
                   {form.tokenName} ({form.tokenSymbol})
                 </strong>{' '}
-                has been submitted for listing on Lunex DEX.
+                has been submitted for listing review on Lunex DEX.
                 <br />
                 <br />
-                Your liquidity of{' '}
+                Intended liquidity of{' '}
                 <strong>
                   {parseFloat(form.lunesLiquidity).toLocaleString()} LUNES
                 </strong>{' '}
-                is now locked until{' '}
-                <strong>{unlockDate.toLocaleDateString()}</strong> (
-                {tier.lockDays} days). This protects users from rug pulls.
+                is not locked yet. The token becomes active only after finalized
+                on-chain proof confirms fee payment, pool creation, LP tokens,
+                and the {tier.lockDays}-day liquidity lock.
               </SuccessText>
 
               {listingId && (
@@ -1378,13 +1379,11 @@ export const Listing: React.FC = () => {
                   </LockSummaryValue>
                 </LockSummaryCard>
                 <LockSummaryCard>
-                  <LockSummaryLabel>Locked Until</LockSummaryLabel>
-                  <LockSummaryValue>
-                    {unlockDate.toLocaleDateString()}
-                  </LockSummaryValue>
+                  <LockSummaryLabel>Status</LockSummaryLabel>
+                  <LockSummaryValue>Pending Proof</LockSummaryValue>
                 </LockSummaryCard>
                 <LockSummaryCard>
-                  <LockSummaryLabel>LUNES Locked</LockSummaryLabel>
+                  <LockSummaryLabel>Intended LUNES</LockSummaryLabel>
                   <LockSummaryValue>
                     {parseFloat(form.lunesLiquidity).toLocaleString()}
                   </LockSummaryValue>

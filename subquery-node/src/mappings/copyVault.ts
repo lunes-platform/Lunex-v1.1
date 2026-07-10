@@ -2,11 +2,17 @@ import { SubstrateEvent } from '@subql/types'
 import { VaultEvent, VaultDailyStat } from '../types'
 import {
   makeEventId,
-  safeNum,
   getOrCreateWalletSummary,
   getOrCreateDailyStats,
   dateToIsoDate,
 } from './utils'
+import {
+  labelGuard,
+  decodeVaultDeposited,
+  decodeVaultWithdrawn,
+  decodeVaultTrade,
+  decodeVaultCircuitBreaker,
+} from './contractEvents'
 
 // ── Copy Vault: Deposited ──────────────────────────────────────
 export async function handleVaultDeposited(event: SubstrateEvent): Promise<void> {
@@ -16,11 +22,16 @@ export async function handleVaultDeposited(event: SubstrateEvent): Promise<void>
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const actor = String(args.depositor ?? signer ?? '')
-  const amountIn = safeNum(args.amount)
-  const sharesAmount = safeNum(args.shares_minted)
-  const sharePrice = safeNum(args.share_price)
+  // Discriminate by ink! string topic; bail on any non-Deposited event.
+  const raw = labelGuard(event, ['CopyVault::Deposited'])
+  if (!raw) return
+
+  const decoded = decodeVaultDeposited(raw.payload)
+  if (!decoded) return
+  const actor = decoded.depositor || signer || ''
+  const amountIn = decoded.amount
+  const sharesAmount = decoded.sharesMinted
+  const sharePrice = decoded.sharePrice
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -29,17 +40,17 @@ export async function handleVaultDeposited(event: SubstrateEvent): Promise<void>
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'DEPOSIT',
-    vaultAddress: args.vault ? String(args.vault) : undefined,
+    vaultAddress: raw.contract,
     actor,
-    leader: args.leader ? String(args.leader) : undefined,
+    leader: undefined,
     amountIn,
     amountOut: undefined,
     sharesAmount,
     sharePrice,
     pairSymbol: undefined,
-    equityAfter: safeNum(args.vault_equity_after),
+    equityAfter: undefined,
     performanceFee: undefined,
     drawdownBps: undefined,
   })
@@ -64,11 +75,16 @@ export async function handleVaultWithdrawn(event: SubstrateEvent): Promise<void>
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const actor = String(args.depositor ?? signer ?? '')
-  const amountOut = safeNum(args.amount_received)
-  const sharesAmount = safeNum(args.shares_burned)
-  const performanceFee = safeNum(args.performance_fee)
+  // Discriminate by ink! string topic; bail on any non-Withdrawn event.
+  const raw = labelGuard(event, ['CopyVault::Withdrawn'])
+  if (!raw) return
+
+  const decoded = decodeVaultWithdrawn(raw.payload)
+  if (!decoded) return
+  const actor = decoded.depositor || signer || ''
+  const amountOut = decoded.amountReceived
+  const sharesAmount = decoded.sharesBurned
+  const performanceFee = decoded.performanceFee
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -77,17 +93,17 @@ export async function handleVaultWithdrawn(event: SubstrateEvent): Promise<void>
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'WITHDRAW',
-    vaultAddress: args.vault ? String(args.vault) : undefined,
+    vaultAddress: raw.contract,
     actor,
-    leader: args.leader ? String(args.leader) : undefined,
+    leader: undefined,
     amountIn: undefined,
     amountOut,
     sharesAmount,
     sharePrice: undefined,
     pairSymbol: undefined,
-    equityAfter: safeNum(args.vault_equity_after),
+    equityAfter: undefined,
     performanceFee,
     drawdownBps: undefined,
   })
@@ -112,13 +128,16 @@ export async function handleVaultTradeExecuted(event: SubstrateEvent): Promise<v
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const leader = String(args.leader ?? signer ?? '')
-  const amountIn = safeNum(args.amount)
-  const equityAfter = safeNum(args.vault_equity_after)
+  // Discriminate by ink! string topic; bail on any non-TradeExecuted event.
+  const raw = labelGuard(event, ['CopyVault::TradeExecuted'])
+  if (!raw) return
 
-  const pairBytes = args.pair
-  const pairSymbol = decodePairBytes(pairBytes)
+  const decoded = decodeVaultTrade(raw.payload)
+  if (!decoded) return
+  const leader = decoded.leader || signer || ''
+  const amountIn = decoded.amount
+  const equityAfter = decoded.vaultEquityAfter
+  const pairSymbol = decoded.pair && decoded.pair.includes('/') ? decoded.pair : undefined
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -127,9 +146,9 @@ export async function handleVaultTradeExecuted(event: SubstrateEvent): Promise<v
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'TRADE_EXECUTED',
-    vaultAddress: args.vault ? String(args.vault) : undefined,
+    vaultAddress: raw.contract,
     actor: leader,
     leader,
     amountIn,
@@ -145,7 +164,7 @@ export async function handleVaultTradeExecuted(event: SubstrateEvent): Promise<v
   await ev.save()
 
   // ── VaultDailyStat: aggregate per-vault per-day ──────────────
-  const vaultAddr = args.vault ? String(args.vault) : event.event.section
+  const vaultAddr = raw.contract
   const dayStr = dateToIsoDate(timestamp)
   const statId = `${vaultAddr}_${dayStr}`
   let stat = await VaultDailyStat.get(statId)
@@ -181,10 +200,15 @@ export async function handleVaultCircuitBreaker(event: SubstrateEvent): Promise<
   const extrinsicHash = extrinsic?.extrinsic.hash.toString() ?? undefined
   const signer = extrinsic?.extrinsic.signer?.toString() ?? undefined
 
-  const args = event.event.data.toJSON() as Record<string, unknown>
-  const vaultAddress = String(args.vault ?? signer ?? '')
-  const drawdownBps = safeNum(args.drawdown_bps)
-  const equityAfter = safeNum(args.current_equity)
+  // Discriminate by ink! string topic; bail on any non-CircuitBreaker event.
+  const raw = labelGuard(event, ['CopyVault::CircuitBreakerTriggered'])
+  if (!raw) return
+
+  const decoded = decodeVaultCircuitBreaker(raw.payload)
+  if (!decoded) return
+  const vaultAddress = decoded.vault || signer || ''
+  const drawdownBps = decoded.drawdownBps
+  const equityAfter = decoded.currentEquity
 
   const id = makeEventId(blockNumber, extrinsic?.idx ?? 0, idx)
 
@@ -193,13 +217,13 @@ export async function handleVaultCircuitBreaker(event: SubstrateEvent): Promise<
     blockNumber,
     timestamp,
     extrinsicHash,
-    contractAddress: event.event.section,
+    contractAddress: raw.contract,
     kind: 'CIRCUIT_BREAKER',
     vaultAddress,
     actor: vaultAddress,
     leader: undefined,
-    amountIn: safeNum(args.current_equity),
-    amountOut: safeNum(args.high_water_mark),
+    amountIn: decoded.currentEquity,
+    amountOut: decoded.highWaterMark,
     sharesAmount: undefined,
     sharePrice: undefined,
     pairSymbol: undefined,
@@ -236,19 +260,3 @@ export async function handleVaultCircuitBreaker(event: SubstrateEvent): Promise<
   await stat.save()
 }
 
-// ── Helpers ────────────────────────────────────────────────────
-
-function decodePairBytes(value: unknown): string | undefined {
-  if (Array.isArray(value)) {
-    try {
-      const str = String.fromCharCode(...(value as number[]))
-      return str.includes('/') ? str : undefined
-    } catch {
-      return undefined
-    }
-  }
-  if (typeof value === 'string' && value.includes('/')) {
-    return value
-  }
-  return undefined
-}

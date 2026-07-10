@@ -106,6 +106,30 @@ export interface SubqueryIndexerMeta {
   queryNodeVersion: string;
 }
 
+export interface SubqueryListingEvent {
+  id: string;
+  blockNumber: string;
+  timestamp: string;
+  extrinsicHash: string | null;
+  kind:
+    | 'TOKEN_LISTED'
+    | 'LIQUIDITY_LOCKED'
+    | 'LIQUIDITY_UNLOCKED'
+    | 'FEE_DISTRIBUTED';
+  listingId: string | null;
+  lockId: string | null;
+  owner: string;
+  tokenAddress: string | null;
+  pairAddress: string | null;
+  lpTokenAddress: string | null;
+  lpAmount: string | null;
+  lunesAmount: string | null;
+  tokenAmount: string | null;
+  unlockTimestamp: string | null;
+  tier: number | null;
+  listingFee: string | null;
+}
+
 async function gql<T>(
   query: string,
   variables?: Record<string, unknown>,
@@ -165,6 +189,45 @@ export const subqueryClient = {
     } catch {
       return null;
     }
+  },
+
+  async getListingEventsByTxHash(
+    txHash: string,
+  ): Promise<SubqueryListingEvent[]> {
+    const data = await gql<{
+      listingEvents: { nodes: SubqueryListingEvent[] };
+    }>(
+      `
+      query GetListingEventsByTxHash($txHash: String!) {
+        listingEvents(
+          filter: { extrinsicHash: { equalTo: $txHash } }
+          orderBy: BLOCK_NUMBER_ASC
+        ) {
+          nodes {
+            id
+            blockNumber
+            timestamp
+            extrinsicHash
+            kind
+            listingId
+            lockId
+            owner
+            tokenAddress
+            pairAddress
+            lpTokenAddress
+            lpAmount
+            lunesAmount
+            tokenAmount
+            unlockTimestamp
+            tier
+            listingFee
+          }
+        }
+      }
+    `,
+      { txHash },
+    );
+    return data.listingEvents.nodes;
   },
 
   // ── Swaps by wallet ──────────────────────────────────────────

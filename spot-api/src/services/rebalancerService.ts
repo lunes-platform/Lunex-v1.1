@@ -7,6 +7,8 @@ import { cryptoWaitReady } from '@polkadot/util-crypto';
 import prisma from '../db';
 import { config } from '../config';
 import { log } from '../utils/logger';
+import { waitForFinalizedTx } from '../utils/finalizedTx';
+import { dryRunGasLimit, txGasLimit } from '../utils/contractGas';
 import {
   asymmetricService,
   isCoolingDown,
@@ -141,7 +143,7 @@ class RebalancerService {
       contractAddress,
     );
     const { output } = await contract.query.getManager(caller, {
-      gasLimit: -1,
+      gasLimit: dryRunGasLimit(this.api),
       storageDepositLimit: null,
     });
 
@@ -183,11 +185,11 @@ class RebalancerService {
     );
     const { output, result } = isBuySide
       ? await contract.query.getBuyCurve(caller, {
-          gasLimit: -1,
+          gasLimit: dryRunGasLimit(this.api),
           storageDepositLimit: null,
         })
       : await contract.query.getSellCurve(caller, {
-          gasLimit: -1,
+          gasLimit: dryRunGasLimit(this.api),
           storageDepositLimit: null,
         });
 
@@ -392,7 +394,7 @@ class RebalancerService {
     // Dry-run to estimate gas (same pattern as settlementService.ts)
     const { gasRequired, result } = await contract.query.updateCurveParameters(
       this.relayer.address,
-      { gasLimit: -1, storageDepositLimit: null },
+      { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null },
       input.isBuySide,
       input.newGamma ?? null,
       nextCapacity,
@@ -403,34 +405,17 @@ class RebalancerService {
       throw new Error(`[Rebalancer] Gas dry-run failed: ${result.toString()}`);
     }
 
-    return new Promise<string>((resolve, reject) => {
-      let unsub: (() => void) | undefined;
-
+    return waitForFinalizedTx('rebalancer.updateCurveParameters', (callback) =>
       contract.tx
         .updateCurveParameters(
-          { gasLimit: gasRequired, storageDepositLimit: null },
+          { gasLimit: txGasLimit(this.api!, gasRequired), storageDepositLimit: null },
           input.isBuySide,
           input.newGamma ?? null,
           nextCapacity,
           input.newFeeTargetBps ?? null,
         )
-        .signAndSend(this.relayer!, (txResult: any) => {
-          if (txResult.dispatchError) {
-            if (unsub) unsub();
-            reject(new Error(txResult.dispatchError.toString()));
-            return;
-          }
-          if (txResult.status.isInBlock || txResult.status.isFinalized) {
-            const txHash = txResult.txHash.toHex();
-            if (unsub) unsub();
-            resolve(txHash);
-          }
-        })
-        .then((unsubscribe: () => void) => {
-          unsub = unsubscribe;
-        })
-        .catch(reject);
-    });
+        .signAndSend(this.relayer!, callback),
+    );
   }
 
   // ─── Health check (reuses existing /health logic) ──────────────
@@ -441,7 +426,7 @@ class RebalancerService {
     }
 
     // Try to derive spread from the orderbook if we can resolve a pair symbol
-    const pair = await (prisma as any).pair.findFirst({
+    const pair = await prisma.pair.findFirst({
       where: { pairAddress },
       select: { symbol: true },
     });

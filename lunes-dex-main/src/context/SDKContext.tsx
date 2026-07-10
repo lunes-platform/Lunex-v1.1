@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useState,
+  useRef,
   ReactNode,
   useCallback,
   useMemo
@@ -10,6 +11,7 @@ import React, {
 import { contractService } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
+import { normalizeReservesForPath } from '../utils/reserveUtils'
 
 interface Quote {
   amountOut: string
@@ -80,13 +82,19 @@ interface SDKContextState {
   signMessage: (message: string) => Promise<string>
 
   // Funções de Swap
-  getQuote: (amountIn: string, path: string[]) => Promise<Quote | null>
+  getQuote: (
+    amountIn: string,
+    path: string[],
+    decimalsIn?: number,
+    decimalsOut?: number
+  ) => Promise<Quote | null>
   executeSwap: (params: SwapParams) => Promise<boolean>
 
   // Funções de Liquidez
   addLiquidity: (params: LiquidityParams) => Promise<boolean>
   removeLiquidity: (params: RemoveLiquidityParams) => Promise<boolean>
   getPairInfo: (tokenA: string, tokenB: string) => Promise<PairInfo | null>
+  getPairToken0: (pairAddress: string) => Promise<string | null>
 
   // Funções de Staking
   stake: (amount: string) => Promise<boolean>
@@ -209,22 +217,25 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   const [balance, setBalance] = useState('0')
   const [currentAccount, setCurrentAccount] =
     useState<InjectedAccountWithMeta | null>(null)
+  const currentAccountRef = useRef<InjectedAccountWithMeta | null>(null)
 
-  // Initialize blockchain connection
+  const rememberCurrentAccount = useCallback(
+    (account: InjectedAccountWithMeta | null) => {
+      currentAccountRef.current = account
+      setCurrentAccount(account)
+    },
+    []
+  )
+
+  // Register contract addresses WITHOUT opening the chain connection.
+  // connect() (which dynamically imports @polkadot/api — the heaviest chunk)
+  // is deferred until first real use: wallet connect, balance read, getQuote,
+  // or any guarded `if (!getIsConnected()) await connect()` call site. This
+  // keeps @polkadot/api out of the landing-page waterfall. setContracts only
+  // stores the addresses here (no api yet); connect() rebuilds the contract
+  // instances from them once the api is ready.
   useEffect(() => {
-    const initBlockchain = async () => {
-      try {
-        const connected = await contractService.connect(NETWORK)
-        if (connected) {
-          contractService.setContracts(CONTRACT_ADDRESSES)
-          if (process.env.NODE_ENV !== 'production')
-            console.log('Connected to Lunes blockchain')
-        }
-      } catch (err) {
-        console.error('Failed to connect to blockchain:', err)
-      }
-    }
-    initBlockchain()
+    contractService.setContracts(CONTRACT_ADDRESSES)
 
     return () => {
       contractService.disconnect()
@@ -298,7 +309,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       // Use first available account from the selected wallet
       const account = accounts[0]
-      setCurrentAccount(account)
+      rememberCurrentAccount(account)
       setWalletAddress(account.address)
       setIsConnected(true)
       localStorage.setItem('lunex_last_wallet_address', account.address)
@@ -327,11 +338,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   // Desconectar Wallet
   const disconnectWallet = useCallback((): void => {
     setWalletAddress(null)
-    setCurrentAccount(null)
+    rememberCurrentAccount(null)
     setIsConnected(false)
     setBalance('0')
     localStorage.removeItem('lunex_last_wallet_address')
-  }, [])
+  }, [rememberCurrentAccount])
 
   const signMessage = useCallback(
     async (message: string): Promise<string> => {
@@ -342,7 +353,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       const { web3Accounts, web3FromSource } =
         await import('@polkadot/extension-dapp')
       const account =
-        currentAccount ||
+        currentAccountRef.current ||
         (await web3Accounts()).find(item => item.address === walletAddress) ||
         null
 
@@ -350,8 +361,8 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         throw new Error('Reconnect your wallet to enable signing')
       }
 
-      if (!currentAccount) {
-        setCurrentAccount(account)
+      if (currentAccountRef.current?.address !== account.address) {
+        rememberCurrentAccount(account)
       }
 
       const injector = await web3FromSource(account.meta.source)
@@ -369,12 +380,17 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       return signature
     },
-    [currentAccount, walletAddress]
+    [rememberCurrentAccount, walletAddress]
   )
 
   // Obter Quote para Swap
   const getQuote = useCallback(
-    async (amountIn: string, path: string[]): Promise<Quote | null> => {
+    async (
+      amountIn: string,
+      path: string[],
+      decimalsIn?: number,
+      decimalsOut?: number
+    ): Promise<Quote | null> => {
       setIsLoading(true)
       setError(null)
 
@@ -394,15 +410,32 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         }
 
         const amountOut = amounts[amounts.length - 1]
-        const executionPrice = (Number(amountOut) / Number(amountIn)).toFixed(6)
+        // Raw amounts carry each token's decimal scale; without adjustment a
+        // 8-dec → 6-dec pair displays a price 100× off (10^(8−6)).
+        const decimalScale =
+          decimalsIn !== undefined && decimalsOut !== undefined
+            ? 10 ** (decimalsIn - decimalsOut)
+            : 1
+        const executionPrice = (
+          (Number(amountOut) / Number(amountIn)) *
+          decimalScale
+        ).toFixed(6)
 
         // Real price impact = 1 - (amountOut/amountIn) / (reserve_out/reserve_in)
         // For Uniswap V2 with 0.3% fee:
         // price_impact ≈ amountIn / (reserve_in + amountIn)  [simplified]
         let priceImpact = '0'
         if (pairInfo) {
-          const reserveIn = BigInt(pairInfo.reserve0)
-          const reserveOut = BigInt(pairInfo.reserve1)
+          const pairAddress = await contractService.getPair(path[0], path[1])
+          const pairToken0 = pairAddress
+            ? (await contractService.getPairToken0(pairAddress)) ?? path[0]
+            : path[0]
+          const { reserveIn, reserveOut } = normalizeReservesForPath(
+            pairToken0,
+            path[0],
+            pairInfo.reserve0,
+            pairInfo.reserve1,
+          )
           const aIn = BigInt(amountIn)
           const aOut = BigInt(amountOut)
 
@@ -415,7 +448,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
           ) {
             // impact = 1 - (aOut * reserveIn) / (aIn * reserveOut)   [in basis points *10000]
             const BPS = BigInt(10000)
-            const midPriceNum = aOut * reserveIn * BPS
+            const midPriceNum = aOut * reserveIn
             const midPriceDen = aIn * reserveOut
             const impactBps =
               midPriceDen > midPriceNum
@@ -866,6 +899,21 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
+  // Obter token_0 canônico do par
+  const getPairToken0 = async (
+    pairAddress: string,
+  ): Promise<string | null> => {
+    try {
+      if (!contractService.getIsConnected()) {
+        await contractService.connect(NETWORK)
+      }
+      return await contractService.getPairToken0(pairAddress)
+    } catch (err) {
+      console.error('Error getting pair token0:', err)
+      return null
+    }
+  }
+
   // Obter Info do Token
   const getTokenInfo = async (address: string): Promise<TokenInfo | null> => {
     try {
@@ -969,6 +1017,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       addLiquidity,
       removeLiquidity,
       getPairInfo,
+      getPairToken0,
       stake,
       unstake,
       claimStakingRewards,

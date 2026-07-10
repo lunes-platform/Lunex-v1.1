@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { spotApi } from '../services/spotService'
 import { useSDK } from '../context/SDKContext'
 import {
@@ -22,12 +22,11 @@ function writeToStorage(favorites: string[]) {
 }
 
 /**
- * Shared favorites hook — localStorage + backend sync.
+ * Shared favorites hook — localStorage first, backend sync only on user action.
  *
- * - Always reads/writes localStorage for instant UX.
- * - When `walletAddress` is provided, syncs with spot-api backend.
- * - On connect: merges localStorage + backend, saves union to both.
- * - On toggle: updates both localStorage and backend in parallel.
+ * Signed reads consume wallet nonces and open wallet prompts. Do not sync the
+ * remote list on mount/remount; route changes and tab navigation must stay
+ * read-only from the wallet's perspective.
  */
 export function useFavorites(walletAddress: string | null) {
   const { signMessage } = useSDK()
@@ -54,34 +53,6 @@ export function useFavorites(walletAddress: string | null) {
     },
     [signMessage, walletAddress]
   )
-
-  // Sync with backend when wallet connects
-  useEffect(() => {
-    if (!walletAddress) return
-
-    let cancelled = false
-
-    const sync = async () => {
-      try {
-        const auth = await signFavoriteAction('favorites.list')
-        const remote = await spotApi.getFavorites(walletAddress, auth)
-        if (cancelled) return
-
-        const local = readFromStorage()
-        const merged = Array.from(new Set([...local, ...remote]))
-
-        setFavorites(merged)
-        writeToStorage(merged)
-      } catch {
-        // Backend offline — continue with localStorage only
-      }
-    }
-
-    sync()
-    return () => {
-      cancelled = true
-    }
-  }, [signFavoriteAction, walletAddress])
 
   const isFavorite = useCallback(
     (symbol: string) => favorites.includes(symbol),

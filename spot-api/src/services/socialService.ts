@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../db';
 import { config } from '../config';
 import {
@@ -76,7 +77,7 @@ function normalizeOptionalString(value?: string | null) {
 }
 
 function getAnalyticsDb() {
-  const db = prisma as any;
+  const db = prisma;
   if (typeof db.leaderAnalyticsSnapshot?.findMany !== 'function') {
     return null;
   }
@@ -270,7 +271,7 @@ export const socialService = {
             : toFloat(leader.totalAum))
         );
       }, 0),
-      activeTraaders: leaders.filter((leader) => !leader.isAi).length,
+      activeTraders: leaders.filter((leader) => !leader.isAi).length,
       aiAgents: leaders.filter((leader) => leader.isAi).length,
       totalFollowers,
       totalIdeas: ideasCount,
@@ -383,12 +384,18 @@ export const socialService = {
     const isFollowing = Array.isArray(leader.follows)
       ? leader.follows.length > 0
       : false;
-    const analyticsSnapshotMap = await getAnalyticsSnapshotMap([leader.id]);
-    return formatLeader(leader, {
-      includeRelations: true,
-      isFollowing,
-      analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-    });
+    const [analyticsSnapshotMap, realFollowerCount] = await Promise.all([
+      getAnalyticsSnapshotMap([leader.id]),
+      prisma.leaderFollow.count({ where: { leaderId: leader.id } }),
+    ]);
+    return formatLeader(
+      { ...leader, followersCount: realFollowerCount },
+      {
+        includeRelations: true,
+        isFollowing,
+        analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
+      },
+    );
   },
 
   async getLeaderProfileByAddress(address: string, viewerAddress?: string) {
@@ -418,12 +425,18 @@ export const socialService = {
     const isFollowing = Array.isArray(leader.follows)
       ? leader.follows.length > 0
       : false;
-    const analyticsSnapshotMap = await getAnalyticsSnapshotMap([leader.id]);
-    return formatLeader(leader, {
-      includeRelations: true,
-      isFollowing,
-      analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
-    });
+    const [analyticsSnapshotMap, realFollowerCount] = await Promise.all([
+      getAnalyticsSnapshotMap([leader.id]),
+      prisma.leaderFollow.count({ where: { leaderId: leader.id } }),
+    ]);
+    return formatLeader(
+      { ...leader, followersCount: realFollowerCount },
+      {
+        includeRelations: true,
+        isFollowing,
+        analyticsSnapshot: analyticsSnapshotMap.get(leader.id),
+      },
+    );
   },
 
   async upsertLeaderProfile(input: UpsertLeaderProfileInput) {
@@ -486,11 +499,48 @@ export const socialService = {
     );
   },
 
-  async followLeader(leaderId: string, address: string) {
+  async followLeader(
+    leaderId: string,
+    address: string,
+    riskConfig?: {
+      copyMultiplier?: number;
+      maxPerTradeUsdt?: number;
+      stopLossPct?: number;
+      maxDrawdownPct?: number;
+    },
+  ) {
     const leader = await prisma.leader.findUnique({ where: { id: leaderId } });
     if (!leader) throw new Error('Leader not found');
 
     return prisma.$transaction(async (tx) => {
+      // Persist copy-engine risk limits onto the leader's vault (if one exists)
+      // so the copy-engine honours them. Vault is per-leader; risk config is
+      // applied at the vault level (RISK-BE contract).
+      if (riskConfig) {
+        const data: Record<string, unknown> = {};
+        if (riskConfig.copyMultiplier != null) {
+          data.copyMultiplier = new Prisma.Decimal(
+            riskConfig.copyMultiplier.toString(),
+          );
+        }
+        if (riskConfig.maxPerTradeUsdt != null) {
+          data.maxPerTradeUsdt = new Prisma.Decimal(
+            riskConfig.maxPerTradeUsdt.toString(),
+          );
+        }
+        if (riskConfig.stopLossPct != null) {
+          data.stopLossPct = new Prisma.Decimal(riskConfig.stopLossPct.toString());
+        }
+        if (riskConfig.maxDrawdownPct != null) {
+          data.maxDrawdownPct = new Prisma.Decimal(
+            riskConfig.maxDrawdownPct.toString(),
+          );
+        }
+        if (Object.keys(data).length > 0) {
+          await tx.copyVault.updateMany({ where: { leaderId }, data });
+        }
+      }
+
       const existing = await tx.leaderFollow.findUnique({
         where: {
           leaderId_followerAddress: {

@@ -11,8 +11,21 @@ export function buildSpotOrderSignMessage(input: {
   return `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}:${input.timestamp}`
 }
 
-export function buildSpotCancelSignMessage(orderId: string) {
-  return `lunex-cancel:${orderId}`
+export function buildSpotCancelSignMessage(input: {
+  address: string
+  orderId: string
+  nonce: string
+  timestamp: number
+}) {
+  return buildWalletActionMessage({
+    action: 'orders.cancel',
+    address: input.address,
+    nonce: input.nonce,
+    timestamp: input.timestamp,
+    fields: {
+      orderId: input.orderId
+    }
+  })
 }
 
 let signedActionNonceCounter = 0
@@ -62,6 +75,18 @@ export function buildWalletActionMessage(input: {
   lines.push(`nonce:${input.nonce}`)
   lines.push(`timestamp:${normalizeSignedValue(input.timestamp)}`)
   return lines.join('\n')
+}
+
+export function signedAuthHeaders(auth: {
+  nonce: string
+  timestamp: number
+  signature: string
+}): HeadersInit {
+  return {
+    'X-Lunex-Nonce': auth.nonce,
+    'X-Lunex-Timestamp': String(auth.timestamp),
+    'X-Lunex-Signature': auth.signature
+  }
 }
 
 export function buildMarginCollateralSignMessage(input: {

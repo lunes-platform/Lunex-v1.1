@@ -4,37 +4,37 @@ const mockPrisma = {
     findFirst: jest.fn(),
     findMany: jest.fn(),
     create: jest.fn(),
-    update: jest.fn()
+    update: jest.fn(),
   },
   asymmetricRebalanceLog: {
     create: jest.fn(),
-    findMany: jest.fn()
-  }
-}
+    findMany: jest.fn(),
+  },
+};
 
 jest.mock('../db', () => ({
   __esModule: true,
-  default: mockPrisma
-}))
+  default: mockPrisma,
+}));
 
 jest.mock('../utils/logger', () => ({
   log: {
     info: jest.fn(),
     warn: jest.fn(),
-    error: jest.fn()
-  }
-}))
+    error: jest.fn(),
+  },
+}));
 
 import {
   asymmetricService,
   isCoolingDown,
-  isProfitableToRebalance
-} from '../services/asymmetricService'
+  isProfitableToRebalance,
+} from '../services/asymmetricService';
 
 function decimalLike(value: string | number) {
   return {
-    toString: () => String(value)
-  }
+    toString: () => String(value),
+  };
 }
 
 function baseStrategy(overrides: Record<string, any> = {}) {
@@ -59,22 +59,22 @@ function baseStrategy(overrides: Record<string, any> = {}) {
     lastError: null,
     createdAt: new Date('2026-04-14T10:00:00Z'),
     updatedAt: new Date('2026-04-14T10:00:00Z'),
-    ...overrides
-  }
+    ...overrides,
+  };
 }
 
 describe('asymmetricService', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
-  })
+    jest.clearAllMocks();
+  });
 
   it('records MANUAL audit log when user updates curve params', async () => {
-    ;(mockPrisma.asymmetricStrategy.findUnique as jest.Mock).mockResolvedValue(
-      baseStrategy()
-    )
-    ;(mockPrisma.asymmetricStrategy.update as jest.Mock).mockResolvedValue(
-      baseStrategy({ buyGamma: 4, buyMaxCapacity: decimalLike('12000') })
-    )
+    (mockPrisma.asymmetricStrategy.findUnique as jest.Mock).mockResolvedValue(
+      baseStrategy(),
+    );
+    (mockPrisma.asymmetricStrategy.update as jest.Mock).mockResolvedValue(
+      baseStrategy({ buyGamma: 4, buyMaxCapacity: decimalLike('12000') }),
+    );
 
     const updated = await asymmetricService.updateCurveParams(
       'strategy-1',
@@ -82,25 +82,25 @@ describe('asymmetricService', () => {
       {
         isBuySide: true,
         newGamma: 4,
-        newMaxCapacity: '12000'
-      }
-    )
+        newMaxCapacity: '12000',
+      },
+    );
 
-    expect(updated.buyCurve.gamma).toBe(4)
+    expect(updated.buyCurve.gamma).toBe(4);
     expect(mockPrisma.asymmetricRebalanceLog.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           strategyId: 'strategy-1',
           trigger: 'MANUAL',
           side: 'BUY',
-          status: 'SUCCESS'
-        })
-      })
-    )
-  })
+          status: 'SUCCESS',
+        }),
+      }),
+    );
+  });
 
   it('normalizes stored logs to canonical trigger/status', async () => {
-    ;(mockPrisma.asymmetricRebalanceLog.findMany as jest.Mock).mockResolvedValue(
+    (mockPrisma.asymmetricRebalanceLog.findMany as jest.Mock).mockResolvedValue(
       [
         {
           id: 'log-1',
@@ -112,18 +112,18 @@ describe('asymmetricService', () => {
           txHash: null,
           gasConsumed: null,
           status: 'auto_rebalance_enabled',
-          createdAt: new Date('2026-04-14T11:00:00Z')
-        }
-      ]
-    )
+          createdAt: new Date('2026-04-14T11:00:00Z'),
+        },
+      ],
+    );
 
-    const logs = await asymmetricService.getRebalanceLogs('strategy-1', 10)
+    const logs = await asymmetricService.getRebalanceLogs('strategy-1', 10);
 
-    expect(logs).toHaveLength(1)
-    expect(logs[0].trigger).toBe('MANUAL')
-    expect(logs[0].status).toBe('SUCCESS')
-    expect(logs[0].newCapacity).toBe('8500')
-  })
+    expect(logs).toHaveLength(1);
+    expect(logs[0].trigger).toBe('MANUAL');
+    expect(logs[0].status).toBe('SUCCESS');
+    expect(logs[0].newCapacity).toBe('8500');
+  });
 
   it('builds canonical status with additive fields while keeping legacy fields', () => {
     const strategy = {
@@ -139,20 +139,20 @@ describe('asymmetricService', () => {
         gamma: 3,
         maxCapacity: '10000',
         feeTargetBps: 30,
-        baseLiquidity: '1000'
+        baseLiquidity: '1000',
       },
       sellCurve: {
         gamma: 2,
         maxCapacity: '9000',
         feeTargetBps: 35,
-        profitTargetBps: 500
+        profitTargetBps: 500,
       },
       retryCount: 0,
       lastError: null,
       agentManaged: true,
       createdAt: new Date('2026-04-14T10:00:00Z'),
-      updatedAt: new Date('2026-04-14T10:00:00Z')
-    }
+      updatedAt: new Date('2026-04-14T10:00:00Z'),
+    };
 
     const canonical = asymmetricService.buildCanonicalStatus(strategy, {
       checkedAt: '2026-04-14T12:00:00.000Z',
@@ -169,33 +169,33 @@ describe('asymmetricService', () => {
           gamma: 3,
           maxCapacity: 10000,
           feeBps: 30,
-          currentVolume: 250
+          currentVolume: 250,
         },
         sellCurve: {
           k: 500,
           gamma: 2,
           maxCapacity: 9000,
           feeBps: 35,
-          currentVolume: 100
-        }
-      }
-    })
+          currentVolume: 100,
+        },
+      },
+    });
 
-    expect(canonical.id).toBe('strategy-1')
-    expect(canonical.persistedConfig.strategyId).toBe('strategy-1')
-    expect(canonical.liveState.available).toBe(true)
-    expect(canonical.delegation.requiredScope).toBe('MANAGE_ASYMMETRIC')
-    expect(canonical.delegation.delegatedToRelayer).toBe(true)
-  })
+    expect(canonical.id).toBe('strategy-1');
+    expect(canonical.persistedConfig.strategyId).toBe('strategy-1');
+    expect(canonical.liveState.available).toBe(true);
+    expect(canonical.delegation.requiredScope).toBe('MANAGE_ASYMMETRIC');
+    expect(canonical.delegation.delegatedToRelayer).toBe(true);
+  });
 
   it('evaluates cooldown windows deterministically', () => {
-    const now = Date.now()
-    expect(isCoolingDown(new Date(now - 1_000), 5_000)).toBe(true)
-    expect(isCoolingDown(new Date(now - 10_000), 5_000)).toBe(false)
-  })
+    const now = Date.now();
+    expect(isCoolingDown(new Date(now - 1_000), 5_000)).toBe(true);
+    expect(isCoolingDown(new Date(now - 10_000), 5_000)).toBe(false);
+  });
 
   it('applies profitability threshold guardrails for rebalance decisions', () => {
-    expect(isProfitableToRebalance(0.1, 0.05)).toBe(false)
-    expect(isProfitableToRebalance(0.25, 0.05)).toBe(true)
-  })
-})
+    expect(isProfitableToRebalance(0.1, 0.05)).toBe(false);
+    expect(isProfitableToRebalance(0.25, 0.05)).toBe(true);
+  });
+});

@@ -5,6 +5,8 @@ import {
   SettlementResult,
   TradeSettlementInput,
 } from './settlementService';
+import { affiliateService } from './affiliateService';
+import { log } from '../utils/logger';
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 60_000, 300_000, 900_000];
 const STALE_SETTLING_MS = 60_000;
@@ -215,6 +217,30 @@ async function processAttempt(inputs: TradeSettlementInput[]) {
   if (claimedInputs.length === 0) return [];
   const results = await settlementService.settleTrades(claimedInputs);
   await applySettlementResults(results, attemptsByTradeId);
+
+  // Credit SPOT affiliate commissions only for trades that actually settled
+  // on-chain (fail-closed: SKIPPED/FAILED never earn commission — parity with
+  // copytrade crediting post-onChainConfirmation). This single point covers
+  // both first-attempt and retry success, so a FAILED trade that settles on a
+  // later retry earns its commission at that moment. Best-effort and OUTSIDE
+  // the applySettlementResults transaction: if this throws, settlement is NOT
+  // rolled back. A lost credit here is NOT permanent — the reconciliation at
+  // the start of processPayoutBatch re-captures SETTLED trades missing a
+  // commission, and the unique constraint makes that re-capture idempotent.
+  const settledIds = results
+    .filter((r) => r.status === 'SETTLED')
+    .map((r) => r.tradeId);
+  if (settledIds.length > 0) {
+    try {
+      await affiliateService.distributeSpotTradeCommissions(settledIds);
+    } catch (err) {
+      log.error(
+        { err, tradeIds: settledIds },
+        '[Affiliate] post-settlement commission credit failed; reconciliation will recover',
+      );
+    }
+  }
+
   return results;
 }
 

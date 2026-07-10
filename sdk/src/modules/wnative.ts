@@ -1,78 +1,104 @@
 import { HttpClient } from '../http-client';
 import { TransactionResult, WNativeInfo } from '../types';
+import { EndpointNotAvailableError } from '../errors';
 
 export class WNativeModule {
   constructor(private http: HttpClient) {}
 
   /**
    * Wrap LUNES to WLUNES
-   * @param amount - Amount of LUNES to wrap
-   * @param gasLimit - Optional gas limit
+   * @param _amount - Amount of LUNES to wrap
+   * @param _gasLimit - Optional gas limit
    * @returns Transaction result
+   * @deprecated spot-api does not expose `/wnative/*` endpoints (this call
+   * always returned HTTP 404). Wrapping is an on-chain transaction
+   * (`deposit` on the wnative contract) that must be signed by the user's
+   * wallet. Always throws {@link EndpointNotAvailableError}.
    */
   async wrap(
-    amount: string,
-    gasLimit?: string,
+    _amount: string,
+    _gasLimit?: string,
   ): Promise<
     TransactionResult & {
       amount: string;
       wlunes: string;
     }
   > {
-    return this.http.post('/wnative/deposit', {
-      amount,
-      gasLimit: gasLimit || '200000000000',
-    });
+    throw new EndpointNotAvailableError(
+      'wnative.wrap',
+      'wrapping LUNES is an on-chain transaction (deposit on the wnative contract) that must be signed by the wallet via @polkadot/api-contract.',
+    );
   }
 
   /**
    * Unwrap WLUNES to LUNES
-   * @param amount - Amount of WLUNES to unwrap
-   * @param gasLimit - Optional gas limit
+   * @param _amount - Amount of WLUNES to unwrap
+   * @param _gasLimit - Optional gas limit
    * @returns Transaction result
+   * @deprecated spot-api does not expose `/wnative/*` endpoints (this call
+   * always returned HTTP 404). Unwrapping is an on-chain transaction
+   * (`withdraw` on the wnative contract) that must be signed by the user's
+   * wallet. Always throws {@link EndpointNotAvailableError}.
    */
   async unwrap(
-    amount: string,
-    gasLimit?: string,
+    _amount: string,
+    _gasLimit?: string,
   ): Promise<
     TransactionResult & {
       amount: string;
       lunes: string;
     }
   > {
-    return this.http.post('/wnative/withdraw', {
-      amount,
-      gasLimit: gasLimit || '200000000000',
-    });
+    throw new EndpointNotAvailableError(
+      'wnative.unwrap',
+      'unwrapping WLUNES is an on-chain transaction (withdraw on the wnative contract) that must be signed by the wallet via @polkadot/api-contract.',
+    );
   }
 
   /**
    * Get WLUNES contract information
    * @returns WLUNES token details
+   * @deprecated spot-api does not expose `/wnative/*` endpoints (this call
+   * always returned HTTP 404). Contract info is an on-chain read on the
+   * wnative contract. Always throws {@link EndpointNotAvailableError}.
    */
   async getInfo(): Promise<WNativeInfo> {
-    return this.http.get('/wnative/info');
+    throw new EndpointNotAvailableError(
+      'wnative.getInfo',
+      'wnative contract info is an on-chain read. Query the wnative contract via @polkadot/api-contract.',
+    );
   }
 
   /**
    * Get balances for an address
-   * @param address - User address
+   * @param _address - User address
    * @returns WLUNES and LUNES balances
+   * @deprecated spot-api does not expose `/wnative/*` endpoints (this call
+   * always returned HTTP 404). Balances are on-chain reads (PSP22
+   * `balance_of` + native balance). Always throws
+   * {@link EndpointNotAvailableError}.
    */
-  async getBalance(address: string): Promise<{
+  async getBalance(_address: string): Promise<{
     wlunesBalance: string;
     lunesBalance: string;
     totalValue: string;
   }> {
-    return this.http.get(`/wnative/balance/${address}`);
+    throw new EndpointNotAvailableError(
+      'wnative.getBalance',
+      'WLUNES/LUNES balances are on-chain reads (PSP22 balance_of + system account balance). Query the chain via @polkadot/api.',
+    );
   }
 
   /**
    * Check if WNATIVE contract is healthy (1:1 backing)
    * @returns Health status
+   * @deprecated Depends on `/wnative/info`, which spot-api never exposed.
+   * Always throws {@link EndpointNotAvailableError}.
    */
   async isHealthy(): Promise<boolean> {
-    const info = await this.getInfo();
-    return info.isHealthy;
+    throw new EndpointNotAvailableError(
+      'wnative.isHealthy',
+      'wnative health (1:1 backing) is an on-chain read. Query the wnative contract via @polkadot/api-contract.',
+    );
   }
 }

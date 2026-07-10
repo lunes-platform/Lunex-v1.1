@@ -7,6 +7,7 @@ import {
   createSignedActionMetadata
 } from '../../utils/signing'
 import * as B from '../../components/bases'
+import { useToast } from '../../components/feedback/ToastProvider'
 
 // Types
 interface Proposal {
@@ -605,6 +606,7 @@ const LoadingSpinner = styled.div`
 export const Governance: React.FC = () => {
   const sdk = useSDK()
   const navigate = useNavigate()
+  const toast = useToast()
   const [filter, setFilter] = useState<ProposalFilter>('active')
   const [proposals, setProposals] = useState<Proposal[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -681,9 +683,14 @@ export const Governance: React.FC = () => {
             const histRes = await fetch(
               `/api/v1/governance/vote/history?walletAddress=${encodeURIComponent(
                 sdk.walletAddress
-              )}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${
-                auth.timestamp
-              }&signature=${encodeURIComponent(auth.signature)}`
+              )}`,
+              {
+                headers: {
+                  'X-Lunex-Nonce': auth.nonce,
+                  'X-Lunex-Timestamp': String(auth.timestamp),
+                  'X-Lunex-Signature': auth.signature
+                }
+              }
             )
             if (histRes.ok) {
               const { votes } = await histRes.json()
@@ -843,7 +850,7 @@ export const Governance: React.FC = () => {
       }
     } catch (error) {
       console.error('Error voting:', error)
-      alert('Error submitting vote. Please try again.')
+      toast.error('Error submitting vote. Please try again.')
     } finally {
       setIsVoting(false)
     }

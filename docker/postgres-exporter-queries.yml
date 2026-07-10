@@ -1,0 +1,38 @@
+# Custom queries do postgres-exporter (PG_EXPORTER_EXTEND_QUERY_PATH).
+# Tornam vivos os alertas que referenciavam métricas inexistentes:
+#   - lunex_last_backup_timestamp_seconds  (DatabaseBackupFailed)
+#   - lunex_db_connections_waiting         (DatabaseConnectionPoolExhausted)
+# A tabela ops_backup_status é criada/atualizada pelo docker/backup.sh.
+
+lunex:
+  query: |
+    SELECT COALESCE(
+      (SELECT EXTRACT(EPOCH FROM last_success) FROM public.ops_backup_status WHERE id = 1),
+      0
+    ) AS last_backup_timestamp_seconds
+  master: true
+  metrics:
+    - last_backup_timestamp_seconds:
+        usage: 'GAUGE'
+        description: 'Epoch (s) do último backup bem-sucedido (0 = nunca; gravado por backup.sh)'
+
+lunex_db:
+  query: |
+    SELECT
+      (SELECT count(*) FROM pg_stat_activity WHERE datname = current_database()) AS connections_active,
+      (SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND state = 'active'
+           AND wait_event_type IS NOT NULL) AS connections_waiting,
+      (SELECT setting::float FROM pg_settings WHERE name = 'max_connections') AS max_connections
+  master: true
+  metrics:
+    - connections_active:
+        usage: 'GAUGE'
+        description: 'Conexões abertas no database da aplicação'
+    - connections_waiting:
+        usage: 'GAUGE'
+        description: 'Conexões ativas aguardando (wait_event_type não nulo)'
+    - max_connections:
+        usage: 'GAUGE'
+        description: 'max_connections configurado no PostgreSQL'

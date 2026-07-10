@@ -35,10 +35,13 @@ jest.mock('../services/tradeSettlementService', () => ({
   tradeSettlementService: mockTradeSettlementService,
 }));
 
+const mockAffiliateService = {
+  distributeCommissions: jest.fn(),
+  distributeSpotTradeCommissions: jest.fn(),
+};
+
 jest.mock('../services/affiliateService', () => ({
-  affiliateService: {
-    distributeCommissions: jest.fn(),
-  },
+  affiliateService: mockAffiliateService,
 }));
 
 jest.mock('../utils/logger', () => ({
@@ -311,5 +314,20 @@ describe('tradeService.processMatches consistency', () => {
         }),
       }),
     );
+  });
+
+  it('does not distribute affiliate commissions during executeTrade (credited post-settlement)', async () => {
+    await tradeService.processMatches('pair-1', [
+      {
+        makerOrderId: 'maker-order-1',
+        takerOrderId: 'taker-order-1',
+        makerAddress: 'maker-wallet',
+        takerAddress: 'taker-wallet',
+        fillAmount: 1,
+        fillPrice: 100,
+      },
+    ]);
+
+    expect(mockAffiliateService.distributeCommissions).not.toHaveBeenCalled();
   });
 });

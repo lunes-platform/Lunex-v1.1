@@ -175,13 +175,23 @@ mod asymmetric_pair {
         }
 
         // base_frac = FRAC_SCALE * (x0 - x) / x0  (i.e. (1 - x/x0) * FRAC_SCALE)
+        // x0 > 0 garantido pelo early-return acima; checked_div satisfaz o lint
+        // clippy::arithmetic-side-effects (obrigatório no cargo-contract 4.x).
         let numerator = x0.saturating_sub(x);
-        let base_frac = (numerator as u128).checked_mul(FRAC_SCALE).unwrap_or(0) / x0;
+        let base_frac = (numerator as u128)
+            .checked_mul(FRAC_SCALE)
+            .unwrap_or(0)
+            .checked_div(x0)
+            .unwrap_or(0);
 
         // Iterated multiply: result = base_frac^gamma / FRAC_SCALE^(gamma-1)
         let mut result = base_frac;
         for _ in 1..gamma {
-            result = result.checked_mul(base_frac).unwrap_or(0) / FRAC_SCALE;
+            result = result
+                .checked_mul(base_frac)
+                .unwrap_or(0)
+                .checked_div(FRAC_SCALE)
+                .unwrap_or(0);
         }
         result
     }

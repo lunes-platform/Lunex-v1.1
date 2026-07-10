@@ -3,7 +3,8 @@ import styled, { keyframes } from 'styled-components'
 // ============================================================
 // DESIGN TOKENS
 // ============================================================
-const PURPLE = '#6C38FF' // ← brand primary: CTAs, accents, active states
+const PURPLE = '#6C38FF' // ← brand primary: CTAs, accents, active states (backgrounds)
+const PURPLE_TEXT = '#AD87FF' // ← a11y: lighter purple for text on dark bg (≥4.5:1)
 const MINT = '#00E5A0' // ← hero gradient title ONLY
 const GOLD = '#FFD700' // ← leaderboard rank #1
 const BG = '#080808'
@@ -12,7 +13,7 @@ const SURFACE2 = '#181818'
 const BORDER = 'rgba(255,255,255,0.07)'
 const BORDER_HOVER = 'rgba(255,255,255,0.14)'
 const TEXT = '#F8F8F8'
-const MUTED = 'rgba(248,248,248,0.45)'
+const MUTED = 'rgba(248,248,248,0.62)' // ← a11y: raised from 0.45 for ≥4.5:1 contrast
 
 // ============================================================
 // ANIMATIONS
@@ -25,17 +26,9 @@ export const fadeIn = keyframes`
   from { opacity: 0; }
   to   { opacity: 1; }
 `
-export const floatY = keyframes`
-  0%, 100% { transform: translateY(0) rotate(var(--r,0deg)); }
-  50%       { transform: translateY(-10px) rotate(var(--r,0deg)); }
-`
 export const orbitSpin = keyframes`
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
-`
-export const counterSpin = keyframes`
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(-360deg); }
 `
 export const shimmer = keyframes`
   0%   { background-position: -200% 0; }
@@ -692,7 +685,7 @@ export const SectionLabel = styled.div`
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  color: ${PURPLE};
+  color: ${PURPLE_TEXT};
   text-align: center;
   margin-bottom: 16px;
   opacity: 0;
@@ -714,7 +707,7 @@ export const STitle = styled.h2`
   }
   /* one accent word per title */
   span {
-    color: ${PURPLE};
+    color: ${PURPLE_TEXT};
   }
 `
 export const SSub = styled.p`
@@ -1074,7 +1067,7 @@ export const AsymFeature = styled.div<Anim & { $accent: string }>`
     z-index: 0;
   }
 
-  h4 {
+  h3 {
     position: relative;
     z-index: 1;
     font-family: 'Space Grotesk', sans-serif;
@@ -1441,13 +1434,13 @@ export const AgentStep = styled.div`
 export const AgentStepNum = styled.div`
   font-size: 12px;
   font-weight: 800;
-  color: ${PURPLE};
+  color: ${PURPLE_TEXT};
   letter-spacing: 0.06em;
   min-width: 28px;
   padding-top: 2px;
 `
 export const AgentStepBody = styled.div`
-  h4 {
+  h3 {
     font-size: 16px;
     font-weight: 700;
     margin-bottom: 6px;
@@ -1638,7 +1631,7 @@ export const LeaderBtn = styled.button`
   border-radius: 6px;
   border: 1px solid rgba(108, 56, 255, 0.35);
   background: rgba(108, 56, 255, 0.08);
-  color: ${PURPLE};
+  color: ${PURPLE_TEXT};
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -1831,7 +1824,7 @@ export const EcoCard = styled.div<Anim & { $accent: string }>`
     box-shadow: 0 16px 32px rgba(0, 0, 0, 0.25);
   }
 
-  h4 {
+  h3 {
     font-size: 15px;
     font-weight: 700;
     margin: 12px 0 6px;
@@ -1926,7 +1919,7 @@ export const StepIcon = styled.div`
   display: flex;
   align-items: center;
   justify-content: center;
-  color: ${PURPLE};
+  color: ${PURPLE_TEXT};
   margin-bottom: 16px;
 `
 
@@ -2048,7 +2041,7 @@ export const FooterBrand = styled.div`
   }
 `
 export const FooterCol = styled.div`
-  h4 {
+  h3 {
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
@@ -2064,7 +2057,7 @@ export const FooterCol = styled.div`
     margin-bottom: 10px;
     transition: color 0.2s;
     &:hover {
-      color: ${PURPLE};
+      color: ${PURPLE_TEXT};
     }
   }
 `
@@ -2093,7 +2086,7 @@ export const SocialRow = styled.div`
     color: ${MUTED};
     transition: color 0.2s;
     &:hover {
-      color: ${PURPLE};
+      color: ${PURPLE_TEXT};
     }
     svg {
       width: 18px;

@@ -9,10 +9,15 @@ type ProductionGuardConfig = {
     allowedOrigins: string[];
   };
   blockchain: {
+    wsUrl: string;
     relayerSeed: string;
     spotContractAddress: string;
     spotContractMetadataPath: string;
     nativeTokenAddress: string;
+    factoryContractAddress: string;
+  };
+  bridge: {
+    adminSeed: string;
   };
   redis: {
     url: string;
@@ -29,6 +34,8 @@ type ProductionGuardConfig = {
     stakerPoolPct: number;
     rewardSplitTotalPct: number;
     rewardSplitValid: boolean;
+    treasuryAddress: string;
+    stakingContractAddress: string;
   };
 };
 
@@ -40,6 +47,22 @@ const DEV_SEEDS = [
   '//Eve',
   '//Ferdie',
 ];
+
+export function isDevSeed(value: string) {
+  return DEV_SEEDS.some((devSeed) => value.startsWith(devSeed));
+}
+
+export function isPlaceholder(value: string) {
+  return value.startsWith('REPLACE_WITH_');
+}
+
+export function isLocalEndpoint(value: string) {
+  return (
+    value.includes('127.0.0.1') ||
+    value.includes('localhost') ||
+    value.includes('0.0.0.0')
+  );
+}
 
 export function collectProductionConfigErrors(config: ProductionGuardConfig) {
   if (!config.isProd) return [];
@@ -81,22 +104,33 @@ export function collectProductionConfigErrors(config: ProductionGuardConfig) {
     errors.push('Wildcard WebSocket origins are forbidden in production');
   }
 
+  if (!config.blockchain.wsUrl) {
+    errors.push('LUNES_WS_URL is required in production');
+  } else if (isLocalEndpoint(config.blockchain.wsUrl)) {
+    errors.push('LUNES_WS_URL must not point to localhost in production');
+  }
+
   if (!config.blockchain.relayerSeed) {
     errors.push('RELAYER_SEED is required in production');
-  } else if (
-    DEV_SEEDS.some((devSeed) =>
-      config.blockchain.relayerSeed.startsWith(devSeed),
-    )
-  ) {
+  } else if (isDevSeed(config.blockchain.relayerSeed)) {
     errors.push(
       'RELAYER_SEED must not use a development account in production',
     );
-  } else if (
-    config.blockchain.relayerSeed.startsWith('REPLACE_WITH_') ||
-    config.blockchain.relayerSeed === ''
-  ) {
+  } else if (isPlaceholder(config.blockchain.relayerSeed)) {
     errors.push(
       'RELAYER_SEED still contains a placeholder value — inject the real seed via secrets manager',
+    );
+  }
+
+  if (!config.bridge.adminSeed) {
+    errors.push('BRIDGE_ADMIN_SEED is required in production');
+  } else if (isDevSeed(config.bridge.adminSeed)) {
+    errors.push(
+      'BRIDGE_ADMIN_SEED must not use a development account in production',
+    );
+  } else if (isPlaceholder(config.bridge.adminSeed)) {
+    errors.push(
+      'BRIDGE_ADMIN_SEED still contains a placeholder value — inject the real seed via secrets manager',
     );
   }
 
@@ -117,6 +151,10 @@ export function collectProductionConfigErrors(config: ProductionGuardConfig) {
       'NATIVE_TOKEN_ADDRESS is required in production. ' +
         'Set it to the sentinel AccountId used by spot_settlement for native LUNES.',
     );
+  }
+
+  if (!config.blockchain.factoryContractAddress) {
+    errors.push('FACTORY_CONTRACT_ADDRESS is required in production');
   }
 
   if (!config.redis.url) {
@@ -148,6 +186,16 @@ export function collectProductionConfigErrors(config: ProductionGuardConfig) {
     errors.push(
       `REWARD split percentages must sum to 100, got ${rewardSplitTotalPct} ` +
         `(leader=${leaderPoolPct}%, trader=${traderPoolPct}%, staker=${stakerPoolPct}%)`,
+    );
+  }
+
+  if (config.rewards.enabled && !config.rewards.treasuryAddress) {
+    errors.push('TREASURY_ADDRESS is required when rewards are enabled');
+  }
+
+  if (config.rewards.enabled && !config.rewards.stakingContractAddress) {
+    errors.push(
+      'STAKING_CONTRACT_ADDRESS is required when rewards are enabled',
     );
   }
 

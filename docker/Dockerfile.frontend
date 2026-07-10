@@ -20,6 +20,7 @@ ARG REACT_APP_TOKEN_LUP=""
 ARG REACT_APP_ENABLE_STAKING=true
 ARG REACT_APP_ENABLE_REWARDS=true
 ARG REACT_APP_DEV_MODE=false
+ARG LUNEX_FRONTEND_STRICT_BUILD=true
 
 ENV REACT_APP_NETWORK=$REACT_APP_NETWORK \
     REACT_APP_SPOT_API_URL=$REACT_APP_SPOT_API_URL \
@@ -43,7 +44,7 @@ COPY package*.json package-lock.json ./
 RUN npm ci --production=false
 COPY . .
 ENV CI=false
-RUN npm run build
+RUN if [ "$LUNEX_FRONTEND_STRICT_BUILD" = "true" ]; then npm run build:prod; else npm run build; fi
 
 # ── Stage 2: Serve with nginx ──
 FROM nginx:1.25-alpine AS runner

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer } from 'react'
-import tokens from 'pages/home/modals/chooseToken/mock'
+import tokens from 'pages/home/modals/chooseToken/tokenRegistry'
 
 export type Option = {
   id: number

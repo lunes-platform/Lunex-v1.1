@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSDK, parseBlockchainError } from '../context/SDKContext'
+import { humanPrice } from '../utils/reserveUtils'
+import { LP_TOKEN_DECIMALS } from '../config/contracts'
 
 interface Token {
   address: string
@@ -89,13 +91,38 @@ const useLiquidity = (): UseLiquidityReturn => {
           }
         }
 
-        // Calcular preços relativos
+        // Calcular preços relativos com ajuste de decimais
         let token0Price = '0'
         let token1Price = '0'
 
-        if (reserve0 > BigInt(0) && reserve1 > BigInt(0)) {
-          token0Price = (Number(reserve1) / Number(reserve0)).toString()
-          token1Price = (Number(reserve0) / Number(reserve1)).toString()
+        if (reserve0 > BigInt(0) && reserve1 > BigInt(0) && tokenA && tokenB) {
+          const pairToken0 =
+            (await sdk.getPairToken0(pairInfo.address)) ?? tokenA.address
+          const decimals0 =
+            pairToken0.toLowerCase() === tokenA.address.toLowerCase()
+              ? tokenA.decimals
+              : tokenB.decimals
+          const decimals1 =
+            pairToken0.toLowerCase() === tokenA.address.toLowerCase()
+              ? tokenB.decimals
+              : tokenA.decimals
+
+          token0Price = humanPrice(
+            pairToken0,
+            tokenA.address,
+            pairInfo.reserve0,
+            pairInfo.reserve1,
+            decimals0,
+            decimals1,
+          ).toString()
+          token1Price = humanPrice(
+            pairToken0,
+            tokenB.address,
+            pairInfo.reserve0,
+            pairInfo.reserve1,
+            decimals0,
+            decimals1,
+          ).toString()
         }
 
         setPoolInfo({
@@ -212,8 +239,11 @@ const useLiquidity = (): UseLiquidityReturn => {
       try {
         const deadline = sdk.calculateDeadline(20)
 
-        // Calcular amounts mínimos baseado na proporção do LP
-        const lpAmountBigInt = BigInt(lpAmount)
+        // LP token tem 8 casas decimais — escalar o valor humano para raw
+        // (antes: BigInt(lpAmount) tratava "2" como 2 raw → queima ~0 → revert
+        //  INSUFFICIENT_LIQUIDITY_BURNED no pair).
+        const lpAmountRaw = sdk.parseAmount(lpAmount, LP_TOKEN_DECIMALS)
+        const lpAmountBigInt = BigInt(lpAmountRaw)
         const totalSupply = BigInt(poolInfo.totalSupply)
         const reserve0 = BigInt(poolInfo.reserve0)
         const reserve1 = BigInt(poolInfo.reserve1)
@@ -233,7 +263,7 @@ const useLiquidity = (): UseLiquidityReturn => {
         const result = await sdk.removeLiquidity({
           tokenA: tokenA.address,
           tokenB: tokenB.address,
-          liquidity: lpAmount,
+          liquidity: lpAmountRaw,
           amountAMin,
           amountBMin,
           to: sdk.walletAddress,

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components'
 import TraderCard from '../components/TraderCard'
@@ -8,6 +8,7 @@ import socialApi, {
   buildUpsertLeaderProfileMessage,
   createSignedActionMetadata
 } from '../../../services/socialService'
+import { useToast } from '../../../components/feedback/ToastProvider'
 
 // ── SVG Icons ──
 const ArrowLeftIcon = () => (
@@ -379,6 +380,7 @@ const StatusText = styled.p<{ $error?: boolean; $success?: boolean }>`
 const SocialSettings: React.FC = () => {
   const navigate = useNavigate()
   const { walletAddress, connectWallet, signMessage } = useSDK()
+  const toast = useToast()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const [name, setName] = useState('')
@@ -406,68 +408,55 @@ const SocialSettings: React.FC = () => {
       .toUpperCase()
   }
 
-  useEffect(() => {
-    let isMounted = true
-
-    const loadProfile = async () => {
-      if (!walletAddress) {
-        if (isMounted) {
-          setSavedTrader(null)
-          setStatusMessage(
-            'Connect your wallet to load your saved leader profile.'
-          )
-        }
-        return
-      }
-
-      if (isMounted) {
-        setIsLoadingProfile(true)
-        setErrorMessage('')
-        setStatusMessage('Loading your leader profile...')
-      }
-
-      try {
-        const trader = await socialApi.getLeaderProfileByAddress(
-          walletAddress,
-          walletAddress,
-          signMessage
-        )
-
-        if (!isMounted) return
-
-        setSavedTrader(trader)
-        setName(trader.name)
-        setUsername(trader.username)
-        setBio(trader.bio)
-        setFee(trader.fee)
-        setTwitter(trader.socialLinks?.twitterUrl || '')
-        setTelegram(trader.socialLinks?.telegramUrl || '')
-        setDiscord(trader.socialLinks?.discordUrl || '')
-        setAvatarPreview(trader.avatar || '')
-        setStatusMessage('Leader profile loaded from database.')
-      } catch (err) {
-        if (!isMounted) return
-
-        const message =
-          err instanceof Error ? err.message : 'Failed to load leader profile'
-        setSavedTrader(null)
-
-        if (message.toLowerCase().includes('not found')) {
-          setStatusMessage(
-            'No leader profile found yet. Fill the form to create one.'
-          )
-        } else {
-          setErrorMessage(message)
-        }
-      } finally {
-        if (isMounted) setIsLoadingProfile(false)
-      }
+  const loadProfile = useCallback(async () => {
+    if (!walletAddress) {
+      setSavedTrader(null)
+      setStatusMessage('Connect your wallet to load your saved leader profile.')
+      return
     }
 
-    void loadProfile()
+    setIsLoadingProfile(true)
+    setErrorMessage('')
+    setStatusMessage('Loading your leader profile...')
 
-    return () => {
-      isMounted = false
+    try {
+      const trader = await socialApi.getLeaderProfileByAddress(
+        walletAddress,
+        walletAddress,
+        signMessage
+      )
+
+      setSavedTrader(trader)
+      setName(trader.name)
+      setUsername(trader.username)
+      setBio(trader.bio)
+      setFee(trader.fee)
+      setTwitter(trader.socialLinks?.twitterUrl || '')
+      setTelegram(trader.socialLinks?.telegramUrl || '')
+      setDiscord(trader.socialLinks?.discordUrl || '')
+      setAvatarPreview(trader.avatar || '')
+      setStatusMessage('Leader profile loaded from database.')
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to load leader profile'
+      setSavedTrader(null)
+
+      if (message.toLowerCase().includes('not found')) {
+        setStatusMessage(
+          'No leader profile found yet. Fill the form to create one.'
+        )
+      } else {
+        setErrorMessage(message)
+      }
+    } finally {
+      setIsLoadingProfile(false)
+    }
+  }, [signMessage, walletAddress])
+
+  useEffect(() => {
+    if (!walletAddress) {
+      setSavedTrader(null)
+      setStatusMessage('Connect your wallet to load your saved leader profile.')
     }
   }, [walletAddress])
 
@@ -543,31 +532,44 @@ const SocialSettings: React.FC = () => {
     setErrorMessage('')
     setStatusMessage('')
 
-    if (!walletAddress) {
-      try {
-        await connectWallet()
-        setStatusMessage(
-          'Wallet connected. Click save again to publish your profile.'
-        )
-      } catch (err) {
-        setErrorMessage(
-          err instanceof Error ? err.message : 'Failed to connect wallet'
-        )
-      }
-      return
-    }
-
+    // Validate the form first so the user always gets feedback on an empty
+    // form, regardless of wallet connection state (no silent clicks).
     if (!name.trim() || !username.trim() || !bio.trim()) {
       setErrorMessage('Display name, username, and biography are required.')
       return
     }
 
+    // Resolve the wallet address: use the one from context, or connect now and
+    // continue the submit in the same click (no "click again" dead-end).
+    let activeAddress = walletAddress
+
+    if (!activeAddress) {
+      setStatusMessage('Connect your wallet to publish your leader profile.')
+      try {
+        await connectWallet()
+      } catch (err) {
+        setErrorMessage(
+          err instanceof Error ? err.message : 'Failed to connect wallet'
+        )
+        return
+      }
+
+      activeAddress = walletAddress
+      if (!activeAddress) {
+        setErrorMessage(
+          'Wallet not connected. Please connect your wallet and try again.'
+        )
+        return
+      }
+    }
+
     setIsSaving(true)
+    setStatusMessage('Awaiting wallet signature...')
 
     try {
       const auth = createSignedActionMetadata()
       const payload = {
-        address: walletAddress,
+        address: activeAddress,
         name: name.trim(),
         username: username.trim(),
         bio: bio.trim(),
@@ -596,6 +598,7 @@ const SocialSettings: React.FC = () => {
       )
       navigate(`/social/profile/${trader.id}`, { state: { trader } })
     } catch (err) {
+      setStatusMessage('')
       setErrorMessage(
         err instanceof Error ? err.message : 'Failed to save leader profile'
       )
@@ -617,6 +620,13 @@ const SocialSettings: React.FC = () => {
               Set up your Leader profile to allow other users to copy your
               trades and earn performance fees.
             </PageDesc>
+            <SaveBtn
+              type="button"
+              onClick={loadProfile}
+              disabled={isLoadingProfile}
+            >
+              {isLoadingProfile ? 'Loading Profile...' : 'Load Saved Profile'}
+            </SaveBtn>
           </div>
         </HeaderRow>
 
@@ -794,7 +804,7 @@ const SocialSettings: React.FC = () => {
             <TraderCard
               trader={previewTrader}
               rank={99}
-              onCopy={() => alert('Profile preview mode - copying disabled')}
+              onCopy={() => toast.info('Profile preview mode - copying disabled')}
             />
 
             <InfoBox>

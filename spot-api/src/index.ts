@@ -50,6 +50,7 @@ import tokenRegistryRouter from './routes/tokenRegistry';
 import favoritesRouter from './routes/favorites';
 import marketInfoRouter from './routes/marketInfo';
 import rewardsRouter from './routes/rewards';
+import balancesRouter from './routes/balances';
 import adminRouter from './routes/admin';
 import { rewardScheduler } from './services/rewardScheduler';
 import { copytradeWalletContinuationScheduler } from './services/copytradeWalletContinuationScheduler';
@@ -59,6 +60,8 @@ import { tradeSettlementService } from './services/tradeSettlementService';
 import { marginService } from './services/marginService';
 import { rebalancerService } from './services/rebalancerService';
 import { strategyService } from './services/strategyService';
+import { setStakeChainVerifier } from './services/agentService';
+import { stakingChainVerifier } from './services/stakeChainVerifier';
 import { copytradeService } from './services/copytradeService';
 
 // ─── Crash Handlers ──────────────────────────────────────────────
@@ -311,6 +314,7 @@ app.use('/api/v1/tokens', tokenRegistryRouter);
 app.use('/api/v1/user', favoritesRouter);
 app.use('/api/v1/markets', marketInfoRouter);
 app.use('/api/v1/rewards', rewardsRouter);
+app.use('/api/v1/balances', balancesRouter);
 app.use('/api/v1/admin', adminRouter);
 
 // ─── Health & Metrics ────────────────────────────────────────────
@@ -390,6 +394,9 @@ app.use(errorHandler());
 
 // ─── Startup ─────────────────────────────────────────────────────
 let httpServer: ReturnType<typeof app.listen> | null = null;
+let wsServer: ReturnType<typeof createWebSocketServer> | null = null;
+let settlementRetryTimer: NodeJS.Timeout | null = null;
+let strategySyncTimer: NodeJS.Timeout | null = null;
 
 async function main() {
   try {
@@ -404,6 +411,10 @@ async function main() {
     await settlementService.ensureReady();
     await rebalancerService.ensureReady();
 
+    // Wire the on-chain stake verifier so verifyStake() can confirm agent
+    // stakes against the Staking contract instead of trusting user input.
+    setStakeChainVerifier(stakingChainVerifier);
+
     const recovery = await tradeSettlementService.retryPendingSettlements();
     log.info(
       `Trade settlement recovery: ${recovery.processed} trades (${recovery.settled} settled, ${recovery.failed} failed)`,
@@ -413,7 +424,7 @@ async function main() {
     vaultReconciliationService.start();
     copytradeWalletContinuationScheduler.start();
 
-    setInterval(() => {
+    settlementRetryTimer = setInterval(() => {
       tradeSettlementService.retryPendingSettlements().catch((error) => {
         log.error({ err: error }, 'Trade settlement retry loop failed');
       });
@@ -431,7 +442,7 @@ async function main() {
     };
     // Run once at startup (non-blocking), then every 6 h
     runStrategySyncOnce();
-    setInterval(runStrategySyncOnce, SIX_HOURS_MS);
+    strategySyncTimer = setInterval(runStrategySyncOnce, SIX_HOURS_MS);
 
     // ─── Reward Distribution Scheduler ───────────────────────────
     rewardScheduler.start();
@@ -442,7 +453,7 @@ async function main() {
       );
     });
 
-    createWebSocketServer(config.wsPort);
+    wsServer = createWebSocketServer(config.wsPort);
   } catch (error) {
     log.error({ err: error }, 'Failed to start server');
     process.exit(1);
@@ -459,10 +470,23 @@ async function shutdown(signal: string) {
     });
   }
 
+  // Fecha o WS antes dos schedulers: clientes param de receber eventos de um
+  // processo que está morrendo. wss.close() também limpa o heartbeat interno.
+  if (wsServer) {
+    for (const client of wsServer.clients) client.terminate();
+    wsServer.close(() => log.info('WebSocket server closed'));
+  }
+
+  if (settlementRetryTimer) clearInterval(settlementRetryTimer);
+  if (strategySyncTimer) clearInterval(strategySyncTimer);
+
   try {
     rewardScheduler.stop();
     vaultReconciliationService.stop();
     copytradeWalletContinuationScheduler.stop();
+    socialAnalyticsPipeline.stop();
+    // Settlements em voo: o claim otimista é idempotente e o recovery de boot
+    // (recoverPendingSettlements) reprocessa pendências — não é preciso drenar.
     await prisma.$disconnect();
     await disconnectRedis();
     log.info('Database and Redis disconnected');

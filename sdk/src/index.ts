@@ -229,6 +229,7 @@ export { StrategyModule } from './modules/strategy';
 export * from './modules/execution';
 export { ExecutionModule } from './modules/execution';
 export { WebSocketClient, WebSocketEvent } from './websocket-client';
+export { EndpointNotAvailableError } from './errors';
 
 // Default export
 export default LunexSDK;

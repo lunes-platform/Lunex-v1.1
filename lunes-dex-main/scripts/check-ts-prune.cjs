@@ -6,8 +6,6 @@ const output = execSync('npx ts-prune -p tsconfig.json', {
 
 const allowExact = new Set([
   'src/config/contracts.ts:34 - TokenMeta',
-  'src/hooks/useAnimatedCounter.ts:18 - useAnimatedCounter',
-  'src/hooks/useAnimatedCounter.ts:75 - useFlashOnChange',
   'src/sdk/AsymmetricClient.ts:104 - AsymmetricClient',
 ]);
 

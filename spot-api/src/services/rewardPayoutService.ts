@@ -18,7 +18,8 @@ import { cryptoWaitReady } from '@polkadot/util-crypto';
 import { BN } from '@polkadot/util';
 import { config } from '../config';
 import { log } from '../utils/logger';
-import { withTxTimeout } from '../utils/txWithTimeout';
+import { waitForFinalizedTx } from '../utils/finalizedTx';
+import { dryRunGasLimit, txGasLimit } from '../utils/contractGas';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -262,7 +263,7 @@ class RewardPayoutService {
       // Dry-run to estimate gas (payable: attach value)
       const value = new BN(amountPlancks.toString());
       const { gasRequired, result } = await queryMethod(this.relayer.address, {
-        gasLimit: -1,
+        gasLimit: dryRunGasLimit(this.api),
         storageDepositLimit: null,
         value,
       });
@@ -278,7 +279,7 @@ class RewardPayoutService {
       // Submit real transaction
       const txHash = await this.signAndSendContract(
         txMethod,
-        { gasLimit: gasRequired, storageDepositLimit: null, value },
+        { gasLimit: txGasLimit(this.api, gasRequired), storageDepositLimit: null, value },
         [],
         `fund_staking_rewards:${amountLunes}`,
       );
@@ -355,7 +356,7 @@ class RewardPayoutService {
 
       const { gasRequired, result } = await queryMethod(
         this.relayer.address,
-        { gasLimit: -1, storageDepositLimit: null },
+        { gasLimit: dryRunGasLimit(this.api), storageDepositLimit: null },
         ...args,
       );
 
@@ -369,7 +370,7 @@ class RewardPayoutService {
 
       const txHash = await this.signAndSendContract(
         txMethod,
-        { gasLimit: gasRequired, storageDepositLimit: null },
+        { gasLimit: txGasLimit(this.api, gasRequired), storageDepositLimit: null },
         args,
         `distribute_trading_rewards${startIndex != null ? `:${startIndex}` : ''}`,
       );
@@ -430,35 +431,13 @@ class RewardPayoutService {
     }
 
     try {
-      const txPromise = new Promise<string>((resolve, reject) => {
-        let unsub: (() => void) | undefined;
-
-        this.api!.tx.balances.transferKeepAlive(
-          toAddress,
-          new BN(amountPlancks.toString()),
-        )
-          .signAndSend(this.relayer!, (txResult: any) => {
-            if (txResult.dispatchError) {
-              if (unsub) unsub();
-              reject(new Error(txResult.dispatchError.toString()));
-              return;
-            }
-
-            if (txResult.status.isInBlock || txResult.status.isFinalized) {
-              const txHash = txResult.txHash.toHex();
-              if (unsub) unsub();
-              resolve(txHash);
-            }
-          })
-          .then((unsubscribe: () => void) => {
-            unsub = unsubscribe;
-          })
-          .catch(reject);
-      });
-
-      const txHash = await withTxTimeout(
+      const txHash = await waitForFinalizedTx(
         `transfer:${toAddress}:${amountLunes}`,
-        txPromise,
+        (callback) =>
+          this.api!.tx.balances.transferKeepAlive(
+            toAddress,
+            new BN(amountPlancks.toString()),
+          ).signAndSend(this.relayer!, callback),
       );
 
       log.info(
@@ -484,30 +463,9 @@ class RewardPayoutService {
     args: any[],
     label: string,
   ): Promise<string> {
-    const txPromise = new Promise<string>((resolve, reject) => {
-      let unsub: (() => void) | undefined;
-
-      txMethod(options, ...args)
-        .signAndSend(this.relayer!, (txResult: any) => {
-          if (txResult.dispatchError) {
-            if (unsub) unsub();
-            reject(new Error(txResult.dispatchError.toString()));
-            return;
-          }
-
-          if (txResult.status.isInBlock || txResult.status.isFinalized) {
-            const txHash = txResult.txHash.toHex();
-            if (unsub) unsub();
-            resolve(txHash);
-          }
-        })
-        .then((unsubscribe: () => void) => {
-          unsub = unsubscribe;
-        })
-        .catch(reject);
-    });
-
-    return withTxTimeout(label, txPromise);
+    return waitForFinalizedTx(label, (callback) =>
+      txMethod(options, ...args).signAndSend(this.relayer!, callback),
+    );
   }
 }
 

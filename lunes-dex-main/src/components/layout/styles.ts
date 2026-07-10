@@ -45,15 +45,3 @@ export const GlowBox = styled.div<{ maxWidth?: string }>`
     width: 100%;
   }
 `
-
-export const PageFooter = styled.p`
-  padding: 16px;
-  color: #fff;
-  opacity: 0.5;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  text-align: center;
-  font-weight: 500;
-  max-width: 500px;
-  margin: 0 auto;
-`

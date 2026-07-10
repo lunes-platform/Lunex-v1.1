@@ -426,9 +426,7 @@ const CopytradePage: React.FC = () => {
     if (!walletAddress) {
       setPositions([])
       setActivity([])
-      return
     }
-    void refreshFollowerDashboard(walletAddress)
   }, [walletAddress])
 
   useEffect(() => {

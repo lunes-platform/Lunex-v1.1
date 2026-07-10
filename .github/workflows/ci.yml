@@ -19,9 +19,23 @@ env:
 # JOB 1 — Validate TypeScript projects (lint + typecheck)
 # ─────────────────────────────────────────────────────────────────────────────
 jobs:
+  ops-docs:
+    name: Ops docs guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate security and runbook docs
+        run: node scripts/check-ops-docs.cjs
+
   validate:
     name: Validate (${{ matrix.project }})
     runs-on: ubuntu-latest
+    needs: ops-docs
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +48,9 @@ jobs:
             dir: sdk
           - project: mcp
             dir: mcp/lunex-agent-mcp
+          - project: admin
+            dir: lunex-admin
+            prisma_generate: "true"
 
     steps:
       - uses: actions/checkout@v4
@@ -46,12 +63,21 @@ jobs:
         run: npm install
         working-directory: ${{ matrix.dir }}
 
+      - name: Generate Prisma client
+        if: matrix.prisma_generate == 'true'
+        run: npx prisma generate
+        working-directory: ${{ matrix.dir }}
+
       - name: Type-check
         run: npx tsc --noEmit
         working-directory: ${{ matrix.dir }}
 
       - name: Lint
         run: npm run lint --if-present
+        working-directory: ${{ matrix.dir }}
+
+      - name: Production regression guards
+        run: npm run prod:guard --if-present
         working-directory: ${{ matrix.dir }}
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -78,6 +104,11 @@ jobs:
           - project: mcp
             dir: mcp/lunex-agent-mcp
             build_cmd: npx tsc -p tsconfig.json
+          - project: admin
+            dir: lunex-admin
+            build_cmd: npm run build
+            env_ci: "true"
+            prisma_generate: "true"
 
     steps:
       - uses: actions/checkout@v4
@@ -88,6 +119,11 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+        working-directory: ${{ matrix.dir }}
+
+      - name: Generate Prisma client
+        if: matrix.prisma_generate == 'true'
+        run: npx prisma generate
         working-directory: ${{ matrix.dir }}
 
       - name: Build
@@ -180,6 +216,71 @@ jobs:
           path: spot-api/coverage
           retention-days: 7
           if-no-files-found: ignore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 3b — E2E tests (spot-api) — supertest against the app, no chain required
+# ─────────────────────────────────────────────────────────────────────────────
+  spot-api-e2e:
+    name: E2E Tests (spot-api)
+    runs-on: ubuntu-latest
+    needs: validate
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: lunex_e2e
+          POSTGRES_USER: lunex
+          POSTGRES_PASSWORD: lunex_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lunex -d lunex_e2e"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: spot-api
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        working-directory: spot-api
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://lunex:lunex_e2e@localhost:5432/lunex_e2e?schema=public
+
+      - name: Run E2E tests
+        run: npm run test:e2e -- --no-coverage --ci
+        working-directory: spot-api
+        env:
+          DATABASE_URL: postgresql://lunex:lunex_e2e@localhost:5432/lunex_e2e?schema=public
+          REDIS_URL: redis://localhost:6379
+          NODE_ENV: test
+          JWT_SECRET: ci-test-secret
+          RELAYER_SEED: "//Alice"
+          LUNES_WS_URL: ws://localhost:9944
 
 # ─────────────────────────────────────────────────────────────────────────────
 # JOB 4 — SubQuery validation (codegen + build)
@@ -400,7 +501,7 @@ jobs:
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
-    needs: [build-ts, test-api, validate-subquery, smoke-test]
+    needs: [build-ts, test-api, spot-api-e2e, validate-subquery, smoke-test, build-contracts, test-contracts]
     if: always()
 
     steps:
@@ -408,13 +509,19 @@ jobs:
         run: |
           echo "build-ts:          ${{ needs.build-ts.result }}"
           echo "test-api:          ${{ needs.test-api.result }}"
+          echo "spot-api-e2e:      ${{ needs.spot-api-e2e.result }}"
           echo "validate-subquery: ${{ needs.validate-subquery.result }}"
           echo "smoke-test:        ${{ needs.smoke-test.result }}"
+          echo "build-contracts:   ${{ needs.build-contracts.result }}"
+          echo "test-contracts:    ${{ needs.test-contracts.result }}"
 
           if [[ "${{ needs.build-ts.result }}"          != "success" ]] ||
              [[ "${{ needs.test-api.result }}"          != "success" ]] ||
+             [[ "${{ needs.spot-api-e2e.result }}"      != "success" ]] ||
              [[ "${{ needs.validate-subquery.result }}" != "success" ]] ||
-             [[ "${{ needs.smoke-test.result }}"        != "success" ]]; then
+             [[ "${{ needs.smoke-test.result }}"        != "success" ]] ||
+             [[ "${{ needs.build-contracts.result }}"   != "success" ]] ||
+             [[ "${{ needs.test-contracts.result }}"    != "success" ]]; then
             echo "One or more required jobs failed."
             exit 1
           fi

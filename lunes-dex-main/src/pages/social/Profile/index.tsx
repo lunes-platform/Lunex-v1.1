@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useLocation, useParams, useNavigate } from 'react-router-dom'
 import styled from 'styled-components'
 import PnLChart from '../components/PnLChart'
@@ -934,16 +934,18 @@ const Profile: React.FC = () => {
 
       try {
         const [nextTrader, nextFollowers] = await Promise.all([
-          socialApi.getLeaderProfile(
-            id,
-            walletAddress ?? undefined,
-            signMessage
-          ),
+          socialApi.getLeaderProfile(id),
           socialApi.getLeaderFollowers(id, 8)
         ])
 
         if (isMounted) {
-          setTrader(nextTrader)
+          // The public reload has no viewer signature, so the backend
+          // returns isFollowing:false by default. Preserve the personalised
+          // follow state already known on the client so the 30s poll does not
+          // clobber a freshly-synced "Following" status back to false.
+          setTrader(prev =>
+            prev ? { ...nextTrader, isFollowing: prev.isFollowing } : nextTrader
+          )
           setLeaderFollowers(nextFollowers)
           setIdeaLikeCounts(
             nextTrader.ideas.reduce<Record<string, number>>((acc, idea) => {
@@ -969,7 +971,23 @@ const Profile: React.FC = () => {
       isMounted = false
       window.clearInterval(intervalId)
     }
-  }, [id, location.state, walletAddress])
+  }, [id, location.state])
+
+  const refreshPrivateFollowState = useCallback(async () => {
+    if (!id || !walletAddress) return
+    try {
+      const nextTrader = await socialApi.getLeaderProfile(
+        id,
+        walletAddress,
+        signMessage
+      )
+      setTrader(prev =>
+        prev ? { ...prev, isFollowing: nextTrader.isFollowing } : nextTrader
+      )
+    } catch {
+      showToast('Failed to sync follow state')
+    }
+  }, [id, signMessage, walletAddress])
 
   const loadComments = async (ideaId: string) => {
     setCommentLoading(prev => ({ ...prev, [ideaId]: true }))
@@ -1190,6 +1208,14 @@ const Profile: React.FC = () => {
                   ? 'Following'
                   : 'Follow'}
             </SecondaryBtn>
+            {walletAddress && (
+              <SecondaryBtn
+                onClick={refreshPrivateFollowState}
+                disabled={followLoading}
+              >
+                Sync Follow State
+              </SecondaryBtn>
+            )}
             <SecondaryBtn onClick={handleShareProfile}>
               <ShareIcon /> Share
             </SecondaryBtn>
