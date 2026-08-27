@@ -3,7 +3,7 @@
   "version": "0.8.0",
   "private": true,
   "dependencies": {
-    "@727-ventures/typechain-compiler": "0.5.10",
+    "@727-ventures/typechain-compiler": "1.1.4",
     "@727-ventures/typechain-types": "0.0.21",
     "@types/jest": "^29.2.3",
     "@typescript-eslint/eslint-plugin": "^4.8.2",
