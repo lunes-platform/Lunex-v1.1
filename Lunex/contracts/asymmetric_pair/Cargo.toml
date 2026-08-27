@@ -22,5 +22,5 @@ scale = { package = "parity-scale-codec", version = "3", default-features = fals
 scale-info = { version = "2.9", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
-ink_e2e = { version = "4.3" }
+ink_e2e = { version = "5.1" }
 
