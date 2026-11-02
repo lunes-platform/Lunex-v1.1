@@ -532,7 +532,8 @@ const AsymmetricPool: React.FC = () => {
     ],
     [
       'Sell curve',
-      `k ${fmt(sell.k)} · cap ${fmt(sell.x0)} · γ${sell.g} ${GAMMA_LABELS[sell.g]}`,
+      // show what is actually deployed: the sell side seeds half of k
+      `k ${fmt(sell.k * 0.5)} seeded (½ of ${fmt(sell.k)}) · cap ${fmt(sell.x0)} · γ${sell.g} ${GAMMA_LABELS[sell.g]}`,
       C.criticalText2
     ],
     ['Fee target', (feeBps / 100).toFixed(2) + '%'],
