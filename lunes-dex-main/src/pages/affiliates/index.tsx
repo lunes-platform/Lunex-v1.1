@@ -1,6 +1,31 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import styled, { keyframes } from 'styled-components'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import styled from 'styled-components'
+import { Copy, Send } from 'lucide-react'
 import { useSDK } from '../../context/SDKContext'
+import { useToast } from '../../components/feedback/ToastProvider'
+import { AnimatedNumber } from '../../components/ui/AnimatedNumber'
+import {
+  Button,
+  C,
+  Card,
+  Col,
+  Empty,
+  H1,
+  H2,
+  Muted,
+  Page,
+  Row,
+  SkeletonLine,
+  StatCard,
+  StatLabel,
+  StatValue,
+  Sub,
+  TabPanel,
+  Tabs,
+  grotesk,
+  short,
+  tabular
+} from '../../components/ui/kit'
 import {
   buildWalletActionMessage,
   createSignedActionMetadata
@@ -8,18 +33,14 @@ import {
 
 const SPOT_API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
-interface LevelInfo {
-  level: number
-  ratePct: number
-  rateBps: number
-}
-interface EarningByLevel {
+type LevelInfo = { level: number; ratePct: number; rateBps: number }
+type EarningByLevel = {
   level: number
   token: string
   totalEarned: number
   tradeCount: number
 }
-interface DashboardData {
+type DashboardData = {
   referralCode: string
   directReferrals: number
   earningsByLevel: EarningByLevel[]
@@ -29,7 +50,7 @@ interface DashboardData {
   paidCount: number
   levels: LevelInfo[]
 }
-interface TreeNode {
+type TreeNode = {
   address: string
   joinedAt: string
   level: number
@@ -37,7 +58,7 @@ interface TreeNode {
   totalFeeGenerated: number
   children: TreeNode[]
 }
-interface AffiliatePayoutRow {
+type PayoutRow = {
   id: string
   level: number
   token: string
@@ -47,936 +68,516 @@ interface AffiliatePayoutRow {
   batchId: string | null
 }
 
-// ─── Animations ───
+// Fallback when the API has not answered yet — the backend owns the rates.
+const DEFAULT_LEVELS: LevelInfo[] = [
+  { level: 1, ratePct: 4, rateBps: 400 },
+  { level: 2, ratePct: 2, rateBps: 200 },
+  { level: 3, ratePct: 1.5, rateBps: 150 },
+  { level: 4, ratePct: 1, rateBps: 100 },
+  { level: 5, ratePct: 0.5, rateBps: 50 }
+]
 
-const fadeIn = keyframes`from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); }`
-const pulse = keyframes`0%,100%{opacity:1}50%{opacity:.6}`
+const LEVEL_COPY: [string, string][] = [
+  ['Direct referrals', 'People who join with your link'],
+  ['2nd level', 'Referrals of your referrals'],
+  ['3rd level', 'Third-degree network'],
+  ['4th level', 'Fourth-degree network'],
+  ['5th level', 'Maximum depth']
+]
 
-// ─── Styled Components ───
+const fmtAmt = (n: number) =>
+  n.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
 
-const Page = styled.div`
-  min-height: 100vh;
-  background: #0d0d0d;
-  padding: 80px 24px 48px;
-`
+/** Flattens the referral tree into rows with their depth level. */
+const flatten = (nodes: TreeNode[], depth = 1): (TreeNode & { d: number })[] =>
+  nodes.flatMap(n => [
+    { ...n, d: n.level || depth },
+    ...flatten(n.children || [], depth + 1)
+  ])
 
-const Container = styled.div`
-  max-width: 960px;
-  margin: 0 auto;
-  animation: ${fadeIn} 0.3s ease;
-`
-
-const HeroBanner = styled.div`
-  text-align: center;
-  margin-bottom: 40px;
-  padding: 32px 0 16px;
-`
-
-const PageTitle = styled.h1`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 42px;
-  font-weight: 800;
-  color: #ffffff;
-  margin: 0 0 12px;
-  letter-spacing: -1px;
-  span {
-    background: linear-gradient(135deg, #6c38ff, #9b6fff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-`
-
-const PageSubtitle = styled.p`
-  font-family: 'Inter', sans-serif;
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.5);
-  margin: 0;
-  max-width: 520px;
-  margin: 0 auto;
-  line-height: 1.6;
-`
-
-// ─── How It Works ───
-
-const HowItWorks = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 32px;
-  @media (max-width: 768px) {
-    grid-template-columns: 1fr;
-  }
-`
-
-const StepCard = styled.div`
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 16px;
-  padding: 24px 20px;
-  text-align: center;
-  transition: all 0.2s;
-  &:hover {
-    border-color: rgba(108, 56, 255, 0.2);
-    background: rgba(108, 56, 255, 0.04);
-  }
-`
-
-const StepNumber = styled.div`
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: rgba(108, 56, 255, 0.12);
-  color: #6c38ff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 16px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto 14px;
-`
-
-const StepTitle = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 15px;
-  font-weight: 700;
-  color: #fff;
-  margin-bottom: 6px;
-`
-
-const StepDesc = styled.div`
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
-  line-height: 1.5;
-`
-
-// ─── Tabs ───
-
-const TabBar = styled.div`
-  display: flex;
-  gap: 4px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 14px;
-  padding: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  margin-bottom: 24px;
-`
-
-const Tab = styled.button<{ $active: boolean }>`
-  flex: 1;
-  padding: 11px 16px;
-  border: none;
-  border-radius: 10px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  font-weight: ${p => (p.$active ? '700' : '500')};
-  cursor: pointer;
-  transition: all 0.2s;
-  background: ${p => (p.$active ? 'rgba(108,56,255,0.15)' : 'transparent')};
-  color: ${p => (p.$active ? '#9B6FFF' : 'rgba(255,255,255,0.5)')};
-  &:hover {
-    background: ${p =>
-      p.$active ? 'rgba(108,56,255,0.15)' : 'rgba(255,255,255,0.04)'};
-    color: ${p => (p.$active ? '#9B6FFF' : '#fff')};
-  }
-`
-
-// ─── Cards ───
-
-const Card = styled.div`
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 16px;
-  padding: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  margin-bottom: 16px;
-`
-
-// ─── Share / Referral Link ───
-
-const ShareCard = styled(Card)`
-  text-align: center;
-  padding: 28px 24px;
-`
-
-const ReferralCodeLabel = styled.div`
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-bottom: 8px;
-`
-
-const ReferralCode = styled.div`
-  color: #6c38ff;
-  font-size: 32px;
-  font-weight: 800;
-  font-family: 'Space Grotesk', monospace;
-  letter-spacing: 6px;
-  margin-bottom: 16px;
-`
+// ─── Styles ──────────────────────────────────────────────────────
 
 const LinkBox = styled.div`
+  flex: 1;
+  min-width: 220px;
+  height: 46px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid ${C.borderStrong};
+  background: ${C.bg};
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 16px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  @media (max-width: 759px) {
+    min-width: 0;
+    width: 100%;
+    flex-basis: 100%;
+  }
 `
 
-const LinkText = styled.span`
-  flex: 1;
+const StatGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  @media (max-width: 479px) {
+    grid-template-columns: 1fr 1fr;
+  }
+`
+
+const ListBox = styled.div`
+  border: 1px solid ${C.border};
+  border-radius: 16px;
+  overflow: hidden;
+`
+
+const ListRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.6);
-  font-family: monospace;
+  ${tabular};
+  & + & {
+    border-top: 1px solid ${C.border};
+  }
+  @media (max-width: 759px) {
+    gap: 10px;
+    padding: 12px;
+  }
+`
+
+const LevelNum = styled.div`
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: rgba(108, 56, 255, 0.16);
+  color: ${C.primaryText2};
+  ${grotesk};
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`
+
+const Rate = styled.span`
+  ${grotesk};
+  font-weight: 600;
+  font-size: 18px;
+`
+
+const Right = styled.span<{ $color?: string; $w?: number }>`
+  min-width: ${p => p.$w ?? 84}px;
+  text-align: right;
+  color: ${p => p.$color ?? '#fff'};
+  white-space: nowrap;
+  @media (max-width: 479px) {
+    min-width: 0;
+  }
+`
+
+const ShareLink = styled.a`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid ${C.borderStrong};
+  color: ${C.secondary};
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  &:hover {
+    color: #fff;
+    border-color: ${C.primary};
+  }
+`
+
+const Mono = styled.span`
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, monospace;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
 `
 
-const CopyBtn = styled.button<{ $copied?: boolean }>`
-  background: ${p =>
-    p.$copied ? 'rgba(0,192,118,0.15)' : 'rgba(108,56,255,0.15)'};
-  border: 1px solid
-    ${p => (p.$copied ? 'rgba(0,192,118,0.3)' : 'rgba(108,56,255,0.3)')};
-  border-radius: 8px;
-  padding: 6px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  font-family: 'Space Grotesk', sans-serif;
-  color: ${p => (p.$copied ? '#00C076' : '#6C38FF')};
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
-  &:hover {
-    opacity: 0.85;
-  }
-`
+// ─── Component ───────────────────────────────────────────────────
 
-const SocialRow = styled.div`
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-`
-
-const SocialBtn = styled.a`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 10px 16px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: 'Space Grotesk', sans-serif;
-  text-decoration: none;
-  cursor: pointer;
-  transition: all 0.15s;
-  &:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.15);
-  }
-`
-
-// ─── Stats ───
-
-const StatsGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
-  @media (max-width: 768px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-`
-
-const StatCard = styled.div`
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 14px;
-  padding: 20px;
-`
-
-const StatLabel = styled.div`
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 8px;
-`
-
-const StatValue = styled.div<{ $color?: string }>`
-  color: ${p => p.$color || '#fff'};
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 24px;
-  font-weight: 800;
-`
-
-// ─── Commission Levels ───
-
-const LevelRow = styled.div<{ $active: boolean }>`
-  display: grid;
-  grid-template-columns: 40px 1fr 80px 100px;
-  align-items: center;
-  padding: 14px 16px;
-  border-radius: 10px;
-  margin-bottom: 6px;
-  background: ${p => (p.$active ? 'rgba(108,56,255,0.06)' : 'transparent')};
-  border: 1px solid
-    ${p => (p.$active ? 'rgba(108,56,255,0.15)' : 'rgba(255,255,255,0.04)')};
-  transition: all 0.15s;
-`
-
-const LevelBadge = styled.div<{ $level: number }>`
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 13px;
-  font-family: 'Space Grotesk', sans-serif;
-  background: ${({ $level }) => {
-    const colors = ['#6C38FF', '#9B6FFF', '#00C076', '#FF9500', '#FF6B6B']
-    return `${colors[$level - 1] || colors[0]}18`
-  }};
-  color: ${({ $level }) => {
-    const colors = ['#6C38FF', '#9B6FFF', '#00C076', '#FF9500', '#FF6B6B']
-    return colors[$level - 1] || colors[0]
-  }};
-`
-
-const LevelLabel = styled.div`
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: 'Space Grotesk', sans-serif;
-  padding-left: 12px;
-`
-
-const LevelSub = styled.div`
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
-  padding-left: 12px;
-`
-
-const LevelRate = styled.div`
-  color: #6c38ff;
-  font-size: 14px;
-  font-weight: 700;
-  text-align: center;
-  font-family: 'Space Grotesk', sans-serif;
-`
-
-const LevelEarned = styled.div`
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 13px;
-  text-align: right;
-  font-family: 'Space Grotesk', sans-serif;
-`
-
-// ─── Tree ───
-
-const TreeNodeRow = styled.div<{ $depth: number }>`
-  padding: 12px 16px;
-  padding-left: ${p => 16 + p.$depth * 24}px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  &:last-child {
-    border-bottom: none;
-  }
-  transition: background 0.15s;
-  &:hover {
-    background: rgba(255, 255, 255, 0.02);
-  }
-`
-
-const TreeAddress = styled.div`
-  color: #fff;
-  font-size: 13px;
-  font-family: monospace;
-  font-weight: 500;
-`
-
-const TreeMeta = styled.div`
-  display: flex;
-  gap: 16px;
-  margin-top: 4px;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 11px;
-  font-family: 'Inter', sans-serif;
-`
-
-// ─── Payouts ───
-
-const PayoutRow = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 100px 80px 80px 120px;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  font-size: 13px;
-  &:last-child {
-    border-bottom: none;
-  }
-`
-
-const PayoutHeader = styled(PayoutRow)`
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.4);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-`
-
-// ─── General ───
-
-const SectionTitle = styled.div`
-  color: #fff;
-  font-size: 16px;
-  font-weight: 700;
-  font-family: 'Space Grotesk', sans-serif;
-  margin-bottom: 16px;
-`
-
-const EmptyState = styled.div`
-  text-align: center;
-  padding: 32px 16px;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 13px;
-  font-family: 'Inter', sans-serif;
-  line-height: 1.6;
-`
-
-const ConnectPrompt = styled.div`
-  text-align: center;
-  padding: 40px 20px;
-  color: rgba(255, 255, 255, 0.5);
-  font-family: 'Inter', sans-serif;
-`
-
-const LoadingDot = styled.span`
-  animation: ${pulse} 1.2s infinite;
-  color: rgba(255, 255, 255, 0.4);
-`
-
-const ConnectButton = styled.button`
-  background: linear-gradient(135deg, #6c38ff, #5a2ee0);
-  border: none;
-  border-radius: 12px;
-  padding: 14px 32px;
-  color: #fff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  margin-top: 16px;
-  transition: opacity 0.15s;
-  &:hover {
-    opacity: 0.9;
-  }
-`
-
-// ─── Component ───
-
-type TabType = 'overview' | 'tree' | 'payouts'
+type NetTab = 'network' | 'payouts'
 
 const Affiliates: React.FC = () => {
   const sdk = useSDK()
-  const [tab, setTab] = useState<TabType>('overview')
+  const { toast } = useToast()
+  const sdkRef = useRef(sdk)
+  sdkRef.current = sdk
+
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [tree, setTree] = useState<TreeNode[]>([])
-  const [payouts, setPayouts] = useState<AffiliatePayoutRow[]>([])
-  const [referralCode, setReferralCode] = useState<string>('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [payouts, setPayouts] = useState<PayoutRow[]>([])
+  const [referralCode, setReferralCode] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [netTab, setNetTab] = useState<NetTab>('network')
 
   const address = sdk.walletAddress || ''
+  const connected = sdk.isConnected && !!address
 
-  const signAffiliateRead = useCallback(
+  const signRead = useCallback(
     async (action: string, fields?: Record<string, string | number>) => {
-      if (!address) {
-        throw new Error('Wallet address required')
-      }
-
-      const metadata = createSignedActionMetadata()
-      const signature = await sdk.signMessage(
+      const s = sdkRef.current
+      const addr = s.walletAddress
+      if (!addr) throw new Error('Wallet address required')
+      const meta = createSignedActionMetadata()
+      const signature = await s.signMessage(
         buildWalletActionMessage({
           action,
-          address,
-          nonce: metadata.nonce,
-          timestamp: metadata.timestamp,
+          address: addr,
+          nonce: meta.nonce,
+          timestamp: meta.timestamp,
           fields
         })
       )
-
       return new URLSearchParams({
-        address,
-        nonce: metadata.nonce,
-        timestamp: String(metadata.timestamp),
+        address: addr,
+        nonce: meta.nonce,
+        timestamp: String(meta.timestamp),
         signature,
         ...Object.fromEntries(
-          Object.entries(fields ?? {}).map(([key, value]) => [
-            key,
-            String(value)
-          ])
+          Object.entries(fields ?? {}).map(([k, v]) => [k, String(v)])
         )
       }).toString()
     },
-    [address, sdk]
+    []
   )
 
-  const fetchDashboard = useCallback(async () => {
-    if (!address) return
-    setIsLoading(true)
-    try {
-      const query = await signAffiliateRead('affiliate.dashboard')
-      const res = await fetch(`${SPOT_API}/api/v1/affiliate/dashboard?${query}`)
-      const data = await res.json()
-      if (data.dashboard) {
-        setDashboard(data.dashboard)
-        if (data.dashboard.referralCode)
-          setReferralCode(data.dashboard.referralCode)
-      }
-    } catch (err) {
-      console.error('Failed to fetch affiliate dashboard:', err)
-    } finally {
-      setIsLoading(false)
-    }
-  }, [address, signAffiliateRead])
-
-  const fetchTree = useCallback(async () => {
-    if (!address) return
-    try {
-      const query = await signAffiliateRead('affiliate.tree', { depth: 3 })
-      const res = await fetch(`${SPOT_API}/api/v1/affiliate/tree?${query}`)
-      const data = await res.json()
-      setTree(data.tree || [])
-    } catch (err) {
-      console.error('Failed to fetch referral tree:', err)
-    }
-  }, [address, signAffiliateRead])
-
-  const fetchPayouts = useCallback(async () => {
-    if (!address) return
-    try {
-      const query = await signAffiliateRead('affiliate.payouts', { limit: 20 })
-      const res = await fetch(`${SPOT_API}/api/v1/affiliate/payouts?${query}`)
-      const data = await res.json()
-      setPayouts(data.payouts || [])
-    } catch (err) {
-      console.error('Failed to fetch payouts:', err)
-    }
-  }, [address, signAffiliateRead])
-
-  // Generate referral code client-side (same SHA-256 logic as backend) + try API
-  const generateLocalCode = useCallback(async (addr: string) => {
-    try {
-      const encoder = new TextEncoder()
-      const data = encoder.encode(addr)
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-      const hashArray = Array.from(new Uint8Array(hashBuffer))
-      const hashHex = hashArray
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-      return hashHex.substring(0, 8).toUpperCase()
-    } catch {
-      return addr.slice(2, 10).toUpperCase()
-    }
-  }, [])
-
   useEffect(() => {
-    if (!sdk.isConnected || !address) return
+    if (!connected) {
+      setDashboard(null)
+      setTree([])
+      setPayouts([])
+      setReferralCode('')
+      return
+    }
+    let alive = true
 
-    // Generate a local referral code immediately
-    generateLocalCode(address).then(code => {
-      setReferralCode(prev => prev || code)
-    })
+    // Local code first (same SHA-256 derivation as the backend), API overrides.
+    ;(async () => {
+      try {
+        const buf = await crypto.subtle.digest(
+          'SHA-256',
+          new TextEncoder().encode(address)
+        )
+        const hex = Array.from(new Uint8Array(buf))
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('')
+        if (alive) setReferralCode(p => p || hex.slice(0, 8).toUpperCase())
+      } catch {
+        if (alive) setReferralCode(p => p || address.slice(2, 10).toUpperCase())
+      }
+    })()
 
-    // Try fetching the code from the API (overrides local if available)
-    signAffiliateRead('affiliate.code')
-      .then(query => fetch(`${SPOT_API}/api/v1/affiliate/code?${query}`))
-      .then(r => r.json())
-      .then(data => {
-        if (data.code) setReferralCode(data.code)
-      })
-      .catch(() => {})
-
-    fetchDashboard()
-    fetchTree()
-    fetchPayouts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sdk.isConnected, address])
+    const load = async () => {
+      setLoading(true)
+      try {
+        const q = await signRead('affiliate.code')
+        const r = await fetch(`${SPOT_API}/api/v1/affiliate/code?${q}`)
+        const d = await r.json()
+        if (alive && d.code) setReferralCode(d.code)
+      } catch {
+        /* keep local code */
+      }
+      try {
+        const q = await signRead('affiliate.dashboard')
+        const r = await fetch(`${SPOT_API}/api/v1/affiliate/dashboard?${q}`)
+        const d = await r.json()
+        if (alive && d.dashboard) {
+          setDashboard(d.dashboard)
+          if (d.dashboard.referralCode)
+            setReferralCode(d.dashboard.referralCode)
+        }
+      } catch (err) {
+        console.error('Failed to fetch affiliate dashboard:', err)
+      } finally {
+        if (alive) setLoading(false)
+      }
+      try {
+        const q = await signRead('affiliate.tree', { depth: 3 })
+        const r = await fetch(`${SPOT_API}/api/v1/affiliate/tree?${q}`)
+        const d = await r.json()
+        if (alive) setTree(d.tree || [])
+      } catch (err) {
+        console.error('Failed to fetch referral tree:', err)
+      }
+      try {
+        const q = await signRead('affiliate.payouts', { limit: 20 })
+        const r = await fetch(`${SPOT_API}/api/v1/affiliate/payouts?${q}`)
+        const d = await r.json()
+        if (alive) setPayouts(d.payouts || [])
+      } catch (err) {
+        console.error('Failed to fetch payouts:', err)
+      }
+    }
+    load()
+    return () => {
+      alive = false
+    }
+  }, [connected, address, signRead])
 
   const referralLink = referralCode
     ? `${window.location.origin}/?ref=${referralCode}`
     : ''
+  const displayLink = referralLink.replace(/^https?:\/\//, '')
 
-  const shareMessage = referralCode
-    ? `Trade on Lunex DEX and earn together! Join via my referral link: ${referralLink}`
-    : ''
+  const copyLink = async () => {
+    if (!referralLink) return
+    try {
+      await navigator.clipboard.writeText(referralLink)
+      toast('success', 'Link copied', displayLink, { silent: true })
+    } catch {
+      toast('error', 'Could not copy', 'Copy the link manually.', {
+        silent: true
+      })
+    }
+  }
 
-  const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
-    shareMessage
-  )}`
+  const shareText = `Trade on Lunex DEX and earn together! Join via my referral link: ${referralLink}`
+  const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`
   const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(
     referralLink
   )}&text=${encodeURIComponent('Join Lunex DEX with my referral!')}`
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(referralLink)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
+  const levels = dashboard?.levels?.length ? dashboard.levels : DEFAULT_LEVELS
+  const earnedAt = (lvl: number) =>
+    (dashboard?.earningsByLevel || [])
+      .filter(e => e.level === lvl)
+      .reduce((s, e) => s + e.totalEarned, 0)
+  const totalEarned = dashboard
+    ? dashboard.totalPaid + dashboard.totalUnpaid
+    : 0
+  const netRows = flatten(tree)
 
-  const truncAddr = (a: string) => `${a.slice(0, 8)}...${a.slice(-6)}`
-  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString()
-  const fmtAmt = (n: number) =>
-    n.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    })
-
-  const levelLabels = [
-    'Direct Referral',
-    '2nd Level',
-    '3rd Level',
-    '4th Level',
-    '5th Level'
+  const stats: { label: string; node: React.ReactNode; color?: string }[] = [
+    {
+      label: 'Direct referrals',
+      node: dashboard ? (
+        <AnimatedNumber value={dashboard.directReferrals} />
+      ) : (
+        '—'
+      )
+    },
+    {
+      label: 'Network size',
+      node: dashboard ? <AnimatedNumber value={netRows.length} /> : '—'
+    },
+    {
+      label: 'Total earned',
+      color: dashboard && totalEarned > 0 ? C.success : undefined,
+      node: dashboard ? (
+        <AnimatedNumber value={totalEarned} format={v => `$${fmtAmt(v)}`} />
+      ) : (
+        '—'
+      )
+    },
+    {
+      label: 'Unpaid (next payout)',
+      node: dashboard ? (
+        <AnimatedNumber
+          value={dashboard.totalUnpaid}
+          format={v => `$${fmtAmt(v)}`}
+        />
+      ) : (
+        '—'
+      )
+    }
   ]
-  const levelDescs = [
-    "You earn from your direct referrals' trades",
-    "Earn from your referrals' referrals",
-    'Third-degree network commissions',
-    'Fourth-degree network commissions',
-    'Maximum depth commissions'
-  ]
-
-  const renderTreeNodes = (nodes: TreeNode[], depth = 0): React.ReactNode =>
-    nodes.map((node, i) => (
-      <React.Fragment key={`${node.address}-${i}`}>
-        <TreeNodeRow $depth={depth}>
-          <TreeAddress>{truncAddr(node.address)}</TreeAddress>
-          <TreeMeta>
-            <span>Joined {fmtDate(node.joinedAt)}</span>
-            <span>{node.subReferrals} sub-referrals</span>
-            <span
-              style={{
-                color: node.totalFeeGenerated > 0 ? '#6C38FF' : undefined
-              }}
-            >
-              ${fmtAmt(node.totalFeeGenerated)} generated
-            </span>
-          </TreeMeta>
-        </TreeNodeRow>
-        {node.children.length > 0 && renderTreeNodes(node.children, depth + 1)}
-      </React.Fragment>
-    ))
 
   return (
-    <Page>
-      <Container>
-        <HeroBanner>
-          <PageTitle>
-            Affiliate <span>Program</span>
-          </PageTitle>
-          <PageSubtitle>
-            Refer traders and earn commissions on every trade they make — up to
-            5 levels deep with rates from 4% down to 0.5%.
-          </PageSubtitle>
-        </HeroBanner>
+    <Page $max={960}>
+      <div>
+        <H1>Affiliates</H1>
+        <Sub>
+          Refer traders and earn on every trade they make — up to 5 levels deep,
+          from 4% down to 0.5%.
+        </Sub>
+      </div>
 
-        {/* How It Works — always visible */}
-        <HowItWorks>
-          <StepCard>
-            <StepNumber>1</StepNumber>
-            <StepTitle>Connect Wallet</StepTitle>
-            <StepDesc>
-              Connect your wallet to generate your unique referral code and
-              tracking link.
-            </StepDesc>
-          </StepCard>
-          <StepCard>
-            <StepNumber>2</StepNumber>
-            <StepTitle>Share Your Link</StepTitle>
-            <StepDesc>
-              Share your referral link on Twitter, Telegram, or anywhere. When
-              someone signs up through your link, they're linked to you.
-            </StepDesc>
-          </StepCard>
-          <StepCard>
-            <StepNumber>3</StepNumber>
-            <StepTitle>Earn Commissions</StepTitle>
-            <StepDesc>
-              Earn 4% on direct referrals, plus up to 4 additional levels.
-              Payouts are processed every 7 days.
-            </StepDesc>
-          </StepCard>
-        </HowItWorks>
+      <Card>
+        <span
+          style={{ fontFamily: 'Space Grotesk', fontWeight: 600, fontSize: 16 }}
+        >
+          Your referral link
+        </span>
+        {connected ? (
+          referralLink ? (
+            <>
+              <Row $gap={8} $wrap>
+                <LinkBox title={referralLink}>{displayLink}</LinkBox>
+                <Button size="lg" onClick={copyLink} style={{ height: 46 }}>
+                  <Copy size={16} strokeWidth={2} />
+                  Copy link
+                </Button>
+              </Row>
+              <Row $gap={8} $wrap>
+                <ShareLink
+                  href={twitterUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Share on X
+                </ShareLink>
+                <ShareLink
+                  href={telegramUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Send size={14} strokeWidth={2} />
+                  Telegram
+                </ShareLink>
+              </Row>
+            </>
+          ) : (
+            <SkeletonLine $h={46} />
+          )
+        ) : (
+          <Row $justify="space-between" $gap={12} $wrap>
+            <Muted $size={14}>Connect a wallet to generate your link.</Muted>
+            <Button size="lg" onClick={() => sdk.connectWallet()}>
+              Connect wallet
+            </Button>
+          </Row>
+        )}
+      </Card>
 
-        {/* Commission Tiers — always visible */}
-        <Card>
-          <SectionTitle>Commission Tiers</SectionTitle>
-          {(
-            dashboard?.levels || [
-              { level: 1, ratePct: 4, rateBps: 400 },
-              { level: 2, ratePct: 2, rateBps: 200 },
-              { level: 3, ratePct: 1.5, rateBps: 150 },
-              { level: 4, ratePct: 1, rateBps: 100 },
-              { level: 5, ratePct: 0.5, rateBps: 50 }
+      <StatGrid>
+        {stats.map(s => (
+          <StatCard key={s.label} style={{ padding: '14px 16px' }}>
+            <StatLabel>{s.label}</StatLabel>
+            <StatValue
+              style={{ color: s.color ?? (dashboard ? '#fff' : C.muted) }}
+            >
+              {connected && loading && !dashboard ? (
+                <SkeletonLine $w="70%" $h={24} />
+              ) : (
+                s.node
+              )}
+            </StatValue>
+          </StatCard>
+        ))}
+      </StatGrid>
+
+      <Col $gap={10}>
+        <H2 style={{ fontSize: 18 }}>Commission tiers</H2>
+        <ListBox>
+          {levels.map(lv => {
+            const [label, desc] = LEVEL_COPY[lv.level - 1] ?? [
+              `Level ${lv.level}`,
+              ''
             ]
-          ).map(level => {
-            const earned = dashboard
-              ? dashboard.earningsByLevel
-                  .filter(e => e.level === level.level)
-                  .reduce((sum, e) => sum + e.totalEarned, 0)
-              : 0
-            const trades = dashboard
-              ? dashboard.earningsByLevel
-                  .filter(e => e.level === level.level)
-                  .reduce((sum, e) => sum + e.tradeCount, 0)
-              : 0
-
+            const earned = earnedAt(lv.level)
             return (
-              <LevelRow key={level.level} $active={earned > 0}>
-                <LevelBadge $level={level.level}>{level.level}</LevelBadge>
-                <div>
-                  <LevelLabel>{levelLabels[level.level - 1]}</LevelLabel>
-                  <LevelSub>{levelDescs[level.level - 1]}</LevelSub>
-                </div>
-                <LevelRate>{level.ratePct}%</LevelRate>
-                <LevelEarned>
-                  ${fmtAmt(earned)}
-                  {trades > 0 && (
-                    <div
-                      style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}
-                    >
-                      {trades} trades
-                    </div>
-                  )}
-                </LevelEarned>
-              </LevelRow>
+              <ListRow key={lv.level}>
+                <LevelNum>{lv.level}</LevelNum>
+                <Col $gap={2} style={{ flex: 1 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{label}</span>
+                  <Muted $size={12}>{desc}</Muted>
+                </Col>
+                <Rate className="num">{lv.ratePct}%</Rate>
+                {connected && (
+                  <Right $color={earned > 0 ? C.success : C.muted}>
+                    {earned > 0 ? `$${fmtAmt(earned)}` : '—'}
+                  </Right>
+                )}
+              </ListRow>
             )
           })}
-        </Card>
+        </ListBox>
+      </Col>
 
-        {!sdk.isConnected ? (
-          <ConnectPrompt>
-            <p>
-              Connect your wallet to access your affiliate dashboard and
-              generate your unique referral link.
-            </p>
-            <ConnectButton onClick={() => sdk.connectWallet()}>
-              Connect Wallet
-            </ConnectButton>
-          </ConnectPrompt>
-        ) : isLoading && !referralCode ? (
-          <ConnectPrompt>
-            <LoadingDot>Loading affiliate data...</LoadingDot>
-          </ConnectPrompt>
-        ) : (
-          <>
-            {/* Referral Link — always visible when connected */}
-            {referralCode && (
-              <ShareCard>
-                <ReferralCodeLabel>Your Referral Code</ReferralCodeLabel>
-                <ReferralCode>{referralCode}</ReferralCode>
-
-                <LinkBox>
-                  <LinkText>{referralLink}</LinkText>
-                  <CopyBtn $copied={copied} onClick={handleCopy}>
-                    {copied ? '✓ Copied' : 'Copy'}
-                  </CopyBtn>
-                </LinkBox>
-
-                <SocialRow>
-                  <SocialBtn
-                    href={twitterUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                    </svg>
-                    Share on Twitter
-                  </SocialBtn>
-                  <SocialBtn
-                    href={telegramUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
-                    </svg>
-                    Share on Telegram
-                  </SocialBtn>
-                </SocialRow>
-              </ShareCard>
+      {connected && (
+        <Col $gap={10}>
+          <Row $justify="space-between" $gap={12} $wrap>
+            <H2 style={{ fontSize: 18 }}>Referral network</H2>
+            <Tabs<NetTab>
+              ariaLabel="Referral data"
+              value={netTab}
+              onChange={setNetTab}
+              items={[
+                { value: 'network', label: 'Network' },
+                { value: 'payouts', label: 'Payouts' }
+              ]}
+            />
+          </Row>
+          <TabPanel key={netTab}>
+            {netTab === 'network' ? (
+              <ListBox>
+                {netRows.length === 0 ? (
+                  <Empty>
+                    No referrals yet. Share your link to start building your
+                    network.
+                  </Empty>
+                ) : (
+                  netRows.map((n, i) => (
+                    <ListRow key={`${n.address}-${i}`}>
+                      <Mono title={n.address}>{short(n.address, 6, 4)}</Mono>
+                      <Muted>L{n.d}</Muted>
+                      <Right $w={80} $color={C.secondary}>
+                        {n.subReferrals} refs
+                      </Right>
+                      <Right
+                        $w={80}
+                        $color={n.totalFeeGenerated > 0 ? C.success : C.muted}
+                        style={{ fontWeight: 600 }}
+                      >
+                        ${fmtAmt(n.totalFeeGenerated)}
+                      </Right>
+                    </ListRow>
+                  ))
+                )}
+              </ListBox>
+            ) : (
+              <ListBox>
+                {payouts.length === 0 ? (
+                  <Empty>
+                    Payouts are processed every 7 days automatically.
+                    {dashboard && dashboard.totalUnpaid > 0
+                      ? ` You have $${fmtAmt(dashboard.totalUnpaid)} pending.`
+                      : ''}
+                  </Empty>
+                ) : (
+                  payouts.map(p => (
+                    <ListRow key={p.id}>
+                      <span style={{ flex: 1, fontWeight: 600 }}>
+                        {p.token}
+                      </span>
+                      <Muted>L{p.level}</Muted>
+                      <Right $w={90} $color={C.muted}>
+                        {new Date(p.paidAt).toLocaleDateString()}
+                      </Right>
+                      <Right $color={C.success} style={{ fontWeight: 600 }}>
+                        ${fmtAmt(p.amount)}
+                      </Right>
+                    </ListRow>
+                  ))
+                )}
+              </ListBox>
             )}
+          </TabPanel>
+        </Col>
+      )}
 
-            {/* Dashboard data — optional, shown if API responds */}
-            {dashboard && (
-              <>
-                <TabBar>
-                  <Tab
-                    $active={tab === 'overview'}
-                    onClick={() => setTab('overview')}
-                  >
-                    Overview
-                  </Tab>
-                  <Tab $active={tab === 'tree'} onClick={() => setTab('tree')}>
-                    Referrals
-                  </Tab>
-                  <Tab
-                    $active={tab === 'payouts'}
-                    onClick={() => setTab('payouts')}
-                  >
-                    Payouts
-                  </Tab>
-                </TabBar>
-
-                {tab === 'overview' && (
-                  <>
-                    {/* Stats Grid */}
-                    <StatsGrid>
-                      <StatCard>
-                        <StatLabel>Direct Referrals</StatLabel>
-                        <StatValue>{dashboard.directReferrals}</StatValue>
-                      </StatCard>
-                      <StatCard>
-                        <StatLabel>Unpaid Earnings</StatLabel>
-                        <StatValue $color="#6C38FF">
-                          ${fmtAmt(dashboard.totalUnpaid)}
-                        </StatValue>
-                      </StatCard>
-                      <StatCard>
-                        <StatLabel>Total Paid</StatLabel>
-                        <StatValue>${fmtAmt(dashboard.totalPaid)}</StatValue>
-                      </StatCard>
-                      <StatCard>
-                        <StatLabel>Total Commissions</StatLabel>
-                        <StatValue>
-                          {dashboard.unpaidCount + dashboard.paidCount}
-                        </StatValue>
-                      </StatCard>
-                    </StatsGrid>
-                  </>
-                )}
-
-                {tab === 'tree' && (
-                  <Card>
-                    <SectionTitle>Referral Network</SectionTitle>
-                    {tree.length > 0 ? (
-                      renderTreeNodes(tree)
-                    ) : (
-                      <EmptyState>
-                        No referrals yet. Share your link to start building your
-                        network!
-                      </EmptyState>
-                    )}
-                  </Card>
-                )}
-
-                {tab === 'payouts' && (
-                  <Card>
-                    <SectionTitle>Payout History</SectionTitle>
-                    {payouts.length > 0 ? (
-                      <>
-                        <PayoutHeader>
-                          <span>Token</span>
-                          <span>Amount</span>
-                          <span>Level</span>
-                          <span>Source</span>
-                          <span>Date</span>
-                        </PayoutHeader>
-                        {payouts.map(p => (
-                          <PayoutRow key={p.id}>
-                            <span
-                              style={{
-                                color: '#fff',
-                                fontWeight: 600,
-                                fontFamily: 'Space Grotesk'
-                              }}
-                            >
-                              {p.token}
-                            </span>
-                            <span style={{ color: '#6C38FF', fontWeight: 600 }}>
-                              ${fmtAmt(p.amount)}
-                            </span>
-                            <span style={{ color: 'rgba(255,255,255,0.5)' }}>
-                              L{p.level}
-                            </span>
-                            <span
-                              style={{
-                                color: 'rgba(255,255,255,0.4)',
-                                fontSize: 11
-                              }}
-                            >
-                              {p.sourceType}
-                            </span>
-                            <span
-                              style={{
-                                color: 'rgba(255,255,255,0.4)',
-                                fontSize: 12
-                              }}
-                            >
-                              {fmtDate(p.paidAt)}
-                            </span>
-                          </PayoutRow>
-                        ))}
-                      </>
-                    ) : (
-                      <EmptyState>
-                        Payouts are processed every 7 days automatically.
-                        {dashboard.totalUnpaid > 0 && (
-                          <>
-                            <br />
-                            You have{' '}
-                            <strong style={{ color: '#6C38FF' }}>
-                              ${fmtAmt(dashboard.totalUnpaid)}
-                            </strong>{' '}
-                            pending.
-                          </>
-                        )}
-                      </EmptyState>
-                    )}
-                  </Card>
-                )}
-              </>
-            )}
-          </>
-        )}
-
-        {/* No dashboard but also no referral code — true offline state */}
-        {sdk.isConnected && !referralCode && !isLoading && (
-          <ConnectPrompt>
-            Unable to generate referral code — make sure the spot-api is
-            running.
-          </ConnectPrompt>
-        )}
-      </Container>
+      {connected && !referralCode && !loading && (
+        <Empty>
+          Unable to generate a referral code — the affiliate service is not
+          reachable.
+        </Empty>
+      )}
     </Page>
   )
 }

@@ -1,830 +1,422 @@
 import React, { useState } from 'react'
 import styled from 'styled-components'
+import { AnimatedNumber } from '../../components/ui/AnimatedNumber'
+import {
+  C,
+  Card,
+  Col,
+  H1,
+  Muted,
+  Page,
+  Row,
+  StatCard,
+  StatLabel,
+  StatValue,
+  Sub,
+  grotesk,
+  tabular
+} from '../../components/ui/kit'
 
-// ─── Styled Components ───────────────────────────────────────────
+// ─── Fee schedule (display mirror of the contracts — not a source of rules) ──
+// AMM: 0.5% per swap = 0.3% LPs / 0.1% protocol / 0.1% stakers (pair contract).
+const AMM_FEE = 0.005
+const AMM_SPLIT = { lp: 0.6, protocol: 0.2, stakers: 0.2 }
 
-const Page = styled.div`
-  min-height: 100vh;
-  background: #1a1a1a;
-  padding: 80px 24px 48px;
-`
+// Spot orderbook: maker 0.10%, taker 0.25%.
+const SPOT_MAKER_FEE = 0.001
+const SPOT_TAKER_FEE = 0.0025
+const SPOT_TAKER_RATIO = 0.7 // simulator assumption: ~70% of volume is taker
+const SPOT_SPLIT = [
+  { label: 'Team', maker: 0.5, taker: 0.4, color: C.primary },
+  { label: 'Stakers', maker: 0.3, taker: 0.3, color: C.primaryText },
+  { label: 'Affiliates', maker: 0.2, taker: 0.2, color: C.success },
+  { label: 'Treasury', maker: 0, taker: 0.1, color: C.warning }
+]
 
-const Container = styled.div`
-  max-width: 1100px;
-  margin: 0 auto;
-`
+// Governance: 10 LUNES per vote.
+const VOTE_COST = 10
+const VOTE_SPLIT = [
+  { label: 'Stakers', pct: 0.3, color: C.primaryText },
+  { label: 'Liquidity providers', pct: 0.2, color: C.success },
+  { label: 'Treasury', pct: 0.1, color: C.warning },
+  { label: 'Team', pct: 0.4, color: C.primary }
+]
 
-const HeroBanner = styled.div`
-  text-align: center;
-  margin-bottom: 48px;
-  padding: 32px 0;
-`
+// Listing manager tiers: fee split 20% staking / 50% team / 30% rewards.
+const LISTING_BASIC_FEE = 1_000
+const LISTING_SPLIT = { staking: 0.2, team: 0.5, rewards: 0.3 }
 
-const PageTitle = styled.h1`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 42px;
-  font-weight: 800;
-  color: #ffffff;
-  margin: 0 0 12px 0;
-  letter-spacing: -1px;
+// Simulator assumption for LUNES → USD.
+const LUNES_USD = 0.0142
 
-  span {
-    background: linear-gradient(135deg, #00ff88, #00d4ff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-`
+const usd = (n: number) =>
+  n >= 1_000_000
+    ? `$${(n / 1_000_000).toFixed(2)}M`
+    : n >= 1_000
+      ? `$${(n / 1_000).toFixed(1)}K`
+      : `$${n.toFixed(0)}`
 
-const PageSubtitle = styled.p`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 16px;
-  color: #8a8a8e;
-  margin: 0;
-`
+const usdFull = (n: number) =>
+  `$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 
-const SectionTitle = styled.h2`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 20px;
-  font-weight: 700;
-  color: #fff;
-  margin: 0 0 20px 0;
-`
+// ─── Styles ──────────────────────────────────────────────────────
 
-const SectionSubtitle = styled.p`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  color: #8a8a8e;
-  margin: -12px 0 20px 0;
-`
-
-const StatsGrid = styled.div`
+const TwoUp = styled.div`
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 32px;
-
-  @media (max-width: 900px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  @media (max-width: 500px) {
-    grid-template-columns: 1fr;
-  }
-`
-
-const StatCard = styled.div<{ $accent?: string }>`
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid
-    ${props =>
-      props.$accent ? `${props.$accent}30` : 'rgba(255,255,255,0.05)'};
-  border-radius: 16px;
-  padding: 24px;
-  text-align: center;
-  backdrop-filter: blur(10px);
-  transition: border-color 0.2s;
-
-  &:hover {
-    border-color: ${props =>
-      props.$accent ? `${props.$accent}60` : 'rgba(255,255,255,0.15)'};
-  }
-`
-
-const StatValue = styled.div<{ $color?: string }>`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 28px;
-  font-weight: 800;
-  color: ${props => props.$color || '#fff'};
-  letter-spacing: -0.5px;
-  margin-bottom: 6px;
-`
-
-const StatLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #8a8a8e;
-  font-weight: 500;
-`
-
-const TwoCol = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 24px;
-  margin-bottom: 32px;
-
-  @media (max-width: 700px) {
-    grid-template-columns: 1fr;
-  }
-`
-
-const Card = styled.div`
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
-  padding: 28px;
-  backdrop-filter: blur(10px);
-`
-
-const FeeRow = styled.div<{ $highlight?: boolean }>`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-
-  &:last-child {
-    border-bottom: none;
-  }
-
-  span:first-child {
-    color: #8a8a8e;
-  }
-  span:last-child {
-    font-weight: 700;
-    color: ${props => (props.$highlight ? '#00ff88' : '#fff')};
-  }
-`
-
-const BarContainer = styled.div`
-  margin-top: 16px;
-  display: flex;
-  flex-direction: column;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
   gap: 12px;
 `
 
-const BarRow = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+const CardTitle = styled.span`
+  ${grotesk};
+  font-weight: 600;
+  font-size: 15px;
 `
 
-const BarLabel = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #8a8a8e;
-
-  span:last-child {
-    color: #fff;
-    font-weight: 600;
-  }
-`
-
-const BarTrack = styled.div`
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 99px;
-  height: 8px;
+const Bar = styled.div`
+  height: 6px;
+  border-radius: 999px;
+  background: ${C.bg};
   overflow: hidden;
-`
-
-const BarFill = styled.div<{ $pct: number; $color: string }>`
-  height: 100%;
-  width: ${props => props.$pct}%;
-  background: ${props => props.$color};
-  border-radius: 99px;
-  transition: width 0.6s ease;
-`
-
-const SliderSection = styled.div`
-  margin-bottom: 32px;
-`
-
-const SliderCard = styled(Card)`
-  padding: 32px;
-`
-
-const SliderGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 24px;
-  margin-top: 24px;
-
-  @media (max-width: 700px) {
-    grid-template-columns: 1fr;
+  > div {
+    height: 100%;
+    border-radius: 999px;
   }
 `
 
-const SliderGroup = styled.div`
-  display: flex;
-  flex-direction: column;
+const SplitGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 1fr;
   gap: 8px;
-`
-
-const SliderLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #8a8a8e;
-  display: flex;
-  justify-content: space-between;
-
-  span {
-    color: #fff;
+  font-size: 14px;
+  ${tabular};
+  > span:nth-child(n + 2) {
+    text-align: right;
     font-weight: 600;
   }
 `
 
-const Slider = styled.input`
-  width: 100%;
-  accent-color: #00ff88;
-  cursor: pointer;
-`
-
-const ResultsGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-top: 28px;
-
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
+const SplitHead = styled(SplitGrid)`
+  font-size: 11px;
+  color: ${C.muted};
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 4px;
+  > span:nth-child(n + 2) {
+    font-weight: 400;
   }
 `
 
-const ResultCard = styled.div<{ $primary?: boolean }>`
-  background: ${props =>
-    props.$primary
-      ? 'linear-gradient(135deg, rgba(0,255,136,0.1), rgba(0,212,255,0.1))'
-      : 'rgba(255,255,255,0.03)'};
-  border: 1px solid
-    ${props =>
-      props.$primary ? 'rgba(0,255,136,0.3)' : 'rgba(255,255,255,0.05)'};
-  border-radius: 16px;
-  padding: 24px;
-  text-align: center;
+const SplitRow = styled(SplitGrid)`
+  padding: 8px 0;
+  border-top: 1px solid ${C.border};
 `
 
-const ResultValue = styled.div<{ $color?: string }>`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 32px;
-  font-weight: 800;
-  color: ${props => props.$color || '#fff'};
-  letter-spacing: -1px;
-  margin-bottom: 6px;
-`
-
-const ResultLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #8a8a8e;
-`
-
-const Note = styled.p`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #47474a;
-  text-align: center;
-  margin-top: 16px;
-`
-
-const DistTable = styled.div`
-  margin-top: 8px;
-`
-
-const DistRow = styled.div<{ $accent: string }>`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-
-  &:last-child {
-    border-bottom: none;
-  }
-`
-
-const DistLeft = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #ccc;
-`
-
-const DistDot = styled.div<{ $color: string }>`
-  width: 10px;
-  height: 10px;
+const Dot = styled.span<{ $c: string }>`
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: ${props => props.$color};
+  background: ${p => p.$c};
   flex-shrink: 0;
 `
 
-const DistRight = styled.div`
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
+const FeeGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  @media (max-width: 479px) {
+    grid-template-columns: 1fr 1fr;
+  }
 `
 
-const DistPct = styled.span`
-  font-weight: 700;
-  color: #fff;
+const SimCard = styled(Card)`
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 24px;
+  padding: 18px;
 `
+
+const Slider = styled.input.attrs({ type: 'range' })`
+  width: 100%;
+  accent-color: ${C.primary};
+  height: 20px;
+`
+
+const Result = styled.div<{ $hl?: boolean }>`
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: ${p => (p.$hl ? 'rgba(108,56,255,0.16)' : C.bg)};
+  > span:first-child {
+    font-size: 13px;
+    color: ${p => (p.$hl ? C.primaryText2 : C.muted)};
+  }
+  > span:last-child {
+    ${grotesk};
+    ${tabular};
+    font-size: 20px;
+    font-weight: 600;
+  }
+`
+
+const SplitBars: React.FC<{
+  rows: { label: string; value: string; pct: number; color: string }[]
+}> = ({ rows }) => (
+  <>
+    {rows.map(r => (
+      <Col key={r.label} $gap={5}>
+        <Row $justify="space-between" style={{ fontSize: 13 }}>
+          <span>{r.label}</span>
+          <span style={{ fontWeight: 600 }} className="num">
+            {r.value}
+          </span>
+        </Row>
+        <Bar>
+          <div style={{ width: `${r.pct * 100}%`, background: r.color }} />
+        </Bar>
+      </Col>
+    ))}
+  </>
+)
+
+const SliderField: React.FC<{
+  label: string
+  display: string
+  min: number
+  max: number
+  step: number
+  value: number
+  onChange: (v: number) => void
+}> = ({ label, display, min, max, step, value, onChange }) => (
+  <Col $gap={6}>
+    <Row $justify="space-between" style={{ fontSize: 13 }}>
+      <Muted>{label}</Muted>
+      <span style={{ fontWeight: 600 }} className="num">
+        {display}
+      </span>
+    </Row>
+    <Slider
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      aria-label={label}
+      onChange={e => onChange(Number(e.target.value))}
+    />
+  </Col>
+)
 
 // ─── Component ───────────────────────────────────────────────────
 
-const SWAP_FEE_LP = 0.4 // 0.4% to LPs
-const SWAP_FEE_PROTOCOL = 0.05 // 0.05% to team/protocol
-const SWAP_FEE_STAKERS = 0.05 // 0.05% to stakers
-
-// Spot Orderbook fee split
-const SPOT_MAKER_FEE = 0.001 // 0.1% maker fee
-const SPOT_TAKER_FEE = 0.0025 // 0.25% taker fee
-const SPOT_MAKER_TEAM = 0.5
-const SPOT_MAKER_STAKERS = 0.3
-const SPOT_MAKER_AFFILIATES = 0.2
-const SPOT_TAKER_TEAM = 0.4
-const SPOT_TAKER_STAKERS = 0.3
-const SPOT_TAKER_AFFILIATES = 0.2
-const SPOT_AVG_TAKER_RATIO = 0.7 // ~70% of Spot trades are taker
-
-const VOTE_COST = 10 // LUNES per vote
-const VOTE_TEAM_PCT = 0.4
-const VOTE_STAKERS_PCT = 0.3
-const VOTE_LP_PCT = 0.2
-const VOTE_TREASURY_PCT = 0.1
-
-const LISTING_FEE = 1000 // LUNES per proposal
-
-const fmt = (n: number, decimals = 2) =>
-  n.toLocaleString('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  })
-
-const fmtUSD = (n: number) =>
-  n >= 1_000_000
-    ? `$${fmt(n / 1_000_000)}M`
-    : n >= 1_000
-      ? `$${fmt(n / 1_000)}K`
-      : `$${fmt(n)}`
-
 const ProtocolStats: React.FC = () => {
-  const [dailyVolumeK, setDailyVolumeK] = useState(200) // AMM $k/day
-  const [dailySpotVolumeK, setDailySpotVolumeK] = useState(100) // Spot $k/day
-  const [dailyVotes, setDailyVotes] = useState(50) // votes/day
-  const [monthlyListings, setMonthlyListings] = useState(5) // proposals/month
-  const [lunesPrice, setLunesPrice] = useState(0.05) // USD per LUNES
+  const [simSwap, setSimSwap] = useState(200_000)
+  const [simSpot, setSimSpot] = useState(100_000)
+  const [simVotes, setSimVotes] = useState(50)
+  const [simList, setSimList] = useState(5)
 
-  // ── AMM Swap fee revenue ──
-  const dailyVolumeUSD = dailyVolumeK * 1_000
-  const dailyProtocolFeeUSD = dailyVolumeUSD * (SWAP_FEE_PROTOCOL / 100)
-  const dailyStakerFeeUSD = dailyVolumeUSD * (SWAP_FEE_STAKERS / 100)
-  const dailyLPFeeUSD = dailyVolumeUSD * (SWAP_FEE_LP / 100)
-  const monthlySwapTeam = dailyProtocolFeeUSD * 30
-  const monthlySwapStakers = dailyStakerFeeUSD * 30
+  // Monthly (30 days) projections in USD.
+  const swapFees = simSwap * 30 * AMM_FEE
+  const takerFees = simSpot * 30 * SPOT_TAKER_RATIO * SPOT_TAKER_FEE
+  const makerFees = simSpot * 30 * (1 - SPOT_TAKER_RATIO) * SPOT_MAKER_FEE
+  const spotShare = (key: 'Team' | 'Stakers' | 'Affiliates' | 'Treasury') => {
+    const s = SPOT_SPLIT.find(x => x.label === key)!
+    return takerFees * s.taker + makerFees * s.maker
+  }
+  const voteFees = simVotes * 30 * VOTE_COST * LUNES_USD
+  const listFees = simList * LISTING_BASIC_FEE * LUNES_USD
 
-  // ── Spot Orderbook fee revenue ──
-  const dailySpotVolumeUSD = dailySpotVolumeK * 1_000
-  const dailySpotTakerFee =
-    dailySpotVolumeUSD * SPOT_TAKER_FEE * SPOT_AVG_TAKER_RATIO
-  const dailySpotMakerFee =
-    dailySpotVolumeUSD * SPOT_MAKER_FEE * (1 - SPOT_AVG_TAKER_RATIO)
-  const dailySpotTeam =
-    dailySpotTakerFee * SPOT_TAKER_TEAM + dailySpotMakerFee * SPOT_MAKER_TEAM
-  const dailySpotStakers =
-    dailySpotTakerFee * SPOT_TAKER_STAKERS +
-    dailySpotMakerFee * SPOT_MAKER_STAKERS
-  const dailySpotAffiliates =
-    dailySpotTakerFee * SPOT_TAKER_AFFILIATES +
-    dailySpotMakerFee * SPOT_MAKER_AFFILIATES
-  const monthlySpotTeam = dailySpotTeam * 30
-  const monthlySpotStakers = dailySpotStakers * 30
-  const monthlySpotAffiliates = dailySpotAffiliates * 30
+  const team =
+    swapFees * AMM_SPLIT.protocol +
+    spotShare('Team') +
+    voteFees * 0.4 +
+    listFees * LISTING_SPLIT.team
+  const stakers =
+    swapFees * AMM_SPLIT.stakers +
+    spotShare('Stakers') +
+    voteFees * 0.3 +
+    listFees * LISTING_SPLIT.staking
+  const affiliates = spotShare('Affiliates')
+  const total = swapFees + takerFees + makerFees + voteFees + listFees
 
-  // ── Governance vote revenue ──
-  const dailyVoteRevenueLUNES = dailyVotes * VOTE_COST
-  const monthlyVoteRevenueLUNES = dailyVoteRevenueLUNES * 30
-  const monthlyVoteTeamUSD =
-    monthlyVoteRevenueLUNES * VOTE_TEAM_PCT * lunesPrice
-  const monthlyVoteStakersUSD =
-    monthlyVoteRevenueLUNES * VOTE_STAKERS_PCT * lunesPrice
-
-  // ── Listing fee revenue ──
-  const monthlyListingRevenueLUNES = monthlyListings * LISTING_FEE
-  const monthlyListingTeamUSD = monthlyListingRevenueLUNES * 0.5 * lunesPrice
-
-  // ── Totals ──
-  const monthlyTeamTotal =
-    monthlySwapTeam +
-    monthlySpotTeam +
-    monthlyVoteTeamUSD +
-    monthlyListingTeamUSD
-  const monthlyStakersTotal =
-    monthlySwapStakers + monthlySpotStakers + monthlyVoteStakersUSD
-  const monthlyAffiliatesTotal = monthlySpotAffiliates
-  const monthlyEcosystemTotal =
-    dailyLPFeeUSD * 30 + monthlyStakersTotal + monthlyAffiliatesTotal
-  const annualTeamTotal = monthlyTeamTotal * 12
+  const results = [
+    { label: 'Team monthly revenue', value: team },
+    { label: 'Stakers monthly yield', value: stakers },
+    { label: 'Affiliates monthly (spot)', value: affiliates },
+    { label: 'Total ecosystem monthly', value: total, hl: true }
+  ]
 
   return (
-    <Page>
-      <Container>
-        <HeroBanner>
-          <PageTitle>
-            Protocol <span>Revenue</span>
-          </PageTitle>
-          <PageSubtitle>
-            Transparent breakdown of how Lunex generates and distributes revenue
-            across the ecosystem.
-          </PageSubtitle>
-        </HeroBanner>
+    <Page $max={1080}>
+      <div>
+        <H1>Protocol revenue</H1>
+        <Sub>
+          Where every fee goes. All splits are enforced by the contracts and can
+          only change through governance.
+        </Sub>
+      </div>
 
-        {/* Fee Model Overview */}
-        <TwoCol>
-          <Card>
-            <SectionTitle>AMM Swap Fee Split (0.5% total)</SectionTitle>
-            <SectionSubtitle>
-              Charged on every AMM swap — distributed across 3 stakeholders
-            </SectionSubtitle>
-            <BarContainer>
-              <BarRow>
-                <BarLabel>
-                  <span>Liquidity Providers</span>
-                  <span>0.4% (80%)</span>
-                </BarLabel>
-                <BarTrack>
-                  <BarFill $pct={80} $color="#6C38FF" />
-                </BarTrack>
-              </BarRow>
-              <BarRow>
-                <BarLabel>
-                  <span>Team / Protocol</span>
-                  <span>0.05% (10%)</span>
-                </BarLabel>
-                <BarTrack>
-                  <BarFill $pct={10} $color="#00ff88" />
-                </BarTrack>
-              </BarRow>
-              <BarRow>
-                <BarLabel>
-                  <span>Stakers</span>
-                  <span>0.05% (10%)</span>
-                </BarLabel>
-                <BarTrack>
-                  <BarFill $pct={10} $color="#00d4ff" />
-                </BarTrack>
-              </BarRow>
-            </BarContainer>
-          </Card>
-
-          <Card>
-            <SectionTitle>Governance Vote Split (10 LUNES/vote)</SectionTitle>
-            <SectionSubtitle>
-              Charged per vote cast on listing proposals
-            </SectionSubtitle>
-            <DistTable>
-              <DistRow $accent="#00ff88">
-                <DistLeft>
-                  <DistDot $color="#00ff88" />
-                  Stakers (Rewards Pool)
-                </DistLeft>
-                <DistRight>
-                  <DistPct>30% — {VOTE_COST * VOTE_STAKERS_PCT} LUNES</DistPct>
-                </DistRight>
-              </DistRow>
-              <DistRow $accent="#6C38FF">
-                <DistLeft>
-                  <DistDot $color="#6C38FF" />
-                  Project Liquidity
-                </DistLeft>
-                <DistRight>
-                  <DistPct>20% — {VOTE_COST * VOTE_LP_PCT} LUNES</DistPct>
-                </DistRight>
-              </DistRow>
-              <DistRow $accent="#ffa500">
-                <DistLeft>
-                  <DistDot $color="#ffa500" />
-                  Treasury
-                </DistLeft>
-                <DistRight>
-                  <DistPct>10% — {VOTE_COST * VOTE_TREASURY_PCT} LUNES</DistPct>
-                </DistRight>
-              </DistRow>
-              <DistRow $accent="#00d4ff">
-                <DistLeft>
-                  <DistDot $color="#00d4ff" />
-                  Team
-                </DistLeft>
-                <DistRight>
-                  <DistPct>40% — {VOTE_COST * VOTE_TEAM_PCT} LUNES</DistPct>
-                </DistRight>
-              </DistRow>
-            </DistTable>
-          </Card>
-        </TwoCol>
-
-        {/* Spot Fee Split */}
-        <Card style={{ marginBottom: '32px' }}>
-          <SectionTitle>Spot Orderbook Fee Split</SectionTitle>
-          <SectionSubtitle>
-            Charged on every matched trade — Maker 0.1% | Taker 0.25%
-          </SectionSubtitle>
-          <TwoCol style={{ marginBottom: 0, gap: '16px' }}>
-            <div>
-              <BarContainer>
-                <BarRow>
-                  <BarLabel>
-                    <span>Team (Maker 50% / Taker 40%)</span>
-                    <span style={{ color: '#00ff88' }}>~45% avg</span>
-                  </BarLabel>
-                  <BarTrack>
-                    <BarFill $pct={45} $color="#00ff88" />
-                  </BarTrack>
-                </BarRow>
-                <BarRow>
-                  <BarLabel>
-                    <span>Stakers</span>
-                    <span style={{ color: '#00d4ff' }}>30%</span>
-                  </BarLabel>
-                  <BarTrack>
-                    <BarFill $pct={30} $color="#00d4ff" />
-                  </BarTrack>
-                </BarRow>
-                <BarRow>
-                  <BarLabel>
-                    <span>Affiliates</span>
-                    <span style={{ color: '#a78bfa' }}>20%</span>
-                  </BarLabel>
-                  <BarTrack>
-                    <BarFill $pct={20} $color="#a78bfa" />
-                  </BarTrack>
-                </BarRow>
-                <BarRow>
-                  <BarLabel>
-                    <span>Treasury (taker only)</span>
-                    <span style={{ color: '#ffa500' }}>10%</span>
-                  </BarLabel>
-                  <BarTrack>
-                    <BarFill $pct={10} $color="#ffa500" />
-                  </BarTrack>
-                </BarRow>
-              </BarContainer>
-            </div>
-            <DistTable>
-              <DistRow $accent="#00ff88">
-                <DistLeft>
-                  <DistDot $color="#00ff88" />
-                  Team
-                </DistLeft>
-                <DistRight>
-                  <DistPct>Maker: 50% &nbsp;|&nbsp; Taker: 40%</DistPct>
-                </DistRight>
-              </DistRow>
-              <DistRow $accent="#00d4ff">
-                <DistLeft>
-                  <DistDot $color="#00d4ff" />
-                  Stakers
-                </DistLeft>
-                <DistRight>
-                  <DistPct>Maker: 30% &nbsp;|&nbsp; Taker: 30%</DistPct>
-                </DistRight>
-              </DistRow>
-              <DistRow $accent="#a78bfa">
-                <DistLeft>
-                  <DistDot $color="#a78bfa" />
-                  Affiliates
-                </DistLeft>
-                <DistRight>
-                  <DistPct>Maker: 20% &nbsp;|&nbsp; Taker: 20%</DistPct>
-                </DistRight>
-              </DistRow>
-              <DistRow $accent="#ffa500">
-                <DistLeft>
-                  <DistDot $color="#ffa500" />
-                  Treasury
-                </DistLeft>
-                <DistRight>
-                  <DistPct>Maker: 0% &nbsp;|&nbsp; Taker: 10%</DistPct>
-                </DistRight>
-              </DistRow>
-            </DistTable>
-          </TwoCol>
+      <TwoUp>
+        <Card $pad={16}>
+          <Col $gap={2}>
+            <CardTitle>AMM swap fee split</CardTitle>
+            <Muted $size={12}>0.5% on every swap</Muted>
+          </Col>
+          <SplitBars
+            rows={[
+              {
+                label: 'Liquidity providers',
+                value: '0.30% · 60%',
+                pct: AMM_SPLIT.lp,
+                color: C.success
+              },
+              {
+                label: 'Protocol / team',
+                value: '0.10% · 20%',
+                pct: AMM_SPLIT.protocol,
+                color: C.primary
+              },
+              {
+                label: 'Trading rewards (stakers)',
+                value: '0.10% · 20%',
+                pct: AMM_SPLIT.stakers,
+                color: C.primaryText
+              }
+            ]}
+          />
         </Card>
-
-        {/* Listing Fee */}
-        <Card style={{ marginBottom: '32px' }}>
-          <SectionTitle>Token Listing Fee</SectionTitle>
-          <SectionSubtitle>
-            Paid upfront to create a community governance proposal
-          </SectionSubtitle>
-          <StatsGrid>
-            <StatCard $accent="#00ff88">
-              <StatValue $color="#00ff88">1,000 LUNES</StatValue>
-              <StatLabel>Proposal fee</StatLabel>
-            </StatCard>
-            <StatCard>
-              <StatValue>14 days</StatValue>
-              <StatLabel>Voting period</StatLabel>
-            </StatCard>
-            <StatCard $accent="#00d4ff">
-              <StatValue $color="#00d4ff">Refunded</StatValue>
-              <StatLabel>If approved by community</StatLabel>
-            </StatCard>
-            <StatCard $accent="#ff6b6b">
-              <StatValue $color="#ff6b6b">Kept</StatValue>
-              <StatLabel>
-                If rejected — split 50% Team / 30% Treasury / 20% Stakers
-              </StatLabel>
-            </StatCard>
-          </StatsGrid>
+        <Card $pad={16}>
+          <Col $gap={2}>
+            <CardTitle>Governance vote split</CardTitle>
+            <Muted $size={12}>{VOTE_COST} LUNES per vote</Muted>
+          </Col>
+          <SplitBars
+            rows={VOTE_SPLIT.map(v => ({
+              label: v.label,
+              value: `${v.pct * 100}% · ${v.pct * VOTE_COST} LUNES`,
+              pct: v.pct,
+              color: v.color
+            }))}
+          />
         </Card>
+      </TwoUp>
 
-        {/* Financial Simulator */}
-        <SliderSection>
-          <SliderCard>
-            <SectionTitle>Financial Simulator</SectionTitle>
-            <SectionSubtitle>
-              Adjust the sliders to project revenue at different growth stages
-            </SectionSubtitle>
+      <Card $pad={16} style={{ gap: 10 }}>
+        <Col $gap={2}>
+          <CardTitle>Spot orderbook fee split</CardTitle>
+          <Muted $size={12}>
+            Charged on every matched trade — maker 0.10% · taker 0.25%
+          </Muted>
+        </Col>
+        <SplitHead>
+          <span>Recipient</span>
+          <span>Maker</span>
+          <span>Taker</span>
+        </SplitHead>
+        {SPOT_SPLIT.map(s => (
+          <SplitRow key={s.label}>
+            <Row $gap={8}>
+              <Dot $c={s.color} />
+              {s.label}
+            </Row>
+            <span>{s.maker * 100}%</span>
+            <span>{s.taker * 100}%</span>
+          </SplitRow>
+        ))}
+      </Card>
 
-            <SliderGrid>
-              <SliderGroup>
-                <SliderLabel>
-                  AMM Swap Volume <span>${fmt(dailyVolumeK)}K/day</span>
-                </SliderLabel>
-                <Slider
-                  type="range"
-                  min={10}
-                  max={5000}
-                  step={10}
-                  value={dailyVolumeK}
-                  onChange={e => setDailyVolumeK(Number(e.target.value))}
-                />
-                <SliderLabel
-                  style={{ justifyContent: 'space-between', fontSize: '11px' }}
-                >
-                  <span>$10K</span>
-                  <span>$5M</span>
-                </SliderLabel>
-              </SliderGroup>
-
-              <SliderGroup>
-                <SliderLabel>
-                  Spot Orderbook Volume{' '}
-                  <span>${fmt(dailySpotVolumeK)}K/day</span>
-                </SliderLabel>
-                <Slider
-                  type="range"
-                  min={0}
-                  max={5000}
-                  step={10}
-                  value={dailySpotVolumeK}
-                  onChange={e => setDailySpotVolumeK(Number(e.target.value))}
-                />
-                <SliderLabel
-                  style={{ justifyContent: 'space-between', fontSize: '11px' }}
-                >
-                  <span>$0</span>
-                  <span>$5M</span>
-                </SliderLabel>
-              </SliderGroup>
-
-              <SliderGroup>
-                <SliderLabel>
-                  Governance Votes/day <span>{dailyVotes} votes</span>
-                </SliderLabel>
-                <Slider
-                  type="range"
-                  min={0}
-                  max={500}
-                  step={5}
-                  value={dailyVotes}
-                  onChange={e => setDailyVotes(Number(e.target.value))}
-                />
-                <SliderLabel
-                  style={{ justifyContent: 'space-between', fontSize: '11px' }}
-                >
-                  <span>0</span>
-                  <span>500</span>
-                </SliderLabel>
-              </SliderGroup>
-            </SliderGrid>
-            <SliderGrid style={{ marginTop: '0' }}>
-              <SliderGroup>
-                <SliderLabel>
-                  Listings/month <span>{monthlyListings} proposals</span>
-                </SliderLabel>
-                <Slider
-                  type="range"
-                  min={0}
-                  max={50}
-                  step={1}
-                  value={monthlyListings}
-                  onChange={e => setMonthlyListings(Number(e.target.value))}
-                />
-                <SliderLabel
-                  style={{ justifyContent: 'space-between', fontSize: '11px' }}
-                >
-                  <span>0</span>
-                  <span>50</span>
-                </SliderLabel>
-              </SliderGroup>
-            </SliderGrid>
-
-            <SliderGrid style={{ marginTop: '8px' }}>
-              <SliderGroup style={{ gridColumn: 'span 3' }}>
-                <SliderLabel>
-                  LUNES Price <span>${lunesPrice.toFixed(3)}</span>
-                </SliderLabel>
-                <Slider
-                  type="range"
-                  min={0.001}
-                  max={1}
-                  step={0.001}
-                  value={lunesPrice}
-                  onChange={e => setLunesPrice(Number(e.target.value))}
-                />
-                <SliderLabel
-                  style={{ justifyContent: 'space-between', fontSize: '11px' }}
-                >
-                  <span>$0.001</span>
-                  <span>$1.00</span>
-                </SliderLabel>
-              </SliderGroup>
-            </SliderGrid>
-
-            {/* Results */}
-            <ResultsGrid>
-              <ResultCard $primary>
-                <ResultValue $color="#00ff88">
-                  {fmtUSD(monthlyTeamTotal)}
-                </ResultValue>
-                <ResultLabel>Team monthly revenue</ResultLabel>
-              </ResultCard>
-              <ResultCard>
-                <ResultValue $color="#00d4ff">
-                  {fmtUSD(monthlyStakersTotal)}
-                </ResultValue>
-                <ResultLabel>Stakers monthly yield</ResultLabel>
-              </ResultCard>
-              <ResultCard>
-                <ResultValue $color="#a78bfa">
-                  {fmtUSD(monthlyAffiliatesTotal)}
-                </ResultValue>
-                <ResultLabel>Affiliates monthly (Spot)</ResultLabel>
-              </ResultCard>
-              <ResultCard>
-                <ResultValue $color="#6C38FF">
-                  {fmtUSD(monthlyEcosystemTotal)}
-                </ResultValue>
-                <ResultLabel>Total ecosystem monthly</ResultLabel>
-              </ResultCard>
-            </ResultsGrid>
-
-            {/* Breakdown */}
-            <Card
-              style={{
-                marginTop: '24px',
-                background: 'rgba(0,0,0,0.2)',
-                border: '1px solid rgba(255,255,255,0.04)'
-              }}
+      <Card $pad={16}>
+        <CardTitle>Token listing fee</CardTitle>
+        <FeeGrid>
+          {[
+            { label: 'Proposal fee', value: '1,000 LUNES' },
+            { label: 'Voting period', value: '14 days' },
+            { label: 'If approved', value: 'Refunded', color: C.successText },
+            { label: 'If rejected', value: '90% treasury' }
+          ].map(k => (
+            <StatCard
+              key={k.label}
+              style={{ padding: '14px 16px', background: C.surface }}
             >
-              <SectionTitle style={{ fontSize: '16px', marginBottom: '4px' }}>
-                Monthly Team Revenue Breakdown
-              </SectionTitle>
-              <FeeRow>
-                <span>
-                  AMM swap fee (0.05% × {fmtUSD(dailyVolumeUSD)}/day × 30)
-                </span>
-                <span>{fmtUSD(monthlySwapTeam)}</span>
-              </FeeRow>
-              <FeeRow>
-                <span>
-                  Spot orderbook fee ({fmtUSD(dailySpotVolumeUSD)}/day × ~45%
-                  team share × 30)
-                </span>
-                <span>{fmtUSD(monthlySpotTeam)}</span>
-              </FeeRow>
-              <FeeRow>
-                <span>
-                  Governance votes ({dailyVotes}/day × 30 × 40% × {VOTE_COST}{' '}
-                  LUNES @ ${lunesPrice.toFixed(3)})
-                </span>
-                <span>{fmtUSD(monthlyVoteTeamUSD)}</span>
-              </FeeRow>
-              <FeeRow>
-                <span>
-                  Listing fees ({monthlyListings} proposals × 1,000 LUNES × 50%
-                  @ ${lunesPrice.toFixed(3)})
-                </span>
-                <span>{fmtUSD(monthlyListingTeamUSD)}</span>
-              </FeeRow>
-              <FeeRow $highlight>
-                <span>Annual team projection</span>
-                <span>{fmtUSD(annualTeamTotal)}/year</span>
-              </FeeRow>
-            </Card>
+              <StatLabel>{k.label}</StatLabel>
+              <StatValue style={{ fontSize: 20, color: k.color }}>
+                <AnimatedNumber text={k.value} />
+              </StatValue>
+            </StatCard>
+          ))}
+        </FeeGrid>
+        <Muted $size={12}>
+          A rejected proposal fee goes 90% to the treasury and 10% to the
+          staking rewards pool. Tiered listings (1k / 5k / 20k LUNES) split 20%
+          staking / 50% team / 30% rewards pool.
+        </Muted>
+      </Card>
 
-            <Note>
-              * Simulation only. Swap fee split requires on-chain contract
-              update to take effect. Governance and listing fees already
-              partially active.
-            </Note>
-          </SliderCard>
-        </SliderSection>
-      </Container>
+      <SimCard>
+        <Col $gap={14} style={{ flex: '1 1 300px' }}>
+          <span
+            style={{
+              fontFamily: 'Space Grotesk',
+              fontWeight: 600,
+              fontSize: 16
+            }}
+          >
+            Financial simulator
+          </span>
+          <SliderField
+            label="Daily AMM volume"
+            display={`${usd(simSwap)}/day`}
+            min={10_000}
+            max={2_000_000}
+            step={10_000}
+            value={simSwap}
+            onChange={setSimSwap}
+          />
+          <SliderField
+            label="Daily spot volume"
+            display={`${usd(simSpot)}/day`}
+            min={10_000}
+            max={2_000_000}
+            step={10_000}
+            value={simSpot}
+            onChange={setSimSpot}
+          />
+          <SliderField
+            label="Governance votes per day"
+            display={`${simVotes}/day`}
+            min={0}
+            max={500}
+            step={5}
+            value={simVotes}
+            onChange={setSimVotes}
+          />
+          <SliderField
+            label="Listings per month"
+            display={`${simList}/month`}
+            min={0}
+            max={30}
+            step={1}
+            value={simList}
+            onChange={setSimList}
+          />
+        </Col>
+        <Col $gap={8} style={{ flex: '1 1 280px' }}>
+          {results.map(r => (
+            <Result key={r.label} $hl={r.hl}>
+              <span>{r.label}</span>
+              <span>
+                <AnimatedNumber value={r.value} format={usdFull} />
+              </span>
+            </Result>
+          ))}
+          <Muted $size={11}>
+            Monthly estimate at 30 days, ~70% taker volume on spot, Basic-tier
+            listings. LUNES valued at ${LUNES_USD}.
+          </Muted>
+        </Col>
+      </SimCard>
     </Page>
   )
 }
