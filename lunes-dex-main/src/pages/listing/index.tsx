@@ -485,7 +485,9 @@ export const Listing: React.FC = () => {
       successTitle: 'Listing submitted',
       steps: [
         {
-          label: `Pay listing fee (${fmt(t.fee)} LUNES)`,
+          // Honest copy: this step signs an application message (no on-chain
+          // fee or lock happens here — those settle on-chain after review).
+          label: 'Sign listing application in your wallet',
           wallet: true,
           run: async ({ advance }) => {
             const s = sdkRef.current
@@ -534,8 +536,7 @@ export const Listing: React.FC = () => {
             return true
           }
         },
-        { label: `Lock ${fmt(l)} LUNES for ${t.lock} days` },
-        { label: 'Waiting for block confirmation' }
+        { label: 'Submitting application for review' }
       ],
       onSuccess: () =>
         setDone({
