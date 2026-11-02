@@ -14,7 +14,6 @@ import {
   buildMarginCollateralSignMessage,
   buildMarginLiquidatePositionSignMessage,
   buildMarginOpenPositionSignMessage,
-  buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../../utils/signing'
 import { Button, C, EASE_OUT, grotesk, tabular } from 'components/ui/kit'
@@ -32,6 +31,9 @@ import {
   fmtPx
 } from '../terminal'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
+import { useReadSession } from 'hooks/useReadSession'
+import { requireReadAuth } from 'services/sessionService'
+import { ReadSessionPrompt } from 'components/session/ReadSessionPrompt'
 
 const LEVERAGES = [2, 3, 5, 10] as const
 const RISK_ACK_FROM = 5
@@ -278,30 +280,19 @@ const MarginTab: React.FC = () => {
 
   const mark = ticker?.symbol === selectedPair ? ticker.lastPrice : 0
 
-  // Reading the account needs a signed read action (existing behaviour).
+  // Reading the account uses the 8h read session (one signature on connect).
+  // Without a session we show the sign-in prompt instead of prompting here.
+  const { hasSession } = useReadSession()
   const load = useCallback(async () => {
-    if (!walletAddress) {
+    if (!walletAddress || !hasSession) {
       setOverview(null)
       return
     }
-    const meta = createSignedActionMetadata()
-    const signature = await signMessage(
-      buildWalletActionMessage({
-        action: 'margin.overview',
-        address: walletAddress,
-        nonce: meta.nonce,
-        timestamp: meta.timestamp
-      })
-    )
     setOverview(
-      await marginApi.getOverview(walletAddress, {
-        nonce: meta.nonce,
-        timestamp: meta.timestamp,
-        signature
-      })
+      await marginApi.getOverview(walletAddress, requireReadAuth(walletAddress))
     )
     setLoadError(null)
-  }, [walletAddress, signMessage])
+  }, [walletAddress, hasSession])
 
   useEffect(() => {
     load().catch((err: unknown) =>
@@ -534,6 +525,12 @@ const MarginTab: React.FC = () => {
           </div>
         </StatTile>
       </Stats>
+      {connected && !hasSession && (
+        <ReadSessionPrompt
+          compact
+          message="Sign in to view your margin account."
+        />
+      )}
       {loadError && connected && (
         <ErrorLine role="alert">{loadError}</ErrorLine>
       )}
