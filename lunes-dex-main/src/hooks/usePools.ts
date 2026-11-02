@@ -4,7 +4,7 @@
  * Queries factory.allPairsLength() + factory.allPairs(i) to get only real deployed pairs.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSDK } from '../context/SDKContext'
 import { contractService } from '../services/contractService'
 
@@ -36,6 +36,22 @@ export interface Pool {
   userLiquidity?: string
 }
 
+/** A wallet's LP position in one pool (raw LP balance + derived share). */
+export interface PoolPosition {
+  pairAddress: string
+  lpBalance: string // raw LP token units
+  share: number // % of the pool's LP supply
+  valueUsd: number // share × TVL (0 when the pool has no USD price)
+}
+
+export interface KnownToken {
+  address: string
+  symbol: string
+  name: string
+  decimals: number
+  icon: string
+}
+
 // Known token metadata keyed by SS58 address
 const TOKEN_META: Record<
   string,
@@ -53,7 +69,7 @@ const TOKEN_META: Record<
     symbol: 'LUSDT',
     name: 'Lunes USD',
     decimals: 6,
-    icon: '/img/lusdt.svg'
+    icon: '/img/lusdt.png'
   },
   [process.env.REACT_APP_TOKEN_LBTC ||
   '5FvT73acgKALbPEqwAdah8pY28LL5EE4fNBzCgmgjTkmdsMg']: {
@@ -66,7 +82,7 @@ const TOKEN_META: Record<
   '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS']: {
     symbol: 'LETH',
     name: 'Lunes ETH',
-    decimals: 18,
+    decimals: 8,
     icon: '/img/leth.svg'
   },
   [process.env.REACT_APP_TOKEN_GMC ||
@@ -81,9 +97,14 @@ const TOKEN_META: Record<
     symbol: 'LUP',
     name: 'Lunex Protocol',
     decimals: 8,
-    icon: '/img/lup.svg'
+    icon: '/img/up.svg'
   }
 }
+
+/** Tokens that can be paired in a pool (factory-listed, with metadata). */
+export const LIQUIDITY_TOKENS: KnownToken[] = Object.entries(TOKEN_META).map(
+  ([address, meta]) => ({ address, ...meta })
+)
 
 // LUSDT address for TVL calculation (the USD quote token)
 const LUSDT_ADDRESS = (
@@ -94,13 +115,21 @@ const LUSDT_DECIMALS = 6
 
 const SPOT_API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
-// Fetch 24h volume for a pair symbol from spot-api
-async function fetchVolume24h(sym0: string, sym1: string): Promise<number> {
+// Fetch the spot-api pair list once per refresh (24h volume source)
+async function fetchSpotPairs(): Promise<any[]> {
   try {
     const res = await fetch(`${SPOT_API}/api/v1/pairs`)
-    if (!res.ok) return 0
+    if (!res.ok) return []
     const data = await res.json()
-    const pairs: any[] = Array.isArray(data) ? data : (data.pairs ?? [])
+    return Array.isArray(data) ? data : (data.pairs ?? [])
+  } catch {
+    return []
+  }
+}
+
+// 24h volume for a pair symbol from the spot-api pair list
+function volume24hFor(pairs: any[], sym0: string, sym1: string): number {
+  try {
     const candidates = [`${sym0}/${sym1}`, `${sym1}/${sym0}`]
     const pair = pairs.find(
       (p: any) =>
@@ -130,8 +159,10 @@ function resolveTokenMeta(address: string) {
 export const usePools = () => {
   const sdk = useSDK()
   const [pools, setPools] = useState<Pool[]>([])
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [positions, setPositions] = useState<Record<string, PoolPosition>>({})
+  const [positionsLoading, setPositionsLoading] = useState(false)
 
   const fetchPools = useCallback(async () => {
     setIsLoading(true)
@@ -141,8 +172,7 @@ export const usePools = () => {
       // Connect to blockchain if needed
       if (!contractService.getIsConnected()) {
         const network = (process.env.REACT_APP_NETWORK || 'testnet') as
-          | 'testnet'
-          | 'mainnet'
+          'testnet' | 'mainnet'
         const ok = await contractService.connect(network)
         if (!ok) throw new Error('Cannot connect to blockchain')
       }
@@ -170,6 +200,8 @@ export const usePools = () => {
         setPools([])
         return
       }
+
+      const spotPairs = await fetchSpotPairs()
 
       // Step 2 — get all pair addresses
       const pairAddresses = await Promise.all(
@@ -216,10 +248,12 @@ export const usePools = () => {
           }
           // If neither token is LUSDT, TVL remains 0 (no USD price available)
 
-          const volume24h = await fetchVolume24h(
+          const volume24h = volume24hFor(
+            spotPairs,
             tok0Meta.symbol,
             tok1Meta.symbol
           )
+          // LPs earn 0.3% of the 0.5% swap fee (0.1% protocol, 0.1% stakers)
           const fees24h = volume24h * 0.003
           const apr = tvl > 0 ? ((fees24h * 365) / tvl) * 100 : 0
 
@@ -231,7 +265,7 @@ export const usePools = () => {
             reserve0: reserves.reserve0,
             reserve1: reserves.reserve1,
             totalSupply: totalSupplyRaw,
-            fee: '0.3%',
+            fee: '0.5%',
             liquidity: tvl,
             volume24h,
             fees24h,
@@ -278,12 +312,78 @@ export const usePools = () => {
     fetchPools()
   }, [fetchPools])
 
+  // LP positions of the connected wallet (LP token balance per pair)
+  const wallet = sdk.walletAddress
+  const fetchPositions = useCallback(async () => {
+    if (!wallet || pools.length === 0) {
+      setPositions({})
+      return
+    }
+    setPositionsLoading(true)
+    try {
+      const entries = await Promise.all(
+        pools.map(async pool => {
+          const lp = await contractService
+            .getTokenBalance(pool.pairAddress, wallet)
+            .catch(() => '0')
+          let lpBig = BigInt(0)
+          try {
+            lpBig = BigInt(lp || '0')
+          } catch {
+            lpBig = BigInt(0)
+          }
+          if (lpBig <= BigInt(0)) return null
+          const supply = BigInt(pool.totalSupply || '0')
+          const share =
+            supply > BigInt(0)
+              ? Number((lpBig * BigInt(1_000_000)) / supply) / 10_000
+              : 0
+          const pos: PoolPosition = {
+            pairAddress: pool.pairAddress,
+            lpBalance: lpBig.toString(),
+            share,
+            valueUsd: (pool.liquidity * share) / 100
+          }
+          return pos
+        })
+      )
+      const map: Record<string, PoolPosition> = {}
+      entries.forEach(p => {
+        if (p) map[p.pairAddress] = p
+      })
+      setPositions(map)
+    } finally {
+      setPositionsLoading(false)
+    }
+  }, [wallet, pools])
+
+  useEffect(() => {
+    fetchPositions()
+  }, [fetchPositions])
+
+  // USD price per token symbol, derived from pools quoted in LUSDT
+  const prices = useMemo(() => {
+    const out: Record<string, number> = { LUSDT: 1 }
+    pools.forEach(p => {
+      const r0 = Number(p.reserve0) / Math.pow(10, p.token0.decimals)
+      const r1 = Number(p.reserve1) / Math.pow(10, p.token1.decimals)
+      if (!(r0 > 0 && r1 > 0)) return
+      if (p.token1.symbol === 'LUSDT') out[p.token0.symbol] = r1 / r0
+      else if (p.token0.symbol === 'LUSDT') out[p.token1.symbol] = r0 / r1
+    })
+    return out
+  }, [pools])
+
   return {
     pools,
     isLoading,
     error,
     refreshPools: fetchPools,
-    getUserLiquidity
+    getUserLiquidity,
+    positions,
+    positionsLoading,
+    refreshPositions: fetchPositions,
+    prices
   }
 }
 

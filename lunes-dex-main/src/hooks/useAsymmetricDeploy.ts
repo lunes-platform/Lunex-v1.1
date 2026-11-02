@@ -102,157 +102,188 @@ export function useAsymmetricDeploy() {
     }, [walletAddress])
 
   /**
-   * Full deployment flow (no manual address needed):
-   *   1. Fetch the verified contract bundle from the backend
-   *   2. Instantiate the AsymmetricPair contract on-chain (user signs → user is owner)
-   *   3. Call deploy_liquidity to seed the initial k values
-   *   4. Register the strategy on the spot-api backend
+   * Staged deployment (one call per wallet step, for the tx progress modal):
+   *   1. instantiate() — fetch the verified bundle and instantiate the
+   *      AsymmetricPair contract (user signs → user is owner)
+   *   2. seed()        — deploy_liquidity with the initial k values
+   *                      (resolves once finalized, returns the tx hash)
+   *   3. register()    — register the strategy on the spot-api backend
    */
-  const deploy = useCallback(
-    async (args: DeployStrategyArgs) => {
-      if (!isConnected || !walletAddress) {
-        setState(s => ({ ...s, step: 'error', error: 'Wallet not connected' }))
-        return
+  const createDeployment = useCallback(
+    (args: DeployStrategyArgs) => {
+      let account: InjectedAccountWithMeta | null = null
+      let contractAddress: string | null = null
+      let txHash: string | null = null
+      let strategyId: string | null = null
+
+      const fail = (err: unknown): never => {
+        const message =
+          err instanceof Error ? err.message : String(err ?? 'Unknown error')
+        console.error('[useAsymmetricDeploy] error:', err)
+        setState(s => ({ ...s, step: 'error', error: message }))
+        throw err instanceof Error ? err : new Error(message)
       }
 
-      const account = await getAccount()
-      if (!account) {
-        setState(s => ({
-          ...s,
-          step: 'error',
-          error: 'Could not find wallet account'
-        }))
-        return
-      }
+      const instantiate = async (): Promise<string> => {
+        try {
+          if (!isConnected || !walletAddress) {
+            throw new Error('Wallet not connected')
+          }
+          account = await getAccount()
+          if (!account) throw new Error('Could not find wallet account')
 
-      try {
-        // ── Step 1: Connect to blockchain ─────────────────────────
-        let api = contractService.getApi()
-        if (!api) {
-          await contractService.connect('testnet')
-          api = contractService.getApi()
-        }
-        if (!api) throw new Error('Could not connect to Lunes blockchain')
-        asymmetricContractService.setApi(api)
+          let api = contractService.getApi()
+          if (!api) {
+            await contractService.connect('testnet')
+            api = contractService.getApi()
+          }
+          if (!api) throw new Error('Could not connect to Lunes blockchain')
+          asymmetricContractService.setApi(api)
 
-        // ── Step 2: Fetch verified contract bundle from backend ────
-        setState(s => ({ ...s, step: 'fetching' }))
-
-        const bundleRes = await fetch(
-          `${API_BASE}/api/v1/asymmetric/contract-bundle`
-        )
-        if (!bundleRes.ok) {
-          const err = await bundleRes.json().catch(() => ({}))
-          throw new Error(
-            (err as { error?: string }).error ??
-              'Contract bundle unavailable. Build the AsymmetricPair contract first.'
+          setState({
+            step: 'fetching',
+            txHash: null,
+            contractAddress: null,
+            strategyId: null,
+            error: null
+          })
+          const bundleRes = await fetch(
+            `${API_BASE}/api/v1/asymmetric/contract-bundle`
           )
+          if (!bundleRes.ok) {
+            const err = await bundleRes.json().catch(() => ({}))
+            throw new Error(
+              (err as { error?: string }).error ??
+                'Contract bundle unavailable. Build the AsymmetricPair contract first.'
+            )
+          }
+          const bundle = await bundleRes.json()
+
+          setState(s => ({ ...s, step: 'instantiating' }))
+          contractAddress = await asymmetricContractService.instantiate(
+            bundle,
+            args.baseToken,
+            args.quoteToken,
+            args.buyGamma,
+            toPlancks(args.buyMaxCapacity),
+            args.buyFeeBps,
+            args.sellGamma,
+            toPlancks(args.sellMaxCapacity),
+            args.sellFeeBps,
+            account
+          )
+          setState(s => ({ ...s, contractAddress }))
+          return contractAddress
+        } catch (err) {
+          return fail(err)
         }
-        const bundle = await bundleRes.json()
+      }
 
-        // ── Step 3: Instantiate contract on-chain ─────────────────
-        // The signing wallet becomes the owner — no manual address needed.
-        setState(s => ({ ...s, step: 'instantiating' }))
+      const seed = async (): Promise<string> => {
+        try {
+          if (!account || !contractAddress) {
+            throw new Error('Contract not instantiated')
+          }
+          setState(s => ({ ...s, step: 'deploying' }))
+          txHash = await asymmetricContractService.deployLiquidity(
+            contractAddress,
+            toPlancks(args.initialBuyK),
+            toPlancks(args.initialSellK),
+            account
+          )
+          setState(s => ({ ...s, txHash }))
+          return txHash
+        } catch (err) {
+          return fail(err)
+        }
+      }
 
-        const contractAddress = await asymmetricContractService.instantiate(
-          bundle,
-          args.baseToken,
-          args.quoteToken,
-          args.buyGamma,
-          toPlancks(args.buyMaxCapacity),
-          args.buyFeeBps,
-          args.sellGamma,
-          toPlancks(args.sellMaxCapacity),
-          args.sellFeeBps,
-          account
-        )
+      const register = async () => {
+        try {
+          if (!walletAddress || !contractAddress) {
+            throw new Error('Contract not deployed')
+          }
+          setState(s => ({ ...s, step: 'registering' }))
 
-        // ── Step 4: Deploy liquidity (seed initial k values) ──────
-        setState(s => ({ ...s, step: 'deploying', contractAddress }))
-
-        const txHash = await asymmetricContractService.deployLiquidity(
-          contractAddress,
-          toPlancks(args.initialBuyK),
-          toPlancks(args.initialSellK),
-          account
-        )
-
-        // ── Step 5: Register strategy in backend ──────────────────
-        setState(s => ({ ...s, step: 'registering', txHash }))
-
-        const signedAction = createSignedActionMetadata()
-        const body = {
-          userAddress: walletAddress,
-          pairAddress: contractAddress,
-          isAutoRebalance: args.autoRebalance ?? true,
-          buyK: args.initialBuyK,
-          buyGamma: args.buyGamma,
-          buyMaxCapacity: args.buyMaxCapacity,
-          buyFeeTargetBps: args.buyFeeBps,
-          sellGamma: args.sellGamma,
-          sellMaxCapacity: args.sellMaxCapacity,
-          sellFeeTargetBps: args.sellFeeBps,
-          sellProfitTargetBps: args.profitTargetBps ?? 300,
-          leverageL: '0',
-          allocationC: 0.5,
-          nonce: signedAction.nonce,
-          timestamp: signedAction.timestamp,
-          signature: await signMessage(
+          const signedAction = createSignedActionMetadata()
+          const fields = {
+            pairAddress: contractAddress,
+            isAutoRebalance: args.autoRebalance ?? true,
+            buyK: args.initialBuyK,
+            buyGamma: args.buyGamma,
+            buyMaxCapacity: args.buyMaxCapacity,
+            buyFeeTargetBps: args.buyFeeBps,
+            sellGamma: args.sellGamma,
+            sellMaxCapacity: args.sellMaxCapacity,
+            sellFeeTargetBps: args.sellFeeBps,
+            sellProfitTargetBps: args.profitTargetBps ?? 300,
+            leverageL: '0',
+            allocationC: 0.5,
+            nonce: signedAction.nonce,
+            timestamp: signedAction.timestamp
+          }
+          const signature = await signMessage(
             buildAsymmetricCreateStrategySignMessage({
               address: walletAddress,
-              pairAddress: contractAddress,
-              isAutoRebalance: args.autoRebalance ?? true,
-              buyK: args.initialBuyK,
-              buyGamma: args.buyGamma,
-              buyMaxCapacity: args.buyMaxCapacity,
-              buyFeeTargetBps: args.buyFeeBps,
-              sellGamma: args.sellGamma,
-              sellMaxCapacity: args.sellMaxCapacity,
-              sellFeeTargetBps: args.sellFeeBps,
-              sellProfitTargetBps: args.profitTargetBps ?? 300,
-              leverageL: '0',
-              allocationC: 0.5,
-              nonce: signedAction.nonce,
-              timestamp: signedAction.timestamp
+              ...fields
             })
           )
+
+          const res = await fetch(`${API_BASE}/api/v1/asymmetric/strategies`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userAddress: walletAddress,
+              ...fields,
+              signature
+            })
+          })
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            throw new Error(
+              (err as { error?: string }).error ?? 'Backend registration failed'
+            )
+          }
+          const data = (await res.json()) as { id?: string }
+          strategyId = data.id ?? null
+
+          setState({
+            step: 'done',
+            txHash,
+            contractAddress,
+            strategyId,
+            error: null
+          })
+          return { txHash, contractAddress, strategyId }
+        } catch (err) {
+          return fail(err)
         }
+      }
 
-        const res = await fetch(`${API_BASE}/api/v1/asymmetric/strategies`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        })
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          throw new Error(
-            (err as { error?: string }).error ?? 'Backend registration failed'
-          )
-        }
-
-        const data = (await res.json()) as { id?: string }
-
-        setState({
-          step: 'done',
-          txHash,
-          contractAddress,
-          strategyId: data.id ?? null,
-          error: null
-        })
-
-        return { txHash, contractAddress, strategyId: data.id }
-      } catch (err: any) {
-        console.error('[useAsymmetricDeploy] error:', err)
-        setState(s => ({
-          ...s,
-          step: 'error',
-          error: err.message ?? 'Unknown error'
-        }))
-        throw err
+      return {
+        instantiate,
+        seed,
+        register,
+        result: () => ({ txHash, contractAddress, strategyId })
       }
     },
     [isConnected, walletAddress, getAccount, signMessage]
+  )
+
+  /** Full deployment flow (all stages in sequence). */
+  const deploy = useCallback(
+    async (args: DeployStrategyArgs) => {
+      const d = createDeployment(args)
+      await d.instantiate()
+      await d.seed()
+      const r = await d.register()
+      return {
+        txHash: r.txHash ?? '',
+        contractAddress: r.contractAddress ?? '',
+        strategyId: r.strategyId ?? undefined
+      }
+    },
+    [createDeployment]
   )
 
   /**
@@ -297,5 +328,5 @@ export function useAsymmetricDeploy() {
       error: null
     })
 
-  return { state, deploy, updateParams, reset }
+  return { state, deploy, createDeployment, updateParams, reset }
 }
