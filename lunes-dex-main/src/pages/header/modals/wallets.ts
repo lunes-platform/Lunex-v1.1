@@ -32,6 +32,28 @@ export const WALLETS: WalletDef[] = [
   }
 ]
 
+/** Source key SDKContext stores for WalletConnect sessions. */
+export const WALLETCONNECT_SOURCE = 'walletconnect'
+
+// WalletConnect logo (inline SVG, rendered via a data URI so <img> works).
+const WALLETCONNECT_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40">' +
+  '<rect width="40" height="40" rx="10" fill="#3B99FC"/>' +
+  '<path fill="#fff" d="M12.6 15.3c4.1-4 10.7-4 14.8 0l.5.5c.2.2.2.5 0 ' +
+  '.7l-1.7 1.6c-.1.1-.3.1-.4 0l-.7-.7c-2.8-2.8-7.4-2.8-10.3 0l-.7.7c-.1.1' +
+  '-.3.1-.4 0L12 16.5c-.2-.2-.2-.5 0-.7l.6-.5Zm18.3 3.4 1.5 1.5c.2.2.2.5 ' +
+  '0 .7l-6.8 6.6c-.2.2-.5.2-.7 0l-4.8-4.7c-.1-.1-.1-.1-.2 0l-4.8 4.7c-.2.2' +
+  '-.5.2-.7 0l-6.8-6.6c-.2-.2-.2-.5 0-.7l1.5-1.5c.2-.2.5-.2.7 0l4.8 4.7c.1' +
+  '.1.1.1.2 0l4.8-4.7c.2-.2.5-.2.7 0l4.8 4.7c.1.1.1.1.2 0l4.8-4.7c.2-.2.5' +
+  '-.2.7 0Z"/></svg>'
+
+export const WALLETCONNECT_WALLET: WalletDef = {
+  source: WALLETCONNECT_SOURCE,
+  name: 'WalletConnect',
+  icon: `data:image/svg+xml;utf8,${encodeURIComponent(WALLETCONNECT_SVG)}`,
+  installUrl: 'https://walletconnect.network/'
+}
+
 export const detectInstalled = (): Set<string> => {
   const injected =
     (window as unknown as { injectedWeb3?: Record<string, unknown> })
@@ -47,6 +69,7 @@ export const currentWallet = (): WalletDef => {
   } catch {
     // storage unavailable
   }
+  if (source === WALLETCONNECT_SOURCE) return WALLETCONNECT_WALLET
   return WALLETS.find(w => w.source === source) ?? WALLETS[0]
 }
 

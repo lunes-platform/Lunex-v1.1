@@ -13,7 +13,13 @@ import {
   spin,
   successRing
 } from 'styles/motion'
-import { WALLETS, WalletDef, detectInstalled } from './wallets'
+import { isDesktopApp, isWalletConnectConfigured } from '../../../wallet/config'
+import {
+  WALLETCONNECT_WALLET,
+  WALLETS,
+  WalletDef,
+  detectInstalled
+} from './wallets'
 
 const Step = styled.div`
   display: flex;
@@ -71,9 +77,13 @@ const WalletRow = styled.button`
   color: ${C.text};
   text-align: left;
   transition: border-color 150ms ease;
-  &:hover,
+  &:hover:not(:disabled),
   &:focus-visible {
     border-color: ${C.primary};
+  }
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
   > img {
     width: 36px;
@@ -192,6 +202,31 @@ const ErrorNotice = styled(Notice)<{ $k: number }>`
     `}
 `
 
+const QrFrame = styled.div`
+  width: 232px;
+  height: 232px;
+  padding: 12px;
+  border-radius: 16px;
+  background: #fff;
+  border: 1px solid ${C.border};
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: ${fadeIn} 200ms ${EASE_OUT} both;
+  img {
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+  }
+`
+
+const QrActions = styled.div`
+  display: flex;
+  gap: 8px;
+`
+
+const WC_HINT = 'Scan with SubWallet, Talisman or Nova on your phone'
+
 const Terms = styled.div`
   font-size: 12px;
   color: ${C.muted};
@@ -216,8 +251,13 @@ const WalletModal: React.FC<{ open: boolean; onClose: () => void }> = ({
   const [error, setError] = useState<string | null>(null)
   const [errKey, setErrKey] = useState(0)
   const [attemptDone, setAttemptDone] = useState(false)
+  const [wcUri, setWcUri] = useState<string | null>(null)
+  const [wcQr, setWcQr] = useState<string | null>(null)
   const attempt = useRef(0)
   const closeTimer = useRef<ReturnType<typeof setTimeout>>()
+  const desktop = isDesktopApp()
+  const wcConfigured = isWalletConnectConfigured()
+  const isWc = picked?.source === WALLETCONNECT_WALLET.source
 
   // Detect installed extensions (some inject late — re-check).
   useEffect(() => {
@@ -236,6 +276,35 @@ const WalletModal: React.FC<{ open: boolean; onClose: () => void }> = ({
     }
     return () => clearTimeout(closeTimer.current)
   }, [open])
+
+  // Closing the dialog mid-pairing abandons the WalletConnect attempt.
+  useEffect(() => {
+    if (!open && step === 'connecting' && isWc) {
+      attempt.current++
+      sdk.cancelWalletConnect()
+    }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Render the pairing URI as a QR code (library loaded on demand).
+  useEffect(() => {
+    setWcQr(null)
+    if (!wcUri) return
+    let alive = true
+    import('qrcode')
+      .then(QR =>
+        QR.toDataURL(wcUri, {
+          margin: 0,
+          width: 416,
+          errorCorrectionLevel: 'M',
+          color: { dark: '#0d0d0d', light: '#ffffff' }
+        })
+      )
+      .then(url => alive && setWcQr(url))
+      .catch(() => alive && setWcQr(null))
+    return () => {
+      alive = false
+    }
+  }, [wcUri])
 
   // Resolve a connection attempt once SDKContext has settled its state.
   useEffect(() => {
@@ -283,8 +352,38 @@ const WalletModal: React.FC<{ open: boolean; onClose: () => void }> = ({
     if (id === attempt.current) setAttemptDone(true)
   }
 
+  const pickWalletConnect = async () => {
+    if (!wcConfigured) {
+      toast('info', 'WalletConnect not configured')
+      return
+    }
+    const id = ++attempt.current
+    setError(null)
+    setPicked(WALLETCONNECT_WALLET)
+    setWcUri(null)
+    setStep('connecting')
+    await sdk.connectWalletConnect(uri => {
+      if (id === attempt.current) setWcUri(uri)
+    })
+    if (id === attempt.current) setAttemptDone(true)
+  }
+
+  const copyWcUri = async () => {
+    if (!wcUri) return
+    try {
+      await navigator.clipboard.writeText(wcUri)
+      toast('success', 'Link copied', 'Paste it in your wallet app.', {
+        silent: true
+      })
+    } catch {
+      toast('error', 'Could not copy the link')
+    }
+  }
+
   const cancel = () => {
     attempt.current++
+    if (isWc) sdk.cancelWalletConnect()
+    setWcUri(null)
     setStep('select')
   }
 
@@ -320,7 +419,7 @@ const WalletModal: React.FC<{ open: boolean; onClose: () => void }> = ({
             </NetCard>
           </NetGrid>
           <StepLabel style={{ marginTop: 8 }}>2 · Wallet</StepLabel>
-          {WALLETS.map(w => {
+          {(desktop ? [] : WALLETS).map(w => {
             const ok = installed.has(w.source)
             return (
               <WalletRow key={w.source} onClick={() => pick(w)}>
@@ -342,10 +441,50 @@ const WalletModal: React.FC<{ open: boolean; onClose: () => void }> = ({
               </WalletRow>
             )
           })}
+          <WalletRow
+            onClick={() => void pickWalletConnect()}
+            disabled={!wcConfigured}
+            aria-disabled={!wcConfigured}
+          >
+            <img src={WALLETCONNECT_WALLET.icon} alt="" />
+            <WalletInfo>
+              <b>{WALLETCONNECT_WALLET.name}</b>
+              <span style={{ fontSize: 12, color: C.muted }}>
+                {!wcConfigured
+                  ? 'WalletConnect not configured'
+                  : desktop
+                    ? WC_HINT
+                    : 'QR code · SubWallet, Talisman, Nova'}
+              </span>
+            </WalletInfo>
+            {wcConfigured && <RowAction $install={false}>Scan</RowAction>}
+          </WalletRow>
         </Step>
       )}
 
-      {step === 'connecting' && picked && (
+      {step === 'connecting' && picked && isWc && (
+        <Center aria-live="polite">
+          {wcQr ? (
+            <QrFrame>
+              <img src={wcQr} alt="WalletConnect QR code" />
+            </QrFrame>
+          ) : (
+            <Ring>
+              <img src={picked.icon} alt="" />
+            </Ring>
+          )}
+          <BigTitle>Scan to connect</BigTitle>
+          <MutedText>
+            {WC_HINT}, then approve the connection in the app.
+          </MutedText>
+          <QrActions>
+            {wcUri && <CancelBtn onClick={copyWcUri}>Copy link</CancelBtn>}
+            <CancelBtn onClick={cancel}>Cancel</CancelBtn>
+          </QrActions>
+        </Center>
+      )}
+
+      {step === 'connecting' && picked && !isWc && (
         <Center aria-live="polite">
           <Ring>
             <img src={picked.icon} alt="" />

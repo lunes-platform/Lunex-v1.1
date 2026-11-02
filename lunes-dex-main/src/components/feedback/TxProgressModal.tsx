@@ -23,6 +23,7 @@ import {
 } from '../../styles/motion'
 import { useTx, shortHash } from '../../context/TxContext'
 import { NETWORK } from '../../config/contracts'
+import { useActiveWalletKind } from '../../wallet/activeWallet'
 
 const EXPLORER: Record<string, string> = {
   testnet: 'https://explorer-test.lunes.io/tx/',
@@ -228,6 +229,7 @@ const HashRow = styled.div`
 
 export const TxProgressModal: React.FC = () => {
   const { tx, background, close, retry } = useTx()
+  const onPhone = useActiveWalletKind() === 'walletconnect'
   if (!tx || tx.hidden) return null
 
   const { cfg, status, current } = tx
@@ -349,7 +351,9 @@ export const TxProgressModal: React.FC = () => {
         {walletHint && (
           <Hint $tone="primary">
             <img src="/img/lunes-wallet.svg" alt="" />
-            Approve the request in Lunes Wallet
+            {onPhone
+              ? 'Approve the request on your phone'
+              : 'Approve the request in Lunes Wallet'}
           </Hint>
         )}
         {active && tx.slow && (

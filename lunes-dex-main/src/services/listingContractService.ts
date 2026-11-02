@@ -18,7 +18,7 @@
  * extension, resolve only once the block is finalized.
  */
 import { ContractPromise } from '@polkadot/api-contract'
-import { web3FromAddress } from '@polkadot/extension-dapp'
+import { getSignerFor } from '../wallet/activeWallet'
 import ListingManagerABI from '../abis/ListingManager.json'
 import PairABI from '../abis/Pair.json'
 import { CONTRACTS, NETWORK, TOKENS } from '../config/contracts'
@@ -219,13 +219,13 @@ const sendFinalized = async (
   if (result.isErr) throw new Error(decodeDispatchError(api, result.asErr))
   unwrap(output?.toJSON()) // throws on Err(..) before the wallet opens
 
-  const injector = await web3FromAddress(signer)
+  const walletSigner = getSignerFor(signer)
   return new Promise<string>((resolve, reject) => {
     let broadcast = false
     let unsub: (() => void) | undefined
     tx({ gasLimit: gasRequired, storageDepositLimit: null }, ...args)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .signAndSend(signer, { signer: injector.signer }, (res: any) => {
+      .signAndSend(signer, { signer: walletSigner }, (res: any) => {
         if (!broadcast && !res.status.isFuture) {
           broadcast = true
           onBroadcast?.()

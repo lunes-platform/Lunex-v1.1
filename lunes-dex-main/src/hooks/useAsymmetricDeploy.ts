@@ -12,7 +12,7 @@ import { useState, useCallback } from 'react'
 import { contractService } from '../services/contractService'
 import { asymmetricContractService } from '../services/asymmetricContractService'
 import { useSDK } from '../context/SDKContext'
-import { web3Accounts } from '@polkadot/extension-dapp'
+import { getWalletAccount } from '../wallet/activeWallet'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import {
   buildAsymmetricCreateStrategySignMessage,
@@ -96,9 +96,7 @@ export function useAsymmetricDeploy() {
 
   const getAccount =
     useCallback(async (): Promise<InjectedAccountWithMeta | null> => {
-      if (!walletAddress) return null
-      const accounts = await web3Accounts()
-      return accounts.find(a => a.address === walletAddress) ?? null
+      return getWalletAccount(walletAddress)
     }, [walletAddress])
 
   /**

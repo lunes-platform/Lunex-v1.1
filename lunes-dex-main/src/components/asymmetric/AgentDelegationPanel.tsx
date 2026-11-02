@@ -11,7 +11,7 @@
 import React, { useEffect, useState } from 'react'
 import styled from 'styled-components'
 import { Check, Copy } from 'lucide-react'
-import { web3Accounts } from '@polkadot/extension-dapp'
+import { getWalletAccount } from '../../wallet/activeWallet'
 import agentService from '../../services/agentService'
 import { ensureReadSession } from '../../services/sessionService'
 import { contractService } from '../../services/contractService'
@@ -131,8 +131,7 @@ export async function enforceDelegation(opts: {
   const delegationContext =
     await agentService.getAsymmetricDelegationContext(key)
 
-  const accounts = await web3Accounts()
-  const account = accounts.find(a => a.address === walletAddress)
+  const account = getWalletAccount(walletAddress)
   if (!account) {
     throw new Error('Could not find wallet account to sign set_manager')
   }

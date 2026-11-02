@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { web3Accounts } from '@polkadot/extension-dapp'
+import { getWalletAccount } from '../wallet/activeWallet'
 import { useSDK, parseBlockchainError } from '../context/SDKContext'
 import { contractService } from '../services/contractService'
 import { CONTRACTS } from '../config/contracts'
@@ -191,8 +191,7 @@ const useLiquidity = (): UseLiquidityReturn => {
 
   const findAccount = useCallback(async () => {
     if (!sdk.walletAddress) throw new Error('Connect your wallet')
-    const accounts = await web3Accounts()
-    const account = accounts.find(a => a.address === sdk.walletAddress)
+    const account = getWalletAccount(sdk.walletAddress)
     if (!account) throw new Error('Could not find the wallet account')
     return account
   }, [sdk.walletAddress])

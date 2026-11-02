@@ -13,7 +13,7 @@
 import { ApiPromise } from '@polkadot/api'
 import { CodePromise, ContractPromise } from '@polkadot/api-contract'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
-import { web3FromAddress } from '@polkadot/extension-dapp'
+import { getSignerFor } from '../wallet/activeWallet'
 import { decodeAddress } from '@polkadot/util-crypto'
 import { u8aEq } from '@polkadot/util'
 import AsymmetricPairABI from '../abis/AsymmetricPair.json'
@@ -82,7 +82,7 @@ class AsymmetricContractService {
     account: InjectedAccountWithMeta
   ): Promise<string> {
     if (!this.api) throw new Error('API not connected')
-    const injector = await web3FromAddress(account.address)
+    const signer = getSignerFor(account.address)
     const gasLimit = this.api.registry.createType(
       'WeightV2',
       INSTANTIATE_GAS
@@ -110,43 +110,39 @@ class AsymmetricContractService {
       // Decode deployer pubkey once for comparison (prefix-agnostic)
       const deployerBytes = decodeAddress(account.address)
 
-      tx.signAndSend(
-        account.address,
-        { signer: injector.signer },
-        (result: any) => {
-          if (result.dispatchError) {
+      tx.signAndSend(account.address, { signer }, (result: any) => {
+        if (result.dispatchError) {
+          reject(
+            new Error(
+              'Instantiation failed: ' + result.dispatchError.toString()
+            )
+          )
+          return
+        }
+        if (result.status.isInBlock || result.status.isFinalized) {
+          // Match only the Instantiated event where deployer == our account
+          // (guards against picking up events from other contracts in the same block)
+          const instantiatedEvent = result.events?.find(
+            ({ event }: any) =>
+              event.section === 'contracts' &&
+              event.method === 'Instantiated' &&
+              u8aEq(decodeAddress(event.data[0].toString()), deployerBytes)
+          )
+          if (instantiatedEvent) {
+            const contractAddress = instantiatedEvent.event.data[1].toString()
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('[instantiate] deployed contract:', contractAddress)
+            }
+            resolve(contractAddress)
+          } else if (result.status.isFinalized) {
             reject(
               new Error(
-                'Instantiation failed: ' + result.dispatchError.toString()
+                'Contract instantiated but Instantiated event not found for this account'
               )
             )
-            return
-          }
-          if (result.status.isInBlock || result.status.isFinalized) {
-            // Match only the Instantiated event where deployer == our account
-            // (guards against picking up events from other contracts in the same block)
-            const instantiatedEvent = result.events?.find(
-              ({ event }: any) =>
-                event.section === 'contracts' &&
-                event.method === 'Instantiated' &&
-                u8aEq(decodeAddress(event.data[0].toString()), deployerBytes)
-            )
-            if (instantiatedEvent) {
-              const contractAddress = instantiatedEvent.event.data[1].toString()
-              if (process.env.NODE_ENV !== 'production') {
-                console.log('[instantiate] deployed contract:', contractAddress)
-              }
-              resolve(contractAddress)
-            } else if (result.status.isFinalized) {
-              reject(
-                new Error(
-                  'Contract instantiated but Instantiated event not found for this account'
-                )
-              )
-            }
           }
         }
-      ).catch(reject)
+      }).catch(reject)
     })
   }
 
@@ -240,7 +236,7 @@ class AsymmetricContractService {
     account: InjectedAccountWithMeta
   ): Promise<string> {
     const c = this.getContract(contractAddress)
-    const injector = await web3FromAddress(account.address)
+    const signer = getSignerFor(account.address)
 
     const { gasRequired, output } = await c.query.deployLiquidity(
       account.address,
@@ -293,17 +289,13 @@ class AsymmetricContractService {
           buyK,
           sellK
         )
-        .signAndSend(
-          account.address,
-          { signer: injector.signer },
-          (result: any) => {
-            if (result.dispatchError) {
-              reject(new Error(result.dispatchError.toString()))
-            } else if (result.status.isFinalized) {
-              resolve(result.txHash.toHex())
-            }
+        .signAndSend(account.address, { signer }, (result: any) => {
+          if (result.dispatchError) {
+            reject(new Error(result.dispatchError.toString()))
+          } else if (result.status.isFinalized) {
+            resolve(result.txHash.toHex())
           }
-        )
+        })
         .catch(reject)
     })
   }
@@ -320,7 +312,7 @@ class AsymmetricContractService {
     account: InjectedAccountWithMeta
   ): Promise<string> {
     const c = this.getContract(contractAddress)
-    const injector = await web3FromAddress(account.address)
+    const signer = getSignerFor(account.address)
 
     const args = [
       isBuy,
@@ -341,17 +333,13 @@ class AsymmetricContractService {
           { gasLimit: gasRequired as any, storageDepositLimit: null },
           ...args
         )
-        .signAndSend(
-          account.address,
-          { signer: injector.signer },
-          (result: any) => {
-            if (result.dispatchError) {
-              reject(new Error(result.dispatchError.toString()))
-            } else if (result.status.isFinalized) {
-              resolve(result.txHash.toHex())
-            }
+        .signAndSend(account.address, { signer }, (result: any) => {
+          if (result.dispatchError) {
+            reject(new Error(result.dispatchError.toString()))
+          } else if (result.status.isFinalized) {
+            resolve(result.txHash.toHex())
           }
-        )
+        })
         .catch(reject)
     })
   }
@@ -366,7 +354,7 @@ class AsymmetricContractService {
     account: InjectedAccountWithMeta
   ): Promise<string> {
     const c = this.getContract(contractAddress)
-    const injector = await web3FromAddress(account.address)
+    const signer = getSignerFor(account.address)
 
     const { gasRequired } = await c.query.setManager(
       account.address,
@@ -382,17 +370,13 @@ class AsymmetricContractService {
           newManager,
           guardrails
         )
-        .signAndSend(
-          account.address,
-          { signer: injector.signer },
-          (result: any) => {
-            if (result.dispatchError) {
-              reject(new Error(result.dispatchError.toString()))
-            } else if (result.status.isFinalized) {
-              resolve(result.txHash.toHex())
-            }
+        .signAndSend(account.address, { signer }, (result: any) => {
+          if (result.dispatchError) {
+            reject(new Error(result.dispatchError.toString()))
+          } else if (result.status.isFinalized) {
+            resolve(result.txHash.toHex())
           }
-        )
+        })
         .catch(reject)
     })
   }
@@ -407,7 +391,7 @@ class AsymmetricContractService {
     account: InjectedAccountWithMeta
   ): Promise<string> {
     const c = this.getContract(contractAddress)
-    const injector = await web3FromAddress(account.address)
+    const signer = getSignerFor(account.address)
 
     const { gasRequired } = await c.query.asymmetricSwap(
       account.address,
@@ -423,17 +407,13 @@ class AsymmetricContractService {
           amountIn,
           isBuy
         )
-        .signAndSend(
-          account.address,
-          { signer: injector.signer },
-          (result: any) => {
-            if (result.dispatchError) {
-              reject(new Error(result.dispatchError.toString()))
-            } else if (result.status.isFinalized) {
-              resolve(result.txHash.toHex())
-            }
+        .signAndSend(account.address, { signer }, (result: any) => {
+          if (result.dispatchError) {
+            reject(new Error(result.dispatchError.toString()))
+          } else if (result.status.isFinalized) {
+            resolve(result.txHash.toHex())
           }
-        )
+        })
         .catch(reject)
     })
   }
