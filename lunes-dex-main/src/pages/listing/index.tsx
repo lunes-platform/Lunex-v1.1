@@ -2,8 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import styled, { css } from 'styled-components'
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, Check, ImagePlus, X } from 'lucide-react'
+import { decodeAddress } from '@polkadot/util-crypto'
+import { u8aEq } from '@polkadot/util'
 import { useSDK } from '../../context/SDKContext'
-import { useTx } from '../../context/TxContext'
+import { useTx, shortHash } from '../../context/TxContext'
+import type { TxStep } from '../../context/TxContext'
 import { AnimatedNumber } from '../../components/ui/AnimatedNumber'
 import {
   Button,
@@ -33,72 +36,80 @@ import {
   createSignedActionMetadata
 } from '../../utils/signing'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
+import { TOKENS } from '../../config/contracts'
+import contractService from '../../services/contractService'
+import {
+  LISTING_FEE_TOKEN,
+  LISTING_MANAGER_ADDRESS,
+  type ListingTierNumber,
+  type OnChainTierConfig,
+  approveForListing,
+  isListingContractConfigured,
+  listToken,
+  readAllowance,
+  readIsPaused,
+  readTierConfig,
+  readTokenListing
+} from '../../services/listingContractService'
 
 const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
-// ── Tier config (display mirror of backend TIER_CONFIG / listing_manager) ──
+// ── Tiers ────────────────────────────────────────────────────────
+// Labels only. Fee, minimum liquidity and lock period come from the
+// ListingManager `tier_config` (source of truth), falling back to the
+// spot-api tier config for display when the contract is not reachable.
 
 type TierKey = 'BASIC' | 'VERIFIED' | 'FEATURED'
 
 const TIERS: {
   key: TierKey
-  n: number
+  n: ListingTierNumber
   label: string
-  fee: number
-  min: number
-  lock: number
   desc: string
-  staking: number
-  treasury: number
-  rewards: number
 }[] = [
   {
     key: 'BASIC',
     n: 1,
     label: 'Basic',
-    fee: 1_000,
-    min: 10_000,
-    lock: 90,
-    desc: 'Entry-level listing. Token visible in search.',
-    staking: 200,
-    treasury: 500,
-    rewards: 300
+    desc: 'Entry-level listing. Token visible in search.'
   },
   {
     key: 'VERIFIED',
     n: 2,
     label: 'Verified',
-    fee: 5_000,
-    min: 25_000,
-    lock: 120,
-    desc: 'Verified badge, trending section, DEX highlight.',
-    staking: 1_000,
-    treasury: 2_500,
-    rewards: 1_500
+    desc: 'Verified badge, trending section, DEX highlight.'
   },
   {
     key: 'FEATURED',
     n: 3,
     label: 'Featured',
-    fee: 20_000,
-    min: 50_000,
-    lock: 180,
-    desc: 'Home highlight, reward campaigns, maximum exposure.',
-    staking: 4_000,
-    treasury: 10_000,
-    rewards: 6_000
+    desc: 'Home highlight, reward campaigns, maximum exposure.'
   }
 ]
 
+// Fee split applied on-chain by list_token (basis points, display only)
+const SPLIT = { staking: 2_000, treasury: 5_000, rewards: 3_000 }
+
+/** Display numbers for a tier (whole LUNES / days). */
+type TierView = { fee: number; min: number; lock: number }
+
+type ApiTier = {
+  tierNumber: number
+  listingFee: number
+  minLunesLiq: number
+  lockDays: number
+}
+
 const STEPS = ['Select tier', 'Liquidity', 'Details', 'Review']
+
+const CONTRACT_MISSING =
+  'On-chain listing opens soon — the listing contract is not deployed on this network yet.'
 
 type ListingForm = {
   tokenName: string
   tokenSymbol: string
   tokenAddress: string
   tokenDecimals: string
-  lunesLiquidity: string
-  tokenLiquidity: string
   website: string
   twitter: string
   telegram: string
@@ -109,14 +120,27 @@ const initialForm: ListingForm = {
   tokenName: '',
   tokenSymbol: '',
   tokenAddress: '',
-  tokenDecimals: '18',
-  lunesLiquidity: '',
-  tokenLiquidity: '',
+  tokenDecimals: '',
   website: '',
   twitter: '',
   telegram: '',
   description: ''
 }
+
+/** The connected wallet's LP position in the TOKEN/WLUNES pool. */
+type LpHolding = {
+  pair: string
+  lp: bigint
+  lunesRaw: bigint
+  tokenRaw: bigint
+}
+type LpPosition =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'nopair' }
+  | { status: 'error' }
+  | ({ status: 'nolp' } & LpHolding)
+  | ({ status: 'ok' } & LpHolding)
 
 const MAX_LOGO_SIZE = 200 * 1024
 const ACCEPTED_TYPES = ['image/svg+xml', 'image/png', 'image/webp']
@@ -130,12 +154,40 @@ const fmtDate = (d: Date) =>
     year: 'numeric'
   })
 
+/** Raw base units → exact decimal string (no float rounding). */
+const toDecimalString = (raw: bigint, decimals: number) => {
+  const base = BigInt(10) ** BigInt(decimals)
+  const whole = raw / base
+  const frac = (raw % base).toString().padStart(decimals, '0')
+  const trimmed = frac.replace(/0+$/, '')
+  return trimmed ? `${whole}.${trimmed}` : whole.toString()
+}
+const toNum = (raw: bigint, decimals: number) =>
+  Number(toDecimalString(raw, decimals))
+
+const looksLikeAddress = (a: string) => {
+  try {
+    return decodeAddress(a.trim()).length === 32
+  } catch {
+    return false
+  }
+}
+const sameAddress = (a: string, b: string) => {
+  try {
+    return u8aEq(decodeAddress(a), decodeAddress(b))
+  } catch {
+    return false
+  }
+}
+
 type Done = {
   sym: string
   tier: string
   lunes: number
   lock: number
   id: string | null
+  onChainId: number
+  txHash: string | null
 }
 
 // ── Styles ───────────────────────────────────────────────────────
@@ -412,18 +464,190 @@ export const Listing: React.FC = () => {
   } | null>(null)
   const logoInputRef = useRef<HTMLInputElement>(null)
 
+  // On-chain state (ListingManager is the source of truth)
+  const configured = isListingContractConfigured()
+  const [chainTiers, setChainTiers] = useState<Record<
+    number,
+    OnChainTierConfig
+  > | null>(null)
+  const [apiTiers, setApiTiers] = useState<Record<number, ApiTier> | null>(null)
+  const [paused, setPaused] = useState(false)
+  const [feeDecimals, setFeeDecimals] = useState<number | null>(null)
+  const [feeSymbol, setFeeSymbol] = useState('LUNES')
+  const [wlunesDecimals, setWlunesDecimals] = useState<number | null>(null)
+  const [feeBalance, setFeeBalance] = useState<bigint | null>(null)
+  const [pos, setPos] = useState<LpPosition>({ status: 'idle' })
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [preflight, setPreflight] = useState(false)
+  /** list_token finalized for this token in this session → never pay twice */
+  const paidRef = useRef<{
+    token: string
+    txHash: string
+    onChainId: number
+  } | null>(null)
+
   const tier = TIERS.find(t => t.key === tierKey)!
-  const lunes = parseFloat(form.lunesLiquidity) || 0
-  const tokens = parseFloat(form.tokenLiquidity) || 0
-  const unlock = fmtDate(new Date(Date.now() + tier.lock * 86_400_000))
-  const lowLiq = form.lunesLiquidity !== '' && lunes < tier.min
+  const chainCfg = chainTiers?.[tier.n] ?? null
+
+  const viewOf = (n: number): TierView | null => {
+    const c = chainTiers?.[n]
+    if (c && feeDecimals !== null)
+      return {
+        fee: toNum(c.listingFee, feeDecimals),
+        min: toNum(c.minLunesLiq, wlunesDecimals ?? feeDecimals),
+        lock: Math.round(c.lockDurationMs / 86_400_000)
+      }
+    const a = apiTiers?.[n]
+    if (a) return { fee: a.listingFee, min: a.minLunesLiq, lock: a.lockDays }
+    return null
+  }
+  const view = viewOf(tier.n)
+  const unlock = view
+    ? fmtDate(new Date(Date.now() + view.lock * 86_400_000))
+    : '—'
+  const feeLabel = (v: TierView | null) =>
+    v ? `${fmt(v.fee)} ${feeSymbol}` : '—'
+
+  // ── Loads ──
 
   useEffect(() => {
     fetch(`${API_BASE}/api/v1/listing/stats`)
       .then(r => r.json())
       .then(setStats)
       .catch(() => null)
+    fetch(`${API_BASE}/api/v1/listing/tiers`)
+      .then(r => r.json())
+      .then((d: { tiers?: ApiTier[] }) => {
+        const m: Record<number, ApiTier> = {}
+        for (const t of d.tiers ?? []) m[t.tierNumber] = t
+        setApiTiers(m)
+      })
+      .catch(() => null)
   }, [])
+
+  useEffect(() => {
+    let alive = true
+    const s = sdkRef.current
+    s.getTokenInfo(TOKENS.WLUNES)
+      .then(i => alive && i && setWlunesDecimals(i.decimals))
+      .catch(() => null)
+    if (!configured) return
+    s.getTokenInfo(LISTING_FEE_TOKEN)
+      .then(i => {
+        if (!alive || !i) return
+        setFeeDecimals(i.decimals)
+        if (i.symbol && i.symbol !== '???') setFeeSymbol(i.symbol)
+      })
+      .catch(() => null)
+    Promise.all(TIERS.map(t => readTierConfig(t.n)))
+      .then(cfgs => {
+        if (!alive) return
+        const m: Record<number, OnChainTierConfig> = {}
+        TIERS.forEach((t, i) => (m[t.n] = cfgs[i]))
+        setChainTiers(m)
+      })
+      .catch(() => null)
+    readIsPaused()
+      .then(p => alive && setPaused(p))
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [configured])
+
+  // Fee token balance of the connected wallet
+  const wallet = sdk.walletAddress
+  useEffect(() => {
+    setFeeBalance(null)
+    if (!wallet || !configured) return
+    let alive = true
+    sdkRef.current
+      .getTokenBalance(LISTING_FEE_TOKEN, wallet)
+      .then(b => alive && setFeeBalance(BigInt(b || '0')))
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [wallet, configured, done])
+
+  // LP position for TOKEN/WLUNES (the amount to lock = full LP balance)
+  const tokenAddr = form.tokenAddress.trim()
+  const [posTick, setPosTick] = useState(0)
+  useEffect(() => {
+    if (!wallet || !looksLikeAddress(tokenAddr)) {
+      setPos({ status: 'idle' })
+      return
+    }
+    let alive = true
+    setPos({ status: 'loading' })
+    const t = setTimeout(async () => {
+      try {
+        const s = sdkRef.current
+        const info = await s.getPairInfo(tokenAddr, TOKENS.WLUNES)
+        if (!alive) return
+        if (!info) return setPos({ status: 'nopair' })
+        const [lpStr, token0] = await Promise.all([
+          s.getTokenBalance(info.address, wallet),
+          contractService.getPairToken0(info.address)
+        ])
+        if (!alive) return
+        const lp = BigInt(lpStr || '0')
+        const supply = BigInt(info.totalSupply || '0')
+        const r0 = BigInt(info.reserve0 || '0')
+        const r1 = BigInt(info.reserve1 || '0')
+        const wIs0 = !!token0 && sameAddress(token0, TOKENS.WLUNES)
+        const [rw, rt] = wIs0 ? [r0, r1] : [r1, r0]
+        const share = (r: bigint) =>
+          supply > BigInt(0) ? (r * lp) / supply : BigInt(0)
+        const holding: LpHolding = {
+          pair: info.address,
+          lp,
+          lunesRaw: share(rw),
+          tokenRaw: share(rt)
+        }
+        setPos(
+          lp > BigInt(0)
+            ? { status: 'ok', ...holding }
+            : { status: 'nolp', ...holding }
+        )
+      } catch {
+        if (alive) setPos({ status: 'error' })
+      }
+    }, 400)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [wallet, tokenAddr, posTick])
+
+  // Prefill token metadata from chain
+  useEffect(() => {
+    if (!looksLikeAddress(tokenAddr)) return
+    let alive = true
+    sdkRef.current
+      .getTokenInfo(tokenAddr)
+      .then(i => {
+        if (!alive || !i) return
+        setForm(prev =>
+          prev.tokenAddress.trim() !== tokenAddr
+            ? prev
+            : {
+                ...prev,
+                tokenName:
+                  prev.tokenName ||
+                  (i.name !== 'Unknown' ? i.name : prev.tokenName),
+                tokenSymbol:
+                  prev.tokenSymbol ||
+                  (i.symbol !== '???' ? i.symbol : prev.tokenSymbol),
+                tokenDecimals: prev.tokenDecimals || String(i.decimals)
+              }
+        )
+      })
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [tokenAddr])
 
   useEffect(
     () => () => {
@@ -455,6 +679,26 @@ export const Listing: React.FC = () => {
     setLogoPreview(URL.createObjectURL(file))
   }, [])
 
+  // ── Derived liquidity numbers ──
+
+  const tokenDecimals = parseInt(form.tokenDecimals, 10)
+  const decOk = Number.isInteger(tokenDecimals) && tokenDecimals >= 0
+  const lpOk = pos.status === 'ok'
+  const lunesRaw = lpOk ? pos.lunesRaw : BigInt(0)
+  const tokenRaw = lpOk ? pos.tokenRaw : BigInt(0)
+  const lunes = wlunesDecimals !== null ? toNum(lunesRaw, wlunesDecimals) : 0
+  const tokens = decOk ? toNum(tokenRaw, tokenDecimals) : 0
+  // Minimum check: on-chain raw units when available, API config otherwise
+  const meetsMin = chainCfg
+    ? lunesRaw >= chainCfg.minLunesLiq
+    : view
+      ? lunes >= view.min
+      : false
+  const lowLiq = lpOk && !meetsMin
+  const feeShort =
+    !!chainCfg && feeBalance !== null && feeBalance < chainCfg.listingFee
+  const poolLink = `/pool?a=${encodeURIComponent(tokenAddr)}&b=WLUNES`
+
   const stepOk =
     step === 1
       ? true
@@ -462,91 +706,204 @@ export const Listing: React.FC = () => {
         ? !!(
             form.tokenName.trim() &&
             form.tokenSymbol.trim() &&
-            form.tokenAddress.trim() &&
-            lunes >= tier.min &&
-            tokens > 0
+            looksLikeAddress(tokenAddr) &&
+            decOk &&
+            lpOk &&
+            wlunesDecimals !== null &&
+            meetsMin
           )
         : step === 3
           ? !!(form.description.trim() && logoFile)
           : true
 
-  // ── Submit (wraps the real signed listing API call) ──
+  // ── Submit: approve fee → approve LP → list_token → register ──
 
-  const submit = () => {
+  const submit = async () => {
+    const s = sdkRef.current
+    const owner = s.walletAddress
+    const cfg = chainCfg
+    if (!owner || !cfg || pos.status !== 'ok' || wlunesDecimals === null) return
     const t = tier
-    const f = { ...form }
-    const l = lunes
+    const v = view
+    const f = { ...form, tokenAddress: tokenAddr }
+    const p = pos
     const logo = logoFile
+    const lunesStr = toDecimalString(p.lunesRaw, wlunesDecimals)
+    const tokenStr = toDecimalString(p.tokenRaw, tokenDecimals)
+    setSubmitError(null)
+
+    // Preflight: allowances + whether this token is already listed on-chain
+    setPreflight(true)
+    let feeAllow: bigint
+    let lpAllow: bigint
+    try {
+      const [fa, la, existing] = await Promise.all([
+        readAllowance(LISTING_FEE_TOKEN, owner),
+        readAllowance(p.pair, owner),
+        readTokenListing(f.tokenAddress)
+      ])
+      feeAllow = fa
+      lpAllow = la
+      if (existing) {
+        if (!sameAddress(existing.owner, owner))
+          throw new Error('This token is already listed on-chain.')
+        // Already paid by this wallet (e.g. registration failed earlier)
+        if (!paidRef.current || paidRef.current.token !== f.tokenAddress)
+          paidRef.current = {
+            token: f.tokenAddress,
+            txHash: '',
+            onChainId: existing.id
+          }
+      }
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : String(e))
+      return
+    } finally {
+      setPreflight(false)
+    }
+
+    const paid = () =>
+      paidRef.current?.token === f.tokenAddress ? paidRef.current : null
     let listingId: string | null = null
-    tx.run({
-      type: 'other',
-      title: 'Submitting listing',
-      summary: `${f.tokenSymbol} · ${t.label} tier`,
-      actTitle: `List ${f.tokenSymbol} (${t.label})`,
-      successTitle: 'Listing submitted',
-      steps: [
+
+    const steps: TxStep[] = []
+    if (!paid() && feeAllow < cfg.listingFee)
+      steps.push({
+        label: `Approve ${feeLabel(v)} listing fee`,
+        wallet: true,
+        run: async () => {
+          if (paid()) return true
+          const now = await readAllowance(LISTING_FEE_TOKEN, owner)
+          if (now >= cfg.listingFee) return true
+          return approveForListing(LISTING_FEE_TOKEN, cfg.listingFee, owner)
+        }
+      })
+    if (!paid() && lpAllow < p.lp)
+      steps.push({
+        label: 'Approve LP tokens',
+        wallet: true,
+        run: async () => {
+          if (paid()) return true
+          const now = await readAllowance(p.pair, owner)
+          if (now >= p.lp) return true
+          return approveForListing(p.pair, p.lp, owner)
+        }
+      })
+    if (!paid())
+      steps.push(
         {
-          // Honest copy: this step signs an application message (no on-chain
-          // fee or lock happens here — those settle on-chain after review).
-          label: 'Sign listing application in your wallet',
+          label: 'Pay fee and lock liquidity',
           wallet: true,
           run: async ({ advance }) => {
-            const s = sdkRef.current
-            if (!s.walletAddress) throw new Error('Connect your wallet first')
-            if (!logo) throw new Error('Token logo is required')
-            const meta = createSignedActionMetadata()
-            const signature = await s.signMessage(
-              buildWalletActionMessage({
-                action: 'listing.create',
-                address: s.walletAddress,
-                nonce: meta.nonce,
-                timestamp: meta.timestamp,
-                fields: {
-                  tokenAddress: f.tokenAddress,
-                  tokenName: f.tokenName,
-                  tokenSymbol: f.tokenSymbol,
-                  tier: t.key,
-                  lunesLiquidity: f.lunesLiquidity,
-                  tokenLiquidity: f.tokenLiquidity
-                }
-              })
+            const prev = paid()
+            if (prev) return prev.txHash || true
+            const res = await listToken(
+              {
+                tier: t.n,
+                tokenAddress: f.tokenAddress,
+                pairAddress: p.pair,
+                // On Lunex the LP token is the pair contract itself
+                lpToken: p.pair,
+                lpAmount: p.lp,
+                lunesLiquidity: p.lunesRaw,
+                tokenLiquidity: p.tokenRaw
+              },
+              owner,
+              advance
             )
-            advance()
-            const fd = new FormData()
-            fd.append('ownerAddress', s.walletAddress)
-            fd.append('tokenAddress', f.tokenAddress)
-            fd.append('tokenName', f.tokenName)
-            fd.append('tokenSymbol', f.tokenSymbol)
-            fd.append('tokenDecimals', String(parseInt(f.tokenDecimals) || 18))
-            fd.append('tier', t.key)
-            fd.append('lunesLiquidity', f.lunesLiquidity)
-            fd.append('tokenLiquidity', f.tokenLiquidity)
-            fd.append('nonce', meta.nonce)
-            fd.append('timestamp', String(meta.timestamp))
-            fd.append('signature', signature)
-            if (f.description) fd.append('description', f.description)
-            if (f.website) fd.append('website', f.website)
-            fd.append('logo', logo)
-            const res = await fetch(`${API_BASE}/api/v1/listing`, {
-              method: 'POST',
-              body: fd
-            })
-            const data = await res.json().catch(() => ({}))
-            if (!res.ok) throw new Error(data.error || 'Listing failed')
-            listingId = data.listing?.id ?? null
-            return true
+            paidRef.current = {
+              token: f.tokenAddress,
+              txHash: res.txHash,
+              onChainId: res.listing.id
+            }
+            return res.txHash
           }
         },
-        { label: 'Submitting application for review' }
-      ],
-      onSuccess: () =>
+        { label: 'Waiting for block confirmation' }
+      )
+    steps.push({
+      label: 'Sign listing registration in your wallet',
+      wallet: true,
+      run: async () => {
+        const chain = paid()
+        if (!chain) throw new Error('The on-chain listing was not confirmed.')
+        const fail = (msg: string) =>
+          new Error(
+            `Fee paid on-chain (listing #${chain.onChainId}), but registering it with Lunex failed: ${msg}. Try again — you will not be charged twice.`
+          )
+        if (!logo) throw fail('token logo is missing')
+        const meta = createSignedActionMetadata()
+        const signature = await s.signMessage(
+          buildWalletActionMessage({
+            action: 'listing.create',
+            address: owner,
+            nonce: meta.nonce,
+            timestamp: meta.timestamp,
+            fields: {
+              tokenAddress: f.tokenAddress,
+              tokenName: f.tokenName,
+              tokenSymbol: f.tokenSymbol,
+              tier: t.key,
+              lunesLiquidity: lunesStr,
+              tokenLiquidity: tokenStr
+            }
+          })
+        )
+        const fd = new FormData()
+        fd.append('ownerAddress', owner)
+        fd.append('tokenAddress', f.tokenAddress)
+        fd.append('tokenName', f.tokenName)
+        fd.append('tokenSymbol', f.tokenSymbol)
+        fd.append('tokenDecimals', String(tokenDecimals))
+        fd.append('tier', t.key)
+        fd.append('lunesLiquidity', lunesStr)
+        fd.append('tokenLiquidity', tokenStr)
+        fd.append('pairAddress', p.pair)
+        fd.append('lpTokenAddress', p.pair)
+        fd.append('lpAmount', p.lp.toString())
+        if (chain.txHash) fd.append('txHash', chain.txHash)
+        fd.append('onChainListingId', String(chain.onChainId))
+        fd.append('nonce', meta.nonce)
+        fd.append('timestamp', String(meta.timestamp))
+        fd.append('signature', signature)
+        if (f.description) fd.append('description', f.description)
+        if (f.website) fd.append('website', f.website)
+        fd.append('logo', logo)
+        let res: Response
+        try {
+          res = await fetch(`${API_BASE}/api/v1/listing`, {
+            method: 'POST',
+            body: fd
+          })
+        } catch {
+          throw fail('network error')
+        }
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw fail(data.error || `HTTP ${res.status}`)
+        listingId = data.listing?.id ?? null
+        return true
+      }
+    })
+
+    tx.run({
+      type: 'other',
+      title: 'Listing token',
+      summary: `${f.tokenSymbol} · ${t.label} tier · ${feeLabel(v)} fee`,
+      actTitle: `List ${f.tokenSymbol} (${t.label})`,
+      successTitle: 'Listing fee paid',
+      steps,
+      onSuccess: () => {
+        const chain = paid()
         setDone({
           sym: f.tokenSymbol,
           tier: t.label,
-          lunes: l,
-          lock: t.lock,
-          id: listingId
+          lunes: toNum(p.lunesRaw, wlunesDecimals),
+          lock: Math.round(cfg.lockDurationMs / 86_400_000),
+          id: listingId,
+          onChainId: chain?.onChainId ?? -1,
+          txHash: chain?.txHash || null
         })
+      }
     })
   }
 
@@ -558,31 +915,53 @@ export const Listing: React.FC = () => {
     setLogoFile(null)
     setLogoPreview(null)
     setLogoError(null)
+    setSubmitError(null)
+    paidRef.current = null
   }
 
   // ── CTA ──
   let cta: { label: string; ok: boolean; on?: () => void }
   if (step < 4)
     cta = { label: 'Continue', ok: stepOk, on: () => setStep(step + 1) }
+  else if (!configured) cta = { label: CONTRACT_MISSING, ok: false }
   else if (!sdk.isConnected)
     cta = {
       label: 'Connect wallet',
       ok: true,
       on: () => requestWalletConnect()
     }
+  else if (paused) cta = { label: 'Listings are paused on-chain', ok: false }
+  else if (!chainCfg) cta = { label: 'Reading listing contract…', ok: false }
+  else if (!lpOk || !meetsMin)
+    cta = { label: 'Go back and fix liquidity', ok: false }
+  else if (feeShort)
+    cta = { label: `Insufficient ${feeSymbol} for the fee`, ok: false }
   else
     cta = {
-      label: `Submit listing (${fmt(tier.fee)} LUNES fee)`,
-      ok: true,
-      on: submit
+      label: preflight
+        ? 'Checking approvals…'
+        : `Pay ${feeLabel(view)} and lock liquidity`,
+      ok: !preflight,
+      on: () => void submit()
     }
   if (step === 2 && !stepOk)
-    cta.label =
-      lunes > 0 && lunes < tier.min
-        ? `Minimum ${fmt(tier.min)} LUNES`
-        : 'Fill in token details'
+    cta.label = lowLiq
+      ? `Minimum ${view ? fmt(view.min) : '—'} LUNES in your LP`
+      : !wallet
+        ? 'Connect wallet to read your LP'
+        : pos.status === 'nopair' || pos.status === 'nolp'
+          ? 'Add liquidity first'
+          : 'Fill in token details'
   if (step === 3 && !stepOk)
     cta.label = !form.description.trim() ? 'Add a description' : 'Upload a logo'
+  if (step === 2 && !wallet)
+    cta = {
+      label: 'Connect wallet to read your LP',
+      ok: true,
+      on: () => requestWalletConnect()
+    }
+
+  const splitOf = (fee: number, bps: number) => (fee * bps) / 10_000
 
   // ── Render ──
 
@@ -647,7 +1026,7 @@ export const Listing: React.FC = () => {
               fontWeight: 600
             }}
           >
-            Listing application submitted
+            Listing fee paid on-chain
           </span>
           <span
             style={{
@@ -657,8 +1036,9 @@ export const Listing: React.FC = () => {
               lineHeight: 1.55
             }}
           >
-            {done.sym} is pending its liquidity proof. It becomes tradable once
-            the pool is finalized and the {done.lock}-day lock starts.
+            {done.sym} is recorded by the listing contract with a {done.lock}
+            -day LP lock. It becomes tradable on Lunex once the listing is
+            activated.
           </span>
           <DoneGrid>
             <StatCard style={{ padding: '14px 16px' }}>
@@ -670,17 +1050,23 @@ export const Listing: React.FC = () => {
             <StatCard style={{ padding: '14px 16px' }}>
               <StatLabel>Status</StatLabel>
               <StatValue style={{ fontSize: 20, color: C.warning }}>
-                Pending proof
+                Pending activation
               </StatValue>
             </StatCard>
             <StatCard style={{ padding: '14px 16px' }}>
-              <StatLabel>LUNES locked</StatLabel>
+              <StatLabel>LUNES in locked LP</StatLabel>
               <StatValue style={{ fontSize: 20 }}>
                 <AnimatedNumber value={done.lunes} format={fmt} />
               </StatValue>
             </StatCard>
           </DoneGrid>
-          {done.id && <Muted $size={12}>Listing ID · {done.id}</Muted>}
+          {done.onChainId >= 0 && (
+            <Muted $size={12}>
+              On-chain listing #{done.onChainId}
+              {done.txHash ? ` · tx ${shortHash(done.txHash)}` : ''}
+              {done.id ? ` · ID ${done.id}` : ''}
+            </Muted>
+          )}
           <Row $gap={8} $wrap $justify="center">
             <Button variant="secondary" size="lg" onClick={reset}>
               Submit another token
@@ -702,74 +1088,109 @@ export const Listing: React.FC = () => {
     <Page $max={760}>
       {header}
 
+      {!configured && (
+        <Notice $tone="warning" role="status">
+          <AlertTriangle size={16} />
+          {CONTRACT_MISSING}
+        </Notice>
+      )}
+      {configured && paused && (
+        <Notice $tone="warning" role="status">
+          <AlertTriangle size={16} />
+          Listings are paused on-chain. You can prepare your application, but
+          payment is disabled until the contract is unpaused.
+        </Notice>
+      )}
+
       <TabPanel key={step}>
         {step === 1 && (
           <>
             <TierGrid role="radiogroup" aria-label="Listing tier">
-              {TIERS.map(t => (
-                <TierBtn
-                  key={t.key}
-                  role="radio"
-                  aria-checked={t.key === tierKey}
-                  $on={t.key === tierKey}
-                  onClick={() => setTierKey(t.key)}
-                >
-                  <Row $justify="space-between">
-                    <TierKicker>TIER {t.n}</TierKicker>
-                    {t.key === tierKey && (
-                      <Check size={16} color={C.primaryText} />
-                    )}
-                  </Row>
-                  <TierName>{t.label}</TierName>
-                  <TierDesc>{t.desc}</TierDesc>
-                  <TierFacts>
-                    <span>
-                      <span>Listing fee</span>
-                      <span>{fmt(t.fee)} LUNES</span>
-                    </span>
-                    <span>
-                      <span>Min. LUNES locked</span>
-                      <span>{fmt(t.min)} LUNES</span>
-                    </span>
-                    <span>
-                      <span>Lock period</span>
-                      <span>{t.lock} days</span>
-                    </span>
-                  </TierFacts>
-                </TierBtn>
-              ))}
+              {TIERS.map(t => {
+                const v = viewOf(t.n)
+                return (
+                  <TierBtn
+                    key={t.key}
+                    role="radio"
+                    aria-checked={t.key === tierKey}
+                    $on={t.key === tierKey}
+                    onClick={() => setTierKey(t.key)}
+                  >
+                    <Row $justify="space-between">
+                      <TierKicker>TIER {t.n}</TierKicker>
+                      {t.key === tierKey && (
+                        <Check size={16} color={C.primaryText} />
+                      )}
+                    </Row>
+                    <TierName>{t.label}</TierName>
+                    <TierDesc>{t.desc}</TierDesc>
+                    <TierFacts>
+                      <span>
+                        <span>Listing fee</span>
+                        <span>{feeLabel(v)}</span>
+                      </span>
+                      <span>
+                        <span>Min. LUNES locked</span>
+                        <span>{v ? `${fmt(v.min)} LUNES` : '—'}</span>
+                      </span>
+                      <span>
+                        <span>Lock period</span>
+                        <span>{v ? `${v.lock} days` : '—'}</span>
+                      </span>
+                    </TierFacts>
+                  </TierBtn>
+                )
+              })}
             </TierGrid>
             <RowsCard>
               <RowsTitle>Fee distribution</RowsTitle>
               <KvRow>
                 <span>Listing fee</span>
-                <span>{fmt(tier.fee)} LUNES</span>
+                <span>{feeLabel(view)}</span>
               </KvRow>
               <KvRow>
                 <span>→ Staking rewards (20%)</span>
-                <span>{fmt(tier.staking)} LUNES</span>
+                <span>
+                  {view
+                    ? `${fmt(splitOf(view.fee, SPLIT.staking))} ${feeSymbol}`
+                    : '—'}
+                </span>
               </KvRow>
               <KvRow>
                 <span>→ Treasury (50%)</span>
-                <span>{fmt(tier.treasury)} LUNES</span>
+                <span>
+                  {view
+                    ? `${fmt(splitOf(view.fee, SPLIT.treasury))} ${feeSymbol}`
+                    : '—'}
+                </span>
               </KvRow>
               <KvRow>
                 <span>→ Rewards pool (30%)</span>
-                <span>{fmt(tier.rewards)} LUNES</span>
+                <span>
+                  {view
+                    ? `${fmt(splitOf(view.fee, SPLIT.rewards))} ${feeSymbol}`
+                    : '—'}
+                </span>
               </KvRow>
               <KvRow>
-                <span>Minimum LUNES to lock</span>
-                <span>{fmt(tier.min)} LUNES</span>
+                <span>Minimum LUNES in locked LP</span>
+                <span>{view ? `${fmt(view.min)} LUNES` : '—'}</span>
               </KvRow>
               <KvRow>
                 <span>Lock duration</span>
-                <span>{tier.lock} days</span>
+                <span>{view ? `${view.lock} days` : '—'}</span>
               </KvRow>
               <KvRow>
                 <span>Estimated unlock</span>
                 <span>{unlock}</span>
               </KvRow>
             </RowsCard>
+            {!chainTiers && view && (
+              <Muted $size={12}>
+                Showing the Lunex API tier config. The listing contract sets the
+                final amounts at payment.
+              </Muted>
+            )}
             {stats && (
               <Muted $size={12}>
                 {fmt(stats.totalActiveLocks)} pools with locked liquidity ·{' '}
@@ -782,6 +1203,19 @@ export const Listing: React.FC = () => {
         {step === 2 && (
           <>
             <FormGrid>
+              <Field
+                label="Contract address"
+                name="tokenAddress"
+                value={form.tokenAddress}
+                onChange={onChange}
+                placeholder="5F…"
+                error={!!tokenAddr && !looksLikeAddress(tokenAddr)}
+                hint={
+                  tokenAddr && !looksLikeAddress(tokenAddr)
+                    ? 'Not a valid address'
+                    : undefined
+                }
+              />
               <Field
                 label="Token name"
                 name="tokenName"
@@ -797,48 +1231,100 @@ export const Listing: React.FC = () => {
                 placeholder="LGLD"
               />
               <Field
-                label="Contract address"
-                name="tokenAddress"
-                value={form.tokenAddress}
-                onChange={onChange}
-                placeholder="5F…"
-              />
-              <Field
                 label="Token decimals"
                 name="tokenDecimals"
                 value={form.tokenDecimals}
                 onChange={onChange}
-                placeholder="18"
+                placeholder="Read from chain"
                 inputMode="numeric"
-              />
-              <Field
-                label="LUNES to lock"
-                name="lunesLiquidity"
-                value={form.lunesLiquidity}
-                onChange={onChange}
-                placeholder={String(tier.min)}
-                inputMode="decimal"
-                error={lowLiq}
-                hint={
-                  lowLiq
-                    ? `Minimum ${fmt(tier.min)} LUNES`
-                    : `Min. ${fmt(tier.min)} LUNES for ${tier.label}`
-                }
-              />
-              <Field
-                label="Tokens to pair"
-                name="tokenLiquidity"
-                value={form.tokenLiquidity}
-                onChange={onChange}
-                placeholder="500000"
-                inputMode="decimal"
+                error={!!form.tokenDecimals && !decOk}
               />
             </FormGrid>
-            {lowLiq && (
+
+            <RowsCard>
+              <RowsTitle>Liquidity to lock</RowsTitle>
+              {!wallet ? (
+                <Muted $size={13}>
+                  Connect your wallet to read your {form.tokenSymbol || 'TOKEN'}
+                  /WLUNES LP position.
+                </Muted>
+              ) : !looksLikeAddress(tokenAddr) ? (
+                <Muted $size={13}>
+                  Enter the token contract address to find its WLUNES pool.
+                </Muted>
+              ) : pos.status === 'loading' || pos.status === 'idle' ? (
+                <Muted $size={13}>Reading your LP position…</Muted>
+              ) : pos.status === 'error' ? (
+                <Row $gap={8} $wrap>
+                  <Muted $size={13}>Could not read the pool.</Muted>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPosTick(n => n + 1)}
+                  >
+                    Retry
+                  </Button>
+                </Row>
+              ) : pos.status === 'nopair' || pos.status === 'nolp' ? (
+                <Col $gap={8}>
+                  <Muted $size={13}>
+                    {pos.status === 'nopair'
+                      ? `There is no ${form.tokenSymbol || 'TOKEN'}/WLUNES pool yet.`
+                      : `You have no LP tokens in the ${form.tokenSymbol || 'TOKEN'}/WLUNES pool.`}{' '}
+                    Listing locks your pool liquidity, so add liquidity first.
+                  </Muted>
+                  <Row $gap={8} $wrap>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => navigate(poolLink)}
+                    >
+                      Add liquidity
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPosTick(n => n + 1)}
+                    >
+                      Refresh
+                    </Button>
+                  </Row>
+                </Col>
+              ) : (
+                <>
+                  <KvRow>
+                    <span>Pool</span>
+                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>
+                      {pos.pair}
+                    </span>
+                  </KvRow>
+                  <KvRow>
+                    <span>LP tokens to lock (your full balance)</span>
+                    <span>{pos.lp.toString()}</span>
+                  </KvRow>
+                  <KvRow>
+                    <span>LUNES in your share</span>
+                    <span>{fmt(lunes)} LUNES</span>
+                  </KvRow>
+                  <KvRow>
+                    <span>{form.tokenSymbol || 'Tokens'} in your share</span>
+                    <span>{decOk ? fmt(tokens) : '—'}</span>
+                  </KvRow>
+                </>
+              )}
+            </RowsCard>
+            {lowLiq && view && (
               <Notice $tone="warning" role="alert">
                 <AlertTriangle size={16} />
-                Minimum {fmt(tier.min)} LUNES required for the {tier.label}{' '}
-                tier. You entered {fmt(lunes)}.
+                Minimum {fmt(view.min)} LUNES required for the {tier.label}{' '}
+                tier. Your LP holds {fmt(lunes)}.{' '}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate(poolLink)}
+                >
+                  Add liquidity
+                </Button>
               </Notice>
             )}
           </>
@@ -959,7 +1445,7 @@ export const Listing: React.FC = () => {
               <KvRow>
                 <span>Contract</span>
                 <span style={{ fontFamily: 'ui-monospace, monospace' }}>
-                  {form.tokenAddress || '—'}
+                  {tokenAddr || '—'}
                 </span>
               </KvRow>
               <KvRow>
@@ -969,53 +1455,82 @@ export const Listing: React.FC = () => {
                 </span>
               </KvRow>
               <KvRow>
-                <span>LUNES to lock</span>
+                <span>LP tokens to lock</span>
+                <span>{lpOk ? pos.lp.toString() : '—'}</span>
+              </KvRow>
+              <KvRow>
+                <span>LUNES in locked LP</span>
                 <span>{fmt(lunes)} LUNES</span>
               </KvRow>
               <KvRow>
-                <span>Tokens to lock</span>
+                <span>Tokens in locked LP</span>
                 <span>
                   {fmt(tokens)} {form.tokenSymbol}
                 </span>
               </KvRow>
               <KvRow>
                 <span>Lock duration</span>
-                <span>{tier.lock} days</span>
+                <span>{view ? `${view.lock} days` : '—'}</span>
               </KvRow>
               <KvRow>
                 <span>Unlock date</span>
                 <span>{unlock}</span>
               </KvRow>
               <KvRow>
-                <span>Listing fee</span>
-                <span>{fmt(tier.fee)} LUNES</span>
+                <span>Listing fee (paid now)</span>
+                <span style={{ fontWeight: 600 }}>{feeLabel(view)}</span>
               </KvRow>
-              <KvRow>
-                <span>Total LUNES required</span>
-                <span style={{ fontWeight: 600 }}>
-                  {fmt(tier.fee + lunes)} LUNES
-                </span>
-              </KvRow>
+              {feeBalance !== null && feeDecimals !== null && (
+                <KvRow>
+                  <span>Your {feeSymbol} balance</span>
+                  <span
+                    style={feeShort ? { color: C.criticalText } : undefined}
+                  >
+                    {fmt(toNum(feeBalance, feeDecimals))} {feeSymbol}
+                  </span>
+                </KvRow>
+              )}
+              {configured && (
+                <KvRow>
+                  <span>Listing contract</span>
+                  <span style={{ fontFamily: 'ui-monospace, monospace' }}>
+                    {LISTING_MANAGER_ADDRESS}
+                  </span>
+                </KvRow>
+              )}
             </RowsCard>
             <RowsCard>
-              <RowsTitle>What happens after submit</RowsTitle>
+              <RowsTitle>What happens on submit</RowsTitle>
               <KvRow>
-                <span>1. Fee paid and liquidity sent</span>
-                <span>On submit</span>
+                <span>1. Approve the listing fee and LP tokens</span>
+                <span>Wallet, if needed</span>
               </KvRow>
               <KvRow>
-                <span>2. Pool created with locked liquidity</span>
-                <span>Next block</span>
+                <span>2. Fee paid, split 20/50/30, LP lock recorded</span>
+                <span>On finalization</span>
               </KvRow>
               <KvRow>
-                <span>3. Community vote</span>
-                <span>14 days</span>
+                <span>3. Listing registered with Lunex</span>
+                <span>Signed message</span>
               </KvRow>
               <KvRow>
                 <span>4. Lock period after activation</span>
-                <span>{tier.lock} days</span>
+                <span>{view ? `${view.lock} days` : '—'}</span>
               </KvRow>
             </RowsCard>
+            {feeShort && (
+              <Notice $tone="warning" role="alert">
+                <AlertTriangle size={16} />
+                The listing fee is paid in {feeSymbol}. Wrap or acquire enough{' '}
+                {feeSymbol} before submitting.
+              </Notice>
+            )}
+            {submitError && (
+              <Notice $tone="critical" role="alert">
+                <AlertTriangle size={16} />
+                {submitError}
+              </Notice>
+            )}
           </>
         )}
       </TabPanel>

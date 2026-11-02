@@ -25,7 +25,14 @@ export const CONTRACTS = {
   ),
   STAKING: env('REACT_APP_STAKING_CONTRACT', ''),
   REWARDS: env('REACT_APP_REWARDS_CONTRACT', ''),
-  COPY_VAULT: env('REACT_APP_COPY_VAULT_CONTRACT', '')
+  COPY_VAULT: env('REACT_APP_COPY_VAULT_CONTRACT', ''),
+  /** ListingManager (list_token). Empty = on-chain listing disabled. */
+  LISTING_MANAGER: env('REACT_APP_LISTING_MANAGER_CONTRACT', ''),
+  /**
+   * PSP22 the ListingManager collects its fee in (its `lunes_token`
+   * constructor arg — the contract has no getter for it). Empty = WLUNES.
+   */
+  LISTING_FEE_TOKEN: env('REACT_APP_LISTING_FEE_TOKEN', '')
 } as const
 
 // ─── Token Addresses ─────────────────────────────────────────────
