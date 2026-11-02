@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+web/
+*.log
+
+# Root .gitignore ignores lockfiles; keep this one for reproducible release builds.
+!package-lock.json
