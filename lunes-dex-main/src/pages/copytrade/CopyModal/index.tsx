@@ -1,197 +1,258 @@
 import React, { useEffect, useState } from 'react'
-import Modal from 'components/modal'
-import * as S from './styles'
+import styled from 'styled-components'
+import { Dialog } from 'components/ui/Dialog'
+import { Button, C, Panel, grotesk, tabular } from 'components/ui/kit'
 import { useSDK } from '../../../context/SDKContext'
-import socialApi, {
-  buildCopytradeDepositMessage,
-  createSignedActionMetadata
-} from '../../../services/socialService'
+import { useToast } from '../../../components/feedback/ToastProvider'
+import { Trader } from '../../social/types'
+import {
+  fmtPct,
+  fmtUsd,
+  TraderAvatar,
+  traderVaultToken
+} from '../../social/shared'
+import { useCopyDeposit } from '../useCopytrade'
 
-interface Trader {
-  id: string
-  name: string
-  fee: number
-  isAI: boolean
-  collateralToken?: string
-  minDeposit?: number
-}
+const AmountInput = styled.input.attrs({ 'data-bare': '' })`
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  ${grotesk};
+  ${tabular};
+  font-size: 26px;
+  font-weight: 500;
+  padding: 0;
+  width: 100%;
+  min-width: 0;
+`
+
+const PanelHead = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: ${C.muted};
+`
+
+const InputRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  span {
+    ${grotesk};
+    font-weight: 600;
+    color: ${C.secondary};
+  }
+`
+
+const SliderHead = styled.div`
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  span:first-child {
+    color: ${C.muted};
+  }
+  span:last-child {
+    font-weight: 600;
+    ${tabular};
+  }
+`
+
+const Range = styled.input.attrs({ type: 'range' })`
+  width: 100%;
+  accent-color: ${C.primary};
+`
+
+const Fine = styled.p`
+  font-size: 12px;
+  line-height: 1.5;
+  color: ${C.muted};
+`
+
+const Who = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: -4px;
+  font-size: 12px;
+  color: ${C.muted};
+  ${tabular};
+`
+
+const Stack = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+`
+
+type CopyTarget = Pick<
+  Trader,
+  'id' | 'name' | 'fee' | 'isAI' | 'roi30d' | 'winRate' | 'avatar' | 'vault'
+>
 
 interface CopyModalProps {
-  trader: Trader | null
+  trader: CopyTarget | null
   onClose: () => void
-  onConfirm: (amount: string) => void | Promise<void>
+  /** Called after the deposit is confirmed (refresh positions etc.). */
+  onSuccess?: () => void
 }
 
 const CopyModal: React.FC<CopyModalProps> = ({
   trader,
   onClose,
-  onConfirm
+  onSuccess
 }) => {
   const [amount, setAmount] = useState('')
-  const [step, setStep] = useState<1 | 2>(1)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  // PLACEHOLDER: no backend yet — the copy stop-loss is shown but not sent
+  // (the deposit API has no stop-loss field).
+  const [stop, setStop] = useState(20)
+  const [connecting, setConnecting] = useState(false)
+  const { walletAddress, connectWallet } = useSDK()
+  const { toast } = useToast()
+  const deposit = useCopyDeposit()
 
   useEffect(() => {
     setAmount('')
-    setStep(1)
-    setLoading(false)
-    setError('')
+    setStop(20)
   }, [trader?.id])
 
-  if (!trader) return null
+  const token = traderVaultToken(trader)
+  const minDeposit = trader?.vault?.minDeposit ?? 0
+  const amt = Number(amount)
 
-  const token = trader.collateralToken ?? 'USDT'
-  const minDeposit = trader.minDeposit ?? 0
-
-  const handleAction = async () => {
-    if (!amount || Number(amount) <= 0) return
-    if (minDeposit > 0 && Number(amount) < minDeposit) {
-      setError(`Minimum deposit is ${String(minDeposit)} ${token}`)
-      return
-    }
-
-    if (!walletAddress) {
-      try {
-        await connectWallet()
-        setError('Wallet connected. Click again to continue.')
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'Failed to connect wallet'
-        )
+  let cta: { label: string; ok: boolean; on?: () => void }
+  if (!walletAddress) {
+    cta = {
+      label: connecting ? 'Connecting…' : 'Connect wallet',
+      ok: !connecting,
+      on: () => {
+        setConnecting(true)
+        connectWallet()
+          .catch((err: unknown) =>
+            toast(
+              'error',
+              'Wallet not connected',
+              err instanceof Error ? err.message : undefined
+            )
+          )
+          .finally(() => setConnecting(false))
       }
-      return
     }
-
-    setError('')
-    setLoading(true)
-
-    try {
-      if (step === 1) {
-        await new Promise(resolve => setTimeout(resolve, 600))
-        setStep(2)
-        return
-      }
-
-      const auth = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildCopytradeDepositMessage({
-          leaderId: trader.id,
-          followerAddress: walletAddress,
+  } else if (!amount || !(amt > 0)) {
+    cta = { label: 'Enter an amount', ok: false }
+  } else if (minDeposit > 0 && amt < minDeposit) {
+    cta = {
+      label: `Minimum deposit is ${minDeposit.toLocaleString()} ${token}`,
+      ok: false
+    }
+  } else {
+    cta = {
+      label: `Start copying with ${fmtUsd(amt)}`,
+      ok: true,
+      on: () => {
+        if (!trader) return
+        const t = trader
+        onClose()
+        deposit({
+          leaderId: t.id,
+          leaderName: t.name,
           token,
           amount,
-          nonce: auth.nonce,
-          timestamp: auth.timestamp
+          onSuccess
         })
-      )
-
-      await socialApi.depositToVault(trader.id, {
-        followerAddress: walletAddress,
-        token,
-        amount,
-        nonce: auth.nonce,
-        timestamp: auth.timestamp,
-        signature
-      })
-
-      await onConfirm(amount)
-      onClose()
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to deposit into vault'
-      )
-    } finally {
-      setLoading(false)
+      }
     }
   }
 
   return (
-    <Modal
-      divider
-      width="520px"
-      justify="space-between"
-      closeX={onClose}
-      closeExternal={onClose}
-      titleModal="Copy Trader Vault"
-      description="Review the leader terms and choose how much you want to allocate to this vault."
+    <Dialog
+      open={!!trader}
+      onClose={onClose}
+      width={420}
+      ariaLabel="Copy trader"
+      title={trader ? `Copy ${trader.name}` : 'Copy trader'}
     >
-      <S.ContentArea>
-        <S.LeaderCard>
-          <S.InfoRow>
-            <span>Target Leader</span>
-            <strong>{trader.name}</strong>
-          </S.InfoRow>
-          <S.InfoRow>
-            <span>Performance Fee (HWM)</span>
-            <S.AccentValue>{trader.fee}% on Profits</S.AccentValue>
-          </S.InfoRow>
-          <S.InfoRow>
-            <span>Minimum Deposit</span>
-            <strong>
-              {String(minDeposit || 0)} {token}
-            </strong>
-          </S.InfoRow>
-          <S.InfoRow>
-            <span>Network</span>
-            <strong>Lunes Network</strong>
-          </S.InfoRow>
-        </S.LeaderCard>
+      {trader && (
+        <>
+          <Who>
+            <TraderAvatar
+              name={trader.name}
+              avatar={trader.avatar}
+              ai={trader.isAI}
+              size={40}
+            />
+            <span>
+              ROI 30d{' '}
+              <b
+                style={{
+                  color: trader.roi30d >= 0 ? C.success : C.criticalText
+                }}
+              >
+                {fmtPct(trader.roi30d)}
+              </b>{' '}
+              · win rate {trader.winRate}%
+            </span>
+          </Who>
 
-        <S.Label>Amount to Deposit</S.Label>
-        <S.InputHint>
-          Enter the amount you want this leader to manage on your behalf.
-        </S.InputHint>
-        <S.InputWrapper>
-          <S.Input
-            type="number"
-            placeholder="0.00"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-          />
-          <S.CurrencyLabel>{token}</S.CurrencyLabel>
-        </S.InputWrapper>
+          <Panel>
+            <PanelHead>
+              <span>Allocate ({token})</span>
+              {minDeposit > 0 && (
+                <span>
+                  Min. {minDeposit.toLocaleString()} {token}
+                </span>
+              )}
+            </PanelHead>
+            <InputRow>
+              <AmountInput
+                value={amount}
+                onChange={e => {
+                  const v = e.target.value.replace(',', '.')
+                  if (/^\d*\.?\d*$/.test(v)) setAmount(v)
+                }}
+                placeholder="0"
+                inputMode="decimal"
+                aria-label="Allocation"
+                autoFocus
+              />
+              <span>{token}</span>
+            </InputRow>
+          </Panel>
 
-        <S.BalanceInfo>
-          <span>
-            Balance is validated by your connected wallet and backend checks
-            during deposit.
-          </span>
-        </S.BalanceInfo>
+          <Stack>
+            <SliderHead>
+              <span>Stop copying if loss reaches</span>
+              <span>−{stop}%</span>
+            </SliderHead>
+            <Range
+              min={5}
+              max={50}
+              step={5}
+              value={stop}
+              onChange={e => setStop(Number(e.target.value))}
+              aria-label="Stop loss"
+            />
+          </Stack>
 
-        <S.WarningBox>
-          <p>
-            By depositing funds, this Trader/AI will automatically execute
-            trades on your behalf. The leader takes a {trader.fee}% fee{' '}
-            <b>only</b> on positive net profits. You can withdraw at any time.
-          </p>
-        </S.WarningBox>
+          <Fine>
+            Trades are mirrored proportionally. The trader never controls your
+            funds and you can stop copying at any time. Leader fee: {trader.fee}
+            % of profits (high-water mark).
+          </Fine>
 
-        {error ? <S.ErrorBox>{error}</S.ErrorBox> : null}
-
-        <S.Actions>
-          <S.Button onClick={onClose}>Cancel</S.Button>
-          <S.Button
-            primary
-            disabled={
-              !amount ||
-              Number(amount) <= 0 ||
-              loading ||
-              Number(amount) < minDeposit
-            }
-            onClick={handleAction}
+          <Button
+            size="xl"
+            block
+            disabled={!cta.ok}
+            onClick={cta.on}
+            style={{ height: 52, borderRadius: 14, fontSize: 16 }}
           >
-            {loading
-              ? 'Processing...'
-              : !walletAddress
-                ? 'Connect Wallet'
-                : step === 1
-                  ? `Approve ${token}`
-                  : 'Deposit in Vault'}
-          </S.Button>
-        </S.Actions>
-      </S.ContentArea>
-    </Modal>
+            {cta.label}
+          </Button>
+        </>
+      )}
+    </Dialog>
   )
 }
 
