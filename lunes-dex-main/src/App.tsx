@@ -7,6 +7,7 @@ import { SpotProvider } from 'context/SpotContext'
 import { TxProvider } from 'context/TxContext'
 import { ToastProvider } from 'components/feedback/ToastProvider'
 import TxProgressModal from 'components/feedback/TxProgressModal'
+import FillNotifier from 'components/feedback/FillNotifier'
 import SystemBanner from 'components/feedback/SystemBanner'
 import MobileTabBar from 'pages/header/MobileTabBar'
 import AppRoutes from 'routers'
@@ -85,6 +86,7 @@ const App = () => {
               <ErrorBoundary>
                 <AppFrame />
                 <TxProgressModal />
+                <FillNotifier />
               </ErrorBoundary>
             </SpotProvider>
           </TxProvider>

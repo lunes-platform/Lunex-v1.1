@@ -3,21 +3,13 @@ import styled from 'styled-components'
 import { useSearchParams } from 'react-router-dom'
 import { Page } from 'components/ui/kit'
 import { useSpot } from 'context/SpotContext'
-import { useToast } from 'components/feedback/ToastProvider'
 import PairSelector from 'components/spot/PairSelector'
 import PriceHeader from 'components/spot/PriceHeader'
 import ChartPanel from 'components/spot/ChartPanel'
 import OrderBook from 'components/spot/OrderBook'
 import OrderForm from 'components/spot/OrderForm'
 import OrderHistory from 'components/spot/OrderHistory'
-import {
-  SpotTerminalProvider,
-  T,
-  TPanel,
-  fmtAmt,
-  fmtPx,
-  splitPair
-} from 'components/spot/terminal'
+import { SpotTerminalProvider, T, TPanel } from 'components/spot/terminal'
 
 // ──────────────────────────────────────────────────────────────
 // Terminal layout
@@ -125,62 +117,6 @@ const FormBox = styled(TPanel)`
   }
 `
 
-const FRESH_MS = 60_000
-
-/**
- * Fill notifications from the live trades stream: a trade involving the
- * connected wallet raises a 'market' toast. A maker fill is an async event
- * (a resting order got hit) so it rings the bell.
- */
-const useFillToasts = () => {
-  const { recentTrades, walletAddress, selectedPair } = useSpot()
-  const { toast } = useToast()
-  const seen = useRef<Set<string> | null>(null)
-
-  useEffect(() => {
-    seen.current = null
-  }, [selectedPair])
-
-  useEffect(() => {
-    const ids = recentTrades.map(t => t.id)
-    // first snapshot (REST / pair switch) is history, not news
-    if (!seen.current) {
-      seen.current = new Set(ids)
-      return
-    }
-    const fresh = recentTrades.filter(t => !seen.current?.has(t.id))
-    const now = Date.now()
-    fresh.forEach(t => seen.current?.add(t.id))
-    if (!walletAddress) return
-    fresh
-      .filter(
-        t =>
-          (t.makerAddress === walletAddress ||
-            t.takerAddress === walletAddress) &&
-          now - new Date(t.createdAt).getTime() < FRESH_MS
-      )
-      .forEach(t => {
-        const maker = t.makerAddress === walletAddress
-        const takerBuy = t.side.toUpperCase() === 'BUY'
-        const buy = maker ? !takerBuy : takerBuy
-        const pair = t.pair?.symbol || selectedPair
-        const [base, quote] = splitPair(pair)
-        const price = parseFloat(t.price)
-        toast(
-          'success',
-          maker ? 'Limit order filled' : 'Order filled',
-          `${buy ? 'Buy' : 'Sell'} ${fmtAmt(parseFloat(t.amount))} ${base} @ ${fmtPx(price)} ${quote}`,
-          {
-            cat: 'market',
-            ring: maker,
-            route: '/spot',
-            action: { label: 'Open spot', route: '/spot' }
-          }
-        )
-      })
-  }, [recentTrades, walletAddress, selectedPair, toast])
-}
-
 /** Select the pair from a shared link (`/spot?pair=WLUNES-LUSDT`). */
 const usePairFromUrl = () => {
   const [params] = useSearchParams()
@@ -198,7 +134,6 @@ const usePairFromUrl = () => {
 }
 
 const SpotPage: React.FC = () => {
-  useFillToasts()
   usePairFromUrl()
 
   return (

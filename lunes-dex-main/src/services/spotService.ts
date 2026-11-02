@@ -182,6 +182,25 @@ class SpotWebSocket {
   private reconnectAttempts = 0
   private readonly maxReconnectAttempts = 10
   private readonly subscriptions = new Set<string>()
+  /** Read-session token binding this socket to a wallet (user:<addr>). */
+  private authToken: string | null = null
+  private authedAddress: string | null = null
+
+  /**
+   * Bind (or unbind with null) the socket to a wallet using the 8h read
+   * session. Private `user:<address>` channels are only (re)subscribed after
+   * the server confirms with `authenticated`.
+   */
+  authenticate(token: string | null) {
+    if (token === this.authToken) return
+    this.authToken = token
+    this.authedAddress = null
+    if (token) this.send({ action: 'auth', token })
+  }
+
+  private isUserChannel(channel: string) {
+    return channel.startsWith('user:')
+  }
 
   connect() {
     if (
@@ -199,15 +218,26 @@ class SpotWebSocket {
         if (process.env.NODE_ENV !== 'production')
           console.log('[SpotWS] Connected')
         this.reconnectAttempts = 0
-        // Re-subscribe to all channels
-        Array.from(this.subscriptions).forEach(channel => {
-          this.send({ action: 'subscribe', channel })
-        })
+        this.authedAddress = null
+        if (this.authToken) this.send({ action: 'auth', token: this.authToken })
+        // Re-subscribe to public channels; user channels wait for auth
+        Array.from(this.subscriptions)
+          .filter(channel => !this.isUserChannel(channel))
+          .forEach(channel => {
+            this.send({ action: 'subscribe', channel })
+          })
       }
 
       this.ws.onmessage = event => {
         try {
           const msg = JSON.parse(event.data)
+          if (msg.type === 'authenticated' && typeof msg.address === 'string') {
+            this.authedAddress = msg.address
+            Array.from(this.subscriptions)
+              .filter(channel => channel === `user:${msg.address}`)
+              .forEach(channel => this.send({ action: 'subscribe', channel }))
+            return
+          }
           if (msg.channel) {
             const callbacks = this.listeners.get(msg.channel)
             if (callbacks) {
@@ -262,6 +292,12 @@ class SpotWebSocket {
     const callbacks = this.listeners.get(channel)
     if (callbacks) callbacks.add(callback)
 
+    if (
+      this.isUserChannel(channel) &&
+      channel !== `user:${this.authedAddress}`
+    ) {
+      return // sent once the server confirms the session (see onmessage)
+    }
     this.send({ action: 'subscribe', channel })
   }
 
