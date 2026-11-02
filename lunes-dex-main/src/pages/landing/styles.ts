@@ -1,2103 +1,1181 @@
-import styled, { keyframes } from 'styled-components'
+import styled, { css, keyframes } from 'styled-components'
+import { Link } from 'react-router-dom'
 
-// ============================================================
-// DESIGN TOKENS
-// ============================================================
-const PURPLE = '#6C38FF' // ← brand primary: CTAs, accents, active states
-const MINT = '#00E5A0' // ← hero gradient title ONLY
-const GOLD = '#FFD700' // ← leaderboard rank #1
-const BG = '#080808'
-const SURFACE = '#111111'
-const SURFACE2 = '#181818'
-const BORDER = 'rgba(255,255,255,0.07)'
-const BORDER_HOVER = 'rgba(255,255,255,0.14)'
-const TEXT = '#F8F8F8'
-const MUTED = 'rgba(248,248,248,0.45)'
+// ─── Tokens (landing palette, from the design handoff) ──────────────
+export const SPACE = '#07070A'
+const EASE = 'cubic-bezier(0, 0, 0.2, 1)'
+const PAD_X = 'clamp(16px, 5vw, 72px)'
 
-// ============================================================
-// ANIMATIONS
-// ============================================================
-export const fadeInUp = keyframes`
-  from { opacity: 0; transform: translateY(28px); }
-  to   { opacity: 1; transform: translateY(0); }
-`
-export const fadeIn = keyframes`
-  from { opacity: 0; }
-  to   { opacity: 1; }
-`
-export const floatY = keyframes`
-  0%, 100% { transform: translateY(0) rotate(var(--r,0deg)); }
-  50%       { transform: translateY(-10px) rotate(var(--r,0deg)); }
-`
-export const orbitSpin = keyframes`
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-`
-export const counterSpin = keyframes`
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(-360deg); }
-`
-export const shimmer = keyframes`
-  0%   { background-position: -200% 0; }
-  100% { background-position:  200% 0; }
-`
-export const pulse = keyframes`
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0; }
-`
-export const terminalType = keyframes`
-  from { opacity: 0; transform: translateX(-6px); }
-  to   { opacity: 1; transform: translateX(0); }
-`
-export const gradientShift = keyframes`
-  0%   { background-position: 0% 50%; }
-  50%  { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+const grotesk = css`
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
 `
 
-interface Anim {
-  $delay?: string
-}
+// ─── Keyframes ──────────────────────────────────────────────────────
+export const orbit = keyframes`to { transform: rotate(360deg) }`
+export const orbitRev = keyframes`to { transform: rotate(-360deg) }`
+const floatY = keyframes`
+  0%, 100% { transform: translateY(0) }
+  50% { transform: translateY(-14px) }
+`
+const dash = keyframes`to { stroke-dashoffset: -40 }`
+const marquee = keyframes`to { transform: translateX(-50%) }`
+const ring = keyframes`
+  0% { transform: scale(0.6); opacity: 0.7 }
+  100% { transform: scale(1.9); opacity: 0 }
+`
+const glow = keyframes`
+  0%, 100% { opacity: 0.55 }
+  50% { opacity: 1 }
+`
+const rise = keyframes`
+  from { opacity: 0; transform: translateY(22px) }
+  to { opacity: 1; transform: none }
+`
+const sweep = keyframes`
+  from { transform: translateX(-120%) skewX(-20deg) }
+  to { transform: translateX(320%) skewX(-20deg) }
+`
 
-// ============================================================
-// LAYOUT
-// ============================================================
-export const Page = styled.div`
-  min-height: 100vh;
-  background: ${BG};
-  color: ${TEXT};
-  overflow-x: hidden;
+// ─── Root ───────────────────────────────────────────────────────────
+/** overflow-x: clip (not hidden) so the sticky diagram keeps working. */
+export const Root = styled.div`
   position: relative;
-  font-family: 'Space Grotesk', sans-serif;
+  min-height: 100vh;
+  background: ${SPACE};
+  color: #ffffff;
+  font-family: 'Inter', sans-serif;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
 
-  /* Subtle dot grid texture */
-  &::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: url("data:image/svg+xml,%3Csvg width='24' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='1' cy='1' r='0.5' fill='%23ffffff' opacity='0.025'/%3E%3C/svg%3E")
-      repeat;
-    pointer-events: none;
-    z-index: 0;
+  a {
+    text-decoration: none;
+  }
+
+  /* Scroll reveal (driven by data-rv set from the motion hook). */
+  [data-reveal][data-rv='pending'] {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+  [data-reveal][data-rv='in'] {
+    transition:
+      opacity 0.8s ${EASE},
+      transform 0.8s ${EASE},
+      border-color 0.25s,
+      box-shadow 0.25s;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 `
 
-// ============================================================
-// NAV
-// ============================================================
-export const Nav = styled.nav<{ $scrolled?: boolean }>`
+const Arrow = css`
+  svg {
+    flex-shrink: 0;
+  }
+`
+
+// ─── Nav ────────────────────────────────────────────────────────────
+export const Nav = styled.nav`
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  z-index: 100;
-  padding: 0 20px;
-  height: 64px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: ${p => (p.$scrolled ? 'rgba(8,8,8,0.88)' : 'transparent')};
-  backdrop-filter: ${p => (p.$scrolled ? 'blur(20px)' : 'none')};
-  -webkit-backdrop-filter: ${p => (p.$scrolled ? 'blur(20px)' : 'none')};
-  border-bottom: 1px solid ${p => (p.$scrolled ? BORDER : 'transparent')};
-  transition: all 0.3s ease;
-  @media (max-width: 768px) {
-    padding: 0 12px;
-  }
-`
-export const Logo = styled.div`
-  display: flex;
-  align-items: center;
-  img {
-    height: 28px;
-    width: auto;
-  }
-`
-export const NavLinks = styled.div`
+  z-index: 50;
+  height: 68px;
   display: flex;
   align-items: center;
   gap: 28px;
-  @media (max-width: 900px) {
-    display: none;
-  }
-`
-export const NavLink = styled.a`
-  color: ${MUTED};
-  text-decoration: none;
-  font-size: 14px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  transition: color 0.2s;
-  &:hover {
-    color: ${TEXT};
-  }
-`
-export const ConnectBtn = styled.button`
-  background: ${PURPLE};
-  color: #fff;
-  border: none;
-  padding: 8px 20px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
-  transition: all 0.2s;
-  &:hover {
-    background: #7d4dff;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(108, 56, 255, 0.4);
-  }
-  &:active {
-    transform: translateY(0) scale(0.96);
+  padding: 0 clamp(16px, 4vw, 48px);
+  border-bottom: 1px solid transparent;
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    backdrop-filter 0.3s ease;
+
+  &[data-scrolled='true'] {
+    background: rgba(7, 7, 10, 0.72);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom-color: rgba(255, 255, 255, 0.06);
   }
 `
 
-// ============================================================
-// HERO
-// ============================================================
-export const HeroSection = styled.section`
+export const LogoLink = styled(Link)`
+  display: flex;
+  align-items: center;
+  img {
+    height: 22px;
+    display: block;
+  }
+`
+
+export const NavLinks = styled.div`
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+`
+
+export const NavLink = styled.button`
+  ${grotesk};
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #b6b6b6;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+  &:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+`
+
+export const NavCta = styled(Link)`
+  ${grotesk};
+  ${Arrow};
+  margin-left: auto;
+  height: 42px;
+  padding: 0 20px;
+  border-radius: 12px;
+  background: #6c38ff;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 0 0 0 rgba(108, 56, 255, 0.5);
+  transition:
+    box-shadow 0.25s,
+    background-color 0.15s;
+  &:hover {
+    background: #5228db;
+    color: #ffffff;
+    box-shadow: 0 0 28px rgba(108, 56, 255, 0.55);
+  }
+`
+
+// ─── Shared section bits ────────────────────────────────────────────
+export const Section = styled.section<{ $pad?: string }>`
+  position: relative;
+  z-index: 1;
+  padding: ${p => p.$pad || `100px ${PAD_X}`};
+`
+
+export const Inner = styled.div`
+  position: relative;
+  max-width: 1240px;
+  margin: 0 auto;
+`
+
+export const SectionHead = styled.div<{ $mb?: number }>`
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+  margin-bottom: ${p => (p.$mb ? `${p.$mb}px` : 0)};
+`
+
+export const Kicker = styled.span`
+  ${grotesk};
+  font-size: 14px;
+  font-weight: 600;
+  color: #ad87ff;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+`
+
+export const H2 = styled.h2`
+  ${grotesk};
+  margin: 0;
+  font-size: clamp(34px, 4.6vw, 60px);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+`
+
+export const Lead = styled.p`
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.65;
+  color: #b6b6b6;
+  max-width: 520px;
+`
+
+// ─── Hero ───────────────────────────────────────────────────────────
+export const Hero = styled.section`
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 120px 40px 80px;
-  position: relative;
-  z-index: 2;
-  text-align: center;
-
-  .desktop-br {
-    display: block;
-  }
-  @media (max-width: 768px) {
-    padding: 100px 20px 60px;
-    .desktop-br {
-      display: none;
-    }
-  }
-
-  /* Subtle top glow */
-  &::before {
-    content: '';
-    position: absolute;
-    top: -15%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 70vw;
-    height: 60vh;
-    background: radial-gradient(
-      ellipse at center,
-      rgba(255, 255, 255, 0.025) 0%,
-      transparent 65%
-    );
-    pointer-events: none;
-    z-index: -1;
-  }
+  padding: 110px ${PAD_X} 120px;
 `
-export const HeroTitle = styled.h1<Anim>`
-  font-size: clamp(64px, 10vw, 128px);
-  font-weight: 800;
-  line-height: 0.95;
-  letter-spacing: -0.04em;
-  margin-bottom: 32px;
-  font-family: 'Space Grotesk', sans-serif;
-  opacity: 0;
-  animation: ${fadeInUp} 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  animation-delay: ${p => p.$delay || '0.1s'};
 
-  span {
-    background: linear-gradient(135deg, ${MINT} 0%, #00ffb4 50%, ${MINT} 100%);
-    background-size: 200% 200%;
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    animation: ${gradientShift} 6s ease infinite;
-  }
+export const Nebula = styled.div<{ $variant: 'violet' | 'green' }>`
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  ${p =>
+    p.$variant === 'violet'
+      ? css`
+          top: -10%;
+          left: -15%;
+          width: 70vw;
+          height: 70vw;
+          max-width: 900px;
+          max-height: 900px;
+          background: radial-gradient(
+            circle,
+            rgba(108, 56, 255, 0.28) 0%,
+            rgba(108, 56, 255, 0.08) 40%,
+            transparent 70%
+          );
+        `
+      : css`
+          bottom: -20%;
+          right: -10%;
+          width: 55vw;
+          height: 55vw;
+          max-width: 760px;
+          max-height: 760px;
+          background: radial-gradient(
+            circle,
+            rgba(38, 208, 124, 0.14) 0%,
+            transparent 65%
+          );
+        `}
 `
-export const HeroSub = styled.p<Anim>`
-  font-size: clamp(16px, 2vw, 20px);
-  color: ${MUTED};
-  max-width: 600px;
-  line-height: 1.65;
-  margin-bottom: 40px;
-  opacity: 0;
-  animation: ${fadeInUp} 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  animation-delay: ${p => p.$delay || '0.2s'};
-`
-export const HeroBtns = styled.div<Anim>`
+
+export const HeroInner = styled(Inner)`
+  width: 100%;
   display: flex;
-  gap: 16px;
   flex-wrap: wrap;
-  justify-content: center;
-  margin-bottom: 80px;
-  opacity: 0;
-  animation: ${fadeInUp} 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  animation-delay: ${p => p.$delay || '0.3s'};
+  align-items: center;
+  gap: 40px;
 `
 
-// Hero Token Orbit
-export const HeroOrbit = styled.div<Anim>`
+export const HeroCopy = styled.div`
+  flex: 1.15 1 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  min-width: 0;
+`
+
+export const H1 = styled.h1`
+  ${grotesk};
+  margin: 0;
+  font-weight: 700;
+  font-size: clamp(44px, 7.2vw, 96px);
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+  animation: ${rise} 0.9s ${EASE} 0.1s both;
+`
+
+export const Gradient = styled.span`
+  background: linear-gradient(100deg, #ad87ff 0%, #6c38ff 45%, #26d07c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+`
+
+export const HeroLead = styled.p`
+  margin: 0;
+  max-width: 560px;
+  font-size: clamp(16px, 1.5vw, 19px);
+  line-height: 1.6;
+  color: #b6b6b6;
+  text-wrap: pretty;
+  animation: ${rise} 0.9s ${EASE} 0.2s both;
+`
+
+export const Ctas = styled.div`
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  animation: ${rise} 0.9s ${EASE} 0.3s both;
+`
+
+export const PrimaryCta = styled(Link)`
+  ${grotesk};
+  ${Arrow};
   position: relative;
-  width: 680px;
-  height: 680px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: -160px;
-  opacity: 0;
-  animation: ${fadeIn} 1s ease forwards;
-  animation-delay: ${p => p.$delay || '0.5s'};
-
-  @media (max-width: 768px) {
-    width: 480px;
-    height: 480px;
-    margin-bottom: -100px;
-  }
-`
-export const dynamicCounterSpin = keyframes`
-  from { transform: rotate(var(--start-angle)); }
-  to   { transform: rotate(var(--end-angle)); }
-`
-export const floatBob = keyframes`
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-8px); }
-`
-
-export const OrbitCenter = styled.div`
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
-  background: rgba(108, 56, 255, 0.1);
-  border: 2px solid rgba(108, 56, 255, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2;
-  box-shadow: 0 0 30px rgba(108, 56, 255, 0.2);
-
-  img {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
-  }
-`
-
-export const OrbitRing = styled.div<{ $radius: number; $duration: number }>`
-  position: absolute;
-  width: ${p => p.$radius * 2}px;
-  height: ${p => p.$radius * 2}px;
-  border-radius: 50%;
-  border: 1px dashed rgba(255, 255, 255, 0.06);
-  animation: ${orbitSpin} ${p => p.$duration}s linear infinite;
-  top: 50%;
-  left: 50%;
-  margin-top: -${p => p.$radius}px;
-  margin-left: -${p => p.$radius}px;
-`
-
-export const OrbitTokenWrapper = styled.div<{
-  $angle: number
-  $radius: number
-}>`
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: rotate(${p => p.$angle}deg) translateX(${p => p.$radius}px);
-  width: 0;
-  height: 0;
-`
-
-export const OrbitTokenInner = styled.div<{
-  $duration: number
-  $angle: number
-}>`
-  position: absolute;
-  width: 56px;
+  overflow: hidden;
   height: 56px;
-  margin-top: -28px;
-  margin-left: -28px;
-  border-radius: 50%;
-  background: ${SURFACE2};
-  border: 1px solid ${BORDER};
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  color: ${TEXT};
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  --start-angle: -${p => p.$angle}deg;
-  --end-angle: calc(-${p => p.$angle}deg - 360deg);
-  animation: ${dynamicCounterSpin} ${p => p.$duration}s linear infinite;
-`
-
-export const OrbitTokenFloat = styled.div<{ $delay: number }>`
-  animation: ${floatBob} 4s ease-in-out infinite;
-  animation-delay: ${p => p.$delay}s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-
-  img {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-  }
-`
-
-// Hero swap card
-export const HeroSwapCard = styled.div<Anim>`
-  background: rgba(17, 17, 17, 0.9);
-  border: 1px solid ${BORDER};
+  padding: 0 28px;
   border-radius: 16px;
-  padding: 24px;
-  width: 100%;
-  max-width: 380px;
-  position: relative;
-  z-index: 3;
-  opacity: 0;
-  animation: ${fadeInUp} 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  animation-delay: ${p => p.$delay || '0.55s'};
-  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.5);
-  margin-top: -20px;
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 24px;
-    right: 24px;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(255, 255, 255, 0.15),
-      transparent
-    );
-    opacity: 1;
-  }
-
-  @media (max-width: 768px) {
-    max-width: 100%;
-  }
-`
-
-// ============================================================
-// SHARED BUTTONS
-// ============================================================
-export const PrimaryBtn = styled.button`
-  background: ${PURPLE};
-  color: #fff;
-  border: none;
-  padding: 14px 32px;
-  border-radius: 6px;
-  font-size: 15px;
-  font-weight: 700;
-  cursor: pointer;
+  background: #6c38ff;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 17px;
   display: flex;
   align-items: center;
   gap: 10px;
+  box-shadow: 0 10px 40px rgba(108, 56, 255, 0.45);
   transition:
     transform 0.2s,
-    box-shadow 0.2s;
-  position: relative;
-  overflow: hidden;
-  letter-spacing: 0.02em;
-
-  &::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(255, 255, 255, 0.18),
-      transparent
-    );
-    animation: ${shimmer} 2.5s infinite;
-  }
-
+    box-shadow 0.25s;
   &:hover {
-    background: #7d4dff;
-    transform: translateY(-3px);
-    box-shadow: 0 12px 30px rgba(108, 56, 255, 0.45);
-    filter: none;
-  }
-  &:active {
-    transform: translateY(0) scale(0.97);
-  }
-  svg {
-    width: 18px;
-    height: 18px;
-  }
-`
-export const SecBtn = styled.button`
-  background: rgba(255, 255, 255, 0.04);
-  color: ${TEXT};
-  border: 1px solid ${BORDER_HOVER};
-  padding: 14px 32px;
-  border-radius: 6px;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  transition: all 0.2s;
-  &:hover {
-    border-color: rgba(255, 255, 255, 0.25);
-    background: rgba(255, 255, 255, 0.07);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-    filter: none;
-  }
-  &:active {
-    transform: translateY(0) scale(0.97);
-  }
-  svg {
-    width: 16px;
-    height: 16px;
-    opacity: 0.7;
-  }
-`
-
-// ============================================================
-// SWAP PREVIEW ELEMENTS (reused from old design)
-// ============================================================
-export const SwapHeader = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  h3 {
-    font-size: 15px;
-    font-weight: 600;
-  }
-  span {
-    font-size: 11px;
-    color: ${MUTED};
-  }
-`
-export const SwapTopStats = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  margin-bottom: 14px;
-`
-export const SwapTopStat = styled.div`
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid ${BORDER};
-  strong {
-    display: block;
-    font-size: 13px;
-    font-weight: 700;
-    color: ${TEXT};
-    margin-bottom: 2px;
-  }
-  span {
-    font-size: 10px;
-    color: ${MUTED};
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-`
-export const SwapField = styled.div<{ $active?: boolean }>`
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid ${p => (p.$active ? BORDER_HOVER : BORDER)};
-  border-radius: 10px;
-  padding: 14px;
-  margin-bottom: 8px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-`
-export const SwapFieldLeft = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  img {
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-  }
-  span {
-    font-weight: 600;
-    font-size: 14px;
-  }
-`
-export const SwapFieldRight = styled.div`
-  text-align: right;
-  .amount {
-    font-size: 20px;
-    font-weight: 700;
-  }
-  .usd {
-    font-size: 11px;
-    color: ${MUTED};
-    margin-top: 2px;
-  }
-`
-export const SwapArrow = styled.div`
-  display: flex;
-  justify-content: center;
-  margin: -4px 0;
-  position: relative;
-  z-index: 2;
-  div {
-    width: 32px;
-    height: 32px;
-    background: ${SURFACE2};
-    border: 1px solid ${BORDER};
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(255, 255, 255, 0.5);
-    svg {
-      width: 14px;
-      height: 14px;
-    }
-  }
-`
-export const SwapButton = styled.div`
-  background: ${PURPLE};
-  color: #fff;
-  border: none;
-  padding: 13px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 800;
-  text-align: center;
-  margin-top: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-  letter-spacing: 0.02em;
-  &:hover {
-    background: #7d4dff;
+    color: #ffffff;
     transform: translateY(-2px);
-    box-shadow: 0 10px 24px rgba(108, 56, 255, 0.35);
-  }
-`
-export const SwapInfo = styled.div`
-  display: flex;
-  justify-content: space-between;
-  margin-top: 10px;
-  font-size: 11px;
-  color: ${MUTED};
-`
-
-// ============================================================
-// STATS BAR
-// ============================================================
-export const StatsBar = styled.section<Anim>`
-  padding: 40px;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeIn} 0.8s ease forwards;
-    animation-delay: ${p => p.$delay || '0s'};
-  }
-  position: relative;
-  z-index: 2;
-  border-top: 1px solid ${BORDER};
-  border-bottom: 1px solid ${BORDER};
-  background: ${SURFACE};
-  @media (max-width: 768px) {
-    padding: 32px 16px;
-  }
-`
-export const StatsGrid = styled.div`
-  max-width: 1200px;
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 0;
-  @media (max-width: 900px) {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  @media (max-width: 560px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-`
-export const StatItem = styled.div`
-  text-align: center;
-  padding: 16px 20px;
-  position: relative;
-
-  & + & {
-    border-left: 1px solid ${BORDER};
-    @media (max-width: 560px) {
-      &:nth-child(2n + 1) {
-        border-left: none;
-      }
-    }
-  }
-`
-export const StatVal = styled.div`
-  font-size: 28px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: ${TEXT};
-`
-export const StatLabel = styled.div`
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: ${MUTED};
-  margin-top: 4px;
-`
-
-// ============================================================
-// SECTION HELPERS
-// ============================================================
-export const Section = styled.section`
-  padding: 120px 40px;
-  max-width: 1200px;
-  margin: 0 auto;
-  position: relative;
-  z-index: 2;
-  @media (max-width: 768px) {
-    padding: 80px 16px;
-  }
-`
-export const DarkSection = styled.section`
-  padding: 120px 40px;
-  background: ${SURFACE};
-  border-top: 1px solid ${BORDER};
-  border-bottom: 1px solid ${BORDER};
-  position: relative;
-  z-index: 2;
-
-  > * {
-    max-width: 1200px;
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  @media (max-width: 768px) {
-    padding: 80px 16px;
-  }
-`
-export const SectionLabel = styled.div`
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: ${PURPLE};
-  text-align: center;
-  margin-bottom: 16px;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.5s ease forwards;
-  }
-`
-export const STitle = styled.h2`
-  font-size: clamp(28px, 4.5vw, 52px);
-  font-weight: 800;
-  text-align: center;
-  margin-bottom: 16px;
-  letter-spacing: -0.03em;
-  font-family: 'Space Grotesk', sans-serif;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: 0.05s;
-  }
-  /* one accent word per title */
-  span {
-    color: ${PURPLE};
-  }
-`
-export const SSub = styled.p`
-  font-size: 17px;
-  color: ${MUTED};
-  text-align: center;
-  max-width: 540px;
-  margin: 0 auto 64px;
-  line-height: 1.65;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: 0.1s;
+    box-shadow: 0 16px 56px rgba(108, 56, 255, 0.65);
   }
 `
 
-// ============================================================
-// HOW LUNEX WORKS — FLOW DIAGRAM
-// ============================================================
-export const FlowSection = styled.section`
-  padding: 120px 40px;
-  max-width: 1200px;
-  margin: 0 auto;
-  position: relative;
-  z-index: 2;
-  @media (max-width: 768px) {
-    padding: 80px 16px;
-  }
-`
-export const flowDashAnim = keyframes`
-  to { stroke-dashoffset: -40; }
-`
-export const flowDashAnimReverse = keyframes`
-  to { stroke-dashoffset: 40; }
-`
-export const corePulse = keyframes`
-  0% { box-shadow: 0 0 0 0 rgba(108,56,255,0.4); }
-  70% { box-shadow: 0 0 0 20px rgba(108,56,255,0); }
-  100% { box-shadow: 0 0 0 0 rgba(108,56,255,0); }
-`
-
-export const FlowDiagram = styled.div`
-  position: relative;
-  width: 100%;
-  max-width: 900px;
-  height: 500px;
-  margin: 40px auto 0;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: 0.15s;
-  }
-  @media (max-width: 768px) {
-    height: auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 32px;
-  }
-`
-
-export const FlowSVG = styled.svg`
+export const Sweep = styled.span`
   position: absolute;
   top: 0;
+  bottom: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
+  width: 40%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.25),
+    transparent
+  );
+  animation: ${sweep} 3.2s ease-in-out 1.2s infinite;
   pointer-events: none;
+`
 
-  .flow-line {
-    fill: none;
-    stroke: rgba(108, 56, 255, 0.2);
-    stroke-width: 2;
-  }
-
-  .flow-anim {
-    fill: none;
-    stroke: rgba(108, 56, 255, 0.8);
-    stroke-width: 2;
-    stroke-dasharray: 8 12;
-    animation: ${flowDashAnim} 1s linear infinite;
-  }
-  .flow-anim-out {
-    fill: none;
-    stroke: rgba(108, 56, 255, 0.8);
-    stroke-width: 2;
-    stroke-dasharray: 8 12;
-    animation: ${flowDashAnimReverse} 1s linear infinite;
-  }
-
-  @media (max-width: 768px) {
-    display: none;
+export const GhostCta = styled.button`
+  ${grotesk};
+  ${Arrow};
+  height: 56px;
+  padding: 0 26px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 17px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+  &:hover {
+    border-color: #6c38ff;
+    background: rgba(108, 56, 255, 0.1);
   }
 `
 
-export const FlowCore = styled.div`
+export const HeroArt = styled.div`
+  flex: 1 1 340px;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+`
+
+export const OrbitStage = styled.div`
+  position: relative;
+  width: min(540px, 82vw, 100%);
+  aspect-ratio: 1;
+  transition: transform 0.4s ${EASE};
+`
+
+export const RingLine = styled.div<{ $inset: string; $border: string }>`
   position: absolute;
-  top: 50%;
+  inset: ${p => p.$inset};
+  border-radius: 50%;
+  border: ${p => p.$border};
+`
+
+/** A rotating ring; its child sits on the top edge. */
+export const OrbitTrack = styled.div<{
+  $inset: string
+  $dur: string
+  $delay: string
+}>`
+  position: absolute;
+  inset: ${p => p.$inset};
+  animation: ${orbit} ${p => p.$dur} linear infinite;
+  animation-delay: ${p => p.$delay};
+`
+
+export const OrbitAnchor = styled.div`
+  position: absolute;
+  top: 0;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 160px;
-  height: 160px;
-  background: ${SURFACE};
-  border: 2px solid #6c38ff;
-  border-radius: 24px;
+`
+
+/** Counter-rotates at the same speed so the token stays upright. */
+export const OrbitBody = styled.div<{
+  $dur: string
+  $delay: string
+  $size: string
+  $glow?: string
+  $border?: string
+}>`
+  width: ${p => p.$size};
+  height: ${p => p.$size};
+  border-radius: 50%;
+  background: #16151c;
+  border: 1px solid ${p => p.$border || 'rgba(255, 255, 255, 0.12)'};
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  z-index: 2;
-  box-shadow: 0 0 30px rgba(108, 56, 255, 0.3);
-  animation: ${corePulse} 2s infinite;
-
-  svg {
-    color: #fff;
-    width: 32px;
-    height: 32px;
-  }
-  span {
-    font-size: 16px;
-    font-weight: 700;
-    color: #fff;
-  }
-
-  @media (max-width: 768px) {
-    position: relative;
-    top: auto;
-    left: auto;
-    transform: none;
-  }
-`
-
-export const FlowNodeGroup = styled.div<{ $side: 'left' | 'right' }>`
-  position: absolute;
-  top: 50%;
-  ${p => (p.$side === 'left' ? 'left: 0;' : 'right: 0;')}
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  z-index: 2;
-
-  @media (max-width: 768px) {
-    position: relative;
-    top: auto;
-    left: auto;
-    right: auto;
-    transform: none;
-    flex-direction: row;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-`
-
-export const FlowNode = styled.div<{ $accent: string }>`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
-  background: ${SURFACE2};
-  border: 1px solid ${BORDER};
-  border-radius: 12px;
-  width: 220px;
-  transition: all 0.3s ease;
-
-  &:hover {
-    border-color: ${p => p.$accent};
-    box-shadow: 0 4px 16px ${p => p.$accent}20;
-    transform: translateX(4px);
-  }
-
-  svg {
-    color: ${p => p.$accent};
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
-  }
-
-  .content {
-    display: flex;
-    flex-direction: column;
-    span {
-      font-size: 14px;
-      font-weight: 600;
-      color: ${TEXT};
-    }
-    small {
-      font-size: 11px;
-      color: rgba(255, 255, 255, 0.5);
-    }
-  }
-
-  @media (max-width: 768px) {
-    width: 160px;
-    padding: 10px 16px;
-    .content small {
-      display: none;
-    }
-    &:hover {
-      transform: translateY(-2px);
-    }
-  }
-`
-
-export const FlowMobileArrow = styled.div`
-  display: none;
-  @media (max-width: 768px) {
-    display: block;
-    width: 2px;
-    height: 30px;
-    background: linear-gradient(
-      180deg,
-      rgba(108, 56, 255, 1),
-      rgba(108, 56, 255, 0.2)
-    );
-  }
-`
-
-// ============================================================
-// ASYMMETRIC LIQUIDITY — REDESIGN COMPLETO
-// ============================================================
-export const AsymSection = styled.section`
-  padding: 0;
-  background:
-    radial-gradient(
-      ellipse 800px 400px at 50% 80%,
-      rgba(0, 229, 160, 0.04) 0%,
-      transparent 70%
-    ),
-    linear-gradient(180deg, ${BG} 0%, #030a06 40%, #030a06 60%, ${BG} 100%);
-  position: relative;
-  z-index: 2;
-  overflow: hidden;
-  border-top: 1px solid rgba(0, 229, 160, 0.12);
-
-  /* Faixa neon horizontal no topo */
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 400px;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      #00e5a0 40%,
-      #00e5a0 60%,
-      transparent
-    );
-    opacity: 0.5;
-    z-index: 3;
-  }
-  @media (max-width: 768px) {
-    padding: 0;
-  }
-`
-
-export const AsymHeader = styled.div`
-  text-align: center;
-  padding: 90px 40px 50px;
-  max-width: 860px;
-  margin: 0 auto;
-  position: relative;
-  z-index: 2;
-  @media (max-width: 768px) {
-    padding: 60px 20px 40px;
-  }
-`
-
-export const AsymTitle = styled.h2`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: clamp(32px, 5vw, 60px);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-  color: #ffffff;
-  margin-bottom: 20px;
-  span {
-    color: #00e5a0;
-    text-shadow: 0 0 40px rgba(0, 229, 160, 0.4);
-  }
-`
-
-export const AsymSubtitle = styled.p`
-  font-size: clamp(15px, 1.8vw, 18px);
-  color: rgba(255, 255, 255, 0.5);
-  max-width: 600px;
-  margin: 0 auto;
-  line-height: 1.7;
-`
-
-export const AsymStat = styled.div`
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 14px;
-  background: rgba(0, 229, 160, 0.07);
-  border: 1px solid rgba(0, 229, 160, 0.2);
-  border-radius: 100px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 2.5px;
-  color: #00e5a0;
-  margin-bottom: 24px;
-`
-
-export const AsymGrid = styled.div`
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 0 40px 100px;
-  display: grid;
-  grid-template-columns: 1fr 1.4fr;
-  gap: 60px;
-  align-items: start;
-  @media (max-width: 960px) {
-    grid-template-columns: 1fr;
-    gap: 40px;
-    padding: 0 20px 80px;
-  }
-`
-export const AsymContent = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding-top: 20px;
-`
-export const AsymFeatureList = styled.div`
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 12px;
-`
-export const AsymFeature = styled.div<Anim & { $accent: string }>`
-  padding: 20px 24px;
-  background: rgba(255, 255, 255, 0.02);
-  border-left: 3px solid ${p => p.$accent};
-  position: relative;
-  overflow: hidden;
-  transition:
-    transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275),
-    background 0.35s ease,
-    box-shadow 0.35s ease;
-  cursor: default;
-  will-change: transform;
-
-  &::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, ${p => p.$accent}12 0%, transparent 60%);
-    opacity: 0;
-    transition: opacity 0.35s ease;
-    z-index: 0;
-  }
-
-  h4 {
-    position: relative;
-    z-index: 1;
-    font-family: 'Space Grotesk', sans-serif;
-    font-size: 17px;
-    font-weight: 700;
-    color: #fff;
-    margin-bottom: 6px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  p {
-    position: relative;
-    z-index: 1;
-    font-size: 13.5px;
-    line-height: 1.65;
-    color: rgba(255, 255, 255, 0.55);
-  }
-
-  &:hover {
-    transform: translateX(8px);
-    background: rgba(255, 255, 255, 0.03);
-    box-shadow: -8px 0 28px ${p => p.$accent}18;
-    &::before {
-      opacity: 1;
-    }
-  }
-`
-
-/* === CHART ÁREA — totalmente nova === */
-const curveReveal = keyframes`
-  from { stroke-dashoffset: 1200; }
-  to   { stroke-dashoffset: 0; }
-`
-const curveRevealBase = keyframes`
-  from { stroke-dashoffset: 1400; }
-  to   { stroke-dashoffset: 0; }
-`
-const priceDotPulse = keyframes`
-  0%, 100% { r: 6px; opacity: 1; }
-  50%       { r: 9px; opacity: 0.7; }
-`
-const scanLine = keyframes`
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(120%); }
-`
-const aiZoneGlow = keyframes`
-  0%, 100% { fill: rgba(0, 229, 160, 0.04); }
-  50%       { fill: rgba(0, 229, 160, 0.10); }
-`
-const labelFloat = keyframes`
-  0%, 100% { transform: translateY(0); }
-  50%       { transform: translateY(-3px); }
-`
-
-export const AsymChartWrap = styled.div<Anim>`
-  position: relative;
-  width: 100%;
-  height: 440px;
-  background: #050c09;
-  border: 1px solid rgba(0, 229, 160, 0.12);
-  border-radius: 4px;
-  overflow: hidden;
-  box-shadow:
-    0 0 0 1px rgba(0, 229, 160, 0.05),
-    0 40px 80px rgba(0, 0, 0, 0.6),
-    inset 0 0 120px rgba(0, 0, 0, 0.5);
-
-  /* HUD scan line */
-  &::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 60%;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(0, 229, 160, 0.4),
-      transparent
-    );
-    animation: ${scanLine} 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    pointer-events: none;
-  }
-
-  @media (max-width: 768px) {
-    height: 320px;
-  }
-`
-
-export const ChartLabels = styled.div`
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 10;
-`
-export const ChartLabel = styled.div<{ $color: string }>`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  color: rgba(255, 255, 255, 0.8);
-  animation: ${labelFloat} 3s ease-in-out infinite;
-  &::before {
-    content: '';
-    width: 8px;
-    height: 8px;
+  box-shadow: ${p => (p.$glow ? `0 0 24px ${p.$glow}` : 'none')};
+  animation: ${orbitRev} ${p => p.$dur} linear infinite;
+  animation-delay: ${p => p.$delay};
+  img {
+    width: 70%;
+    height: 70%;
     border-radius: 50%;
-    background: ${p => p.$color};
-    box-shadow: 0 0 8px ${p => p.$color};
   }
 `
-export const AsymSVG = styled.svg`
+
+export const Core = styled.div`
+  position: absolute;
+  inset: 38%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+`
+
+export const Pulse = styled.span<{ $delay?: string }>`
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(108, 56, 255, 0.6);
+  animation: ${ring} 3s ease-out ${p => p.$delay || '0s'} infinite;
+`
+
+export const Planet = styled.div`
   width: 100%;
   height: 100%;
-
-  .grid {
-    stroke: rgba(0, 229, 160, 0.04);
-    stroke-width: 1;
-  }
-  .axis-x {
-    stroke: rgba(255, 255, 255, 0.08);
-    stroke-width: 1;
-  }
-  .axis-y {
-    stroke: rgba(255, 255, 255, 0.08);
-    stroke-width: 1;
-  }
-  .tick {
-    stroke: rgba(255, 255, 255, 0.06);
-    stroke-width: 1;
-  }
-
-  /* Curva base (xy) - pontilhada e fraca */
-  .base-curve {
-    fill: none;
-    stroke: rgba(255, 255, 255, 0.12);
-    stroke-width: 1.5;
-    stroke-dasharray: 6 4;
-    stroke-dashoffset: 1400;
-    animation: ${curveRevealBase} 2s ease-out 0.3s forwards;
-  }
-
-  /* Curva concentrada VERDE — o destaque */
-  .active-curve {
-    fill: none;
-    stroke: #00e5a0;
-    stroke-width: 2.5;
-    stroke-dasharray: 1200;
-    stroke-dashoffset: 1200;
-    animation: ${curveReveal} 1.8s cubic-bezier(0.16, 1, 0.3, 1) 0.6s forwards;
-    filter: drop-shadow(0 0 6px rgba(0, 229, 160, 0.5));
-  }
-
-  /* Zona AI */
-  .ai-zone {
-    animation: ${aiZoneGlow} 3s ease-in-out infinite;
-    stroke: rgba(0, 229, 160, 0.2);
-    stroke-width: 1;
-    stroke-dasharray: 5 3;
-  }
-
-  /* Fill gradiente */
-  .fill-area {
-    opacity: 0.12;
-  }
-
-  /* Dot de preço */
-  .price-dot {
-    fill: #00e5a0;
-    filter: drop-shadow(0 0 8px rgba(0, 229, 160, 0.9));
-    animation: ${priceDotPulse} 2s ease-in-out infinite;
-  }
-
-  /* Labels dentro do SVG */
-  .svg-label {
-    font-size: 10px;
-    fill: rgba(255, 255, 255, 0.4);
-    font-family: 'Space Grotesk', sans-serif;
-    letter-spacing: 0.5px;
-  }
-  .svg-label-green {
-    font-size: 11px;
-    fill: #00e5a0;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-  }
-`
-export const ModesSection = styled.section`
-  padding: 120px 40px;
-  background: ${SURFACE};
-  border-top: 1px solid ${BORDER};
-  position: relative;
-  z-index: 2;
-  @media (max-width: 768px) {
-    padding: 80px 16px;
-  }
-`
-export const ModesGrid = styled.div`
-  max-width: 1200px;
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  @media (max-width: 1024px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
-  }
-`
-export const ModeCard = styled.div<Anim & { $accent: string }>`
-  background: ${BG};
-  border: 1px solid ${BORDER};
-  border-radius: 12px;
-  padding: 32px 24px;
-  cursor: pointer;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: ${p => p.$delay || '0s'};
-  }
-  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
-  position: relative;
-  overflow: hidden;
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: ${p => p.$accent};
-    opacity: 0.5;
-    transition: opacity 0.3s;
-  }
-
-  &:hover {
-    transform: translateY(-8px);
-    border-color: ${p => p.$accent}30;
-    box-shadow:
-      0 24px 48px rgba(0, 0, 0, 0.4),
-      0 0 0 1px ${p => p.$accent}10 inset;
-    &::before {
-      opacity: 1;
-    }
-  }
-`
-export const ModeTag = styled.div`
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: ${MUTED};
-  margin-bottom: 16px;
-`
-export const ModeIcon = styled.div<{ $accent: string }>`
-  width: 56px;
-  height: 56px;
-  border-radius: 10px;
-  background: ${p => p.$accent}15;
-  border: 1px solid ${p => p.$accent}25;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    #9469ff 0%,
+    #6c38ff 45%,
+    #291193 100%
+  );
+  box-shadow:
+    0 0 80px rgba(108, 56, 255, 0.7),
+    inset -12px -16px 40px rgba(0, 0, 0, 0.45);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 20px;
-  color: ${p => p.$accent};
-  svg {
-    width: 28px;
-    height: 28px;
+  animation: ${floatY} 6s ease-in-out infinite;
+  img {
+    width: 46%;
+    height: 46%;
+    filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.4));
   }
-  transition: all 0.3s;
+`
 
-  ${ModeCard}:hover & {
-    transform: scale(1.1);
-    background: ${p => p.$accent}25;
-  }
-`
-export const ModeTitle = styled.h3`
-  font-size: 20px;
-  font-weight: 700;
-  margin-bottom: 12px;
-  letter-spacing: -0.01em;
-  font-family: 'Space Grotesk', sans-serif;
-`
-export const ModeDesc = styled.p`
-  font-size: 14px;
-  color: ${MUTED};
-  line-height: 1.65;
-  margin-bottom: 24px;
-`
-export const ModeStats = styled.div`
+export const Marquee = styled.div`
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 56px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(7, 7, 10, 0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  overflow: hidden;
   display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
+  align-items: center;
+`
 
-  span {
-    font-size: 11px;
-    font-weight: 600;
-    padding: 4px 10px;
-    border-radius: 4px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid ${BORDER};
-    color: ${MUTED};
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+export const MarqueeTrack = styled.div`
+  display: flex;
+  gap: 48px;
+  white-space: nowrap;
+  animation: ${marquee} 38s linear infinite;
+  padding-left: 48px;
+`
+
+export const Tick = styled.span`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  img {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
   }
 `
 
-// ============================================================
-// AI AGENTS / OPENCLAW
-// ============================================================
-export const AgentSection = styled.section`
-  padding: 120px 40px;
-  position: relative;
-  z-index: 2;
-  @media (max-width: 768px) {
-    padding: 80px 16px;
-  }
+export const TickPair = styled.span`
+  ${grotesk};
+  font-weight: 600;
 `
-export const AgentInner = styled.div`
-  max-width: 1200px;
+
+// ─── Stats ──────────────────────────────────────────────────────────
+export const StatsBand = styled.div`
+  max-width: 1240px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 80px;
-  align-items: center;
-  @media (max-width: 900px) {
-    grid-template-columns: 1fr;
-    gap: 48px;
-  }
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.03),
+    rgba(255, 255, 255, 0.01)
+  );
+  overflow: hidden;
 `
-export const AgentLeft = styled.div``
-export const AgentRight = styled.div<Anim>`
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: 0.2s;
-  }
-`
-export const AgentSteps = styled.div`
+
+export const StatCell = styled.div`
+  padding: 28px 28px 30px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: 0.15s;
-  }
+  gap: 8px;
 `
-export const AgentStep = styled.div`
+
+export const StatLabel = styled.span`
+  font-size: 13px;
+  color: #8a8a8e;
+`
+
+export const StatValue = styled.span`
+  ${grotesk};
+  font-size: clamp(32px, 3.6vw, 46px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+`
+
+// ─── How it works ───────────────────────────────────────────────────
+export const HowLayout = styled.div`
   display: flex;
-  gap: 20px;
+  flex-wrap: wrap;
+  gap: 32px;
   align-items: flex-start;
 `
-export const AgentStepNum = styled.div`
-  font-size: 12px;
-  font-weight: 800;
-  color: ${PURPLE};
-  letter-spacing: 0.06em;
-  min-width: 28px;
-  padding-top: 2px;
-`
-export const AgentStepBody = styled.div`
-  h4 {
-    font-size: 16px;
-    font-weight: 700;
-    margin-bottom: 6px;
-    color: ${TEXT};
-  }
-  p {
-    font-size: 14px;
-    color: ${MUTED};
-    line-height: 1.6;
-  }
-`
 
-// Terminal
-export const AgentTerminal = styled.div`
-  background: #0a0a0a;
-  border: 1px solid ${BORDER};
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 0 40px 80px rgba(0, 0, 0, 0.6);
-`
-export const TerminalBar = styled.div`
+export const DiagramSticky = styled.div<{ $wide: boolean }>`
+  flex: 1 1 340px;
+  position: sticky;
+  top: ${p => (p.$wide ? '110px' : '72px')};
+  z-index: 2;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background: #111;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  justify-content: center;
+  ${p =>
+    !p.$wide &&
+    css`
+      /* Mobile: steps scroll under the diagram, so mask them out. */
+      padding-bottom: 16px;
+      background: linear-gradient(${SPACE} 88%, transparent);
+    `}
+`
 
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    &.red {
-      background: #ff5f57;
-    }
-    &.yellow {
-      background: #febc2e;
-    }
-    &.green {
-      background: #28c840;
-    }
-  }
-
-  .title {
-    font-size: 11px;
-    color: ${MUTED};
-    margin-left: 8px;
-    font-family: 'Space Grotesk', monospace;
+export const DiagramCard = styled.div<{ $wide: boolean }>`
+  position: relative;
+  width: 100%;
+  max-width: ${p =>
+    p.$wide ? 'min(560px, calc(100vh - 150px))' : 'min(380px, 44vh)'};
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: radial-gradient(
+    circle at 50% 40%,
+    rgba(108, 56, 255, 0.16),
+    rgba(10, 10, 14, 0.92) 70%
+  );
+  padding: 12px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+  svg {
+    width: 100%;
+    height: auto;
+    display: block;
   }
 `
-export const TerminalBody = styled.div`
-  padding: 20px;
+
+export const Flow = styled.path`
+  animation: ${dash} 1s linear infinite;
+  transition: opacity 0.5s ease;
+`
+
+export const Node = styled.g`
+  transition: opacity 0.4s;
+`
+
+export const Dots = styled.div`
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: 18px;
+  display: flex;
+  gap: 6px;
+`
+
+export const Dot = styled.button<{ $on: boolean }>`
+  flex: 1;
+  height: 4px;
+  border: none;
+  padding: 0;
+  border-radius: 999px;
+  background: ${p => (p.$on ? '#6C38FF' : 'rgba(255,255,255,0.1)')};
+  cursor: pointer;
+  transition: background-color 0.4s;
+`
+
+export const StepsCol = styled.div`
+  flex: 1 1 300px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-height: 260px;
-`
-export const TerminalLine = styled.div<{ $color: string; $delay?: string }>`
-  font-family: 'Space Grotesk', monospace;
-  font-size: 13px;
-  color: ${p => p.$color};
-  opacity: 0;
-  animation: ${terminalType} 0.4s ease forwards;
-  animation-delay: ${p => p.$delay || '0s'};
-  line-height: 1.5;
-`
-export const TerminalCursor = styled.div`
-  width: 8px;
-  height: 16px;
-  background: rgba(255, 255, 255, 0.6);
-  opacity: 0;
-  animation: ${pulse} 1s step-end infinite;
-  animation-delay: 1.8s;
+  min-width: 0;
 `
 
-// ============================================================
-// COPYTRADE LEADERBOARD
-// ============================================================
-export const LeaderGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  @media (max-width: 900px) {
-    grid-template-columns: 1fr;
-  }
+export const Step = styled.div<{ $on: boolean; $wide: boolean }>`
+  min-height: ${p => (p.$wide ? '62vh' : '46vh')};
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px 0;
+  opacity: ${p => (p.$on ? 1 : 0.32)};
+  transform: translateX(${p => (p.$on ? '0px' : '-8px')});
+  transition:
+    opacity 0.45s ease,
+    transform 0.45s ${EASE};
 `
-export const LeaderCard = styled.div<Anim & { $rank: number }>`
-  background: ${SURFACE};
-  border: 1px solid ${BORDER};
-  border-radius: 12px;
-  padding: 28px 24px;
-  position: relative;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: ${p => p.$delay || '0s'};
-  }
-  transition: all 0.3s;
 
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: ${p =>
-      p.$rank === 1
-        ? GOLD
-        : p.$rank === 2
-          ? 'rgba(192,192,192,0.8)'
-          : 'rgba(205,127,50,0.8)'};
-  }
-
-  &:hover {
-    transform: translateY(-6px);
-    border-color: ${BORDER_HOVER};
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-  }
-`
-export const LeaderRank = styled.div`
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: ${MUTED};
-  text-transform: uppercase;
-  margin-bottom: 16px;
-`
-export const LeaderInfo = styled.div`
+export const StepHead = styled.div`
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 14px;
 `
-export const LeaderAvatar = styled.div`
+
+export const StepBadge = styled.span<{ $on: boolean }>`
+  ${grotesk};
   width: 44px;
   height: 44px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid ${BORDER_HOVER};
+  border-radius: 14px;
+  background: ${p => (p.$on ? '#6C38FF' : 'rgba(255,255,255,0.04)')};
+  border: 1px solid ${p => (p.$on ? '#6C38FF' : 'rgba(255,255,255,0.12)')};
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
-  font-weight: 800;
-  color: ${TEXT};
-  flex-shrink: 0;
-`
-export const LeaderName = styled.div`
-  font-size: 15px;
   font-weight: 700;
-  color: ${TEXT};
-`
-export const LeaderMeta = styled.div`
-  font-size: 11px;
-  color: ${MUTED};
-  margin-top: 2px;
-`
-export const LeaderStats = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 16px;
-  background: ${BG};
-  border-radius: 8px;
-  border: 1px solid ${BORDER};
-`
-export const LeaderStat = styled.div`
-  text-align: center;
-`
-export const StatNum = styled.div<{ $positive?: boolean }>`
-  font-size: 16px;
-  font-weight: 800;
-  color: ${TEXT};
-  letter-spacing: -0.01em;
-`
-export const StatLbl = styled.div`
-  font-size: 10px;
-  color: ${MUTED};
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-top: 2px;
-`
-export const LeaderBtn = styled.button`
-  width: 100%;
-  padding: 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(108, 56, 255, 0.35);
-  background: rgba(108, 56, 255, 0.08);
-  color: ${PURPLE};
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: all 0.2s;
-  letter-spacing: 0.02em;
-  &:hover {
-    background: rgba(108, 56, 255, 0.15);
-    border-color: rgba(108, 56, 255, 0.6);
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(108, 56, 255, 0.15);
-    filter: none;
-  }
-`
-
-// ============================================================
-// STRATEGY MARKETPLACE
-// ============================================================
-export const StratGrid = styled.div`
-  max-width: 1200px;
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  @media (max-width: 900px) {
-    grid-template-columns: 1fr;
-  }
-`
-export const StratCard = styled.div<Anim & { $featured?: boolean }>`
-  background: ${BG};
-  border: 1px solid ${p => (p.$featured ? BORDER_HOVER : BORDER)};
-  border-radius: 12px;
-  padding: 28px 24px;
-  position: relative;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: ${p => p.$delay || '0s'};
-  }
-  transition: all 0.3s;
-  &:hover {
-    transform: translateY(-6px);
-    border-color: ${BORDER_HOVER};
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-  }
-`
-export const StratFeaturedBadge = styled.div`
-  position: absolute;
-  top: -12px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid ${BORDER_HOVER};
-  color: ${TEXT};
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  padding: 4px 14px;
-  border-radius: 20px;
-  white-space: nowrap;
-`
-export const StratHeader = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-`
-export const StratBadge = styled.div<{ $color: string }>`
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 4px 10px;
-  border-radius: 4px;
-  background: ${p => p.$color}18;
-  border: 1px solid ${p => p.$color}30;
-  color: ${p => p.$color};
-`
-export const StratRating = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 700;
-  color: ${GOLD};
-  svg {
-    width: 12px;
-    height: 12px;
-    fill: ${GOLD};
-  }
-`
-export const StratName = styled.h3`
   font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 10px;
-  letter-spacing: -0.01em;
+  transition:
+    background-color 0.4s,
+    border-color 0.4s;
 `
-export const StratDesc = styled.p`
+
+export const StepKicker = styled.span`
+  ${grotesk};
   font-size: 13px;
-  color: ${MUTED};
+  font-weight: 600;
+  color: #ad87ff;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+`
+
+export const StepTitle = styled.h3`
+  ${grotesk};
+  margin: 0;
+  font-size: clamp(26px, 3vw, 38px);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+`
+
+export const StepBody = styled.p`
+  margin: 0;
+  font-size: 17px;
   line-height: 1.65;
-  margin-bottom: 20px;
+  color: #b6b6b6;
+  max-width: 480px;
+  text-wrap: pretty;
 `
-export const StratMetrics = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 20px;
-  padding: 14px;
-  background: ${SURFACE};
-  border-radius: 8px;
-  border: 1px solid ${BORDER};
 
-  .val {
-    display: block;
-    font-size: 15px;
-    font-weight: 800;
-    color: ${TEXT};
-    text-align: center;
-  }
-  .lbl {
-    display: block;
-    font-size: 10px;
-    color: ${MUTED};
-    text-align: center;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-top: 2px;
-  }
+// ─── Benefits ───────────────────────────────────────────────────────
+export const BenefitPlanet = styled.div`
+  position: absolute;
+  top: 10%;
+  right: -12%;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(148, 105, 255, 0.5),
+    rgba(41, 17, 147, 0.35) 55%,
+    transparent 72%
+  );
+  filter: blur(2px);
+  pointer-events: none;
 `
-export const StratMetric = styled.div``
-export const StratBtn = styled.button`
-  width: 100%;
-  padding: 11px;
-  border-radius: 6px;
-  border: none;
-  background: ${PURPLE};
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
+
+export const Stack = styled(Inner)`
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  transition: all 0.2s;
-  letter-spacing: 0.02em;
-  &:hover {
-    background: #7d4dff;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 20px rgba(108, 56, 255, 0.35);
-    filter: none;
-  }
+  flex-direction: column;
+  gap: 40px;
 `
 
-// ============================================================
-// ECOSYSTEM GRID
-// ============================================================
-export const EcoGrid = styled.div`
+export const CardGrid = styled.div<{ $min: number }>`
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(min(${p => p.$min}px, 100%), 1fr)
+  );
   gap: 16px;
-  @media (max-width: 768px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-  @media (max-width: 480px) {
-    grid-template-columns: 1fr;
-  }
-`
-export const EcoCard = styled.div<Anim & { $accent: string }>`
-  background: ${SURFACE};
-  border: 1px solid ${BORDER};
-  border-radius: 10px;
-  padding: 24px 20px;
-  cursor: pointer;
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: ${p => p.$delay || '0s'};
-  }
-  transition: all 0.3s;
-
-  &:hover {
-    transform: translateY(-4px);
-    border-color: ${p => p.$accent}30;
-    box-shadow: 0 16px 32px rgba(0, 0, 0, 0.25);
-  }
-
-  h4 {
-    font-size: 15px;
-    font-weight: 700;
-    margin: 12px 0 6px;
-    color: ${TEXT};
-  }
-  p {
-    font-size: 13px;
-    color: ${MUTED};
-    line-height: 1.55;
-  }
-`
-export const EcoIcon = styled.div<{ $accent: string }>`
-  width: 48px;
-  height: 48px;
-  border-radius: 10px;
-  background: ${p => p.$accent}12;
-  border: 1px solid ${p => p.$accent}20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: ${p => p.$accent};
-  transition: all 0.3s;
-
-  ${EcoCard}:hover & {
-    transform: scale(1.1);
-    background: ${p => p.$accent}22;
-  }
 `
 
-// ============================================================
-// ONBOARDING STEPS
-// ============================================================
-export const StepsWrap = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-  position: relative;
-  @media (max-width: 768px) {
-    grid-template-columns: 1fr;
-  }
-`
-export const Step = styled.div<Anim>`
-  opacity: 0;
-  &.in-view {
-    animation: ${fadeInUp} 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-    animation-delay: ${p => p.$delay || '0s'};
-  }
-  position: relative;
-`
-export const StepNum = styled.div`
-  font-size: 48px;
-  font-weight: 800;
-  color: rgba(255, 255, 255, 0.07);
-  letter-spacing: -0.03em;
-  line-height: 1;
-  margin-bottom: 16px;
-`
-export const StepConnector = styled.div<{ $last?: boolean }>`
-  display: none; /* removed linear connector — grid handles layout */
-`
-export const StepBody = styled.div`
-  background: ${SURFACE};
-  border: 1px solid ${BORDER};
-  border-radius: 12px;
-  padding: 28px 24px;
-  transition: all 0.3s;
-
-  &:hover {
-    border-color: ${BORDER_HOVER};
-    transform: translateY(-4px);
-    box-shadow: 0 16px 32px rgba(0, 0, 0, 0.25);
-  }
-
-  h3 {
-    font-size: 18px;
-    font-weight: 700;
-    margin-bottom: 10px;
-    color: ${TEXT};
-  }
-  p {
-    font-size: 14px;
-    color: ${MUTED};
-    line-height: 1.65;
-  }
-`
-export const StepIcon = styled.div`
-  width: 48px;
-  height: 48px;
-  border-radius: 10px;
-  background: rgba(108, 56, 255, 0.1);
-  border: 1px solid rgba(108, 56, 255, 0.25);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: ${PURPLE};
-  margin-bottom: 16px;
-`
-
-// ============================================================
-// CTA
-// ============================================================
-export const CTASection = styled.section`
-  padding: 120px 40px;
-  position: relative;
-  z-index: 2;
-  @media (max-width: 768px) {
-    padding: 80px 16px;
-  }
-`
-export const CTACard = styled.div`
-  max-width: 720px;
-  margin: 0 auto;
-  text-align: center;
-  background: ${SURFACE};
-  border: 1px solid ${BORDER};
-  border-radius: 20px;
-  padding: 72px 48px;
+export const BenefitCard = styled.div`
   position: relative;
   overflow: hidden;
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 60%;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      rgba(108, 56, 255, 0.5),
-      transparent
-    );
-    opacity: 1;
-  }
-  &::after {
-    content: '';
-    position: absolute;
-    top: -60%;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 60%;
-    height: 100%;
-    background: radial-gradient(
-      ellipse,
-      rgba(108, 56, 255, 0.06) 0%,
-      transparent 70%
-    );
-    pointer-events: none;
-  }
-
-  @media (max-width: 600px) {
-    padding: 48px 24px;
-  }
-`
-export const CTATitle = styled.h2`
-  font-size: clamp(28px, 4vw, 48px);
-  font-weight: 800;
-  font-family: 'Space Grotesk', sans-serif;
-  letter-spacing: -0.03em;
-  margin-bottom: 20px;
-  line-height: 1.1;
-`
-export const CTADesc = styled.p`
-  font-size: 17px;
-  color: ${MUTED};
-  max-width: 440px;
-  margin: 0 auto 36px;
-  line-height: 1.65;
-`
-export const CTABtns = styled.div`
+  padding: 28px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.035),
+    rgba(255, 255, 255, 0.01)
+  );
   display: flex;
-  gap: 16px;
-  justify-content: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 240px;
+  transition:
+    border-color 0.25s,
+    transform 0.25s,
+    box-shadow 0.25s;
+  &:hover {
+    border-color: rgba(108, 56, 255, 0.6);
+    transform: translateY(-6px);
+    box-shadow: 0 24px 60px rgba(108, 56, 255, 0.2);
+  }
+  > *:not(:first-child) {
+    position: relative;
+  }
 `
 
-// ============================================================
-// FOOTER
-// ============================================================
-export const Footer = styled.footer`
-  background: ${SURFACE};
-  border-top: 1px solid ${BORDER};
-  padding: 72px 40px 32px;
+export const CardGlow = styled.div<{ $color: string; $delay: number }>`
+  position: absolute;
+  top: -60px;
+  right: -60px;
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  background: radial-gradient(circle, ${p => p.$color}, transparent 70%);
+  animation: ${glow} 4s ease-in-out infinite;
+  animation-delay: ${p => p.$delay}ms;
+  pointer-events: none;
+`
+
+export const BenefitIcon = styled.div<{ $color: string }>`
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: rgba(108, 56, 255, 0.14);
+  border: 1px solid rgba(108, 56, 255, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: ${p => p.$color};
+`
+
+export const BigRow = styled.div`
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+`
+
+export const Big = styled.span<{ $color: string }>`
+  ${grotesk};
+  font-size: 34px;
+  font-weight: 700;
+  color: ${p => p.$color};
+  letter-spacing: -0.02em;
+`
+
+export const BigSub = styled.span`
+  font-size: 13px;
+  color: #8a8a8e;
+`
+
+export const CardTitle = styled.h3`
+  ${grotesk};
+  margin: 0;
+  font-size: 21px;
+  font-weight: 600;
+`
+
+export const CardBody = styled.p`
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #b6b6b6;
+`
+
+// ─── Modes ──────────────────────────────────────────────────────────
+export const ModeCard = styled(Link)<{ $color: string }>`
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 26px;
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #0e0d13;
+  color: #ffffff;
+  min-height: 300px;
+  height: 100%;
+  transition:
+    border-color 0.25s,
+    transform 0.25s;
+  &:hover {
+    border-color: ${p => p.$color};
+    transform: translateY(-4px);
+    color: #ffffff;
+  }
+`
+
+export const ModeArt = styled.div`
+  height: 110px;
+  position: relative;
+  margin-bottom: 6px;
+`
+
+export const ModeRing = styled.div<{ $ring: string }>`
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  border: 1px dashed ${p => p.$ring};
+  animation: ${orbit} 14s linear infinite;
+`
+
+export const ModeMoon = styled.span<{ $color: string }>`
+  position: absolute;
+  top: -5px;
+  left: 40px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: ${p => p.$color};
+  box-shadow: 0 0 12px ${p => p.$color};
+`
+
+export const ModeIcon = styled.div<{
+  $color: string
+  $tint: string
+  $ring: string
+}>`
+  position: absolute;
+  left: 22px;
+  top: 32px;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: ${p => p.$tint};
+  border: 1px solid ${p => p.$ring};
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: ${p => p.$color};
+`
+
+export const ModeKicker = styled.span<{ $color: string }>`
+  ${grotesk};
+  font-size: 13px;
+  font-weight: 600;
+  color: ${p => p.$color};
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+`
+
+export const ModeTitle = styled.span`
+  ${grotesk};
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+`
+
+export const ModeBody = styled.span`
+  font-size: 15px;
+  line-height: 1.6;
+  color: #b6b6b6;
+  flex: 1;
+`
+
+export const ModeOpen = styled.span`
+  ${grotesk};
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+`
+
+// ─── Ecosystem ──────────────────────────────────────────────────────
+export const EcoLayout = styled(Inner)`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 56px;
+  align-items: center;
+`
+
+export const EcoCopy = styled.div`
+  flex: 1 1 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+`
+
+export const TokenList = styled.div`
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  overflow: hidden;
+  background: rgba(14, 13, 19, 0.8);
+`
+
+export const TokenRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  & + & {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  img {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+  }
+`
+
+export const TokenName = styled.span`
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  b {
+    ${grotesk};
+    font-weight: 600;
+  }
+  small {
+    font-size: 12px;
+    color: #8a8a8e;
+  }
+`
+
+export const TokenPrice = styled.span`
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+`
+
+export const TokenChg = styled.span<{ $color: string }>`
+  min-width: 64px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: ${p => p.$color};
+`
+
+export const EcoArt = styled.div`
+  flex: 1 1 420px;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+`
+
+export const EcoStage = styled.div`
+  position: relative;
+  width: min(500px, 86vw);
+  aspect-ratio: 1;
+`
+
+export const EcoPlanet = styled.div`
+  position: absolute;
+  inset: 18%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 32% 28%,
+    #ad87ff 0%,
+    #6c38ff 35%,
+    #291193 75%,
+    #120640 100%
+  );
+  box-shadow:
+    0 0 120px rgba(108, 56, 255, 0.55),
+    inset -30px -40px 80px rgba(0, 0, 0, 0.55);
+`
+
+export const EcoBands = styled.div`
+  position: absolute;
+  inset: 18%;
+  border-radius: 50%;
+  background: repeating-linear-gradient(
+    -20deg,
+    rgba(255, 255, 255, 0.05) 0 10px,
+    transparent 10px 26px
+  );
+  mix-blend-mode: overlay;
+`
+
+export const EcoRing = styled.div`
+  position: absolute;
+  left: -4%;
+  right: -4%;
+  top: 44%;
+  height: 12%;
+  border-radius: 50%;
+  border: 2px solid rgba(202, 175, 255, 0.35);
+  transform: rotate(-14deg);
+  box-shadow: 0 0 30px rgba(173, 135, 255, 0.25);
+`
+
+// ─── CTA + footer ───────────────────────────────────────────────────
+export const CtaSection = styled.section`
+  position: relative;
+  z-index: 1;
+  padding: 120px ${PAD_X} 0;
+  overflow: hidden;
+`
+
+export const CtaInner = styled.div`
   position: relative;
   z-index: 2;
-  @media (max-width: 768px) {
-    padding: 48px 16px 24px;
-  }
-`
-export const FooterGrid = styled.div`
-  max-width: 1200px;
+  max-width: 860px;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
-  gap: 48px;
-  margin-bottom: 48px;
-  @media (max-width: 900px) {
-    grid-template-columns: 1fr 1fr;
-    gap: 32px;
-  }
-  @media (max-width: 480px) {
-    grid-template-columns: 1fr;
-  }
-`
-export const FooterBrand = styled.div`
-  p {
-    font-size: 14px;
-    color: ${MUTED};
-    line-height: 1.6;
-    margin-top: 16px;
-    max-width: 240px;
-  }
-`
-export const FooterCol = styled.div`
-  h4 {
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: ${TEXT};
-    margin-bottom: 16px;
-  }
-  a {
-    display: block;
-    font-size: 14px;
-    color: ${MUTED};
-    text-decoration: none;
-    margin-bottom: 10px;
-    transition: color 0.2s;
-    &:hover {
-      color: ${PURPLE};
-    }
-  }
-`
-export const FooterBottom = styled.div`
-  max-width: 1200px;
-  margin: 0 auto;
+  text-align: center;
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding-bottom: 200px;
+`
+
+export const CtaTitle = styled.h2`
+  ${grotesk};
+  margin: 0;
+  font-size: clamp(40px, 6vw, 80px);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.035em;
+`
+
+export const CtaLead = styled.p`
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.6;
+  color: #b6b6b6;
+  max-width: 560px;
+`
+
+export const CtaButton = styled(Link)`
+  ${grotesk};
+  ${Arrow};
+  height: 60px;
+  padding: 0 34px;
+  border-radius: 18px;
+  background: #6c38ff;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 14px 60px rgba(108, 56, 255, 0.55);
+  transition:
+    transform 0.2s,
+    box-shadow 0.25s;
+  &:hover {
+    color: #ffffff;
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 20px 80px rgba(108, 56, 255, 0.75);
+  }
+`
+
+/** Planet horizon; parallax keeps the translateX(-50%) (data-center). */
+export const Horizon = styled.div`
+  position: absolute;
+  left: 50%;
+  bottom: -130vw;
+  width: 160vw;
+  height: 160vw;
+  max-width: 2400px;
+  max-height: 2400px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 0%,
+    #3c1cb7 0%,
+    #1b0a7a 18%,
+    #0b0420 40%,
+    #07070a 60%
+  );
+  box-shadow: 0 -20px 120px rgba(108, 56, 255, 0.45);
+  border-top: 2px solid rgba(173, 135, 255, 0.55);
+  pointer-events: none;
+`
+
+export const Footer = styled.footer`
+  position: relative;
+  z-index: 2;
+  padding: 32px ${PAD_X} 40px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: ${SPACE};
+`
+
+export const FooterInner = styled(Inner)`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
   justify-content: space-between;
   align-items: center;
-  padding-top: 24px;
-  border-top: 1px solid ${BORDER};
-  p {
-    font-size: 13px;
-    color: ${MUTED};
+`
+
+export const FooterBrand = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  img {
+    height: 18px;
   }
-  @media (max-width: 600px) {
-    flex-direction: column;
-    gap: 16px;
-    text-align: center;
+  span {
+    font-size: 13px;
+    color: #8a8a8e;
   }
 `
-export const SocialRow = styled.div`
+
+export const FooterLinks = styled.div`
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 22px;
+  font-size: 14px;
   a {
-    color: ${MUTED};
-    transition: color 0.2s;
-    &:hover {
-      color: ${PURPLE};
-    }
-    svg {
-      width: 18px;
-      height: 18px;
-    }
+    color: #ad87ff;
+    transition: color 0.15s ease;
+  }
+  a:hover {
+    color: #caafff;
   }
 `
