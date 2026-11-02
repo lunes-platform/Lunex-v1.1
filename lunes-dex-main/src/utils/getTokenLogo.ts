@@ -15,7 +15,7 @@ const logoCache = new Map<string, string>()
 const KNOWN_LOGOS: Record<string, string> = {
   LUNES: '/img/lunes-logo.svg',
   WLUNES: '/img/lunes-logo.svg',
-  LUSDT: '/img/lusdt.svg',
+  LUSDT: '/img/lusdt.png',
   GMC: '/img/gmc.svg',
   LETH: '/img/leth.svg',
   LBTC: '/img/lbtc.svg'

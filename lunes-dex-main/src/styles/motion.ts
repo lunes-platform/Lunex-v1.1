@@ -298,3 +298,108 @@ export const AnimatedPage = styled.div`
 export const StaggeredGrid = styled.div`
   ${staggerChildren(60)}
 `
+
+// ─── Redesign keyframes (Claude Design handoff) ─────────────────
+// Durations: fast 150 / normal 200 / smooth 300. Entrances decelerate,
+// exits accelerate.
+
+export const pageEnter = keyframes`
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+`
+
+export const modalEnter = keyframes`
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+`
+
+export const sheetEnter = keyframes`
+  from { transform: translateY(100%); }
+  to { transform: none; }
+`
+
+export const riseIn = keyframes`
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+`
+
+export const toastIn = keyframes`
+  from { opacity: 0; transform: translateX(24px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+`
+
+export const toastUp = keyframes`
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+`
+
+export const toastCollapse = keyframes`
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+    max-height: 0;
+    margin-bottom: -10px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+`
+
+export const timerBar = keyframes`
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+`
+
+export const pop = keyframes`
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); }
+`
+
+export const drawStroke = keyframes`
+  from { stroke-dashoffset: 24; }
+  to { stroke-dashoffset: 0; }
+`
+
+export const shake = keyframes`
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+`
+
+export const successRing = keyframes`
+  0% { box-shadow: 0 0 0 0 rgba(38, 208, 124, 0.5); }
+  100% { box-shadow: 0 0 0 18px rgba(38, 208, 124, 0); }
+`
+
+export const bellRing = keyframes`
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(14deg); }
+  40% { transform: rotate(-12deg); }
+  60% { transform: rotate(8deg); }
+  80% { transform: rotate(-4deg); }
+`
+
+export const stepGlow = keyframes`
+  0%, 100% { box-shadow: 0 0 0 0 rgba(108, 56, 255, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(108, 56, 255, 0.25); }
+`
+
+export const flashGreen = keyframes`
+  from { background-color: rgba(38, 208, 124, 0.35); }
+  to { background-color: transparent; }
+`
+
+export const flashRed = keyframes`
+  from { background-color: rgba(255, 40, 76, 0.35); }
+  to { background-color: transparent; }
+`
+
+export const softPulse = keyframes`
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+`
+
+export const skeletonShimmer = keyframes`
+  from { background-position: -200px 0; }
+  to { background-position: 200px 0; }
+`
