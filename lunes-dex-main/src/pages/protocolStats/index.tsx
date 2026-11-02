@@ -324,9 +324,9 @@ const DistPct = styled.span`
 
 // ─── Component ───────────────────────────────────────────────────
 
-const SWAP_FEE_LP = 0.4 // 0.4% to LPs
-const SWAP_FEE_PROTOCOL = 0.05 // 0.05% to team/protocol
-const SWAP_FEE_STAKERS = 0.05 // 0.05% to stakers
+const SWAP_FEE_LP = 0.3 // Pair: 60% of the 0.5% swap fee
+const SWAP_FEE_PROTOCOL = 0.1 // Pair: 20% to team/protocol
+const SWAP_FEE_STAKERS = 0.1 // Pair: 20% to Trading Rewards
 
 // Spot Orderbook fee split
 const SPOT_MAKER_FEE = 0.001 // 0.1% maker fee
@@ -442,28 +442,28 @@ const ProtocolStats: React.FC = () => {
               <BarRow>
                 <BarLabel>
                   <span>Liquidity Providers</span>
-                  <span>0.4% (80%)</span>
+                  <span>0.3% (60%)</span>
                 </BarLabel>
                 <BarTrack>
-                  <BarFill $pct={80} $color="#6C38FF" />
+                  <BarFill $pct={60} $color="#6C38FF" />
                 </BarTrack>
               </BarRow>
               <BarRow>
                 <BarLabel>
                   <span>Team / Protocol</span>
-                  <span>0.05% (10%)</span>
+                  <span>0.1% (20%)</span>
                 </BarLabel>
                 <BarTrack>
-                  <BarFill $pct={10} $color="#00ff88" />
+                  <BarFill $pct={20} $color="#00ff88" />
                 </BarTrack>
               </BarRow>
               <BarRow>
                 <BarLabel>
-                  <span>Stakers</span>
-                  <span>0.05% (10%)</span>
+                  <span>Trading Rewards</span>
+                  <span>0.1% (20%)</span>
                 </BarLabel>
                 <BarTrack>
-                  <BarFill $pct={10} $color="#00d4ff" />
+                  <BarFill $pct={20} $color="#00d4ff" />
                 </BarTrack>
               </BarRow>
             </BarContainer>
@@ -786,7 +786,8 @@ const ProtocolStats: React.FC = () => {
               </SectionTitle>
               <FeeRow>
                 <span>
-                  AMM swap fee (0.05% × {fmtUSD(dailyVolumeUSD)}/day × 30)
+                  AMM swap fee ({SWAP_FEE_PROTOCOL}% × {fmtUSD(dailyVolumeUSD)}
+                  /day × 30)
                 </span>
                 <span>{fmtUSD(monthlySwapTeam)}</span>
               </FeeRow>
@@ -818,9 +819,9 @@ const ProtocolStats: React.FC = () => {
             </Card>
 
             <Note>
-              * Simulation only. Swap fee split requires on-chain contract
-              update to take effect. Governance and listing fees already
-              partially active.
+              * Simulation only. AMM projections use the current Pair contract
+              fee split. Actual revenue depends on executed volume and active
+              fee routing.
             </Note>
           </SliderCard>
         </SliderSection>

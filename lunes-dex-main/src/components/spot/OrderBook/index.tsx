@@ -263,6 +263,7 @@ const EmptyState = styled.div`
 const OrderBook: React.FC = () => {
   const {
     orderbook,
+    selectedPair,
     recentTrades: spotTrades,
     isConnected,
     setSelectedPrice
@@ -365,7 +366,7 @@ const OrderBook: React.FC = () => {
       {viewMode === 'book' ? (
         <>
           <ColHeaders>
-            <span>Price (USDT)</span>
+            <span>Price ({selectedPair.split('/')[1] || '—'})</span>
             <span>Size</span>
             <span>Total</span>
           </ColHeaders>

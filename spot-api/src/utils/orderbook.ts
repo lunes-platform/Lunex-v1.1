@@ -3,6 +3,8 @@
  * Bids sorted descending (highest first), Asks sorted ascending (lowest first).
  */
 
+import { Decimal } from '@prisma/client/runtime/library';
+
 export interface OrderbookEntry {
   orderId: string;
   price: number;
@@ -102,13 +104,13 @@ export class Orderbook {
     makerAddress: string,
   ): MatchResult[] {
     const matches: MatchResult[] = [];
-    let remaining = amount;
+    let remaining = new Decimal(amount.toString());
     const now = Date.now();
     let touched = false;
 
     if (side === 'BUY') {
       // Match against asks (lowest first)
-      while (remaining > 0 && this.asks.length > 0) {
+      while (remaining.gt(0) && this.asks.length > 0) {
         const bestAsk = this.asks[0];
         if (price < bestAsk.price) break; // No more matches
 
@@ -117,7 +119,10 @@ export class Orderbook {
           break;
         }
 
-        const fillAmount = Math.min(remaining, bestAsk.remainingAmount);
+        const fillAmount = Decimal.min(
+          remaining,
+          bestAsk.remainingAmount.toString(),
+        ).toNumber();
         const fillPrice = bestAsk.price; // Maker's price (price-time priority)
 
         matches.push({
@@ -130,8 +135,12 @@ export class Orderbook {
         });
         touched = true;
 
-        bestAsk.remainingAmount -= fillAmount;
-        remaining -= fillAmount;
+        bestAsk.remainingAmount = new Decimal(
+          bestAsk.remainingAmount.toString(),
+        )
+          .minus(fillAmount.toString())
+          .toNumber();
+        remaining = remaining.minus(fillAmount.toString());
 
         if (bestAsk.remainingAmount <= 0) {
           this.asks.shift();
@@ -139,12 +148,12 @@ export class Orderbook {
       }
 
       // If order not fully filled, add remainder to book
-      if (remaining > 0) {
+      if (remaining.gt(0)) {
         this.insertBid({
           orderId,
           price,
           amount,
-          remainingAmount: remaining,
+          remainingAmount: remaining.toNumber(),
           makerAddress,
           timestamp: now,
         });
@@ -152,7 +161,7 @@ export class Orderbook {
       }
     } else {
       // SELL: Match against bids (highest first)
-      while (remaining > 0 && this.bids.length > 0) {
+      while (remaining.gt(0) && this.bids.length > 0) {
         const bestBid = this.bids[0];
         if (price > bestBid.price) break;
 
@@ -161,7 +170,10 @@ export class Orderbook {
           break;
         }
 
-        const fillAmount = Math.min(remaining, bestBid.remainingAmount);
+        const fillAmount = Decimal.min(
+          remaining,
+          bestBid.remainingAmount.toString(),
+        ).toNumber();
         const fillPrice = bestBid.price;
 
         matches.push({
@@ -174,20 +186,24 @@ export class Orderbook {
         });
         touched = true;
 
-        bestBid.remainingAmount -= fillAmount;
-        remaining -= fillAmount;
+        bestBid.remainingAmount = new Decimal(
+          bestBid.remainingAmount.toString(),
+        )
+          .minus(fillAmount.toString())
+          .toNumber();
+        remaining = remaining.minus(fillAmount.toString());
 
         if (bestBid.remainingAmount <= 0) {
           this.bids.shift();
         }
       }
 
-      if (remaining > 0) {
+      if (remaining.gt(0)) {
         this.insertAsk({
           orderId,
           price,
           amount,
-          remainingAmount: remaining,
+          remainingAmount: remaining.toNumber(),
           makerAddress,
           timestamp: now,
         });
@@ -212,16 +228,19 @@ export class Orderbook {
     makerAddress: string,
   ): MatchResult[] {
     const matches: MatchResult[] = [];
-    let remaining = amount;
+    let remaining = new Decimal(amount.toString());
     const now = Date.now();
     let touched = false;
 
     if (side === 'BUY') {
-      while (remaining > 0 && this.asks.length > 0) {
+      while (remaining.gt(0) && this.asks.length > 0) {
         const bestAsk = this.asks[0];
         // Self-trade prevention
         if (bestAsk.makerAddress === makerAddress) break;
-        const fillAmount = Math.min(remaining, bestAsk.remainingAmount);
+        const fillAmount = Decimal.min(
+          remaining,
+          bestAsk.remainingAmount.toString(),
+        ).toNumber();
         const fillPrice = bestAsk.price;
 
         matches.push({
@@ -234,19 +253,26 @@ export class Orderbook {
         });
         touched = true;
 
-        bestAsk.remainingAmount -= fillAmount;
-        remaining -= fillAmount;
+        bestAsk.remainingAmount = new Decimal(
+          bestAsk.remainingAmount.toString(),
+        )
+          .minus(fillAmount.toString())
+          .toNumber();
+        remaining = remaining.minus(fillAmount.toString());
 
         if (bestAsk.remainingAmount <= 0) {
           this.asks.shift();
         }
       }
     } else {
-      while (remaining > 0 && this.bids.length > 0) {
+      while (remaining.gt(0) && this.bids.length > 0) {
         const bestBid = this.bids[0];
         // Self-trade prevention
         if (bestBid.makerAddress === makerAddress) break;
-        const fillAmount = Math.min(remaining, bestBid.remainingAmount);
+        const fillAmount = Decimal.min(
+          remaining,
+          bestBid.remainingAmount.toString(),
+        ).toNumber();
         const fillPrice = bestBid.price;
 
         matches.push({
@@ -259,8 +285,12 @@ export class Orderbook {
         });
         touched = true;
 
-        bestBid.remainingAmount -= fillAmount;
-        remaining -= fillAmount;
+        bestBid.remainingAmount = new Decimal(
+          bestBid.remainingAmount.toString(),
+        )
+          .minus(fillAmount.toString())
+          .toNumber();
+        remaining = remaining.minus(fillAmount.toString());
 
         if (bestBid.remainingAmount <= 0) {
           this.bids.shift();
@@ -306,14 +336,21 @@ export class Orderbook {
 
       for (const entry of entries) {
         const existing = levels.get(entry.price) || 0;
-        levels.set(entry.price, existing + entry.remainingAmount);
+        levels.set(
+          entry.price,
+          new Decimal(existing.toString())
+            .plus(entry.remainingAmount.toString())
+            .toNumber(),
+        );
       }
 
       const result: Array<{ price: number; amount: number; total: number }> =
         [];
       let cumulative = 0;
       for (const [price, amount] of levels) {
-        cumulative += amount;
+        cumulative = new Decimal(cumulative.toString())
+          .plus(amount.toString())
+          .toNumber();
         result.push({ price, amount, total: cumulative });
         if (result.length >= maxLevels) break;
       }

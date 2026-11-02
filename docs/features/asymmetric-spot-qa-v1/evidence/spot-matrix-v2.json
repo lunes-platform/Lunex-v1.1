@@ -1,0 +1,1063 @@
+{
+  "startedAt": "2026-10-18T16:03:44.898Z",
+  "finishedAt": "2026-10-18T16:15:13.625Z",
+  "summary": {
+    "passed": 27,
+    "failed": 0
+  },
+  "network": "ws://127.0.0.1:9944",
+  "vault": "5D4xv6SAZ6hgjhRu21MyLDZE7nHk4n47CMXWs174TqjijbPS",
+  "base": "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT",
+  "quote": "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL",
+  "signaturesEnforced": true,
+  "cases": [
+    {
+      "name": "limit_open_cancel",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "46402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5271632270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "53598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4727415977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "951753"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "46402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5271632270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "53598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4727415977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "951753"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "limit_partial_full",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "46402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5271632270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "53598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4727415977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "951753"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "46102000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5277626270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "53898000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4721400977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "972753"
+      },
+      "settledTrades": [
+        {
+          "id": "ecd826eb-8942-4812-8327-1b0838da17ee",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0xa8c605c477f4ec4fe535f6459f989a240dea80c062f4d93247965e88f9fe3e3d"
+        },
+        {
+          "id": "15d69019-d666-4e42-9da8-4056c51c565e",
+          "price": "2",
+          "amount": "2",
+          "txHash": "0xd11874efa73073eb3a478d1cfa3ca4321638926611189e91764c6d6146865bb8"
+        }
+      ]
+    },
+    {
+      "name": "price_priority",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "46102000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5277626270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "53898000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4721400977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "972753"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "46002000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5279624270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "53998000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4719395977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "979753"
+      },
+      "settledTrades": [
+        {
+          "id": "068a62c7-0cee-48d3-bcdc-ba723841ccd5",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0x1b449af722de85c922f60cbae6f51ae4590e32fedb4733bb180b83194453c160"
+        }
+      ]
+    },
+    {
+      "name": "time_priority",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "46002000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5279624270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "53998000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4719395977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "979753"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45902000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5281622270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54098000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4717390977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "986753"
+      },
+      "settledTrades": [
+        {
+          "id": "edb0e4c0-321a-435b-a7f8-35146d313a6a",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0xd28b68bf8c06277fdb9390f6b2905948b44ab52dbb8a54d1d1870772790bf109"
+        }
+      ]
+    },
+    {
+      "name": "market_buy",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45902000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5281622270",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54098000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4717390977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "986753"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45752000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5284669220",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54248000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4714333352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "997428"
+      },
+      "settledTrades": [
+        {
+          "id": "0f311c0f-04c5-468d-bf7d-e8efa3e7449b",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0xb6fa22c2be67254eda0e31fa2fdfe05276296f9d4b910065db07bc6f4d361f9e"
+        },
+        {
+          "id": "6bb826a2-6352-4dee-927b-51a3de4539db",
+          "price": "2.1",
+          "amount": "0.5",
+          "txHash": "0x73e47ad1234ee0bb90d10e819dfbecbbcc4750e5ae84f62e5b65b01d1d8c6c6e"
+        }
+      ]
+    },
+    {
+      "name": "market_sell",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45752000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5284669220",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54248000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4714333352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "997428"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45602000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5287661720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54398000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4711330352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1007928"
+      },
+      "settledTrades": [
+        {
+          "id": "641c6f58-cc01-4319-89a6-345c5a3bb7bb",
+          "price": "2",
+          "amount": "1.5",
+          "txHash": "0x198e5dfb20cc620254d9b9cf6c7ab95c0866ce8e9a4ffb9564c8d7c21e1ae47e"
+        }
+      ]
+    },
+    {
+      "name": "market_partial",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45602000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5287661720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54398000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4711330352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1007928"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45502000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5289656720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54498000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4709328352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1014928"
+      },
+      "settledTrades": [
+        {
+          "id": "09d44420-4b7f-4410-b9e9-1337134d8021",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0x777508623c2d9694ee4bfe22af5b52f621850650fc1c9f6ccab5d3bb8822a3d3"
+        }
+      ]
+    },
+    {
+      "name": "ioc_partial",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45502000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5289656720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54498000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4709328352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1014928"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5291654720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4707323352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1021928"
+      },
+      "settledTrades": [
+        {
+          "id": "672b4c30-7aff-4c63-a353-dfe258532735",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0x679b033024e253098c22eccf716f06f3454af943125c389044cf1dc215131360"
+        }
+      ]
+    },
+    {
+      "name": "ioc_no_match",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5291654720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4707323352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1021928"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5291654720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4707323352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1021928"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "fok_insufficient",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5291654720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4707323352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1021928"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5291654720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4707323352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1021928"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "fok_full",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45402000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5291654720",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54598000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4707323352",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1021928"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45102000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5297848520",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54898000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4701107852",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1043628"
+      },
+      "settledTrades": [
+        {
+          "id": "3d40deff-c3ea-44b9-825b-9919068ac1b3",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0x702d1caaf4225ea3c0998d52ddf7649b4c93948981ca5e02904da9fd8e26e934"
+        },
+        {
+          "id": "8a8b5c86-a080-435f-af87-1b514ebd162b",
+          "price": "2.1",
+          "amount": "2",
+          "txHash": "0x38dbf05fe3dc5a463fdd3e69ef09088c14444367d7a8b002ca374675b78f1778"
+        }
+      ]
+    },
+    {
+      "name": "stop_buy",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45102000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5297848520",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "54898000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4701107852",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1043628"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45000000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5300995370",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55000000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4697949977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1054653"
+      },
+      "settledTrades": [
+        {
+          "id": "915430df-2af7-4bc4-9b73-450b83ee9edd",
+          "price": "2",
+          "amount": "0.01",
+          "txHash": "0x5b0755a9dc9dab8ed593233ef4a5a5985e28ed695de538e16fab8ee0c1a88e23"
+        },
+        {
+          "id": "69febf70-f7db-4471-8c77-46456a55b33b",
+          "price": "3",
+          "amount": "0.01",
+          "txHash": "0xc2393121cf6d2a2a6825d1d169f759b151314d9747a8caaa93faf5949797310e"
+        },
+        {
+          "id": "3f6514a5-0491-427a-be6c-e0273f63e8a5",
+          "price": "3.1",
+          "amount": "1",
+          "txHash": "0xb65ab1042d688889008888d035c4bd11702a8444d34f4e1f13469f1fe556154e"
+        }
+      ]
+    },
+    {
+      "name": "stop_sell",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "45000000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5300995370",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55000000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4697949977",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1054653"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44898000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5302426835",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55102000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4696513490",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1059675"
+      },
+      "settledTrades": [
+        {
+          "id": "b8490c45-62ea-49e0-a687-13c715731874",
+          "price": "1.5",
+          "amount": "0.01",
+          "txHash": "0x4e4275e99a5a3b3b8bf2c446346d1aba437013fe7ffc700390575eca58cd7ae3"
+        },
+        {
+          "id": "d599eb04-4e9b-45fa-be5e-d0efa3962bef",
+          "price": "1.4",
+          "amount": "1",
+          "txHash": "0xf46f0ffc8cfbb8352c3901cb9eb89a0281755d1bb3ef0461785b7caeb80fbabc"
+        },
+        {
+          "id": "7278514a-ccbd-4646-baca-419b30151d3a",
+          "price": "2",
+          "amount": "0.01",
+          "txHash": "0xdd37ba7edcd8edad8a3457790b4768c2f812a693ae1278d89edcdbf098ae0aa5"
+        }
+      ]
+    },
+    {
+      "name": "stop_limit_buy",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44898000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5302426835",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55102000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4696513490",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1059675"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44796000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5305668785",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55204000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4693260165",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1071050"
+      },
+      "settledTrades": [
+        {
+          "id": "732bd478-d10d-4efd-a90b-57023ce0c9de",
+          "price": "2",
+          "amount": "0.01",
+          "txHash": "0x91224db9ea1f54cdf10c5ffdaf273023596384aff61bab566b358c6a134d7f2f"
+        },
+        {
+          "id": "8e8d7d51-4aae-4897-9c2c-43895b0ceb1d",
+          "price": "3",
+          "amount": "0.01",
+          "txHash": "0x5c9959e3136c1b8cfca3a20797e2fee3fec693587d57bdd2e3605864df016bc1"
+        },
+        {
+          "id": "b7743da8-5bbe-4a80-bc6d-e52dc80d777b",
+          "price": "3.2",
+          "amount": "1",
+          "txHash": "0x1ab9a38cdec10d3401d06fc3dc2b361a81ea6df49904bbe104858dc51dc4e706"
+        }
+      ]
+    },
+    {
+      "name": "stop_limit_sell",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44796000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5305668785",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55204000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4693260165",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1071050"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44694000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307102350",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55306000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691821578",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076072"
+      },
+      "settledTrades": [
+        {
+          "id": "c93d428e-d7a0-4a2b-b6d3-23f8f1d65331",
+          "price": "2",
+          "amount": "0.01",
+          "txHash": "0x482a24ab89bb6e4691231f6d96b457a864512f027243edfc0af9502c7c14398a"
+        },
+        {
+          "id": "33c5004f-98a9-4501-be52-553688a6ee51",
+          "price": "1.5",
+          "amount": "0.01",
+          "txHash": "0x2bdec005458b11e60867ca84e658c7ffd21e2cb80f92e0b897d4faa6c4f3ae49"
+        },
+        {
+          "id": "14d73062-433e-4c79-975e-9d951c7e251b",
+          "price": "1.4",
+          "amount": "1",
+          "txHash": "0x3c05cde69c0cf287ac0ddb64829d0f74e051dc291a16e2cda4ef7f43d8374147"
+        }
+      ]
+    },
+    {
+      "name": "pending_stop_cancel",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44694000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307102350",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55306000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691821578",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076072"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44693000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307122330",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55307000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691801528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076142"
+      },
+      "settledTrades": [
+        {
+          "id": "5dc32df2-d6f9-46ad-842b-6b464e97114f",
+          "price": "2",
+          "amount": "0.01",
+          "txHash": "0x4341d2049a55c5642ee3d266ea6df8eccf6e3ed01a511f5c43de42827a951bde"
+        }
+      ]
+    },
+    {
+      "name": "replay_and_tamper",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44693000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307122330",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55307000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691801528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076142"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44693000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307122330",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55307000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691801528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076142"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "expired_order",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44693000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307122330",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55307000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691801528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076142"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44693000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307122330",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55307000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691801528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076142"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "decimal_sweep",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44693000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307122330",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55307000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691801528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1076142"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "settledTrades": [
+        {
+          "id": "a6d662f5-4930-4351-bd4c-c8282f4f2e7b",
+          "price": "2",
+          "amount": "0.1",
+          "txHash": "0x44fbbf434f64bd0f60b8223c5a2f390a86a36b8430f5f16b5d62fbd5adb0caa3"
+        },
+        {
+          "id": "2e1fa4c5-9fc6-48ab-812c-89e4b5b03034",
+          "price": "2",
+          "amount": "0.2",
+          "txHash": "0x6298a30ed1269983848227dc8ade21bd5f8198cc30c805a5926c06b0866c7521"
+        }
+      ]
+    },
+    {
+      "name": "balances",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "signed_history",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "websocket_book",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "signature_tif_tamper",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "signature_expiry_tamper",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "canonical_decimal_limit",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44663000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5307721730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55337000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4691200028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1078242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5309719730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4689195028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1085242"
+      },
+      "settledTrades": [
+        {
+          "id": "aa8d7f01-c997-4318-b4dc-3784915dedf3",
+          "price": "2",
+          "amount": "1",
+          "txHash": "0x45411b6e892d15fb010d07df8d835256eb635352d5fcf01249c791d6c6c68e0e"
+        }
+      ]
+    },
+    {
+      "name": "legacy_signature_compat",
+      "status": "passed",
+      "pair": "QAX/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5309719730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4689195028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1085242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5309719730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4689195028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1085242"
+      },
+      "settledTrades": []
+    },
+    {
+      "name": "native_limit",
+      "status": "passed",
+      "pair": "LUNES/QUSD",
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5309719730",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "180000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4689195028",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "220000000"
+        },
+        "fees": "1085242"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5309919530",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "170000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4688994528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "230000000"
+        },
+        "fees": "1085942"
+      },
+      "settledTrades": [
+        {
+          "id": "72dccf82-08a9-49f0-a677-09407d240b99",
+          "price": "2",
+          "amount": "0.1",
+          "txHash": "0x2e91deb85aef960d8b16ccc6629852aee365a89ed115bd3029ab34c7069c394b"
+        }
+      ]
+    }
+  ]
+}

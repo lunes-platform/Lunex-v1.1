@@ -316,6 +316,17 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       // Use first available account from the selected wallet
       const account = accounts[0]
+
+      // Fetch real native balance from blockchain
+      if (!contractService.getIsConnected()) {
+        const ready = await contractService.connect(NETWORK)
+        if (!ready) throw new Error('Could not connect to the blockchain')
+      }
+
+      const nativeBalance = await contractService.getNativeBalance(
+        account.address
+      )
+      setBalance(nativeBalance)
       rememberCurrentAccount(account)
       setWalletAddress(account.address)
       setIsConnected(true)
@@ -324,16 +335,6 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         'lunex_last_wallet_source',
         account.meta.source || ''
       )
-
-      // Fetch real native balance from blockchain
-      if (!contractService.getIsConnected()) {
-        await contractService.connect(NETWORK)
-      }
-
-      const nativeBalance = await contractService.getNativeBalance(
-        account.address
-      )
-      setBalance(nativeBalance)
     } catch (err: unknown) {
       setError(parseBlockchainError(err))
       console.error('Error connecting wallet:', err)
@@ -379,9 +380,10 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         throw new Error('Signer not available in the connected wallet')
       }
 
+      const { stringToHex } = await import('@polkadot/util')
       const { signature } = await signRaw({
         address: walletAddress,
-        data: message,
+        data: stringToHex(message),
         type: 'bytes'
       })
 
@@ -435,13 +437,13 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         if (pairInfo) {
           const pairAddress = await contractService.getPair(path[0], path[1])
           const pairToken0 = pairAddress
-            ? (await contractService.getPairToken0(pairAddress)) ?? path[0]
+            ? ((await contractService.getPairToken0(pairAddress)) ?? path[0])
             : path[0]
           const { reserveIn, reserveOut } = normalizeReservesForPath(
             pairToken0,
             path[0],
             pairInfo.reserve0,
-            pairInfo.reserve1,
+            pairInfo.reserve1
           )
           const aIn = BigInt(amountIn)
           const aOut = BigInt(amountOut)
@@ -989,9 +991,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   }
 
   // Obter token_0 canônico do par
-  const getPairToken0 = async (
-    pairAddress: string,
-  ): Promise<string | null> => {
+  const getPairToken0 = async (pairAddress: string): Promise<string | null> => {
     try {
       if (!contractService.getIsConnected()) {
         await contractService.connect(NETWORK)

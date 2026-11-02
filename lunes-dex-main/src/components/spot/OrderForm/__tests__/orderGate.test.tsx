@@ -5,8 +5,9 @@ import { act } from 'react-dom/test-utils'
 import { LimitForm, StopForm, StopLimitForm, MarketForm } from '../index'
 
 // Tell React 18 we are inside an act()-aware test environment (jsdom + vitest).
-;(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT =
-  true
+;(
+  globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true
 
 // Regression test for the "freshly listed pair" order-gate blocker.
 //
@@ -45,7 +46,7 @@ afterEach(() => {
 function setInput(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
-    'value',
+    'value'
   )?.set
   act(() => {
     setter?.call(input, value)
@@ -55,7 +56,7 @@ function setInput(input: HTMLInputElement, value: string): void {
 
 function inputs(): HTMLInputElement[] {
   return Array.from(container.querySelectorAll('input')).filter(
-    (el) => (el as HTMLInputElement).type === 'number',
+    el => (el as HTMLInputElement).type === 'number'
   ) as HTMLInputElement[]
 }
 
@@ -77,7 +78,7 @@ const NEW_PAIR_PROPS = {
   balanceLunes: 100000,
   marketPrice: null,
   makerFee: 0.001,
-  takerFee: 0.0025,
+  takerFee: 0.0025
 }
 
 describe('OrderForm gate — freshly listed pair (no trades, ticker empty)', () => {

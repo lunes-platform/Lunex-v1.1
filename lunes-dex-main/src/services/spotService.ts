@@ -52,6 +52,8 @@ export interface SpotPair {
   symbol: string
   baseName: string
   quoteName: string
+  baseToken: string
+  quoteToken: string
   baseDecimals: number
   quoteDecimals: number
   isNativeBase: boolean
@@ -162,6 +164,7 @@ export interface CreateOrderParams {
   timestamp: number
   signature: string
   makerAddress: string
+  expiresAt?: string
 }
 
 // ─── WebSocket Manager ───
@@ -294,7 +297,24 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   return data
 }
 
+export interface SpotBalance {
+  token: string
+  total: string
+  locked: string
+  available: string
+}
+
 export const spotApi = {
+  async getBalances(
+    address: string,
+    auth: SignedActionAuth
+  ): Promise<{ balances: SpotBalance[] }> {
+    return fetchApi<{ balances: SpotBalance[] }>(
+      `/api/v1/balances?address=${encodeURIComponent(address)}`,
+      { headers: signedAuthHeaders(auth) }
+    )
+  },
+
   // ─── Pairs ───
   async getPairs(): Promise<SpotPair[]> {
     const data = await fetchApi<{ pairs: SpotPair[] }>('/api/v1/pairs')

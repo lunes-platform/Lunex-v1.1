@@ -7,23 +7,18 @@
  *   LP share = 60% of total fee = 0.3% of trade amount
  */
 
-const LP_FEE_RATE = 0.003; // 0.3% — pair/lib.rs LP_FEE_SHARE=600 (60% of 0.5% total)
+const LP_FEE_RATE = 0.003 // 0.3% — pair/lib.rs LP_FEE_SHARE=600 (60% of 0.5% total)
 
 /**
  * Computes the Liquidity Provider fee for a given input amount.
  * Result is LP_FEE_RATE (0.3%) of the input, formatted to `decimals` places
  * with trailing zeros stripped.
  */
-export function computeLpFee(
-  inputAmount: string,
-  decimals: number,
-): string {
-  if (!inputAmount || inputAmount === '0') return '0';
-  const parsed = parseFloat(inputAmount);
-  if (isNaN(parsed) || parsed === 0) return '0';
-  return (parsed * LP_FEE_RATE)
-    .toFixed(decimals)
-    .replace(/\.?0+$/, '');
+export function computeLpFee(inputAmount: string, decimals: number): string {
+  if (!inputAmount || inputAmount === '0') return '0'
+  const parsed = parseFloat(inputAmount)
+  if (isNaN(parsed) || parsed === 0) return '0'
+  return (parsed * LP_FEE_RATE).toFixed(decimals).replace(/\.?0+$/, '')
 }
 
 /**
@@ -33,11 +28,11 @@ export function computeLpFee(
  */
 export function isQuoteReady(
   minimumReceived: string | undefined,
-  _priceImpact: string | undefined,
+  _priceImpact: string | undefined
 ): boolean {
   return (
     typeof minimumReceived === 'string' &&
     minimumReceived !== '' &&
     minimumReceived !== '0'
-  );
+  )
 }

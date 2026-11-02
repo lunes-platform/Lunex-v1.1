@@ -55,7 +55,10 @@ export interface SpotContextState {
   setSelectedPair: (symbol: string) => void
   setWalletAddress: (address: string | null) => void
   createOrder: (
-    params: Omit<CreateOrderParams, 'makerAddress' | 'nonce' | 'signature'> & {
+    params: Omit<
+      CreateOrderParams,
+      'makerAddress' | 'nonce' | 'signature' | 'timestamp'
+    > & {
       signMessage: (message: string) => Promise<string>
     }
   ) => Promise<boolean>
@@ -80,7 +83,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [pairs, setPairs] = useState<SpotPair[]>([])
-  const [selectedPair, setSelectedPairState] = useState('WLUNES/LUSDT')
+  const [selectedPair, setSelectedPairState] = useState('')
   const [ticker, setTicker] = useState<SpotTicker | null>(null)
   const [orderbook, setOrderbook] = useState<OrderbookSnapshot | null>(null)
   const [recentTrades, setRecentTrades] = useState<SpotTrade[]>([])
@@ -129,6 +132,9 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
       try {
         const p = await spotApi.getPairs()
         setPairs(p)
+        setSelectedPairState(current =>
+          p.some(pair => pair.symbol === current) ? current : p[0]?.symbol || ''
+        )
         setIsConnected(true)
       } catch {
         console.warn('[Spot] API not available, using offline mode')
@@ -148,6 +154,8 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
   // ─── Subscribe to pair channels ───
   useEffect(() => {
+    if (!selectedPair) return
+    let active = true
     const obChannel = `orderbook:${selectedPair}`
     const trChannel = `trades:${selectedPair}`
     const tkChannel = `ticker:${selectedPair}`
@@ -158,6 +166,12 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
     const handleTrade = (data: SpotTrade) => {
       setRecentTrades(prev => [data, ...prev.slice(0, 49)])
+      void spotApi
+        .getTicker(selectedPair)
+        .then(value => {
+          if (active) setTicker(value)
+        })
+        .catch(() => undefined)
     }
 
     const handleTicker = (data: SpotTicker) => {
@@ -180,6 +194,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     }
 
     return () => {
+      active = false
       spotWs.unsubscribe(obChannel, handleOrderbook)
       spotWs.unsubscribe(trChannel, handleTrade)
       spotWs.unsubscribe(tkChannel, handleTicker)
@@ -188,8 +203,9 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
   // ─── Fetch initial data when pair changes ───
   useEffect(() => {
+    let active = true
     const fetchPairData = async () => {
-      if (!isConnected) return
+      if (!isConnected || !selectedPair) return
 
       try {
         const [tickerData, obData, tradesData] = await Promise.all([
@@ -200,6 +216,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
             .catch(() => ({ trades: [] }))
         ])
 
+        if (!active) return
         if (tickerData) setTicker(tickerData)
         if (obData) setOrderbook(obData)
         setRecentTrades(tradesData.trades)
@@ -209,27 +226,16 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     }
 
     fetchPairData()
+    return () => {
+      active = false
+    }
   }, [selectedPair, isConnected])
 
-  // ─── Track user channel without signing reads on route/tab changes ───
+  // Private reads remain explicit and signed. User channels are not public.
   useEffect(() => {
-    if (!walletAddress || !isConnected) {
-      setUserOrders([])
-      setUserTrades([])
-      return
-    }
-
-    const userChannel = `user:${walletAddress}`
-    const handleUserUpdate = () => {
-      setUserOrders([])
-      setUserTrades([])
-    }
-    spotWs.subscribe(userChannel, handleUserUpdate)
-
-    return () => {
-      spotWs.unsubscribe(userChannel, handleUserUpdate)
-    }
-  }, [walletAddress, isConnected])
+    setUserOrders([])
+    setUserTrades([])
+  }, [walletAddress])
 
   // ─── Actions ───
 
@@ -255,7 +261,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     async (
       params: Omit<
         CreateOrderParams,
-        'makerAddress' | 'nonce' | 'signature'
+        'makerAddress' | 'nonce' | 'signature' | 'timestamp'
       > & {
         signMessage: (message: string) => Promise<string>
       }
@@ -278,6 +284,8 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           price: params.price,
           stopPrice: params.stopPrice,
           amount: params.amount,
+          timeInForce: params.timeInForce,
+          expiresAt: params.expiresAt,
           nonce,
           timestamp
         })
@@ -290,6 +298,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           price: params.price,
           stopPrice: params.stopPrice,
           amount: params.amount,
+          expiresAt: params.expiresAt,
           timeInForce: params.timeInForce,
           nonce,
           timestamp,

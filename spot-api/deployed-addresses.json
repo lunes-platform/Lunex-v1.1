@@ -1,10 +1,18 @@
 {
-  "wnative": "5Gj6cZim8bFpih7yxoTvGPoTX7UiHo39uSJvfrvqf3kJzAE9",
+  "wnative": "5CfGHgT1MX1kqCQpTNdyWTftqdbNR24KFQVxexw454Tfm5J2",
   "pairCodeHash": "0xbd4411df5490e8323c2f53e77c2d919d05d9402afb578576000623dbf084849b",
-  "factory": "5Cgp15fHEpJQSsqBWex4fYs6jeUUuN7q8jofQsr6hz5Uco21",
-  "router": "5CxhzPMesPJ4MmcvFRizoUPvRWTUkACgbB8JDJLdpbuhhpRn",
-  "staking": "5Fk4p6BoodfDd7JQfnFtASiJLJbHSR5QAhtAtDypP8AaUPUE",
-  "rewards": "5GWUMBwmdvDdeakSWoY58tv2SFuHNwMTWSvvU9i4X4MogguN",
-  "lusdt": "5GKSfDeR93bomRor9b7jXaCGh2fZDsnGUVztdm11Nj3henFh",
-  "pairWlunesLusdt": "5FGXNYFPcnsae9ibSmu72jYqJLA8N7sZF2URcCracvCzKxZT"
+  "factory": "5FB3qUoB23QFuufk5qDctbCRUfm2VE7Gf7akiCL8DxPMMtk4",
+  "router": "5DaJT6GxHfeQPRUkf4hvVsKW1TxgMHzdspaYopUBwD4VPT6y",
+  "staking": "5C4xBz7H9dacV44bkVnkVp1HdQnU3iom9divSzWgWQVxqTek",
+  "rewards": "5DxbSfPxADmg9GXpmerxaLWYJysyhZqAcVvHNsFcWpXaN6Ue",
+  "lusdt": "5DauTc8Wx6tzL99tvvTozmdVYcT6cofyyPonTQeXz54qdtzY",
+  "pairWlunesLusdt": "5Gkj68GT52Ud6kTTRzijFyRTA7hRGC1wH7WvLFXiRoaPj3Me",
+  "lbtc": "5DKiLH9dgytLwLtRQ4zfq8siJMNRmWFCb5VSF9EgPTdmWyMk",
+  "pairLBTCLusdt": "5H3yT6i9wR3x4prL65HqmRvRX1nnirG1uCh887HLttFCGUcx",
+  "leth": "5GDp8hUd5inMdymFxuhyHXyHERmj1kPiY8QxvQ2VgCag1EgB",
+  "pairLETHLusdt": "5EvhyTFHfuRUX1nqiyDHEUhpnK9NFXvvf7UKtPjoLyZ7nsMK",
+  "gmc": "5G6Yw7HJS4eBB8zxaS5V6WFfDLLHXEJUeuqSZQmV8443hfHe",
+  "pairGMCLusdt": "5GtJTwg7jct9gkCWx718gRgomPXAg6ZnRdY7JwLesEfXDA5a",
+  "lup": "5CVV9AJ3EnLyZJo3VAy7RAYPMnHTssD8nKqEoweWhvQn36ST",
+  "pairLUPLusdt": "5EfjbMQ59w8HokokY3nPCZak8fRbBSnsh4Fmb4NvxY1n66Ss"
 }

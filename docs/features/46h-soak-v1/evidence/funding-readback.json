@@ -1,0 +1,47 @@
+{
+  "at": "2026-10-18T17:15:37.168Z",
+  "balances": [
+    {
+      "address": "5FjigHTk1U2o5NGyzAKwcwKLQ4RW47ZoPAyh1aNAnEDLFFmi",
+      "native": "99898603880",
+      "walletBase": "500000000000000",
+      "walletQuote": "20000000000000",
+      "vaultBase": "1000000000000000",
+      "vaultQuote": "100000000000000",
+      "vaultNative": "100000000"
+    },
+    {
+      "address": "5G9Sj1WYemjYSxeWGHojE4iYH3RdRoQ7BbQpmK1wDZbaDTFC",
+      "native": "99898605240",
+      "walletBase": "500000000000000",
+      "walletQuote": "20000000000000",
+      "vaultBase": "1000000000000000",
+      "vaultQuote": "100000000000000",
+      "vaultNative": "100000000"
+    },
+    {
+      "address": "5FCngzVsaroUZeTZbEZXK5HhPuhBAzYaXrsqbXUXXEQRnHXg",
+      "native": "99898605240",
+      "walletBase": "500000000000000",
+      "walletQuote": "20000000000000",
+      "vaultBase": "1000000000000000",
+      "vaultQuote": "100000000000000",
+      "vaultNative": "100000000"
+    },
+    {
+      "address": "5Eq9bAvZrVJt6NVfvemQbg9FuvhJuKDybZjzGj5ZG4cGrdxC",
+      "native": "99898605240",
+      "walletBase": "500000000000000",
+      "walletQuote": "20000000000000",
+      "vaultBase": "1000000000000000",
+      "vaultQuote": "100000000000000",
+      "vaultNative": "100000000"
+    }
+  ],
+  "reserves": [
+    "0x0000000000000000002386f26fc10000",
+    200000000000000,
+    1792343610
+  ],
+  "signatureVerificationEnforced": true
+}

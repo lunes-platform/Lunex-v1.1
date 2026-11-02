@@ -31,7 +31,7 @@ export const LUNES_TOKEN: Token = {
   tokenPrice: 'Unavailable',
   address: NATIVE_SENTINEL,
   decimals: NATIVE_DECIMALS,
-  isNative: true,
+  isNative: true
 }
 
 type TokenLike = {
@@ -97,7 +97,7 @@ export type TradeClassification =
  *  call/approval it implies. LUNES<->WLUNES is a 1:1 wrap/unwrap, not a swap. */
 export const classifyTrade = (
   from: TokenInput,
-  to: TokenInput,
+  to: TokenInput
 ): TradeClassification => {
   const fromLunes = isLunes(from)
   const toLunes = isLunes(to)
@@ -109,20 +109,20 @@ export const classifyTrade = (
     return {
       kind: 'swap',
       method: 'swapExactNativeForTokens',
-      needsApprove: false,
+      needsApprove: false
     }
   }
   if (toLunes) {
     return {
       kind: 'swap',
       method: 'swapExactTokensForNative',
-      needsApprove: true,
+      needsApprove: true
     }
   }
   return {
     kind: 'swap',
     method: 'swapExactTokensForTokens',
-    needsApprove: true,
+    needsApprove: true
   }
 }
 

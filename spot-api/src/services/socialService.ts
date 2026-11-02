@@ -529,7 +529,9 @@ export const socialService = {
           );
         }
         if (riskConfig.stopLossPct != null) {
-          data.stopLossPct = new Prisma.Decimal(riskConfig.stopLossPct.toString());
+          data.stopLossPct = new Prisma.Decimal(
+            riskConfig.stopLossPct.toString(),
+          );
         }
         if (riskConfig.maxDrawdownPct != null) {
           data.maxDrawdownPct = new Prisma.Decimal(

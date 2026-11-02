@@ -1,0 +1,145 @@
+{
+  "transactions": [
+    {
+      "method": "withdrawPsp22",
+      "hash": "0x37a347393e43251c5aa917632bd807d397e78259e4aa0352a74552fba30898e5",
+      "events": [
+        "balances.Withdraw",
+        "contracts.ContractEmitted",
+        "contracts.Called",
+        "contracts.ContractEmitted",
+        "contracts.Called",
+        "balances.Deposit",
+        "balances.Deposit",
+        "transactionPayment.TransactionFeePaid",
+        "system.ExtrinsicSuccess"
+      ]
+    },
+    {
+      "method": "approve",
+      "hash": "0x541b7d513c18bfd2ba2b2bb4fa6b90522aff4899100b3cad096254a7d1629fdf",
+      "events": [
+        "balances.Withdraw",
+        "contracts.ContractEmitted",
+        "contracts.Called",
+        "balances.Deposit",
+        "balances.Deposit",
+        "transactionPayment.TransactionFeePaid",
+        "system.ExtrinsicSuccess"
+      ]
+    },
+    {
+      "method": "depositPsp22",
+      "hash": "0xe6aedbedc0dfc4b0905df44119dcd2a1c58c6dd3e0918ec65566117050d94c93",
+      "events": [
+        "balances.Withdraw",
+        "contracts.ContractEmitted",
+        "contracts.Called",
+        "contracts.ContractEmitted",
+        "contracts.Called",
+        "balances.Deposit",
+        "balances.Deposit",
+        "transactionPayment.TransactionFeePaid",
+        "system.ExtrinsicSuccess"
+      ]
+    },
+    {
+      "method": "withdrawNative",
+      "hash": "0x39ab811fa5b609aa7197c22b0380ee3c54645112ffa7d5ebd1d7d8aaf48493c6",
+      "events": [
+        "balances.Withdraw",
+        "balances.Transfer",
+        "contracts.ContractEmitted",
+        "contracts.Called",
+        "balances.Deposit",
+        "balances.Deposit",
+        "transactionPayment.TransactionFeePaid",
+        "system.ExtrinsicSuccess"
+      ]
+    },
+    {
+      "method": "depositNative",
+      "hash": "0x3b544fae793b52fe8f375c73687a39e4bec1033d6cae44539aabba14fe153234",
+      "events": [
+        "balances.Withdraw",
+        "balances.Transfer",
+        "contracts.ContractEmitted",
+        "contracts.Called",
+        "balances.Deposit",
+        "balances.Deposit",
+        "transactionPayment.TransactionFeePaid",
+        "system.ExtrinsicSuccess"
+      ]
+    }
+  ],
+  "negative": [
+    {
+      "method": "withdrawPsp22",
+      "caller": "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+      "result": {
+        "err": "WithdrawExceedsBalance"
+      }
+    },
+    {
+      "method": "withdrawNative",
+      "caller": "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+      "result": {
+        "err": "WithdrawExceedsBalance"
+      }
+    },
+    {
+      "method": "withdrawPsp22",
+      "caller": "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw",
+      "result": {
+        "err": "WithdrawExceedsBalance"
+      }
+    },
+    {
+      "method": "withdrawNative",
+      "caller": "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw",
+      "result": {
+        "err": "WithdrawExceedsBalance"
+      }
+    },
+    {
+      "method": "withdrawNative",
+      "caller": "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw",
+      "result": {
+        "err": "ZeroAmount"
+      }
+    }
+  ],
+  "before": {
+    "walletQax": "50000000000",
+    "contractQax": "100000000000",
+    "vaultQax": "43563000000",
+    "vaultNative": "170000000",
+    "contractNative": "400000500",
+    "fees": "1155942"
+  },
+  "afterTokenWithdraw": {
+    "walletQax": "50100000000",
+    "contractQax": "99900000000",
+    "vaultQax": "43463000000",
+    "vaultNative": "170000000",
+    "contractNative": "400000500",
+    "fees": "1155942"
+  },
+  "afterNativeWithdraw": {
+    "walletQax": "50000000000",
+    "contractQax": "100000000000",
+    "vaultQax": "43563000000",
+    "vaultNative": "160000000",
+    "contractNative": "390000500",
+    "fees": "1155942"
+  },
+  "after": {
+    "walletQax": "50000000000",
+    "contractQax": "100000000000",
+    "vaultQax": "43563000000",
+    "vaultNative": "170000000",
+    "contractNative": "400000500",
+    "fees": "1155942"
+  },
+  "status": "passed"
+}

@@ -175,7 +175,7 @@ Representative result shape:
 {
   "nonce": "1709689254000-ab12cd34",
   "timestamp": 1709689254000,
-  "message": "lunex-order:BTC/USDT:BUY:LIMIT:62000:0:0.0100:1709689254000-ab12cd34:1709689254000",
+  "message": "lunex-order-v2:BTC/USDT:BUY:LIMIT:62000:0:0.01:1709689254000-ab12cd34:1709689254000:GTC:0",
   "order": {
     "pairSymbol": "BTC/USDT",
     "side": "BUY",
@@ -197,7 +197,7 @@ This must happen outside MCP.
 Example signed message target:
 
 ```text
-lunex-order:BTC/USDT:BUY:LIMIT:62000:0:0.0100:1709689254000-ab12cd34:1709689254000
+lunex-order-v2:BTC/USDT:BUY:LIMIT:62000:0:0.01:1709689254000-ab12cd34:1709689254000:GTC:0
 ```
 
 ### 8. Agent submits the signed order

@@ -27,7 +27,7 @@ const prefetchers: Record<string, Prefetcher> = {
   '/affiliates': () => import('pages/affiliates'),
   '/governance': () => import('pages/governance'),
   '/protocol-stats': () => import('pages/protocolStats'),
-  '/docs': () => import('pages/docs'),
+  '/docs': () => import('pages/docs')
 }
 
 // Tracks paths already prefetched in this session to avoid re-invoking import()

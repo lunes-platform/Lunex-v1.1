@@ -267,7 +267,12 @@ export const Landing: React.FC = () => {
           </S.SwapTopStats>
           <S.SwapField $active>
             <S.SwapFieldLeft>
-              <img src="/img/lunes-green.svg" alt="LUNES" width={26} height={26} />
+              <img
+                src="/img/lunes-green.svg"
+                alt="LUNES"
+                width={26}
+                height={26}
+              />
               <span>LUNES</span>
             </S.SwapFieldLeft>
             <S.SwapFieldRight>

@@ -305,13 +305,16 @@ const OrderHistory: React.FC = () => {
   const tradeHistory = useMemo(() => {
     if (isConnected && userTrades.length > 0) {
       return userTrades.map(t => {
-        const isMaker =
-          t.makerAddress === t.takerAddress ? false : t.makerFee !== '0'
+        const isMaker = t.makerAddress === walletAddress
         const feeVal = parseFloat(isMaker ? t.makerFee : t.takerFee)
         return {
           id: t.id,
           pair: t.pair?.symbol || selectedPair,
-          side: t.side.toLowerCase() as 'buy' | 'sell',
+          side: (isMaker
+            ? t.side === 'BUY'
+              ? 'sell'
+              : 'buy'
+            : t.side.toLowerCase()) as 'buy' | 'sell',
           price: parseFloat(t.price),
           amount: parseFloat(t.amount),
           fee: feeVal,
@@ -324,7 +327,7 @@ const OrderHistory: React.FC = () => {
       })
     }
     return []
-  }, [isConnected, userTrades, selectedPair])
+  }, [isConnected, userTrades, selectedPair, walletAddress])
 
   const handleCancel = async (orderId: string) => {
     await cancelOrder(orderId, signMessage)

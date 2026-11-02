@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSDK, parseBlockchainError } from '../context/SDKContext'
-import { humanPrice } from '../utils/reserveUtils'
+import { humanPrice, normalizeReservesForPath } from '../utils/reserveUtils'
 import { LP_TOKEN_DECIMALS } from '../config/contracts'
 import { isLunes, toRoutingAddress } from '../utils/nativeToken'
 
@@ -41,7 +41,10 @@ interface UseLiquidityReturn {
   setAmountB: (amount: string) => void
   setSlippage: (slippage: number) => void
   addLiquidity: () => Promise<boolean>
-  removeLiquidity: (lpAmount: string, receiveNative?: boolean) => Promise<boolean>
+  removeLiquidity: (
+    lpAmount: string,
+    receiveNative?: boolean
+  ) => Promise<boolean>
   refreshPoolInfo: () => Promise<void>
 }
 
@@ -80,6 +83,15 @@ const useLiquidity = (): UseLiquidityReturn => {
         const reserve0 = BigInt(pairInfo.reserve0)
         const reserve1 = BigInt(pairInfo.reserve1)
         const totalSupply = BigInt(pairInfo.totalSupply)
+        const pairToken0 =
+          (await sdk.getPairToken0(pairInfo.address)) ?? routedA
+        const { reserveIn: reserveA, reserveOut: reserveB } =
+          normalizeReservesForPath(
+            pairToken0,
+            routedA,
+            pairInfo.reserve0,
+            pairInfo.reserve1
+          )
 
         let lpBalance = '0'
         let poolShare = '0'
@@ -101,8 +113,6 @@ const useLiquidity = (): UseLiquidityReturn => {
         let token1Price = '0'
 
         if (reserve0 > BigInt(0) && reserve1 > BigInt(0) && tokenA && tokenB) {
-          const pairToken0 =
-            (await sdk.getPairToken0(pairInfo.address)) ?? routedA
           const decimals0 =
             pairToken0.toLowerCase() === routedA.toLowerCase()
               ? tokenA.decimals
@@ -118,7 +128,7 @@ const useLiquidity = (): UseLiquidityReturn => {
             pairInfo.reserve0,
             pairInfo.reserve1,
             decimals0,
-            decimals1,
+            decimals1
           ).toString()
           token1Price = humanPrice(
             pairToken0,
@@ -126,14 +136,15 @@ const useLiquidity = (): UseLiquidityReturn => {
             pairInfo.reserve0,
             pairInfo.reserve1,
             decimals0,
-            decimals1,
+            decimals1
           ).toString()
         }
 
         setPoolInfo({
           pairAddress: pairInfo.address,
-          reserve0: pairInfo.reserve0,
-          reserve1: pairInfo.reserve1,
+          // Consumers use these reserves in the selected A/B order.
+          reserve0: reserveA.toString(),
+          reserve1: reserveB.toString(),
           totalSupply: pairInfo.totalSupply,
           token0Price,
           token1Price,
@@ -152,10 +163,10 @@ const useLiquidity = (): UseLiquidityReturn => {
     }
   }, [tokenA, tokenB, sdk])
 
-  // Atualizar info quando mudar tokens
+  // Refresh the position when the wallet changes as well as the token pair.
   useEffect(() => {
     refreshPoolInfo()
-  }, [tokenA, tokenB])
+  }, [tokenA, tokenB, sdk.walletAddress])
 
   // Calcular amountB baseado em amountA e reserves
   useEffect(() => {

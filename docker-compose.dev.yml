@@ -43,6 +43,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # ── Redis (matching engine locks, caching) ─────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ── Spot API ──────────────────────────────────────────────────
   api:
     build:
@@ -52,11 +67,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - ./docker/.env.docker
     environment:
       <<: *common-env
+      NODE_ENV: development
       DATABASE_URL: postgresql://lunex:lunex_dev@postgres:5432/lunex_spot?schema=public
+      REDIS_URL: redis://redis:6379
     ports:
       - "4000:4000"
       - "4001:4001"
@@ -89,6 +108,7 @@ services:
         REACT_APP_ENABLE_STAKING: "true"
         REACT_APP_ENABLE_REWARDS: "true"
         REACT_APP_DEV_MODE: "false"
+        LUNEX_FRONTEND_STRICT_BUILD: "false"
     restart: unless-stopped
     depends_on:
       api:
@@ -112,13 +132,15 @@ services:
       DATABASE_URL: postgresql://lunex:lunex_dev@postgres:5432/lunex_spot?schema=public
       NEXTAUTH_URL: http://localhost:8080/admin
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me-in-production}
+      AUTH_TRUST_HOST: "true"
       NEXT_PUBLIC_API_URL: http://api:4000
       PORT: "3001"
     ports:
       - "3001:3001"
       # Admin available at http://localhost:3001 and via nginx at http://localhost:8080/admin
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3001 || exit 1"]
+      # A raiz redireciona (307) para o login quando não autenticado — considerar 2xx/3xx saudável.
+      test: ["CMD-SHELL", "wget --spider -S http://localhost:3001 2>&1 | grep -qE 'HTTP/1.1 (2|3)0[0-9]' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -211,3 +233,4 @@ services:
 
 volumes:
   pgdata:
+  redisdata:

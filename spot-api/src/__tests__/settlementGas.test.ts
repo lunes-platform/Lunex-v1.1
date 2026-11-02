@@ -65,12 +65,16 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
   const gasRequired = makeWeight(123_000_000_000n, 2_000_000n);
 
   let createTypeSpy: jest.Mock;
+  let submittedNonces: Array<bigint | undefined>;
   let queryCancelGas: CapturedGas | null;
   let txCancelGas: CapturedGas | null;
   let querySettleGas: CapturedGas | null;
   let txSettleGas: CapturedGas | null;
 
   beforeEach(() => {
+    submittedNonces = [];
+    svc.nextRelayerNonce = null;
+    svc.nonceLock = Promise.resolve();
     queryCancelGas = null;
     txCancelGas = null;
     querySettleGas = null;
@@ -104,9 +108,10 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
         record(gas);
         return {
           signAndSend: (_signer: unknown, ...rest: any[]) => {
-            const cb = (
-              typeof rest[0] === 'function' ? rest[0] : rest[1]
-            ) as (r: any) => void;
+            submittedNonces.push(rest[0]?.nonce);
+            const cb = (typeof rest[0] === 'function' ? rest[0] : rest[1]) as (
+              r: any,
+            ) => void;
             cb({
               status: { isInBlock: true, isFinalized: true },
               txHash: { toHex: () => '0xfeed' },
@@ -151,7 +156,9 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
     svc.cancelOrderForMethodKey = 'cancel_order_for';
     jest.spyOn(svc, 'ensureReady').mockResolvedValue(true);
     // Trust-source check is signature-specific; bypass for gas-only assertions.
-    jest.spyOn(svc, 'assertSettlementInputTrusted').mockResolvedValue(undefined);
+    jest
+      .spyOn(svc, 'assertSettlementInputTrusted')
+      .mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -159,6 +166,48 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
     svc.api = null;
     svc.contract = null;
     svc.relayer = null;
+  });
+
+  it.each(['MARKET', 'STOP'])(
+    'encodes an unlimited BUY %s consistently across fills',
+    (type) => {
+      const pair = {
+        baseToken: 'base-token',
+        quoteToken: 'quote-token',
+        baseDecimals: 8,
+        quoteDecimals: 6,
+        isNativeBase: false,
+        isNativeQuote: false,
+      };
+      const order = {
+        makerAddress: 'buyer',
+        side: 'BUY',
+        type,
+        price: '0',
+        amount: '1.5',
+        filledAmount: '0',
+        nonce: '123',
+        signature: '0x' + 'ab'.repeat(64),
+        expiresAt: null,
+      };
+      const first = svc.toSignedOrder(pair, order);
+      const next = svc.toSignedOrder(pair, { ...order, filledAmount: '1' });
+      expect(first.price).toBe(((1n << 128n) - 1n).toString());
+      expect(next.price).toBe(first.price);
+      expect(svc.toSignedOrder(pair, { ...order, side: 'SELL' }).price).toBe(
+        '0',
+      );
+      expect(
+        svc.toSignedOrder(pair, { ...order, type: 'LIMIT', price: '2' }).price,
+      ).toBe('2000000');
+    },
+  );
+
+  it('reserves one relayer nonce sequence for trades and cancellations', async () => {
+    const first = await svc.nextNonce();
+    await settlementService.cancelOrderFor('maker-address', '123');
+    const third = await svc.nextNonce();
+    expect([first, ...submittedNonces, third]).toEqual([0n, 1n, 2n]);
   });
 
   it('cancel_order_for dry-run uses an explicit WeightV2, never gasLimit:-1', async () => {
@@ -196,6 +245,7 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
         isNativeBase: true,
         isNativeQuote: false,
         baseDecimals: 8,
+        quoteDecimals: 8,
       },
       makerOrder: {
         makerAddress: 'maker-1',
@@ -248,13 +298,19 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
     svc.contract.query.is_nonce_used = jest.fn(
       (_addr: string, gas: CapturedGas) => {
         usedGas = gas;
-        return { output: { toString: () => 'false' }, result: { isErr: false } };
+        return {
+          output: { toString: () => 'false' },
+          result: { isErr: false },
+        };
       },
     );
     svc.contract.query.is_nonce_cancelled = jest.fn(
       (_addr: string, gas: CapturedGas) => {
         cancelledGas = gas;
-        return { output: { toString: () => 'false' }, result: { isErr: false } };
+        return {
+          output: { toString: () => 'false' },
+          result: { isErr: false },
+        };
       },
     );
     svc.contract.query.get_balance = jest.fn(
@@ -266,7 +322,11 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
 
     await settlementService.isNonceUsed('user-address', '1700000000001');
     await settlementService.isNonceCancelled('user-address', '1700000000001');
-    await settlementService.getVaultBalance('user-address', 'token-address', false);
+    await settlementService.getVaultBalance(
+      'user-address',
+      'token-address',
+      false,
+    );
 
     for (const g of [usedGas, cancelledGas, balanceGas]) {
       expect(g).not.toBeNull();

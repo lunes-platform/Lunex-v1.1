@@ -197,7 +197,12 @@ export const affiliateService = {
         // error is a real DB failure and must propagate.
         if (isUniqueViolation(error)) {
           log.debug(
-            { sourceTradeId, sourceAddr, beneficiary: ancestor.address, level: ancestor.level },
+            {
+              sourceTradeId,
+              sourceAddr,
+              beneficiary: ancestor.address,
+              level: ancestor.level,
+            },
             '[Affiliate] skipping duplicate commission (P2002)',
           );
           continue;

@@ -124,7 +124,6 @@ const ActionBtn = styled.button<{ isFav?: boolean }>`
   }
 `
 
-
 const PriceHeader: React.FC = () => {
   const { ticker, orderbook, selectedPair, walletAddress } = useSpot()
   const { isFavorite, toggleFavorite } = useFavorites(walletAddress)
@@ -138,7 +137,8 @@ const PriceHeader: React.FC = () => {
   const high = ticker?.high24h ?? 0
   const low = ticker?.low24h ?? 0
   const volume = ticker?.volume24h ?? 0
-  const turnover = volume * price
+  const turnover = ticker?.quoteVolume24h ?? 0
+  const [baseSymbol, quoteSymbol] = selectedPair.split('/')
   const positive = change >= 0
 
   const marketCap = circulatingSupply > 0 ? circulatingSupply * price : 0
@@ -201,14 +201,14 @@ const PriceHeader: React.FC = () => {
         <Stat>
           <StatLabel>24h Volume</StatLabel>
           <StatValue>
-            {volume > 0 ? `${formatVolume(volume)} LUNES` : '--'}
+            {volume > 0 ? `${formatVolume(volume)} ${baseSymbol}` : '--'}
           </StatValue>
         </Stat>
 
         <Stat>
           <StatLabel>24h Turnover</StatLabel>
           <StatValue>
-            {turnover > 0 ? `${formatVolume(turnover)} USDT` : '--'}
+            {turnover > 0 ? `${formatVolume(turnover)} ${quoteSymbol}` : '--'}
           </StatValue>
         </Stat>
 

@@ -59,6 +59,8 @@ export class OrdersModule {
     amount: string;
     nonce: string;
     timestamp: number;
+    timeInForce?: string;
+    expiresAt?: string;
   }): string {
     return buildSpotOrderSignMessage(input);
   }
@@ -88,6 +90,8 @@ export class OrdersModule {
         price: input.price,
         stopPrice: input.stopPrice,
         amount: input.amount,
+        timeInForce: input.timeInForce,
+        expiresAt: input.expiresAt,
         nonce,
         timestamp,
       }),

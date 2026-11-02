@@ -804,7 +804,9 @@ const SocialSettings: React.FC = () => {
             <TraderCard
               trader={previewTrader}
               rank={99}
-              onCopy={() => toast.info('Profile preview mode - copying disabled')}
+              onCopy={() =>
+                toast.info('Profile preview mode - copying disabled')
+              }
             />
 
             <InfoBox>

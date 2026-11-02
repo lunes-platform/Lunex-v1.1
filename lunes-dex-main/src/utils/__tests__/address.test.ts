@@ -4,7 +4,9 @@ import { isValidSubstrateAddress } from '../address'
 describe('isValidSubstrateAddress', () => {
   it('accepts a real SS58 address', () => {
     expect(
-      isValidSubstrateAddress('5C75w2nFNbjd8cZFSparTvQHJ52nca7EfQYBYueBiD5rzYJW'),
+      isValidSubstrateAddress(
+        '5C75w2nFNbjd8cZFSparTvQHJ52nca7EfQYBYueBiD5rzYJW'
+      )
     ).toBe(true)
   })
 

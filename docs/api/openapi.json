@@ -581,5 +581,15 @@
                 }
             }
         }
+    },
+    "x-lunex-spot-order-signature": {
+        "version": "v2",
+        "endpoint": "POST /api/v1/orders",
+        "message": "lunex-order-v2:{pairSymbol}:{side}:{type}:{canonicalPrice}:{canonicalStop}:{canonicalAmount}:{nonce}:{timestamp}:{timeInForce}:{expiryUnixMs}",
+        "decimals": "Exact ordinary decimal strings, without leading/trailing zeros; absent price/stop use0.",
+        "timeInForce": "GTC(default), IOC or FOK; included in the signature.",
+        "expiry": "UTC Unix milliseconds, or0 if absent; included in the signature.",
+        "legacy": "v1 accepted only for GTC without expiresAt; constrained orders require v2.",
+        "documentation": "docs/PUBLIC_API_SPECIFICATION.md#spot-order-signatures--v2-2026-10-18"
     }
 }

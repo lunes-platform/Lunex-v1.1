@@ -245,6 +245,24 @@ describe('tradeService.processMatches consistency', () => {
     mockTradeSettlementService.processNewTradeSettlements.mockResolvedValue([]);
   });
 
+  it('records quote and fees in exact token units with on-chain truncation', async () => {
+    mockPrisma.pair.findUnique.mockResolvedValue({ ...pair, quoteDecimals: 6 });
+    await tradeService.processMatches('pair-1', [
+      {
+        makerOrderId: 'maker-order',
+        takerOrderId: 'taker-order',
+        makerAddress: 'maker-wallet',
+        takerAddress: 'taker-wallet',
+        fillAmount: 0.3,
+        fillPrice: 1.234567,
+      },
+    ]);
+    const data = mockPrisma.trade.create.mock.calls[0][0].data;
+    expect(data.quoteAmount.toString()).toBe('0.37037');
+    expect(data.makerFee.toString()).toBe('0.00037');
+    expect(data.takerFee.toString()).toBe('0.000925');
+  });
+
   it('persists all matches inside one database transaction', async () => {
     await tradeService.processMatches('pair-1', [
       {

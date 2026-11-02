@@ -51,6 +51,58 @@ interface Client {
 
 const clients: Client[] = [];
 
+function sendUpdate(client: Client, channel: string, data: unknown) {
+  if (
+    !client.subscriptions.has(channel) ||
+    client.ws.readyState !== WebSocket.OPEN
+  )
+    return;
+  try {
+    client.ws.send(JSON.stringify({ type: 'update', channel, data }));
+  } catch (error) {
+    log.warn({ err: error, channel }, '[WS] Failed to send committed update');
+  }
+}
+
+export function broadcastOrderbook(symbol: string) {
+  const book = orderbookManager.get(symbol);
+  if (!book) return;
+  for (const client of clients) {
+    const depth = client.authenticated
+      ? AUTHENTICATED_ORDERBOOK_DEPTH
+      : PUBLIC_ORDERBOOK_DEPTH;
+    sendUpdate(client, `orderbook:${symbol}`, book.getSnapshot(depth));
+  }
+}
+
+export function broadcastTrade(symbol: string, trade: Record<string, unknown>) {
+  const {
+    id,
+    side,
+    price,
+    amount,
+    quoteAmount,
+    makerFee,
+    takerFee,
+    settlementStatus,
+    txHash,
+    createdAt,
+  } = trade;
+  const data = {
+    id,
+    side,
+    price,
+    amount,
+    quoteAmount,
+    makerFee,
+    takerFee,
+    settlementStatus,
+    txHash,
+    createdAt,
+  };
+  for (const client of clients) sendUpdate(client, `trades:${symbol}`, data);
+}
+
 function getIp(req: IncomingMessage): string {
   const forwarded = req.headers['x-forwarded-for'];
   if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();

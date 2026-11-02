@@ -1,0 +1,48 @@
+{
+  "status": "passed",
+  "frontend": {
+    "tests": 91,
+    "testFiles": 20,
+    "additionalFinalComponentChecks": 8,
+    "build": "passed",
+    "quality": "passed"
+  },
+  "api": {
+    "tests": 475,
+    "suites": 60,
+    "build": "passed",
+    "quality": "passed"
+  },
+  "sdk": {
+    "tests": 4,
+    "build": "passed",
+    "quality": "passed"
+  },
+  "mcp": {
+    "tests": 6,
+    "build": "passed",
+    "quality": "passed"
+  },
+  "contracts": {
+    "workspacePassed": 349,
+    "workspaceIgnored": 8,
+    "advancedAsymmetricModulePassed": 7,
+    "asymmetricWasmBuild": "passed",
+    "strictClippy": "blocked by pre-existing simulator5/Router32 lint findings; see ../local-browser-qa-v1/QA.md"
+  },
+  "spot": {
+    "matrixV2Passed": 27,
+    "insufficientBalancePassed": 3,
+    "browserUsers": 2,
+    "browserTradeSettled": true,
+    "mobileWidth": 390,
+    "mobileHorizontalOverflow": false,
+    "mobileFormReachable": true,
+    "vaultNegativeQueriesPassed": 5,
+    "vaultFinalizedTransactions": 5
+  },
+  "notes": [
+    "All financial proofs used the isolated local Lunes development chain and QA database.",
+    "The asymmetric prototype does not transfer PSP22; these gates do not approve the hybrid economic protocol."
+  ]
+}

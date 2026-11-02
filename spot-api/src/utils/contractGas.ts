@@ -59,5 +59,8 @@ export function txGasLimit(
   const proofSize =
     (gasRequired.proofSize.toBigInt() * TX_MARGIN_NUMERATOR) /
     TX_MARGIN_DENOMINATOR;
-  return api.registry.createType('WeightV2', { refTime, proofSize }) as WeightV2;
+  return api.registry.createType('WeightV2', {
+    refTime,
+    proofSize,
+  }) as WeightV2;
 }

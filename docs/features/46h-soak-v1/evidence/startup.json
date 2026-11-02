@@ -1,0 +1,73 @@
+{
+  "capturedAt": "2026-10-18T20:30:45.966Z",
+  "window": "RUNNING",
+  "startedAt": "2026-10-18T20:21:36.576Z",
+  "deadline": "2026-10-20T18:21:36.576Z",
+  "cycles": 7,
+  "financialHalted": null,
+  "activeOperation": "stop_sell",
+  "counters": {
+    "extrinsics": 9,
+    "readPulse.200": 171,
+    "ws.bookFrames": 31,
+    "http.201": 27,
+    "orders.created": 27,
+    "trades.settled": 12,
+    "recipe.limit_partial_full": 1,
+    "http.200": 51,
+    "orders.cancelled": 3,
+    "recipe.market_buy": 1,
+    "recipe.market_sell": 1,
+    "recipe.ioc_partial": 1,
+    "recipe.fok_insufficient": 1,
+    "recipe.fok_full": 1,
+    "recipe.stop_buy": 1,
+    "recipe.stop_sell": 0,
+    "recipe.stop_limit_buy": 0,
+    "recipe.stop_limit_sell": 0,
+    "recipe.price_priority": 0,
+    "recipe.time_priority": 0,
+    "http.401": 0,
+    "http.400": 0,
+    "http.403": 0,
+    "negativeChecks": 0,
+    "recipe.cancel_auth": 0,
+    "swaps.finalized": 7,
+    "wrapUnwrap.cycles": 1,
+    "vault.cycles": 0,
+    "liquidity.cycles": 0,
+    "readBatches": 8,
+    "frontendSwaps.finalized": 0,
+    "browser.passed": 0
+  },
+  "volumes": {
+    "spotBaseRaw": "9452000000000",
+    "spotQuoteRaw": "200300000000",
+    "swapBaseInputRaw": "2200000000000",
+    "swapQuoteInputRaw": "30000000000",
+    "frontendSwapNativeInputRaw": "0",
+    "frontendSwapQuoteOutputRaw": "0"
+  },
+  "health": {
+    "at": "2026-10-18T20:30:27.782Z",
+    "frontend": true,
+    "api": true,
+    "node": true,
+    "db": true,
+    "redis": true,
+    "finalizedBlock": 17883,
+    "ok": true
+  },
+  "pids": {
+    "supervisor": 60323,
+    "api": 60324,
+    "worker": 60473,
+    "caffeinate": 60472
+  },
+  "resources": {
+    "supervisorRssMiB": 67,
+    "freeMemoryMiB": 4527,
+    "load1m": 5.7490234375,
+    "cpuCount": 4
+  }
+}

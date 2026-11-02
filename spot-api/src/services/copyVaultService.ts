@@ -146,7 +146,11 @@ class CopyVaultService {
         let unsub: (() => void) | undefined;
 
         contract.tx
-          .deposit({ gasLimit: txGasLimit(this.api!, gasRequired), storageDepositLimit: null, value })
+          .deposit({
+            gasLimit: txGasLimit(this.api!, gasRequired),
+            storageDepositLimit: null,
+            value,
+          })
           .signAndSend(this.relayer!, (txResult: any) => {
             if (txResult.dispatchError) {
               if (unsub) unsub();
@@ -226,7 +230,10 @@ class CopyVaultService {
 
         contract.tx
           .withdraw(
-            { gasLimit: txGasLimit(this.api!, gasRequired), storageDepositLimit: null },
+            {
+              gasLimit: txGasLimit(this.api!, gasRequired),
+              storageDepositLimit: null,
+            },
             shareBN,
           )
           .signAndSend(this.relayer!, (txResult: any) => {

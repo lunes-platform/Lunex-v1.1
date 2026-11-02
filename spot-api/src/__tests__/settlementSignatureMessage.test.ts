@@ -23,7 +23,7 @@ describe('settlement order signature message', () => {
     );
 
     expect(message).toBe(
-      'lunex-order:LUNES/USDT:BUY:LIMIT:100:0:1:1700000000001:1700000000123',
+      'lunex-order-v2:LUNES/USDT:BUY:LIMIT:100:0:1:1700000000001:1700000000123:GTC:0',
     );
   });
 

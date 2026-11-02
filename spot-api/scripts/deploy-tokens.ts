@@ -113,8 +113,8 @@ async function deployPSP22(
   return new Promise((resolve, reject) => {
     const tx = (code.tx as any)['new'](
       { gasLimit: gas, storageDepositLimit: null },
-      name ? { some: name } : { none: null },
-      symbol ? { some: symbol } : { none: null },
+      name || null,
+      symbol || null,
       decimals,
       initialSupply,
     )
@@ -188,6 +188,14 @@ async function main() {
     LUSDT_INITIAL_SUPPLY,
   )
   const lusdt = new ContractPromise(api, psp22Abi, lusdtAddress)
+  const [name, symbol, decimals] = await Promise.all([
+    query(api, alice, lusdt, 'tokenName'),
+    query(api, alice, lusdt, 'tokenSymbol'),
+    query(api, alice, lusdt, 'tokenDecimals'),
+  ])
+  if (name !== 'Lunes USD Tether' || symbol !== 'LUSDT' || Number(decimals) !== 6) {
+    throw new Error('LUSDT metadata mismatch; refusing to fund its pool')
+  }
 
   // ── 2. Wrap LUNES → WLUNES ───────────────────────────────────────────────
   section('2. Wrapping LUNES → WLUNES (100 LUNES)')

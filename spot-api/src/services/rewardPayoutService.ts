@@ -279,7 +279,11 @@ class RewardPayoutService {
       // Submit real transaction
       const txHash = await this.signAndSendContract(
         txMethod,
-        { gasLimit: txGasLimit(this.api, gasRequired), storageDepositLimit: null, value },
+        {
+          gasLimit: txGasLimit(this.api, gasRequired),
+          storageDepositLimit: null,
+          value,
+        },
         [],
         `fund_staking_rewards:${amountLunes}`,
       );
@@ -370,7 +374,10 @@ class RewardPayoutService {
 
       const txHash = await this.signAndSendContract(
         txMethod,
-        { gasLimit: txGasLimit(this.api, gasRequired), storageDepositLimit: null },
+        {
+          gasLimit: txGasLimit(this.api, gasRequired),
+          storageDepositLimit: null,
+        },
         args,
         `distribute_trading_rewards${startIndex != null ? `:${startIndex}` : ''}`,
       );

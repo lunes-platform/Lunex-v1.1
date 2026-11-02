@@ -646,15 +646,11 @@ const AsymmetricPool: React.FC = () => {
     setSelectedTemplate(t)
     setBuyParams({
       ...defaultBuy,
-      gamma: t.buyParams.gamma,
-      x0: t.buyParams.x0,
-      feeT: t.buyParams.feeT
+      ...t.buyParams
     })
     setSellParams({
       ...defaultSell,
-      gamma: t.sellParams.gamma,
-      x0: t.sellParams.x0,
-      feeT: t.sellParams.feeT
+      ...t.sellParams
     })
     setActiveTab('builder')
   }
@@ -678,7 +674,7 @@ const AsymmetricPool: React.FC = () => {
       sellMaxCapacity: sellParams.x0.toString(),
       sellFeeBps: Math.round(sellParams.feeT * 10000),
       initialBuyK: buyParams.k.toString(),
-      initialSellK: (sellParams.k * 0.5).toString(),
+      initialSellK: sellParams.k.toString(),
       pairSymbol: 'WLUNES-LUSDT',
       autoRebalance: true,
       profitTargetBps: selectedTemplate?.profitTargetBps ?? 300
@@ -1228,7 +1224,7 @@ const AsymmetricPool: React.FC = () => {
                   <br />
                   2. Seed initial liquidity — buy k ={' '}
                   <strong>{buyParams.k}</strong>, sell k ={' '}
-                  <strong>{Math.round(sellParams.k * 0.5)}</strong>
+                  <strong>{sellParams.k}</strong>
                 </DeployModalNote>
                 <RowButtons>
                   <Button

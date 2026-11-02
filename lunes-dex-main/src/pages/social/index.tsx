@@ -599,7 +599,11 @@ const formatAumLabel = (value: number): string => {
 const getListEmptyMessage = (tab: TabType, searchTerm: string): string => {
   const hasSearch = searchTerm.trim().length > 0
   const noun =
-    tab === 'bots' ? 'AI bots' : tab === 'leaderboard' ? 'ranked traders' : 'traders'
+    tab === 'bots'
+      ? 'AI bots'
+      : tab === 'leaderboard'
+        ? 'ranked traders'
+        : 'traders'
 
   if (hasSearch) {
     return `No ${noun} found matching "${searchTerm.trim()}".`

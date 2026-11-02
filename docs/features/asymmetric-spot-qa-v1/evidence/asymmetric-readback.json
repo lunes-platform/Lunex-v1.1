@@ -1,0 +1,48 @@
+{
+  "contract": "5GYZ255U3qDFRYcnBxpFkGJ5EzNwr42Jaemi9ABrnSs7aATw",
+  "strategyId": "e9085d3e-3192-4179-83df-829d310604b4",
+  "httpStatus": 200,
+  "chain": {
+    "getOwner": "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+    "getManager": null,
+    "getBuyCurve": {
+      "k": "0x00000000000000000011c37937e08000",
+      "gamma": 5,
+      "maxCapacityX0": 2000000000000000,
+      "feeBps": 10,
+      "currentVolume": 0
+    },
+    "getSellCurve": {
+      "k": "0x00000000000000000011c37937e08000",
+      "gamma": 5,
+      "maxCapacityX0": 2000000000000000,
+      "feeBps": 10,
+      "currentVolume": 0
+    }
+  },
+  "apiLiveState": {
+    "available": true,
+    "reason": null,
+    "source": "on-chain",
+    "checkedAt": "2026-10-18T15:22:24.731Z",
+    "managerAddress": null,
+    "relayerAddress": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+    "delegatedToRelayer": false,
+    "buyCurve": {
+      "k": 5000,
+      "gamma": 5,
+      "maxCapacity": 2000,
+      "feeBps": 10,
+      "currentVolume": 0
+    },
+    "sellCurve": {
+      "k": 5000,
+      "gamma": 5,
+      "maxCapacity": 2000,
+      "feeBps": 10,
+      "currentVolume": 0
+    }
+  },
+  "custodyImplemented": false,
+  "note": "deploy_liquidity/asymmetric_swap only update curve state; no PSP22 delivery. See QA.md for separate transfer proof and economic discrepancies."
+}

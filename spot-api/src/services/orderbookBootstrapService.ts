@@ -5,6 +5,17 @@ import { orderbookManager } from '../utils/orderbook';
 const RESTING_ORDER_TYPES = ['LIMIT', 'STOP_LIMIT'] as const;
 const RESTING_ORDER_STATUSES = ['OPEN', 'PARTIAL'] as const;
 
+async function cancelExpiredOrders(pairId?: string) {
+  await prisma.order.updateMany({
+    where: {
+      ...(pairId ? { pairId } : {}),
+      status: { in: ['OPEN', 'PARTIAL', 'PENDING_TRIGGER'] },
+      expiresAt: { lte: new Date() },
+    },
+    data: { status: 'CANCELLED' },
+  });
+}
+
 function restoreOrderIntoBook(
   book: ReturnType<typeof orderbookManager.getOrCreate>,
   order: {
@@ -15,8 +26,10 @@ function restoreOrderIntoBook(
     remainingAmount: unknown;
     makerAddress: string;
     createdAt: Date;
+    expiresAt?: Date | null;
   },
 ) {
+  if (order.expiresAt && order.expiresAt.getTime() <= Date.now()) return false;
   const remainingAmount = decimalToNumber(order.remainingAmount);
   const totalAmount = decimalToNumber(order.amount);
   const price = decimalToNumber(order.price);
@@ -39,6 +52,7 @@ function restoreOrderIntoBook(
 
 export async function rehydrateOrderbooks() {
   orderbookManager.clearAll();
+  await cancelExpiredOrders();
 
   const openOrders = await prisma.order.findMany({
     where: {
@@ -80,6 +94,7 @@ export async function rehydrateOrderbookForPair(
 ) {
   const book = orderbookManager.getOrCreate(pairSymbol);
   book.clear();
+  await cancelExpiredOrders(pairId);
 
   const openOrders = await prisma.order.findMany({
     where: {

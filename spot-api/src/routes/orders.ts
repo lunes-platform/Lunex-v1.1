@@ -3,6 +3,7 @@ import { orderService } from '../services/orderService';
 import { CreateOrderSchema, CancelOrderSchema } from '../utils/validation';
 import {
   buildSpotOrderMessage,
+  buildLegacySpotOrderMessage,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
   verifyAddressSignature,
@@ -47,20 +48,24 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return res.status(401).json({ error: 'Order nonce already used' });
     }
 
-    const isValid = await verifyAddressSignature(
-      buildSpotOrderMessage({
-        pairSymbol: parsed.data.pairSymbol,
-        side: parsed.data.side,
-        type: parsed.data.type,
-        price: parsed.data.price,
-        stopPrice: parsed.data.stopPrice,
-        amount: parsed.data.amount,
-        nonce: parsed.data.nonce,
-        timestamp: parsed.data.timestamp,
-      }),
+    let isValid = await verifyAddressSignature(
+      buildSpotOrderMessage(parsed.data),
       parsed.data.signature,
       parsed.data.makerAddress,
     );
+    // Legacy signatures never authenticated execution policy or expiry.
+    // Accept them only for the original basic GTC order without a deadline.
+    if (
+      !isValid &&
+      parsed.data.timeInForce === 'GTC' &&
+      !parsed.data.expiresAt
+    ) {
+      isValid = await verifyAddressSignature(
+        buildLegacySpotOrderMessage(parsed.data),
+        parsed.data.signature,
+        parsed.data.makerAddress,
+      );
+    }
     if (!isValid) return res.status(401).json({ error: 'Invalid signature' });
 
     const consumeResult = await consumeNonce(nonceKey);

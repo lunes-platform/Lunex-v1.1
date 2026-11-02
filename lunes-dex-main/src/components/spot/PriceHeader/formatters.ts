@@ -1,4 +1,6 @@
 export function formatVolume(vol: number): string {
+  if (vol > 0 && vol < 1)
+    return vol.toLocaleString(undefined, { maximumSignificantDigits: 6 })
   if (vol >= 1_000_000) return (vol / 1_000_000).toFixed(2) + 'M'
   if (vol >= 1_000) return (vol / 1_000).toFixed(0) + 'K'
   return vol.toFixed(0)

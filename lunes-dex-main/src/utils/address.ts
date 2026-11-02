@@ -10,7 +10,7 @@ import { decodeAddress } from '@polkadot/util-crypto'
  * "no pair / insufficient liquidity" state instead of surfacing a decode crash.
  */
 export const isValidSubstrateAddress = (
-  addr: string | null | undefined,
+  addr: string | null | undefined
 ): addr is string => {
   if (!addr || typeof addr !== 'string') return false
   try {

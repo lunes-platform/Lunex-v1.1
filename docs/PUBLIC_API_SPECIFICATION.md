@@ -1402,3 +1402,22 @@ if float(price) < 2.0:  # Buy if price below $2
 **FIM DA ESPECIFICAÇÃO DE API PÚBLICA V2.0**
 
 Esta API fornece todos os endpoints necessários para automação completa de trading, staking, liquidez e listagem de tokens com segurança robusta.
+
+
+## Spot order signatures — v2 (2026-10-18)
+
+`POST /api/v1/orders` uses sr25519 with the versioned UTF-8 message:
+
+```text
+lunex-order-v2:{pairSymbol}:{side}:{type}:{canonicalPrice}:{canonicalStop}:{canonicalAmount}:{nonce}:{timestamp}:{timeInForce}:{expiryUnixMs}
+```
+
+Decimals are exact ordinary decimal strings without leading/trailing zeros (`2.0000` and `2e0` both become `2`); absent price/stop become `0`. Execution policy defaults to `GTC`; absent expiry becomes `0`, otherwise use the UTC Unix timestamp in milliseconds. The SDK, frontend and MCP preparation helper produce this message. A wallet extension signRaw receives its UTF-8 bytes encoded as hexadecimal. Maker identity is verified using the signing AccountId.
+
+Changing amount, price, policy or expiry invalidates the signature. API signature freshness and one-time nonce rules remain enforced. Legacy `lunex-order:...:{timestamp}` signatures are accepted only for basic GTC without an expiry; IOC/FOK or deadline requests must be signed with v2. Settlement verifies the same message before attestation and stores the execution policy in its retry snapshot. Legacy snapshots with unbound deadlines fail verification and require cancellation/resubmission. No contract ABI change is involved.
+
+Example golden vector (FOK, deadline2026-10-18T18:00:00Z):
+
+```text
+lunex-order-v2:QAX/QUSD:BUY:LIMIT:2:0:1:123456789:1700000000000:FOK:1792346400000
+```

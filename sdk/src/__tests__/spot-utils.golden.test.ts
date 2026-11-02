@@ -61,7 +61,7 @@ describe('formato canônico de mensagens assinadas (golden vectors)', () => {
         timestamp: TIMESTAMP,
       }),
     ).toBe(
-      `lunex-order:WLUNES/LUSDT:BUY:LIMIT:2000.5:0:10:${NONCE}:${TIMESTAMP}`,
+      `lunex-order-v2:WLUNES/LUSDT:BUY:LIMIT:2000.5:0:10:${NONCE}:${TIMESTAMP}:GTC:0`,
     );
 
     expect(
@@ -73,7 +73,26 @@ describe('formato canônico de mensagens assinadas (golden vectors)', () => {
         nonce: NONCE,
         timestamp: TIMESTAMP,
       }),
-    ).toBe(`lunex-order:WLUNES/LUSDT:SELL:MARKET:0:0:3:${NONCE}:${TIMESTAMP}`);
+    ).toBe(
+      `lunex-order-v2:WLUNES/LUSDT:SELL:MARKET:0:0:3:${NONCE}:${TIMESTAMP}:GTC:0`,
+    );
+  });
+
+  it('binds canonical values and execution terms with the API v2 golden vector', () => {
+    const order = {
+      pairSymbol: 'QAX/QUSD',
+      side: 'BUY',
+      type: 'LIMIT',
+      price: '2.0000',
+      amount: '1e0',
+      nonce: '123456789',
+      timestamp: 1700000000000,
+      timeInForce: 'FOK',
+      expiresAt: '2026-10-18T18:00:00.000Z',
+    };
+    expect(buildSpotOrderSignMessage(order)).toBe(
+      'lunex-order-v2:QAX/QUSD:BUY:LIMIT:2:0:1:123456789:1700000000000:FOK:1792346400000',
+    );
   });
 
   it('buildSpotCancelSignMessage: delega para o formato wallet-action com orderId', () => {

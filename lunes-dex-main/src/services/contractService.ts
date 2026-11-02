@@ -92,7 +92,10 @@ export interface PairInfo {
 // Dry-run gas limit. proofSize precisa ser generoso (5M) porque swaps passam
 // por chamadas cross-contract aninhadas (router→factory→pair→psp22); 1M causava
 // ContractTrapped (module 24, 0x02000000) no dry-run do swap.
-const DRY_GAS = { refTime: BigInt('500000000000'), proofSize: BigInt('5000000') }
+const DRY_GAS = {
+  refTime: BigInt('500000000000'),
+  proofSize: BigInt('5000000')
+}
 
 class ContractService {
   private api: ApiPromise | null = null
@@ -524,12 +527,13 @@ class ContractService {
       )
 
       if (result.isOk && output) {
-        const json = output.toJSON() as any
-        const addr = json?.ok ?? json
-        return addr &&
+        const addr = this.unwrapResult(output.toJSON())
+        return typeof addr === 'string' &&
+          isValidSubstrateAddress(addr) &&
           addr !==
-            '0x0000000000000000000000000000000000000000000000000000000000000000'
-          ? String(addr)
+            '0x0000000000000000000000000000000000000000000000000000000000000000' &&
+          addr !== '5C4hrfjw9DjXZTzV3MwzrrAr9P1MJhSrvWGWqi1eSuYmJFpN'
+          ? addr
           : null
       }
       return null
@@ -749,7 +753,7 @@ class ContractService {
     // Guard against the native sentinel / unconfigured token addresses reaching
     // createType('AccountId', …), which throws "Invalid base58". A bad address
     // means there is simply no pair → surface as null (insufficient liquidity).
-    if (!path.every((addr) => isValidSubstrateAddress(addr))) return null
+    if (!path.every(addr => isValidSubstrateAddress(addr))) return null
 
     try {
       const caller = path[0]
@@ -769,7 +773,7 @@ class ContractService {
         pairToken0 ?? path[0],
         path[0],
         reserves.reserve0,
-        reserves.reserve1,
+        reserves.reserve1
       )
 
       // Use router.get_amount_out(amount_in, reserve_in, reserve_out)
@@ -1136,7 +1140,9 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+                reject(
+                  new Error(this.decodeDispatchError(result.dispatchError))
+                )
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
@@ -1214,7 +1220,9 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+                reject(
+                  new Error(this.decodeDispatchError(result.dispatchError))
+                )
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
@@ -1268,20 +1276,33 @@ class ContractService {
 
       const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
 
-      const { gasRequired, output: dryOutput } =
-        await this.routerContract.query.addLiquidityNative(
-          account.address,
-          { gasLimit: this.makeDryGas(), value: amountNativeDesired },
-          token,
-          amountTokenDesired,
-          amountTokenMin,
-          amountNativeMin,
-          to,
-          deadlineMs
-        )
+      const {
+        result: dryResult,
+        gasRequired,
+        output: dryOutput
+      } = await this.routerContract.query.addLiquidityNative(
+        account.address,
+        { gasLimit: this.makeDryGas(), value: amountNativeDesired },
+        token,
+        amountTokenDesired,
+        amountTokenMin,
+        amountNativeMin,
+        to,
+        deadlineMs
+      )
 
+      if (dryResult.isErr) {
+        throw new Error(this.decodeDispatchError(dryResult.asErr))
+      }
       if (dryOutput) {
-        const dryJson = (dryOutput as any).toJSON?.() as any
+        let dryJson = dryOutput.toJSON() as any
+        while (
+          dryJson &&
+          typeof dryJson === 'object' &&
+          ('ok' in dryJson || 'Ok' in dryJson)
+        ) {
+          dryJson = 'ok' in dryJson ? dryJson.ok : dryJson.Ok
+        }
         const dryErr = dryJson?.err ?? dryJson?.Err
         if (dryErr !== undefined && dryErr !== null) {
           const errName =
@@ -1314,7 +1335,9 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+                reject(
+                  new Error(this.decodeDispatchError(result.dispatchError))
+                )
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
@@ -1383,7 +1406,9 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+                reject(
+                  new Error(this.decodeDispatchError(result.dispatchError))
+                )
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
@@ -1431,7 +1456,9 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+                reject(
+                  new Error(this.decodeDispatchError(result.dispatchError))
+                )
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }
@@ -1475,7 +1502,9 @@ class ContractService {
             { signer: injector.signer },
             (result: any) => {
               if (result.dispatchError) {
-                reject(new Error(this.decodeDispatchError(result.dispatchError)))
+                reject(
+                  new Error(this.decodeDispatchError(result.dispatchError))
+                )
               } else if (result.status.isFinalized) {
                 resolve(result.txHash.toHex())
               }

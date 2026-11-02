@@ -751,7 +751,9 @@ const BotRegistry: React.FC = () => {
 
                 <MetricsRow>
                   <Metric>
-                    <MetricValue positive={myAgent.roi != null && myAgent.roi >= 0}>
+                    <MetricValue
+                      positive={myAgent.roi != null && myAgent.roi >= 0}
+                    >
                       {formatRoi(myAgent.roi)}
                     </MetricValue>
                     <MetricLabel>ROI</MetricLabel>
@@ -874,7 +876,9 @@ const BotRegistry: React.FC = () => {
 
                   <MetricsRow>
                     <Metric>
-                      <MetricValue positive={agent.roi != null && agent.roi >= 0}>
+                      <MetricValue
+                        positive={agent.roi != null && agent.roi >= 0}
+                      >
                         {formatRoi(agent.roi)}
                       </MetricValue>
                       <MetricLabel>ROI</MetricLabel>

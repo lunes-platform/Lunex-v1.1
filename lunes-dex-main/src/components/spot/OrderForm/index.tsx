@@ -3,9 +3,12 @@ import styled, { css, keyframes } from 'styled-components'
 import { useSpot } from 'context/SpotContext'
 import { useSDK } from 'context/SDKContext'
 import { Tooltip } from 'components/bases/tooltip'
-import { contractService } from 'services/contractService'
-import { calcFeeBreakdown } from 'services/spotService'
-import type { FeeBreakdown } from 'services/spotService'
+import { calcFeeBreakdown, spotApi } from 'services/spotService'
+import type { FeeBreakdown, SpotBalance } from 'services/spotService'
+import {
+  buildWalletActionMessage,
+  createSignedActionMetadata
+} from '../../../utils/signing'
 import MarginTab from './MarginTab'
 
 // ──────────────────── Constants ────────────────────
@@ -732,7 +735,9 @@ export const MarketForm: React.FC<FormProps> = ({
               )}%). Deducted from total received.`}
             />
           </span>
-          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
+          <FeeValue>
+            ~{fee.toFixed(4)} {quoteSymbol}
+          </FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
@@ -869,7 +874,9 @@ export const LimitForm: React.FC<FormProps> = ({
             placeholder="0.00000"
             aria-label={`Price in ${quoteSymbol}`}
             value={price}
-            onChange={e => setPrice(truncatePrice(e.target.value, priceDecimals))}
+            onChange={e =>
+              setPrice(truncatePrice(e.target.value, priceDecimals))
+            }
             hasError={!!priceError}
             step={0.00001}
             min={MIN_PRICE}
@@ -953,7 +960,9 @@ export const LimitForm: React.FC<FormProps> = ({
               position="top"
             />
           </span>
-          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
+          <FeeValue>
+            ~{fee.toFixed(4)} {quoteSymbol}
+          </FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
@@ -1112,7 +1121,9 @@ export const StopForm: React.FC<FormProps> = ({
       {total > 0 && (
         <FeeRow>
           <span>Fee (Taker {((takerFee ?? 0) * 100).toFixed(2)}%)</span>
-          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
+          <FeeValue>
+            ~{fee.toFixed(4)} {quoteSymbol}
+          </FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
@@ -1286,7 +1297,9 @@ export const StopLimitForm: React.FC<FormProps> = ({
       {total > 0 && (
         <FeeRow>
           <span>Fee (Maker {((makerFee ?? 0) * 100).toFixed(2)}%)</span>
-          <FeeValue>~{fee.toFixed(4)} {quoteSymbol}</FeeValue>
+          <FeeValue>
+            ~{fee.toFixed(4)} {quoteSymbol}
+          </FeeValue>
         </FeeRow>
       )}
       <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
@@ -1309,8 +1322,6 @@ const ORDER_TABS: Array<{ key: OrderTab; label: string }> = [
   { key: 'margin', label: 'Margin' }
 ]
 
-const LUSDT_ADDRESS = process.env.REACT_APP_TOKEN_LUSDT || ''
-
 const OrderForm: React.FC = () => {
   const {
     selectedPair,
@@ -1332,28 +1343,59 @@ const OrderForm: React.FC = () => {
   const [side, setSide] = useState<Side>('buy')
   const [pendingOrder, setPendingOrder] = useState<OrderData | null>(null)
   const [submitStatus, setSubmitStatus] = useState<string | null>(null)
-  const [balanceUsdt, setBalanceUsdt] = useState(0)
-  const [balanceLunes, setBalanceLunes] = useState(0)
-
-  // Fetch real balances when wallet connects
+  const [spotBalances, setSpotBalances] = useState<{
+    address: string
+    rows: SpotBalance[]
+  } | null>(null)
+  const [balancesLoading, setBalancesLoading] = useState(false)
+  const [balanceError, setBalanceError] = useState<string | null>(null)
   useEffect(() => {
-    if (!sdkWalletAddress) {
-      setBalanceUsdt(0)
-      setBalanceLunes(0)
-      return
-    }
-    Promise.all([
-      LUSDT_ADDRESS
-        ? contractService
-            .getTokenBalance(LUSDT_ADDRESS, sdkWalletAddress)
-            .catch(() => '0')
-        : Promise.resolve('0'),
-      contractService.getNativeBalance(sdkWalletAddress).catch(() => '0')
-    ]).then(([lusdtRaw, lunesRaw]) => {
-      setBalanceUsdt(Number(lusdtRaw) / 1e6) // LUSDT: 6 decimals
-      setBalanceLunes(Number(lunesRaw) / 1e8) // LUNES: 8 decimals
-    })
+    setSpotBalances(null)
+    setBalanceError(null)
   }, [sdkWalletAddress])
+  const loadSpotBalances = useCallback(async () => {
+    if (!sdkWalletAddress) return
+    setBalancesLoading(true)
+    setBalanceError(null)
+    try {
+      const metadata = createSignedActionMetadata()
+      const signature = await signMessage(
+        buildWalletActionMessage({
+          action: 'balances.list',
+          address: sdkWalletAddress,
+          ...metadata
+        })
+      )
+      const data = await spotApi.getBalances(sdkWalletAddress, {
+        ...metadata,
+        signature
+      })
+      setSpotBalances({ address: sdkWalletAddress, rows: data.balances })
+    } catch (err) {
+      setBalanceError(
+        err instanceof Error ? err.message : 'Spot balances unavailable'
+      )
+    } finally {
+      setBalancesLoading(false)
+    }
+  }, [sdkWalletAddress, signMessage])
+  const balancePair = pairs.find(p => p.symbol === selectedPair)
+  const available = (token: string | undefined, native?: boolean) => {
+    if (!token || spotBalances?.address !== sdkWalletAddress) return 0
+    const key = native ? '0x' + '00'.repeat(32) : token
+    return Math.max(
+      0,
+      Number(spotBalances.rows.find(b => b.token === key)?.available || '0')
+    )
+  }
+  const balanceUsdt = available(
+    balancePair?.quoteToken,
+    balancePair?.isNativeQuote
+  )
+  const balanceLunes = available(
+    balancePair?.baseToken,
+    balancePair?.isNativeBase
+  )
 
   const handleSubmit = useCallback((order: OrderData) => {
     setPendingOrder(order)
@@ -1392,11 +1434,11 @@ const OrderForm: React.FC = () => {
       price: orderPrice,
       stopPrice: orderStopPrice,
       amount: pendingOrder.amount.toString(),
-      timestamp: Date.now(),
       signMessage
     })
 
     if (success) {
+      setSpotBalances(null)
       setSubmitStatus(
         orderType === 'STOP' || orderType === 'STOP_LIMIT'
           ? 'Order armed successfully. It will trigger when the market reaches your stop price.'
@@ -1546,6 +1588,22 @@ const OrderForm: React.FC = () => {
           </WarningBox>
         ) : null}
 
+        {walletAddress && activeTab !== 'margin' ? (
+          <div>
+            <PresetPct
+              type="button"
+              onClick={loadSpotBalances}
+              disabled={balancesLoading}
+            >
+              {balancesLoading
+                ? 'Loading Spot balances…'
+                : spotBalances?.address === sdkWalletAddress
+                  ? 'Refresh Spot balances'
+                  : 'Load Spot balances'}
+            </PresetPct>
+            {balanceError ? <WarningBox>{balanceError}</WarningBox> : null}
+          </div>
+        ) : null}
         {renderForm()}
       </Body>
 

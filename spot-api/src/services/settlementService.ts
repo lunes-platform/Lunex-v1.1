@@ -14,9 +14,18 @@ import { config } from '../config';
 import { log } from '../utils/logger';
 import {
   buildSpotOrderMessage,
+  buildLegacySpotOrderMessage,
   verifyAddressSignature,
 } from '../middleware/auth';
 import { withTxTimeout } from '../utils/txWithTimeout';
+import {
+  toSettlementPriceUnits,
+  toSettlementOrderPriceUnits,
+} from '../utils/settlementUnits';
+import {
+  readContractBalance,
+  readContractBoolean,
+} from '../utils/contractResult';
 
 type PairSettlementSnapshot = {
   symbol: string;
@@ -25,9 +34,12 @@ type PairSettlementSnapshot = {
   isNativeBase: boolean;
   isNativeQuote: boolean;
   baseDecimals: number;
+  // Optional only for old persisted payloads, which must fail closed until repaired.
+  quoteDecimals?: number;
 };
 
 type OrderSettlementSnapshot = {
+  timeInForce?: string;
   makerAddress: string;
   side: string;
   type: string;
@@ -62,6 +74,7 @@ type ContractMethodKind = 'tx' | 'query';
 export function buildSettlementOrderSignatureMessage(
   pair: Pick<PairSettlementSnapshot, 'symbol'>,
   order: OrderSettlementSnapshot,
+  version: 'v1' | 'v2' = 'v2',
 ) {
   if (!order.signatureTimestamp) {
     throw new Error(
@@ -69,7 +82,11 @@ export function buildSettlementOrderSignatureMessage(
     );
   }
 
-  return buildSpotOrderMessage({
+  const build =
+    version === 'v1' ? buildLegacySpotOrderMessage : buildSpotOrderMessage;
+  return build({
+    timeInForce: order.timeInForce || 'GTC',
+    expiresAt: order.expiresAt,
     pairSymbol: pair.symbol,
     side: order.side as 'BUY' | 'SELL',
     type: order.type as 'LIMIT' | 'MARKET' | 'STOP' | 'STOP_LIMIT',
@@ -248,7 +265,11 @@ export function buildOrderMessageV2(order: OnChainSignedOrder): Uint8Array {
   const maker = order.maker.toU8a();
   const baseToken = order.base_token.toU8a();
   const quoteToken = order.quote_token.toU8a();
-  if (maker.length !== 32 || baseToken.length !== 32 || quoteToken.length !== 32) {
+  if (
+    maker.length !== 32 ||
+    baseToken.length !== 32 ||
+    quoteToken.length !== 32
+  ) {
     throw new Error('AccountId encoding must be exactly 32 bytes');
   }
   const parts: Uint8Array[] = [
@@ -330,9 +351,7 @@ export function attestOrder(
   const hash = buildAttestationHash(order);
   const sig = wasmSecp256k1Sign(hash, attestorSecretKey);
   if (sig.length !== 65) {
-    throw new Error(
-      `Attestation must be 65 bytes (r‖s‖v), got ${sig.length}`,
-    );
+    throw new Error(`Attestation must be 65 bytes (r‖s‖v), got ${sig.length}`);
   }
   return Array.from(sig);
 }
@@ -642,9 +661,8 @@ class SpotSettlementService {
       }
     };
 
-    const pool = Array.from(
-      { length: Math.min(limit, items.length) },
-      () => runner(),
+    const pool = Array.from({ length: Math.min(limit, items.length) }, () =>
+      runner(),
     );
     await Promise.all(pool);
     return results;
@@ -674,7 +692,7 @@ class SpotSettlementService {
       );
     }
 
-    return BigInt(output.toString());
+    return readContractBalance(output);
   }
 
   async isNonceUsed(
@@ -700,7 +718,7 @@ class SpotSettlementService {
       );
     }
 
-    return output.toString() === 'true';
+    return readContractBoolean(output);
   }
 
   async isNonceCancelled(
@@ -726,7 +744,7 @@ class SpotSettlementService {
       );
     }
 
-    return output.toString() === 'true';
+    return readContractBoolean(output);
   }
 
   private toSignedOrder(
@@ -738,7 +756,7 @@ class SpotSettlementService {
       base_token: this.toAccountId(pair.baseToken, pair.isNativeBase),
       quote_token: this.toAccountId(pair.quoteToken, pair.isNativeQuote),
       side: order.side === 'BUY' ? 0 : 1,
-      price: decimalToUnits(order.price, 8).toString(),
+      price: toSettlementOrderPriceUnits(order, pair),
       amount: decimalToUnits(order.amount, pair.baseDecimals).toString(),
       filled_amount: decimalToUnits(
         order.filledAmount,
@@ -760,7 +778,10 @@ class SpotSettlementService {
     // Sign the FINAL on-chain field values — buildOrderMessageV2 reads the
     // exact same maker/token/side/price/amount/nonce/expiry the contract sees.
     if (this.attestorSecretKey) {
-      signedOrder.attestation = attestOrder(signedOrder, this.attestorSecretKey);
+      signedOrder.attestation = attestOrder(
+        signedOrder,
+        this.attestorSecretKey,
+      );
     }
     return signedOrder;
   }
@@ -785,11 +806,23 @@ class SpotSettlementService {
       );
     }
 
-    const isValid = await verifyAddressSignature(
+    let isValid = await verifyAddressSignature(
       buildSettlementOrderSignatureMessage(pair, order),
       order.signature,
       order.makerAddress,
     );
+
+    if (
+      !isValid &&
+      (order.timeInForce || 'GTC') === 'GTC' &&
+      !order.expiresAt
+    ) {
+      isValid = await verifyAddressSignature(
+        buildSettlementOrderSignatureMessage(pair, order, 'v1'),
+        order.signature,
+        order.makerAddress,
+      );
+    }
 
     if (!isValid) {
       throw new Error(`Invalid order signature for ${order.makerAddress}`);
@@ -829,7 +862,7 @@ class SpotSettlementService {
       input.fillAmount,
       input.pair.baseDecimals,
     ).toString();
-    const fillPrice = decimalToUnits(input.fillPrice, 8).toString();
+    const fillPrice = toSettlementPriceUnits(input.fillPrice, input.pair);
 
     const { gasRequired, result } = await queryMethod(
       this.relayer.address,
@@ -999,6 +1032,7 @@ class SpotSettlementService {
       );
     }
 
+    const relayerNonce = await this.nextNonce();
     const cancelPromise = new Promise<string>((resolve, reject) => {
       let unsub: (() => void) | undefined;
 
@@ -1009,6 +1043,7 @@ class SpotSettlementService {
       )
         .signAndSend(
           this.relayer!,
+          { nonce: relayerNonce },
           (txResult: {
             status: { isInBlock: boolean; isFinalized: boolean };
             dispatchError?: { toString(): string };
@@ -1040,7 +1075,10 @@ class SpotSettlementService {
     return withTxTimeout(
       `cancel_order_for:${makerAddress}:${nonce}`,
       cancelPromise,
-    );
+    ).catch((error) => {
+      this.invalidateNonce();
+      throw error;
+    });
   }
 }
 

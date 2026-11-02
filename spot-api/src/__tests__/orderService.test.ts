@@ -171,6 +171,148 @@ describe('orderService stop orders', () => {
     mockBook.createCheckpoint.mockReturnValue({ bids: [], asks: [] });
   });
 
+  it.each(['BUY', 'SELL'] as const)(
+    'rejects an unfunded %s with400 before persisting or matching',
+    async (side) => {
+      mockSettlementService.getVaultBalance.mockResolvedValue(0n);
+      await expect(
+        orderService.createOrder({
+          makerAddress: 'maker-1',
+          pairSymbol: pair.symbol,
+          side,
+          type: 'LIMIT',
+          price: '2',
+          amount: '1',
+          timeInForce: 'GTC',
+          nonce: '123',
+          signature: 'sig',
+          timestamp: Date.now(),
+        }),
+      ).rejects.toMatchObject({ statusCode: 400 });
+      expect(mockPrisma.order.create).not.toHaveBeenCalled();
+      expect(mockBook.addLimitOrder).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects an already expired order before persistence or matching', async () => {
+    await expect(
+      orderService.createOrder({
+        makerAddress: 'maker-1',
+        pairSymbol: pair.symbol,
+        side: 'SELL',
+        type: 'LIMIT',
+        price: '2',
+        amount: '1',
+        timeInForce: 'GTC',
+        nonce: '123',
+        signature: 'sig',
+        timestamp: Date.now(),
+        expiresAt: new Date(Date.now() - 10000).toISOString(),
+      }),
+    ).rejects.toThrow('expired');
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+    expect(mockBook.addLimitOrder).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 0.5])(
+    'cancels IOC remainder after matching %s without resting',
+    async (fill) => {
+      const order = makeOrder({
+        type: 'LIMIT',
+        price: new Decimal(100),
+        stopPrice: null,
+        status: 'OPEN',
+        timeInForce: 'IOC',
+      });
+      mockPrisma.order.create.mockResolvedValue(order);
+      mockPrisma.order.findUnique.mockResolvedValue({
+        ...order,
+        filledAmount: new Decimal(fill),
+        remainingAmount: new Decimal(1).minus(fill),
+        status: fill ? 'PARTIAL' : 'OPEN',
+      });
+      mockPrisma.order.update.mockImplementation(async () => {
+        const cancelled = { ...order, status: 'CANCELLED' };
+        mockPrisma.order.findUnique.mockResolvedValue(cancelled);
+        return cancelled;
+      });
+      mockPrisma.trade.findFirst.mockResolvedValue(null);
+      mockBook.addLimitOrder.mockReturnValue(
+        fill
+          ? [
+              {
+                makerOrderId: 'other',
+                takerOrderId: order.id,
+                fillAmount: fill,
+                fillPrice: 100,
+                makerAddress: 'other-wallet',
+                takerAddress: order.makerAddress,
+              },
+            ]
+          : [],
+      );
+      const result = await orderService.createOrder({
+        makerAddress: 'maker-1',
+        pairSymbol: pair.symbol,
+        side: 'BUY',
+        type: 'LIMIT',
+        price: '100',
+        amount: '1',
+        timeInForce: 'IOC',
+        nonce: '123',
+        signature: 'sig',
+        timestamp: Date.now(),
+      });
+      expect(result?.status).toBe('CANCELLED');
+      expect(mockBook.cancelOrder).toHaveBeenCalledWith(order.id);
+    },
+  );
+
+  it('kills insufficient FOK before persisting any partial match', async () => {
+    const order = makeOrder({
+      type: 'LIMIT',
+      price: new Decimal(100),
+      stopPrice: null,
+      status: 'OPEN',
+      timeInForce: 'FOK',
+    });
+    mockPrisma.order.create.mockResolvedValue(order);
+    mockPrisma.order.findUnique.mockResolvedValue(order);
+    mockPrisma.order.update.mockResolvedValue({
+      ...order,
+      status: 'CANCELLED',
+    });
+    mockBook.addLimitOrder.mockReturnValue([
+      {
+        makerOrderId: 'other',
+        takerOrderId: order.id,
+        fillAmount: 0.5,
+        fillPrice: 100,
+        makerAddress: 'other-wallet',
+        takerAddress: order.makerAddress,
+      },
+    ]);
+    mockPrisma.trade.findFirst.mockResolvedValue(null);
+    await orderService.createOrder({
+      makerAddress: 'maker-1',
+      pairSymbol: pair.symbol,
+      side: 'BUY',
+      type: 'LIMIT',
+      price: '100',
+      amount: '1',
+      timeInForce: 'FOK',
+      nonce: '123',
+      signature: 'sig',
+      timestamp: Date.now(),
+    });
+    expect(mockTradeService.processMatches).not.toHaveBeenCalled();
+    expect(mockBook.restoreCheckpoint).toHaveBeenCalled();
+    expect(mockPrisma.order.update).toHaveBeenCalledWith({
+      where: { id: order.id },
+      data: { status: 'CANCELLED' },
+    });
+  });
+
   it('redacts signatures, nonces and order hashes from user order reads', async () => {
     mockPrisma.order.findMany.mockResolvedValue([
       {

@@ -1,0 +1,92 @@
+{
+  "status": "passed",
+  "startedAt": "2026-10-18T16:16:08.839Z",
+  "finishedAt": "2026-10-18T16:17:07.565Z",
+  "orders": [
+    {
+      "user": "Eve",
+      "id": "53247e63-ab3e-4223-bc66-e5dc3b491bc5",
+      "status": "OPEN",
+      "type": "Limit",
+      "side": "Sell"
+    },
+    {
+      "user": "Eve",
+      "id": "b7173cb3-9cbd-42c8-94b4-6555a7db32ab",
+      "status": "OPEN",
+      "type": "Limit",
+      "side": "Sell"
+    },
+    {
+      "user": "Ferdie",
+      "id": "74599de7-2556-470b-9922-726f0e2c1abf",
+      "status": "FILLED",
+      "type": "Market",
+      "side": "Buy"
+    }
+  ],
+  "cancelled": "53247e63-ab3e-4223-bc66-e5dc3b491bc5",
+  "trade": {
+    "id": "29f75e91-2abd-42d7-86ce-1040bde5b744",
+    "status": "SETTLED",
+    "txHash": "0xa3d152b6ff16f86200ea01902a0a279d5f5b4fd59ca2020df1a5280c4505119e"
+  },
+  "before": {
+    "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+      "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "44563000000",
+      "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5309919530"
+    },
+    "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+      "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "55437000000",
+      "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4688994528"
+    },
+    "fees": "1085942"
+  },
+  "after": {
+    "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+      "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "43563000000",
+      "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5329899530"
+    },
+    "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+      "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "56437000000",
+      "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4668944528"
+    },
+    "fees": "1155942"
+  },
+  "errors": [],
+  "http": [],
+  "historyCorrected": {
+    "status": "passed",
+    "readOnly": true,
+    "users": [
+      {
+        "name": "Eve",
+        "address": "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw",
+        "side": "SELL",
+        "fee": "0.02"
+      },
+      {
+        "name": "Ferdie",
+        "address": "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL",
+        "side": "BUY",
+        "fee": "0.05"
+      }
+    ]
+  },
+  "mobile": {
+    "width": 390,
+    "scroll": 390
+  },
+  "mobileForm": {
+    "status": "passed",
+    "width": 390,
+    "height": 844,
+    "scroll": 390,
+    "submit": {
+      "x": 12,
+      "y": 757.5,
+      "width": 366,
+      "height": 44
+    }
+  }
+}

@@ -127,9 +127,7 @@ export class AssetBridgeService {
     const provider = new WsProvider(this.config.wsEndpoint);
     this.api = await ApiPromise.create({ provider });
     await this.api.isReady;
-    log.info(
-      `[AssetBridge] Connected. Bridge account: ${this.bridgeAddress}`,
-    );
+    log.info(`[AssetBridge] Connected. Bridge account: ${this.bridgeAddress}`);
 
     // Load contract metadata
     const metadataPath = path.resolve(this.config.contractMetadataPath);
@@ -314,9 +312,7 @@ export class AssetBridgeService {
       const withdrawKey = `w:${blockNumber}:${extrinsicIndex}`;
 
       if (this.state.processedWithdrawals[withdrawKey]) {
-        log.info(
-          `[AssetBridge] Skipping duplicate withdrawal ${withdrawKey}`,
-        );
+        log.info(`[AssetBridge] Skipping duplicate withdrawal ${withdrawKey}`);
         continue;
       }
 
@@ -353,7 +349,11 @@ export class AssetBridgeService {
         );
         if (bridgeBalance.lt(withdrawAmount)) {
           log.error(
-            { assetId, has: bridgeBalance.toString(), needs: withdrawAmount.toString() },
+            {
+              assetId,
+              has: bridgeBalance.toString(),
+              needs: withdrawAmount.toString(),
+            },
             '[AssetBridge] CRITICAL: Insufficient bridge balance',
           );
           continue; // Do not mark as processed — manual intervention needed

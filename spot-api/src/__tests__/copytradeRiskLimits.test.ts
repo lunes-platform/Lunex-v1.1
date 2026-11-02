@@ -133,8 +133,8 @@ function wireSignalTx(vaultRecord: any) {
     },
     copyVault: { update: jest.fn().mockResolvedValue({}) },
   };
-  (mockPrisma.$transaction as jest.Mock).mockImplementation(
-    async (cb: any) => cb(tx),
+  (mockPrisma.$transaction as jest.Mock).mockImplementation(async (cb: any) =>
+    cb(tx),
   );
   return { captured, tx };
 }
@@ -256,8 +256,8 @@ describe('RISK-BE: persistence on deposit', () => {
       },
       leader: { update: jest.fn().mockResolvedValue({}) },
     };
-    (mockPrisma.$transaction as jest.Mock).mockImplementation(
-      async (cb: any) => cb(tx),
+    (mockPrisma.$transaction as jest.Mock).mockImplementation(async (cb: any) =>
+      cb(tx),
     );
 
     await copytradeService.depositToVault('leader-1', {

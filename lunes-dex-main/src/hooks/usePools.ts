@@ -71,7 +71,7 @@ const TOKEN_META_ENTRIES: Array<[string, TokenMeta]> = [
   tokenMeta(TOKENS.LETH, {
     symbol: 'LETH',
     name: 'Lunes ETH',
-    decimals: 18,
+    decimals: 8,
     icon: '/img/leth.svg'
   }),
   tokenMeta(TOKENS.GMC, {
@@ -115,18 +115,19 @@ async function fetchVolume24h(sym0: string, sym1: string): Promise<number> {
   }
 }
 
-function resolveTokenMeta(address: string) {
+async function resolveTokenMeta(address: string): Promise<TokenMeta> {
   const key = Object.keys(TOKEN_META).find(
     k => k.toLowerCase() === address.toLowerCase()
   )
-  return key
-    ? TOKEN_META[key]
-    : {
-        symbol: address.slice(0, 6) + '…',
-        name: 'Unknown Token',
-        decimals: 8,
-        icon: ''
-      }
+  const metadata = await contractService.getTokenInfo(address)
+  if (!metadata) throw new Error('Token metadata unavailable')
+  const registered = key ? TOKEN_META[key] : undefined
+  return {
+    symbol: registered?.symbol ?? metadata.symbol,
+    name: registered?.name ?? metadata.name,
+    decimals: metadata.decimals,
+    icon: registered?.icon ?? ''
+  }
 }
 
 export const usePools = () => {
@@ -181,6 +182,12 @@ export const usePools = () => {
       const validAddresses = pairAddresses.filter(
         (a): a is string => a !== null
       )
+      const metadata = new Map<string, Promise<TokenMeta>>()
+      const tokenInfo = (address: string) => {
+        if (!metadata.has(address))
+          metadata.set(address, resolveTokenMeta(address))
+        return metadata.get(address)!
+      }
 
       // Step 3 — fetch on-chain data for each pair
       const results = await Promise.allSettled(
@@ -201,8 +208,10 @@ export const usePools = () => {
             return null
           }
 
-          const tok0Meta = resolveTokenMeta(token0Addr)
-          const tok1Meta = resolveTokenMeta(token1Addr)
+          const [tok0Meta, tok1Meta] = await Promise.all([
+            tokenInfo(token0Addr),
+            tokenInfo(token1Addr)
+          ])
 
           // TVL = 2 × LUSDT reserve (AMM: equal value on both sides)
           const token0IsLusdt = token0Addr.toLowerCase() === LUSDT_ADDRESS
@@ -220,6 +229,7 @@ export const usePools = () => {
             tok0Meta.symbol,
             tok1Meta.symbol
           )
+          // LP yield is the 0.3% LP share; the total swap fee is 0.5%.
           const fees24h = volume24h * 0.003
           const apr = tvl > 0 ? ((fees24h * 365) / tvl) * 100 : 0
 
@@ -231,7 +241,7 @@ export const usePools = () => {
             reserve0: reserves.reserve0,
             reserve1: reserves.reserve1,
             totalSupply: totalSupplyRaw,
-            fee: '0.3%',
+            fee: '0.5%',
             liquidity: tvl,
             volume24h,
             fees24h,
@@ -250,6 +260,9 @@ export const usePools = () => {
         .filter((p): p is Pool => p !== null)
 
       setPools(fetched)
+      if (results.some(result => result.status === 'rejected')) {
+        setError('Some pool data is unavailable. Please refresh.')
+      }
     } catch (err) {
       console.error('[usePools] Error:', err)
       setError((err as Error).message)

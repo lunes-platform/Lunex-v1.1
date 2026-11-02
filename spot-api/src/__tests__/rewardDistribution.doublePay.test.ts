@@ -55,11 +55,16 @@ describe('rewardDistributionService — no double-pay across reprocessing', () =
       txHash: '0xpaid',
       error: null,
     });
-    jest
-      .spyOn(rewardDistributionService, 'rankLeaders')
-      .mockResolvedValue([
-        { address: 'leader-a', score: 10, roi30d: 1, aum: 1, followers: 1, name: 'A' },
-      ]);
+    jest.spyOn(rewardDistributionService, 'rankLeaders').mockResolvedValue([
+      {
+        address: 'leader-a',
+        score: 10,
+        roi30d: 1,
+        aum: 1,
+        followers: 1,
+        name: 'A',
+      },
+    ]);
   });
 
   it('pays once on the first run', async () => {

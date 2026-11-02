@@ -249,6 +249,7 @@ const ChartPanel: React.FC = () => {
     data: CandleWithVolume[]
     offline: boolean
   }> => {
+    if (!selectedPair) return { data: [], offline: false }
     try {
       const res = await spotApi.getCandles(selectedPair, activeTimeframe, 200)
       // API responded — it's online regardless of candle count

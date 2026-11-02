@@ -35,22 +35,15 @@ import { withMatchingLock } from './matchingLockService';
 import { rehydrateOrderbookForPair } from './orderbookBootstrapService';
 import type { Prisma, OrderStatus } from '@prisma/client';
 import { ApiError } from '../middleware/errors';
+import { balanceService } from './balanceService';
+import {
+  spotAssetKey,
+  toSpotUnits,
+  quoteReserveUnits,
+} from '../utils/spotReservation';
+import { broadcastOrderbook } from '../websocket/server';
 
 const STOP_PENDING_STATUS = 'PENDING_TRIGGER';
-
-function decimalToUnits(value: string, decimals: number) {
-  const normalized = value.trim();
-  const negative = normalized.startsWith('-');
-  const unsigned = negative ? normalized.slice(1) : normalized;
-  const [wholePart, fractionPart = ''] = unsigned.split('.');
-  const base = 10n ** BigInt(decimals);
-  const whole = BigInt(wholePart || '0') * base;
-  const fraction = BigInt(
-    (fractionPart + '0'.repeat(decimals)).slice(0, decimals) || '0',
-  );
-  const result = whole + fraction;
-  return negative ? -result : result;
-}
 
 async function getReferencePrice(
   pairId: string,
@@ -124,6 +117,7 @@ async function executeOrderOnBook(
     price: Decimal;
     remainingAmount: Decimal;
     makerAddress: string;
+    timeInForce?: string;
   },
 ) {
   const executableAmount = decimalToNumber(order.remainingAmount);
@@ -153,12 +147,33 @@ async function executeOrderOnBook(
       );
     }
 
+    if (
+      order.timeInForce === 'FOK' &&
+      !matches
+        .reduce(
+          (sum, match) => sum.plus(match.fillAmount.toString()),
+          new Decimal(0),
+        )
+        .eq(order.remainingAmount)
+    ) {
+      book.restoreCheckpoint(checkpoint);
+      return prisma.order.update({
+        where: { id: order.id },
+        data: { status: 'CANCELLED' },
+      });
+    }
+
     if (matches.length > 0) {
       await tradeService.processMatches(pairId, matches);
     }
   } catch (err) {
     book.restoreCheckpoint(checkpoint);
     throw err;
+  }
+
+  if (order.timeInForce === 'IOC' || order.timeInForce === 'FOK') {
+    book.cancelOrder(order.id);
+    return finalizeMarketLikeOrder(order.id);
   }
 
   if (order.type === 'MARKET' || order.type === 'STOP') {
@@ -186,8 +201,10 @@ async function processTriggeredOrders(pairId: string, pairSymbol: string) {
       orderBy: { createdAt: 'asc' },
     });
 
-    const triggeredOrder = pendingOrders.find((order) =>
-      isStopTriggered(order, referencePrice),
+    const triggeredOrder = pendingOrders.find(
+      (order) =>
+        (!order.expiresAt || order.expiresAt.getTime() > Date.now()) &&
+        isStopTriggered(order, referencePrice),
     );
     if (!triggeredOrder) return;
 
@@ -205,6 +222,8 @@ async function estimateRequiredQuoteUnits(
     id: string;
     symbol: string;
     quoteDecimals: number;
+    makerFeeBps?: number;
+    takerFeeBps?: number;
   },
   order: {
     type: string;
@@ -232,64 +251,25 @@ async function estimateRequiredQuoteUnits(
     );
   }
 
-  const quoteEstimate = executionPrice * parseFloat(order.amount.toString());
-  return decimalToUnits(
-    quoteEstimate.toFixed(pair.quoteDecimals),
-    pair.quoteDecimals,
-  );
+  const exactPrice = new Decimal(order.price?.toString() || '0').gt(0)
+    ? order.price!.toString()
+    : executionPrice.toString();
+  return quoteReserveUnits(exactPrice, order.amount.toString(), pair);
 }
 
 async function getReservedVaultAmounts(
   makerAddress: string,
   tokenAddress: string,
-  side: 'BUY' | 'SELL',
+  decimals: number,
+  isNative: boolean,
 ) {
-  const relevantOrders = await prisma.order.findMany({
-    where: {
-      makerAddress,
-      status: { in: ['OPEN', 'PARTIAL', STOP_PENDING_STATUS] },
-    },
-    include: {
-      pair: true,
-    },
-  });
-
-  let reserved = 0n;
-
-  for (const order of relevantOrders) {
-    if (
-      side === 'SELL' &&
-      order.side === 'SELL' &&
-      order.pair.baseToken === tokenAddress
-    ) {
-      reserved += decimalToUnits(
-        order.remainingAmount.toString(),
-        order.pair.baseDecimals,
-      );
-    }
-
-    if (
-      side === 'BUY' &&
-      order.side === 'BUY' &&
-      order.pair.quoteToken === tokenAddress
-    ) {
-      reserved += await estimateRequiredQuoteUnits(
-        {
-          id: order.pair.id,
-          symbol: order.pair.symbol,
-          quoteDecimals: order.pair.quoteDecimals,
-        },
-        {
-          type: order.type,
-          price: order.price,
-          stopPrice: order.stopPrice,
-          amount: order.remainingAmount,
-        },
-      );
-    }
-  }
-
-  return reserved;
+  const locked = await balanceService.computeLockedByToken(makerAddress);
+  return toSpotUnits(
+    (
+      locked.get(spotAssetKey(tokenAddress, isNative)) ?? new Decimal(0)
+    ).toString(),
+    decimals,
+  );
 }
 
 async function assertValidOnChainState(
@@ -325,10 +305,8 @@ async function assertValidOnChainState(
   if (onChainNonceCancelled)
     throw ApiError.conflict('Nonce already cancelled on-chain');
 
-  const requiredBase =
-    input.side === 'SELL'
-      ? decimalToUnits(input.amount, pair.baseDecimals)
-      : 0n;
+  const baseAmount = toSpotUnits(input.amount, pair.baseDecimals);
+  const requiredBase = input.side === 'SELL' ? baseAmount : 0n;
 
   let requiredQuote = 0n;
   if (input.side === 'BUY') {
@@ -352,10 +330,13 @@ async function assertValidOnChainState(
     const reservedBase = await getReservedVaultAmounts(
       input.makerAddress,
       pair.baseToken,
-      'SELL',
+      pair.baseDecimals,
+      pair.isNativeBase,
     );
     if (baseBalance !== null && baseBalance - reservedBase < requiredBase) {
-      throw new Error('Insufficient base token balance in Spot vault');
+      throw ApiError.badRequest(
+        'Insufficient base token balance in Spot vault',
+      );
     }
   }
 
@@ -371,10 +352,13 @@ async function assertValidOnChainState(
     const reservedQuote = await getReservedVaultAmounts(
       input.makerAddress,
       pair.quoteToken,
-      'BUY',
+      pair.quoteDecimals,
+      pair.isNativeQuote,
     );
     if (quoteBalance !== null && quoteBalance - reservedQuote < requiredQuote) {
-      throw new Error('Insufficient quote token balance in Spot vault');
+      throw ApiError.badRequest(
+        'Insufficient quote token balance in Spot vault',
+      );
     }
   }
 }
@@ -384,6 +368,9 @@ export const orderService = {
    * Create a new order, attempt matching, persist to DB
    */
   async createOrder(input: CreateOrderInput) {
+    if (input.expiresAt && new Date(input.expiresAt).getTime() <= Date.now()) {
+      throw ApiError.badRequest('Order already expired');
+    }
     // 1. Find pair
     const pair = await prisma.pair.findUnique({
       where: { symbol: input.pairSymbol },
@@ -436,6 +423,13 @@ export const orderService = {
       await rehydrateOrderbookForPair(pair.id, pair.symbol);
       await assertValidOnChainState(pair, input);
 
+      if (
+        input.expiresAt &&
+        new Date(input.expiresAt).getTime() <= Date.now()
+      ) {
+        throw ApiError.badRequest('Order already expired');
+      }
+
       // 5. Create order in DB
       const order = await prisma.order.create({
         data: {
@@ -467,6 +461,7 @@ export const orderService = {
       }
 
       await processTriggeredOrders(pair.id, pair.symbol);
+      broadcastOrderbook(pair.symbol);
 
       return prisma.order.findUnique({ where: { id: order.id } });
     });
@@ -519,6 +514,7 @@ export const orderService = {
 
       const book = orderbookManager.get(pair.symbol);
       if (book) book.cancelOrder(orderId);
+      broadcastOrderbook(pair.symbol);
 
       return updated;
     });

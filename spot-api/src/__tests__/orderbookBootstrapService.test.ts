@@ -3,6 +3,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 const mockPrisma = {
   order: {
     findMany: jest.fn(),
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
 };
 
@@ -38,6 +39,32 @@ describe('rehydrateOrderbooks', () => {
     mockOrderbookManager.getAll.mockReturnValue(
       new Map([['LUNES/USDT', mockBook]]),
     );
+  });
+
+  it('never restores an expired resting order and cancels expired active states', async () => {
+    mockPrisma.order.findMany.mockResolvedValue([
+      {
+        id: 'expired',
+        side: 'SELL',
+        price: new Decimal(2),
+        amount: new Decimal(1),
+        remainingAmount: new Decimal(1),
+        makerAddress: 'maker',
+        createdAt: new Date(0),
+        expiresAt: new Date(1),
+        pair: { symbol: 'LUNES/USDT' },
+      },
+    ]);
+    await rehydrateOrderbookForPair('pair-1', 'LUNES/USDT');
+    expect(mockBook.restoreLimitOrder).not.toHaveBeenCalled();
+    expect(mockPrisma.order.updateMany).toHaveBeenCalledWith({
+      where: {
+        pairId: 'pair-1',
+        status: { in: ['OPEN', 'PARTIAL', 'PENDING_TRIGGER'] },
+        expiresAt: { lte: expect.any(Date) },
+      },
+      data: { status: 'CANCELLED' },
+    });
   });
 
   it('restores persisted resting orders into the in-memory orderbooks', async () => {

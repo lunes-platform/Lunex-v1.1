@@ -3,12 +3,14 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { ApiPromise, Keyring, WsProvider } from '@polkadot/api';
 import { ContractPromise } from '@polkadot/api-contract';
-import { cryptoWaitReady } from '@polkadot/util-crypto';
+import { cryptoWaitReady, decodeAddress } from '@polkadot/util-crypto';
+import { u8aEq } from '@polkadot/util';
 import prisma from '../db';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import { waitForFinalizedTx } from '../utils/finalizedTx';
 import { dryRunGasLimit, txGasLimit } from '../utils/contractGas';
+import { readContractOptionalAccount } from '../utils/contractResult';
 import {
   asymmetricService,
   isCoolingDown,
@@ -142,22 +144,15 @@ class RebalancerService {
       this.asymmetricPairAbi,
       contractAddress,
     );
-    const { output } = await contract.query.getManager(caller, {
+    const { output, result } = await contract.query.getManager(caller, {
       gasLimit: dryRunGasLimit(this.api),
       storageDepositLimit: null,
     });
 
-    const json = output?.toJSON?.() as any;
-    const normalized =
-      typeof json === 'string'
-        ? json
-        : (json?.some ?? output?.toString?.()?.trim());
-
-    if (!normalized || normalized === 'None' || normalized === 'null') {
-      return null;
+    if (result.isErr || !output) {
+      throw new Error('Failed to query asymmetric manager');
     }
-
-    return String(normalized);
+    return readContractOptionalAccount(output);
   }
 
   async isManagedByRelayer(contractAddress: string) {
@@ -166,9 +161,9 @@ class RebalancerService {
       this.getRelayerAddress(),
     ]);
 
-    return Boolean(
-      managerAddress && relayerAddress && managerAddress === relayerAddress,
-    );
+    if (!managerAddress || !relayerAddress) return false;
+    if (managerAddress === relayerAddress) return true;
+    return u8aEq(decodeAddress(managerAddress), decodeAddress(relayerAddress));
   }
 
   async getCurveState(contractAddress: string, isBuySide: boolean) {
@@ -407,7 +402,10 @@ class RebalancerService {
     return waitForFinalizedTx('rebalancer.updateCurveParameters', (callback) =>
       contract.tx
         .updateCurveParameters(
-          { gasLimit: txGasLimit(this.api!, gasRequired), storageDepositLimit: null },
+          {
+            gasLimit: txGasLimit(this.api!, gasRequired),
+            storageDepositLimit: null,
+          },
           input.isBuySide,
           input.newGamma ?? null,
           nextCapacity,

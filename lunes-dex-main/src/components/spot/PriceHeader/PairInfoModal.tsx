@@ -166,7 +166,6 @@ const LoadingText = styled.div`
   font-size: 13px;
 `
 
-
 function shortenAddress(addr: string): string {
   if (addr.length <= 12) return addr
   return `${addr.slice(0, 8)}...${addr.slice(-6)}`

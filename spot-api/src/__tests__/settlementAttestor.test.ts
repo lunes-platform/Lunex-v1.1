@@ -67,7 +67,8 @@ describe('settlement attestor (ECDSA, ADR-001 option c)', () => {
     // price: u128 little-endian
     const price = Buffer.from(msg.slice(117, 133));
     let priceVal = 0n;
-    for (let i = 15; i >= 0; i -= 1) priceVal = (priceVal << 8n) | BigInt(price[i]);
+    for (let i = 15; i >= 0; i -= 1)
+      priceVal = (priceVal << 8n) | BigInt(price[i]);
     expect(priceVal).toBe(123456789n);
 
     // amount: u128 little-endian
@@ -80,7 +81,8 @@ describe('settlement attestor (ECDSA, ADR-001 option c)', () => {
     // nonce: u64 little-endian
     const nonce = Buffer.from(msg.slice(149, 157));
     let nonceVal = 0n;
-    for (let i = 7; i >= 0; i -= 1) nonceVal = (nonceVal << 8n) | BigInt(nonce[i]);
+    for (let i = 7; i >= 0; i -= 1)
+      nonceVal = (nonceVal << 8n) | BigInt(nonce[i]);
     expect(nonceVal).toBe(1700000000001n);
 
     // expiry: u64 little-endian
@@ -118,17 +120,19 @@ describe('settlement attestor (ECDSA, ADR-001 option c)', () => {
     // Independently recover the pubkey from (attestation, hash) exactly as the
     // contract's ecdsa_recover does, and confirm it equals attestor_pubkey.
     const hash = buildAttestationHash(o);
-    const r = BigInt('0x' + Buffer.from(attestation.slice(0, 32)).toString('hex'));
-    const s = BigInt('0x' + Buffer.from(attestation.slice(32, 64)).toString('hex'));
+    const r = BigInt(
+      '0x' + Buffer.from(attestation.slice(0, 32)).toString('hex'),
+    );
+    const s = BigInt(
+      '0x' + Buffer.from(attestation.slice(32, 64)).toString('hex'),
+    );
     const v = attestation[64];
     expect([0, 1, 27, 28]).toContain(v);
     const recovered = new secp256k1.Signature(r, s, v % 2)
       .recoverPublicKey(Uint8Array.from(hash))
       .toRawBytes(true);
 
-    expect(Buffer.from(recovered)).toEqual(
-      Buffer.from(publicKeyCompressed),
-    );
+    expect(Buffer.from(recovered)).toEqual(Buffer.from(publicKeyCompressed));
   });
 
   it('a tampered field yields a different hash so the attestation no longer recovers the key', () => {
@@ -142,8 +146,12 @@ describe('settlement attestor (ECDSA, ADR-001 option c)', () => {
     // (amount changed) — recovery must NOT match the attestor pubkey, which
     // is exactly the on-chain AttestationInvalid revert path.
     const tamperedHash = buildAttestationHash(order({ amount: '999' }));
-    const r = BigInt('0x' + Buffer.from(attestation.slice(0, 32)).toString('hex'));
-    const s = BigInt('0x' + Buffer.from(attestation.slice(32, 64)).toString('hex'));
+    const r = BigInt(
+      '0x' + Buffer.from(attestation.slice(0, 32)).toString('hex'),
+    );
+    const s = BigInt(
+      '0x' + Buffer.from(attestation.slice(32, 64)).toString('hex'),
+    );
     const v = attestation[64];
     const recovered = new secp256k1.Signature(r, s, v % 2)
       .recoverPublicKey(Uint8Array.from(tamperedHash))

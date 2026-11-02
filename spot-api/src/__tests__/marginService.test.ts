@@ -880,10 +880,7 @@ describe('marginService hardening', () => {
     mockPrisma.marginAccount.findUnique.mockResolvedValue(baseAccount);
     mockPrisma.marginPosition.findMany.mockResolvedValue([]);
 
-    await marginService.liquidatePosition(
-      'position-liq',
-      thirdPartyLiquidator,
-    );
+    await marginService.liquidatePosition('position-liq', thirdPartyLiquidator);
 
     // The CAS is filtered on status OPEN -> only one liquidation can win.
     expect(mockTx.marginPosition.updateMany).toHaveBeenCalledWith(

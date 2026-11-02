@@ -61,6 +61,7 @@ function buildInput(id: string, makerNonce: string): TradeSettlementInput {
       isNativeBase: true,
       isNativeQuote: false,
       baseDecimals: 8,
+      quoteDecimals: 8,
     },
     makerOrder: {
       makerAddress: `maker-${id}`,
@@ -113,7 +114,8 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
 
   function installMocks() {
     const createTypeSpy = jest.fn((type: string, value: any) => {
-      if (type === 'WeightV2') return makeWeightLike(value.refTime, value.proofSize);
+      if (type === 'WeightV2')
+        return makeWeightLike(value.refTime, value.proofSize);
       return { __type: type, value };
     });
 
@@ -139,7 +141,13 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
     // (4th positional after the gas object). It records the nonce it was given
     // and asserts concurrency by tracking in-flight count across an async tick.
     const settleTx = jest.fn(
-      (_gas: unknown, makerOrder: any, _taker: unknown, _fa: unknown, _fp: unknown) => {
+      (
+        _gas: unknown,
+        makerOrder: any,
+        _taker: unknown,
+        _fa: unknown,
+        _fp: unknown,
+      ) => {
         const tradeId: string = makerOrder.__tradeId;
         return {
           signAndSend: (
@@ -187,7 +195,9 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
     svc.nonceLock = Promise.resolve();
 
     jest.spyOn(svc, 'ensureReady').mockResolvedValue(true);
-    jest.spyOn(svc, 'assertSettlementInputTrusted').mockResolvedValue(undefined);
+    jest
+      .spyOn(svc, 'assertSettlementInputTrusted')
+      .mockResolvedValue(undefined);
     // toSignedOrder is signature-shaped; stub it to a marker carrying the
     // trade id so the tx mock can attribute submissions to a trade.
     jest
@@ -236,7 +246,9 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
     expect(settledIds).toEqual(['t0', 't1', 't2', 't3', 't4']);
 
     // Distinct, monotonically increasing nonces seeded from chain (100..104).
-    const nonces = submissions.map((s) => s.nonce).sort((a, b) => Number(a - b));
+    const nonces = submissions
+      .map((s) => s.nonce)
+      .sort((a, b) => Number(a - b));
     expect(nonces).toEqual([100n, 101n, 102n, 103n, 104n]);
     // No nonce reused.
     expect(new Set(nonces).size).toBe(5);
@@ -280,6 +292,15 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
     expect(results[0].status).toBe('SETTLED');
     expect(accountNextIndexCalls).toBe(2);
     expect(submissions[submissions.length - 1].nonce).toBe(200n);
+  });
+
+  it('does not submit a legacy payload with unknown quote precision', async () => {
+    const input = buildInput('legacy', '1700000000010');
+    delete input.pair.quoteDecimals;
+    const results = await settlementService.settleTrades([input]);
+    expect(results[0].status).toBe('FAILED');
+    expect(results[0].error).toContain('Missing quote decimals');
+    expect(submissions).toHaveLength(0);
   });
 
   it('bounds concurrency by MAX_SETTLE_CONCURRENCY', async () => {

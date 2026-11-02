@@ -167,7 +167,8 @@ const DirBtn = styled.button<{ tone: 'long' | 'short'; active?: boolean }>`
   color: ${({ tone, active }) =>
     active ? '#ffffff' : tone === 'long' ? '#00C076' : '#FF4B55'};
   border: 1px solid
-    ${({ tone }) => (tone === 'long' ? 'rgba(0,192,118,0.3)' : 'rgba(255,75,85,0.3)')};
+    ${({ tone }) =>
+      tone === 'long' ? 'rgba(0,192,118,0.3)' : 'rgba(255,75,85,0.3)'};
 `
 
 const PositionCard = styled.div`

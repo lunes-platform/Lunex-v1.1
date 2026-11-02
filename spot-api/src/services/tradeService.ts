@@ -8,6 +8,9 @@ import {
   tradeSettlementService,
 } from './tradeSettlementService';
 import { log } from '../utils/logger';
+import { broadcastTrade } from '../websocket/server';
+
+const MoneyDecimal = Decimal.clone({ precision: 80 });
 
 function sanitizeTradeForClient<T extends Record<string, unknown>>(trade: T) {
   const {
@@ -38,7 +41,7 @@ export const tradeService = {
    * Updates orders, creates trades, updates candles.
    */
   async processMatches(pairId: string, matches: MatchResult[]) {
-    const { trades, settlementInputs } = await prisma.$transaction(
+    const { trades, settlementInputs, pairSymbol } = await prisma.$transaction(
       async (tx) => {
         // TODO(types): typing `tx` surfaces a pre-existing issue — the create
         // below passes `settlementPayload: null` where Prisma expects the
@@ -46,6 +49,7 @@ export const tradeService = {
         const txAny = tx as any;
         const transactionTrades = [];
         const transactionSettlementInputs: TradeSettlementInput[] = [];
+        let transactionPairSymbol = '';
 
         for (const match of matches) {
           // 1. Update maker order
@@ -101,10 +105,19 @@ export const tradeService = {
           // 3. Get pair for fee calculation
           const pair = await tx.pair.findUnique({ where: { id: pairId } });
           if (!pair) throw new Error('Pair not found');
+          transactionPairSymbol = pair.symbol;
 
-          const quoteAmount = match.fillAmount * match.fillPrice;
-          const makerFee = (quoteAmount * pair.makerFeeBps) / 10000;
-          const takerFee = (quoteAmount * pair.takerFeeBps) / 10000;
+          const quoteAmount = new MoneyDecimal(match.fillAmount.toString())
+            .mul(match.fillPrice.toString())
+            .toDecimalPlaces(pair.quoteDecimals, Decimal.ROUND_DOWN);
+          const makerFee = quoteAmount
+            .mul(pair.makerFeeBps)
+            .div(10000)
+            .toDecimalPlaces(pair.quoteDecimals, Decimal.ROUND_DOWN);
+          const takerFee = quoteAmount
+            .mul(pair.takerFeeBps)
+            .div(10000)
+            .toDecimalPlaces(pair.quoteDecimals, Decimal.ROUND_DOWN);
 
           // 4. Determine taker side
           const takerSide = takerOrder.side;
@@ -118,9 +131,11 @@ export const tradeService = {
               isNativeBase: pair.isNativeBase,
               isNativeQuote: pair.isNativeQuote,
               baseDecimals: pair.baseDecimals,
+              quoteDecimals: pair.quoteDecimals,
             },
             makerOrder: {
               makerAddress: makerOrder.makerAddress,
+              timeInForce: makerOrder.timeInForce,
               side: makerOrder.side,
               type: makerOrder.type,
               price: makerOrder.price.toString(),
@@ -134,6 +149,7 @@ export const tradeService = {
             },
             takerOrder: {
               makerAddress: takerOrder.makerAddress,
+              timeInForce: takerOrder.timeInForce,
               side: takerOrder.side,
               type: takerOrder.type,
               price: takerOrder.price.toString(),
@@ -190,9 +206,12 @@ export const tradeService = {
         return {
           trades: transactionTrades,
           settlementInputs: transactionSettlementInputs,
+          pairSymbol: transactionPairSymbol,
         };
       },
     );
+
+    for (const trade of trades) broadcastTrade(pairSymbol, trade);
 
     for (const match of matches) {
       // 6. Update candles (outside transaction for performance)

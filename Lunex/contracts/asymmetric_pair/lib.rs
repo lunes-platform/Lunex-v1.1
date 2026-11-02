@@ -21,6 +21,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
 
+// ink! 4 event macros generate bounded topic-index casts flagged by cargo-contract 5.
+#[allow(clippy::cast_possible_truncation)]
 #[ink::contract]
 mod asymmetric_pair {
     use scale::{Decode, Encode};

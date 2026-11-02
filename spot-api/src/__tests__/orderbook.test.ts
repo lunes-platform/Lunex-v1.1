@@ -7,6 +7,36 @@ describe('Orderbook', () => {
     book = new Orderbook('LUNES/USDT');
   });
 
+  it.each(['BUY', 'SELL'] as const)(
+    'fills decimal amounts exactly for LIMIT %s',
+    (side) => {
+      const resting = side === 'BUY' ? 'SELL' : 'BUY';
+      book.addLimitOrder('a', resting, 2, 0.1, 'maker');
+      book.addLimitOrder('b', resting, 2, 0.2, 'maker');
+      const matches = book.addLimitOrder('taker', side, 2, 0.3, 'other');
+      expect(matches.map((m) => m.fillAmount)).toEqual([0.1, 0.2]);
+      expect(book.getBidCount() + book.getAskCount()).toBe(0);
+    },
+  );
+  it.each(['BUY', 'SELL'] as const)(
+    'fills decimal amounts exactly for MARKET %s',
+    (side) => {
+      const resting = side === 'BUY' ? 'SELL' : 'BUY';
+      book.addLimitOrder('a', resting, 2, 0.1, 'maker');
+      book.addLimitOrder('b', resting, 2, 0.2, 'maker');
+      const matches = book.addMarketOrder('taker', side, 0.3, 'other');
+      expect(matches.map((m) => m.fillAmount)).toEqual([0.1, 0.2]);
+      expect(book.getBidCount() + book.getAskCount()).toBe(0);
+    },
+  );
+  it('aggregates decimal depth without binary floating point dust', () => {
+    book.addLimitOrder('a', 'SELL', 2, 0.1, 'maker');
+    book.addLimitOrder('b', 'SELL', 2, 0.2, 'maker');
+    expect(book.getSnapshot().asks).toEqual([
+      { price: 2, amount: 0.3, total: 0.3 },
+    ]);
+  });
+
   describe('Limit Orders - No Match', () => {
     it('should add a buy order to bids', () => {
       const matches = book.addLimitOrder('o1', 'BUY', 100, 10, 'alice');

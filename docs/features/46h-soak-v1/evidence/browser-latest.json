@@ -1,0 +1,43 @@
+{
+  "at": "2026-10-18T20:16:44.491Z",
+  "pages": [
+    {
+      "path": "/spot",
+      "wallet": "5Eq9bAvZrVJt6NVfvemQbg9FuvhJuKDybZjzGj5ZG4cGrdxC",
+      "signedCreateCancel": true,
+      "signatures": 3
+    },
+    {
+      "path": "/swap",
+      "rendered": true
+    },
+    {
+      "path": "/pool",
+      "rendered": true
+    }
+  ],
+  "errors": [],
+  "requestsFailed": [],
+  "wsMessages": 115,
+  "orderId": "03bf07d7-c5ce-4cfa-9774-cf9100fdbd0d",
+  "swapBefore": {
+    "fromBlock": 17753,
+    "quoteBalanceRaw": "20000000019898"
+  },
+  "submittedTxHashes": [
+    "0x70163385ce15bef8d4dea571d2dc54273d1c2a29e5a35a5a3268bd95a387ab2e"
+  ],
+  "frontendSwap": {
+    "hash": "0x70163385ce15bef8d4dea571d2dc54273d1c2a29e5a35a5a3268bd95a387ab2e",
+    "finalizedBlock": 17754,
+    "dispatchSuccess": true,
+    "nativeInputRaw": "1000000",
+    "quoteReceivedRaw": "19894"
+  },
+  "mobile": {
+    "width": 390,
+    "scrollWidth": 390
+  },
+  "status": "PASSED",
+  "finishedAt": "2026-10-18T20:17:35.540Z"
+}

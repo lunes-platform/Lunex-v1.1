@@ -78,7 +78,9 @@ type VaultRiskConfig = {
 
 // Builds the Prisma update payload for risk columns from a request input.
 // Only includes fields that were actually provided so partial updates are safe.
-function buildRiskConfigUpdate(input: RiskConfigInput): Record<string, unknown> {
+function buildRiskConfigUpdate(
+  input: RiskConfigInput,
+): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   if (input.copyMultiplier != null) {
     data.copyMultiplier = toDecimal(input.copyMultiplier);

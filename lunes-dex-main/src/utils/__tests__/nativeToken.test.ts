@@ -8,7 +8,7 @@ import {
   toRoutingAddress,
   wlunesAddress,
   classifyTrade,
-  maxNativeSpendable,
+  maxNativeSpendable
 } from '../nativeToken'
 
 const WLUNES_ADDR = '5C75w2nFNbjd8cZFSparTvQHJ52nca7EfQYBYueBiD5rzYJW'
@@ -78,33 +78,33 @@ describe('classifyTrade', () => {
     expect(classifyTrade(LUNES, LUSDT)).toEqual({
       kind: 'swap',
       method: 'swapExactNativeForTokens',
-      needsApprove: false,
+      needsApprove: false
     })
   })
   it('token -> LUNES = tokens-for-native swap, needs approve', () => {
     expect(classifyTrade(LUSDT, LUNES)).toEqual({
       kind: 'swap',
       method: 'swapExactTokensForNative',
-      needsApprove: true,
+      needsApprove: true
     })
   })
   it('token -> token = tokens-for-tokens swap, needs approve', () => {
     expect(classifyTrade(LUSDT, LBTC)).toEqual({
       kind: 'swap',
       method: 'swapExactTokensForTokens',
-      needsApprove: true,
+      needsApprove: true
     })
   })
   it('LUNES -> WLUNES = wrap (1:1, no approve, no router method)', () => {
     expect(classifyTrade(LUNES, WLUNES)).toEqual({
       kind: 'wrap',
-      needsApprove: false,
+      needsApprove: false
     })
   })
   it('WLUNES -> LUNES = unwrap (1:1, no approve, no router method)', () => {
     expect(classifyTrade(WLUNES, LUNES)).toEqual({
       kind: 'unwrap',
-      needsApprove: false,
+      needsApprove: false
     })
   })
 })

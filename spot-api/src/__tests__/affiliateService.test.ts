@@ -179,20 +179,8 @@ describe('affiliateService.distributeSpotTradeCommissions (Task 2)', () => {
         include: { pair: true },
       }),
     );
-    expect(spy).toHaveBeenCalledWith(
-      'taker',
-      'USDT',
-      '2',
-      'SPOT',
-      'trade-1',
-    );
-    expect(spy).toHaveBeenCalledWith(
-      'maker',
-      'USDT',
-      '1',
-      'SPOT',
-      'trade-1',
-    );
+    expect(spy).toHaveBeenCalledWith('taker', 'USDT', '2', 'SPOT', 'trade-1');
+    expect(spy).toHaveBeenCalledWith('maker', 'USDT', '1', 'SPOT', 'trade-1');
     spy.mockRestore();
   });
 
@@ -257,8 +245,8 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
         findMany: jest.fn(() => Promise.resolve([])),
       },
     };
-    mockPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
-      fn(txMock),
+    mockPrisma.$transaction.mockImplementation(
+      async (fn: (tx: unknown) => unknown) => fn(txMock),
     );
     mockPrisma.$queryRaw.mockResolvedValue([]);
   });
@@ -280,7 +268,12 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
       // 1st call: unpaid selection
       .mockImplementationOnce(() =>
         Promise.resolve([
-          { id: 'c1', sourceType: 'COPYTRADE', sourceTradeId: null, commissionAmount: new Decimal('5') },
+          {
+            id: 'c1',
+            sourceType: 'COPYTRADE',
+            sourceTradeId: null,
+            commissionAmount: new Decimal('5'),
+          },
         ]),
       )
       // 2nd call: rows linked to the batch (for totalPaid)
@@ -303,10 +296,30 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
     txMock.affiliateCommission.findMany
       .mockImplementationOnce(() =>
         Promise.resolve([
-          { id: 'spot-unsettled', sourceType: 'SPOT', sourceTradeId: 't-unsettled', commissionAmount: new Decimal('1') },
-          { id: 'spot-settled', sourceType: 'SPOT', sourceTradeId: 't-settled', commissionAmount: new Decimal('2') },
-          { id: 'copytrade', sourceType: 'COPYTRADE', sourceTradeId: 'wd-1', commissionAmount: new Decimal('3') },
-          { id: 'nullsrc', sourceType: 'SPOT', sourceTradeId: null, commissionAmount: new Decimal('4') },
+          {
+            id: 'spot-unsettled',
+            sourceType: 'SPOT',
+            sourceTradeId: 't-unsettled',
+            commissionAmount: new Decimal('1'),
+          },
+          {
+            id: 'spot-settled',
+            sourceType: 'SPOT',
+            sourceTradeId: 't-settled',
+            commissionAmount: new Decimal('2'),
+          },
+          {
+            id: 'copytrade',
+            sourceType: 'COPYTRADE',
+            sourceTradeId: 'wd-1',
+            commissionAmount: new Decimal('3'),
+          },
+          {
+            id: 'nullsrc',
+            sourceType: 'SPOT',
+            sourceTradeId: null,
+            commissionAmount: new Decimal('4'),
+          },
         ]),
       )
       .mockImplementationOnce(() => Promise.resolve([]));
@@ -316,7 +329,8 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
 
     await affiliateService.processPayoutBatch();
 
-    const eligibleIds = txMock.affiliateCommission.updateMany.mock.calls[0][0].where.id.in;
+    const eligibleIds =
+      txMock.affiliateCommission.updateMany.mock.calls[0][0].where.id.in;
     expect(eligibleIds).toEqual(
       expect.arrayContaining(['spot-settled', 'copytrade', 'nullsrc']),
     );
@@ -353,7 +367,11 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
     const result = await affiliateService.processPayoutBatch();
 
     expect(result).toEqual(
-      expect.objectContaining({ batchId: 'batch-1', processed: 0, totalPaid: 0 }),
+      expect.objectContaining({
+        batchId: 'batch-1',
+        processed: 0,
+        totalPaid: 0,
+      }),
     );
   });
 

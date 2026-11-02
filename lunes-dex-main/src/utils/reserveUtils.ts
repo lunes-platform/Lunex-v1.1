@@ -23,23 +23,22 @@ export function normalizeReservesForPath(
   pairToken0: string,
   pathToken0: string,
   reserve0Raw: string,
-  reserve1Raw: string,
+  reserve1Raw: string
 ): { reserveIn: bigint; reserveOut: bigint } {
-  const isPathToken0 =
-    pathToken0.toLowerCase() === pairToken0.toLowerCase();
+  const isPathToken0 = pathToken0.toLowerCase() === pairToken0.toLowerCase()
 
   if (isPathToken0) {
     return {
       reserveIn: BigInt(reserve0Raw),
-      reserveOut: BigInt(reserve1Raw),
-    };
+      reserveOut: BigInt(reserve1Raw)
+    }
   }
 
   // path[0] is the canonical token_1 → swap the reserves
   return {
     reserveIn: BigInt(reserve1Raw),
-    reserveOut: BigInt(reserve0Raw),
-  };
+    reserveOut: BigInt(reserve0Raw)
+  }
 }
 
 /**
@@ -68,34 +67,34 @@ export function humanPrice(
   reserve0Raw: string,
   reserve1Raw: string,
   decimals0: number,
-  decimals1: number,
+  decimals1: number
 ): number {
-  const r0 = BigInt(reserve0Raw);
-  const r1 = BigInt(reserve1Raw);
+  const r0 = BigInt(reserve0Raw)
+  const r1 = BigInt(reserve1Raw)
 
-  if (r0 === 0n || r1 === 0n) return 0;
+  if (r0 === 0n || r1 === 0n) return 0
 
   // 9-decimal intermediate scale to preserve precision through the division
-  const SCALE = BigInt(1_000_000_000);
+  const SCALE = BigInt(1_000_000_000)
 
   const isDisplayToken0 =
-    displayToken.toLowerCase() === pairToken0.toLowerCase();
+    displayToken.toLowerCase() === pairToken0.toLowerCase()
 
   if (isDisplayToken0) {
     // price of 1 token_0 in token_1
     // = (r1 / 10^decimals1) / (r0 / 10^decimals0)
     // = (r1 * 10^decimals0) / (r0 * 10^decimals1)
-    const d0 = BigInt(10 ** decimals0);
-    const d1 = BigInt(10 ** decimals1);
-    const scaledNum = (r1 * d0 * SCALE) / (r0 * d1);
-    return Number(scaledNum) / 1e9;
+    const d0 = BigInt(10 ** decimals0)
+    const d1 = BigInt(10 ** decimals1)
+    const scaledNum = (r1 * d0 * SCALE) / (r0 * d1)
+    return Number(scaledNum) / 1e9
   }
 
   // price of 1 token_1 in token_0
   // = (r0 / 10^decimals0) / (r1 / 10^decimals1)
   // = (r0 * 10^decimals1) / (r1 * 10^decimals0)
-  const d0 = BigInt(10 ** decimals0);
-  const d1 = BigInt(10 ** decimals1);
-  const scaledNum = (r0 * d1 * SCALE) / (r1 * d0);
-  return Number(scaledNum) / 1e9;
+  const d0 = BigInt(10 ** decimals0)
+  const d1 = BigInt(10 ** decimals1)
+  const scaledNum = (r0 * d1 * SCALE) / (r1 * d0)
+  return Number(scaledNum) / 1e9
 }

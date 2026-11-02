@@ -157,8 +157,8 @@ async function deployPSP22(
   return new Promise((resolve, reject) => {
     const tx = (code.tx as any)['new'](
       { gasLimit: gas, storageDepositLimit: null },
-      { some: cfg.name },
-      { some: cfg.symbol },
+      cfg.name,
+      cfg.symbol,
       cfg.decimals,
       cfg.supply,
     )
@@ -229,6 +229,29 @@ async function main() {
   const deployedTokens: Record<string, string> = {}
   const deployedPairs:  Record<string, string> = {}
 
+  // setup-local-tokens leaves 50,000 LUSDT after the core pool; the four
+  // additional pools require 850,000. Only the local WNative mock can be
+  // topped up with deposit(value). Refuse to send funds to any other token.
+  const requiredLusdt = TOKENS.reduce((total, cfg) => total + cfg.liqLusdt, 0n)
+  const currentLusdt = BigInt(await query(api, alice, lusdt, 'balanceOf', [alice.address]))
+  if (currentLusdt < requiredLusdt) {
+    const [lusdtInfo, wrappedInfo] = await Promise.all([
+      api.query.contracts.contractInfoOf(lusdtAddress),
+      api.query.contracts.contractInfoOf(addresses.wnative),
+    ])
+    if (lusdtInfo.isEmpty || wrappedInfo.isEmpty ||
+        (lusdtInfo as any).unwrap().codeHash.toString() !== (wrappedInfo as any).unwrap().codeHash.toString()) {
+      throw new Error('Insufficient LUSDT; automatic funding is only supported for the local WNative mock')
+    }
+    const wrappedAbi = JSON.parse(readFileSync(join(ARTIFACTS, 'wnative_contract', 'wnative_contract.json'), 'utf8'))
+    const mockLusdt = new ContractPromise(api, wrappedAbi, lusdtAddress)
+    const deficit = requiredLusdt - currentLusdt
+    await sendTx('Top up local mock LUSDT for all pools',
+      (mockLusdt.tx as any).deposit({ gasLimit: gas, storageDepositLimit: null, value: deficit }), alice)
+    const funded = BigInt(await query(api, alice, lusdt, 'balanceOf', [alice.address]))
+    if (funded < requiredLusdt) throw new Error('Local LUSDT funding did not produce the required balance')
+  }
+
   let step = 1
 
   for (const cfg of TOKENS) {
@@ -237,6 +260,15 @@ async function main() {
     const tokenAddress = await deployPSP22(api, alice, cfg)
     deployedTokens[cfg.symbol] = tokenAddress
     const token = new ContractPromise(api, psp22Abi, tokenAddress)
+
+    const [name, symbol, decimals] = await Promise.all([
+      query(api, alice, token, 'tokenName'),
+      query(api, alice, token, 'tokenSymbol'),
+      query(api, alice, token, 'tokenDecimals'),
+    ])
+    if (name !== cfg.name || symbol !== cfg.symbol || Number(decimals) !== cfg.decimals) {
+      throw new Error(`${cfg.symbol} metadata mismatch; refusing to fund its pool`)
+    }
 
     const bal = await query(api, alice, token, 'balanceOf', [alice.address])
     log(`Alice ${cfg.symbol}: ${BigInt(bal) / BigInt(10 ** cfg.decimals)} ${cfg.symbol}`)

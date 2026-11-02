@@ -589,7 +589,12 @@ const Pool: React.FC = () => {
                 ) : (
                   'Select'
                 )}
-                <img src="/img/arrow-down.svg" alt="Select" width={16} height={16} />
+                <img
+                  src="/img/arrow-down.svg"
+                  alt="Select"
+                  width={16}
+                  height={16}
+                />
               </TokenButton>
             </InputRow>
           </InputContainer>
@@ -626,7 +631,12 @@ const Pool: React.FC = () => {
                 ) : (
                   'Select'
                 )}
-                <img src="/img/arrow-down.svg" alt="Select" width={16} height={16} />
+                <img
+                  src="/img/arrow-down.svg"
+                  alt="Select"
+                  width={16}
+                  height={16}
+                />
               </TokenButton>
             </InputRow>
           </InputContainer>
@@ -694,7 +704,12 @@ const Pool: React.FC = () => {
               <MaxButton
                 onClick={() => {
                   if (liquidity.poolInfo) {
-                    setLpAmountToRemove(liquidity.poolInfo.lpBalance)
+                    setLpAmountToRemove(
+                      sdk.formatAmount(
+                        liquidity.poolInfo.lpBalance,
+                        LP_TOKEN_DECIMALS
+                      )
+                    )
                   }
                 }}
               >
@@ -862,7 +877,7 @@ const calculateExpectedAmount = (
     if (total === BigInt(0)) return '0'
     const raw = (lp * res) / total
     return (Number(raw) / 10 ** tokenDecimals).toLocaleString('en-US', {
-      maximumFractionDigits: 6,
+      maximumFractionDigits: 6
     })
   } catch {
     return '0'

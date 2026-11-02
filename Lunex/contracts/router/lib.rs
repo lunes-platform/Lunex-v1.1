@@ -93,8 +93,9 @@ impl PairRef {
             .exec_input(
                 ExecutionInput::new(Selector::new(ink::selector_bytes!("mint"))).push_arg(to),
             )
-            .returns::<Balance>()
+            .returns::<Result<Balance, ()>>()
             .try_invoke()
+            .map_err(|_| ink::env::Error::CalleeTrapped)?
             .map_err(|_| ink::env::Error::CalleeTrapped)?
             .map_err(|_| ink::env::Error::CalleeTrapped)
     }
@@ -1085,28 +1086,82 @@ pub mod router_contract {
                 return Err(RouterError::InsufficientBAmount);
             }
 
-            // Wrap native token para WNATIVE
-            WNativeRef::deposit(self.wnative, amount_native)
-                .map_err(|_| RouterError::InsufficientAAmount)?;
-
-            // Adicionar liquidez usando WNATIVE
-            let result = self.add_liquidity_internal(
-                token,
-                self.wnative,
+            let (token_0, token_1) = self.sort_tokens(token, self.wnative);
+            let pair = FactoryRef::get_pair(self.factory, token_0, token_1)
+                .map_err(|_| RouterError::PairNotExists)?;
+            let (reserve_0, reserve_1, _) =
+                PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
+            let (reserve_token, reserve_native) = if token == token_0 {
+                (reserve_0, reserve_1)
+            } else {
+                (reserve_1, reserve_0)
+            };
+            let (amount_token, native_used) = self.native_liquidity_amounts(
                 amount_token_desired,
                 amount_native,
                 amount_token_min,
                 amount_native_min,
-                to,
-                deadline,
-            );
+                reserve_token,
+                reserve_native,
+            )?;
 
-            // Se falhar, fazer unwrap e devolver native tokens
-            if result.is_err() {
-                let _ = WNativeRef::withdraw(self.wnative, amount_native);
+            let caller = self.env().caller();
+            PSP22Ref::transfer_from(token, caller, pair, amount_token)
+                .map_err(|_| RouterError::InsufficientAAmount)?;
+            // The Router owns the freshly wrapped tokens. Never transfer_from
+            // the user's WLUNES balance in this native-token path.
+            WNativeRef::deposit(self.wnative, native_used)
+                .map_err(|_| RouterError::InsufficientBAmount)?;
+            WNativeRef::transfer(self.wnative, pair, native_used)
+                .map_err(|_| RouterError::InsufficientBAmount)?;
+            let liquidity =
+                PairRef::mint(pair, to).map_err(|_| RouterError::InsufficientLiquidity)?;
+            let refund = amount_native
+                .checked_sub(native_used)
+                .ok_or(RouterError::Overflow)?;
+            if refund > 0 {
+                self.env()
+                    .transfer(caller, refund)
+                    .map_err(|_| RouterError::InsufficientBAmount)?;
             }
+            self.env().emit_event(LiquidityAdded {
+                token_a: token,
+                token_b: self.wnative,
+                amount_a: amount_token,
+                amount_b: native_used,
+                liquidity,
+                to,
+            });
+            Ok((amount_token, native_used, liquidity))
+        }
 
-            result
+        fn native_liquidity_amounts(
+            &self,
+            token_desired: Balance,
+            native_desired: Balance,
+            token_min: Balance,
+            native_min: Balance,
+            reserve_token: Balance,
+            reserve_native: Balance,
+        ) -> Result<(Balance, Balance), RouterError> {
+            if reserve_token == 0 && reserve_native == 0 {
+                return Ok((token_desired, native_desired));
+            }
+            let token_optimal =
+                self.quote_internal(native_desired, reserve_native, reserve_token)?;
+            if token_optimal <= token_desired {
+                if token_optimal < token_min {
+                    return Err(RouterError::InsufficientAAmount);
+                }
+                Ok((token_optimal, native_desired))
+            } else {
+                let native_optimal =
+                    self.quote_internal(token_desired, reserve_token, reserve_native)?;
+                if native_optimal > native_desired || native_optimal < native_min {
+                    return Err(RouterError::InsufficientBAmount);
+                }
+                Ok((token_desired, native_optimal))
+            }
         }
 
         /// Remove liquidez e recebe token nativo (LUNES)
@@ -1673,6 +1728,44 @@ pub mod router_contract {
         // ========================================
         // TESTES BÁSICOS DE INICIALIZAÇÃO
         // ========================================
+
+        #[ink::test]
+        fn native_liquidity_uses_proportional_token_amount() {
+            let a = default_accounts();
+            let router = RouterContract::new(a.bob, a.charlie);
+            assert_eq!(
+                router.native_liquidity_amounts(300, 10, 190, 9, 2000, 100),
+                Ok((200, 10))
+            );
+        }
+
+        #[ink::test]
+        fn native_liquidity_leaves_excess_native_for_refund() {
+            let a = default_accounts();
+            let router = RouterContract::new(a.bob, a.charlie);
+            assert_eq!(
+                router.native_liquidity_amounts(100, 10, 99, 4, 2000, 100),
+                Ok((100, 5))
+            );
+            assert_eq!(
+                router.native_liquidity_amounts(100, 10, 99, 9, 2000, 100),
+                Err(RouterError::InsufficientBAmount)
+            );
+        }
+
+        #[ink::test]
+        fn native_liquidity_respects_token_minimum() {
+            let a = default_accounts();
+            let router = RouterContract::new(a.bob, a.charlie);
+            assert_eq!(
+                router.native_liquidity_amounts(300, 10, 250, 9, 2000, 100),
+                Err(RouterError::InsufficientAAmount)
+            );
+            assert_eq!(
+                router.native_liquidity_amounts(300, 10, 250, 9, 0, 0),
+                Ok((300, 10))
+            );
+        }
 
         #[ink::test]
         fn test_new_router_initializes_correctly() {

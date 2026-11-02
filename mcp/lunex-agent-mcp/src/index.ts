@@ -163,6 +163,27 @@ function generateNonce(): string {
     .padStart(3, '0')}`;
 }
 
+function canonicalOrderDecimal(value: string | undefined): string {
+  const match = (value || '0')
+    .trim()
+    .match(/^\+?(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i);
+  if (!match || (!match[1] && !match[2]))
+    throw new Error('Invalid order decimal');
+  let digits = (match[1] + (match[2] || '')).replace(/^0+/, '');
+  if (!digits) return '0';
+  let exponent = Number(match[3] || '0') - (match[2] || '').length;
+  if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1000)
+    throw new Error('Invalid order decimal exponent');
+  while (digits.endsWith('0')) {
+    digits = digits.slice(0, -1);
+    exponent++;
+  }
+  const point = digits.length + exponent;
+  if (point <= 0) return '0.' + '0'.repeat(-point) + digits;
+  if (point >= digits.length) return digits + '0'.repeat(point - digits.length);
+  return digits.slice(0, point) + '.' + digits.slice(point);
+}
+
 function buildSpotOrderSignMessage(input: {
   pairSymbol: string;
   side: string;
@@ -172,8 +193,11 @@ function buildSpotOrderSignMessage(input: {
   amount: string;
   nonce: string;
   timestamp: number;
+  timeInForce?: string;
+  expiresAt?: string;
 }) {
-  return `lunex-order:${input.pairSymbol}:${input.side}:${input.type}:${input.price || '0'}:${input.stopPrice || '0'}:${input.amount}:${input.nonce}:${input.timestamp}`;
+  const expiry = input.expiresAt ? new Date(input.expiresAt).getTime() : 0;
+  return `lunex-order-v2:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp}:${input.timeInForce || 'GTC'}:${expiry}`;
 }
 
 function buildSpotCancelSignMessage(input: {
@@ -270,7 +294,7 @@ function buildSpotTradingDocs() {
     '',
     '## Message formats',
     '',
-    '- Order: `lunex-order:{pairSymbol}:{side}:{type}:{price||0}:{stopPrice||0}:{amount}:{nonce}:{timestamp}`',
+    '- Order: `lunex-order-v2:{pairSymbol}:{side}:{type}:{canonicalPrice}:{canonicalStop}:{canonicalAmount}:{nonce}:{timestamp}:{timeInForce||GTC}:{expiryUnixMs||0}`',
     '- Cancel: wallet action `lunex-auth:orders.cancel` with fields `address`, `orderId`, `nonce`, and `timestamp`.',
     '',
     '## Notes',
@@ -2531,6 +2555,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           amount,
           nonce,
           timestamp,
+          timeInForce,
+          expiresAt,
         }),
         order: {
           pairSymbol,

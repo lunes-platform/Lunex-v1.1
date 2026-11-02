@@ -1,0 +1,134 @@
+{
+  "summary": {
+    "passed": 3,
+    "failed": 0
+  },
+  "cases": [
+    {
+      "name": "insufficient_sell",
+      "status": "passed",
+      "responses": [
+        {
+          "method": "POST",
+          "path": "/orders",
+          "status": 400,
+          "data": {
+            "error": "Insufficient base token balance in Spot vault",
+            "code": "BAD_REQUEST"
+          }
+        }
+      ],
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "43563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5329899530",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "170000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "56437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4668944528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "230000000"
+        },
+        "fees": "1155942"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "43563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5329899530",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "170000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "56437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4668944528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "230000000"
+        },
+        "fees": "1155942"
+      },
+      "tradeCount": 0
+    },
+    {
+      "name": "insufficient_buy",
+      "status": "passed",
+      "responses": [
+        {
+          "method": "POST",
+          "path": "/orders",
+          "status": 400,
+          "data": {
+            "error": "Insufficient quote token balance in Spot vault",
+            "code": "BAD_REQUEST"
+          }
+        }
+      ],
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "43563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5329899530",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "170000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "56437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4668944528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "230000000"
+        },
+        "fees": "1155942"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "43563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5329899530",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "170000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "56437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4668944528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "230000000"
+        },
+        "fees": "1155942"
+      },
+      "tradeCount": 0
+    },
+    {
+      "name": "insufficient_native",
+      "status": "passed",
+      "responses": [
+        {
+          "method": "POST",
+          "path": "/orders",
+          "status": 400,
+          "data": {
+            "error": "Insufficient base token balance in Spot vault",
+            "code": "BAD_REQUEST"
+          }
+        }
+      ],
+      "before": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "43563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5329899530",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "170000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "56437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4668944528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "230000000"
+        },
+        "fees": "1155942"
+      },
+      "after": {
+        "5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "43563000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "5329899530",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "170000000"
+        },
+        "5CiPPseXPECbkjWCa6MnjNokrgYjMqmKndv2rSnekmSK2DjL": {
+          "5FPFAuNBTPzxJpd8aS5rrNVmDYJrCUxQnNdDjugjN2EmULuT": "56437000000",
+          "5DLgfGJKfKMxsyjnzLZXc2nup9gchnKaLyM1HWa9a6fG34kL": "4668944528",
+          "0x0000000000000000000000000000000000000000000000000000000000000000": "230000000"
+        },
+        "fees": "1155942"
+      },
+      "tradeCount": 0
+    }
+  ]
+}

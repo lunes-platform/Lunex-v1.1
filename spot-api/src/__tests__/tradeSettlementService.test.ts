@@ -265,7 +265,14 @@ describe('tradeSettlementService', () => {
   });
 
   describe('post-settlement affiliate hook (Task 2)', () => {
-    function arrangeAttempt(results: Array<{ tradeId: string; status: string; txHash?: string; error?: string }>) {
+    function arrangeAttempt(
+      results: Array<{
+        tradeId: string;
+        status: string;
+        txHash?: string;
+        error?: string;
+      }>,
+    ) {
       mockSettlementService.isEnabled.mockReturnValue(true);
       mockPrisma.trade.updateMany.mockResolvedValue({ count: results.length });
       mockPrisma.trade.findUnique.mockResolvedValue({
@@ -282,7 +289,9 @@ describe('tradeSettlementService', () => {
         { tradeId: 'trade-2', status: 'FAILED', error: 'x' },
         { tradeId: 'trade-3', status: 'SKIPPED' },
       ]);
-      mockAffiliateService.distributeSpotTradeCommissions.mockResolvedValue(undefined);
+      mockAffiliateService.distributeSpotTradeCommissions.mockResolvedValue(
+        undefined,
+      );
 
       await tradeSettlementService.processNewTradeSettlements([
         baseInput,
@@ -306,7 +315,9 @@ describe('tradeSettlementService', () => {
     });
 
     it('does not break settlement when the affiliate hook rejects', async () => {
-      arrangeAttempt([{ tradeId: 'trade-1', status: 'SETTLED', txHash: '0xabc' }]);
+      arrangeAttempt([
+        { tradeId: 'trade-1', status: 'SETTLED', txHash: '0xabc' },
+      ]);
       mockAffiliateService.distributeSpotTradeCommissions.mockRejectedValue(
         new Error('affiliate down'),
       );

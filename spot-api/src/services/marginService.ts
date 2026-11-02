@@ -941,9 +941,8 @@ export const marginService = {
       throw new Error(`Pair ${input.pairSymbol} not found or inactive`);
     }
 
-    const entryPrice = (
-      await resolveReferencePrice(pair.id, input.pairSymbol)
-    ).price;
+    const entryPrice = (await resolveReferencePrice(pair.id, input.pairSymbol))
+      .price;
 
     const position = await prisma.$transaction(async (tx) => {
       const txAny = tx;

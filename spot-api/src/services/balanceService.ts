@@ -20,8 +20,18 @@
  */
 import prisma from '../db';
 import { Decimal } from '@prisma/client/runtime/library';
+import { settlementService } from './settlementService';
+import {
+  spotAssetKey,
+  quoteReserveUnits,
+  spotUnitsToDecimal,
+} from '../utils/spotReservation';
 
-const RESERVING_ORDER_STATUSES = ['OPEN', 'PARTIAL', 'PENDING_TRIGGER'] as const;
+const RESERVING_ORDER_STATUSES = [
+  'OPEN',
+  'PARTIAL',
+  'PENDING_TRIGGER',
+] as const;
 
 export type TokenBalance = {
   token: string;
@@ -75,9 +85,13 @@ async function computeLockedByToken(
   };
 
   for (const order of orders) {
+    if (order.expiresAt && order.expiresAt.getTime() <= Date.now()) continue;
     if (order.side === 'SELL') {
       // Reserves BASE token: the remaining amount still on the book.
-      add(order.pair.baseToken, new Decimal(order.remainingAmount.toString()));
+      add(
+        spotAssetKey(order.pair.baseToken, order.pair.isNativeBase),
+        new Decimal(order.remainingAmount.toString()),
+      );
     } else if (order.side === 'BUY') {
       // Reserves QUOTE token: price × remaining amount.
       const price = effectivePrice({
@@ -89,8 +103,15 @@ async function computeLockedByToken(
             : null,
       });
       add(
-        order.pair.quoteToken,
-        price.times(new Decimal(order.remainingAmount.toString())),
+        spotAssetKey(order.pair.quoteToken, order.pair.isNativeQuote),
+        spotUnitsToDecimal(
+          quoteReserveUnits(
+            price.toString(),
+            order.remainingAmount.toString(),
+            order.pair,
+          ),
+          order.pair.quoteDecimals,
+        ),
       );
     }
   }
@@ -112,6 +133,50 @@ export async function getBalances(
   address: string,
   token?: string,
 ): Promise<TokenBalance[]> {
+  if (settlementService.isEnabled()) {
+    const [pairs, locked] = await Promise.all([
+      prisma.pair.findMany(),
+      computeLockedByToken(address, token),
+    ]);
+    const assets = new Map<
+      string,
+      { address: string; decimals: number; native: boolean }
+    >();
+    for (const pair of pairs) {
+      assets.set(spotAssetKey(pair.baseToken, pair.isNativeBase), {
+        address: pair.baseToken,
+        decimals: pair.baseDecimals,
+        native: pair.isNativeBase,
+      });
+      assets.set(spotAssetKey(pair.quoteToken, pair.isNativeQuote), {
+        address: pair.quoteToken,
+        decimals: pair.quoteDecimals,
+        native: pair.isNativeQuote,
+      });
+    }
+    const balances = await Promise.all(
+      [...assets]
+        .filter(([key]) => !token || key === token)
+        .map(async ([key, asset]) => {
+          const units = await settlementService.getVaultBalance(
+            address,
+            asset.address,
+            asset.native,
+          );
+          if (units === null) throw new Error('Spot vault balance unavailable');
+          const total = spotUnitsToDecimal(units, asset.decimals);
+          const reserved = locked.get(key) ?? new Decimal(0);
+          return {
+            token: key,
+            total: total.toString(),
+            locked: reserved.toString(),
+            available: total.minus(reserved).toString(),
+          };
+        }),
+    );
+    return balances.sort((a, b) => a.token.localeCompare(b.token));
+  }
+
   const [ledgerRows, lockedByToken] = await Promise.all([
     prisma.userBalance.findMany({
       where: token ? { address, token } : { address },

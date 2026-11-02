@@ -9,6 +9,8 @@ const SignedWalletActionSchema = z.object({
 const positiveDecimalString = z
   .string()
   .min(1)
+  .max(128)
+  .regex(/^\+?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i, 'Must be a decimal number')
   .refine(
     (v) => {
       const n = Number(v);
@@ -125,7 +127,7 @@ export const SocialLeadersQuerySchema = z.object({
 //   maxDrawdownPct  : pause copy when drawdown from peak exceeds this %.
 // copyMultiplier is optional on the wire; the copy-engine treats an absent
 // value as 1x (see readVaultRiskConfig). Range still enforced when present.
-export const CopyRiskConfigSchema = z.object({
+const CopyRiskConfigSchema = z.object({
   copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
   maxPerTradeUsdt: z.coerce.number().min(0).optional(),
   stopLossPct: z.coerce.number().min(1).max(100).optional(),
@@ -134,11 +136,7 @@ export const CopyRiskConfigSchema = z.object({
 
 export const FollowLeaderSchema = SignedWalletActionSchema.extend({
   address: z.string().min(3),
-  copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
-  maxPerTradeUsdt: z.coerce.number().min(0).optional(),
-  stopLossPct: z.coerce.number().min(1).max(100).optional(),
-  maxDrawdownPct: z.coerce.number().min(1).max(100).optional(),
-});
+}).merge(CopyRiskConfigSchema);
 
 export const LeaderProfileByAddressSchema = z.object({
   address: z.string().min(3),
@@ -171,11 +169,7 @@ export const CopyVaultDepositSchema = SignedWalletActionSchema.extend({
   followerAddress: z.string().min(3),
   token: z.string().trim().min(2).max(32),
   amount: z.string().min(1),
-  copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
-  maxPerTradeUsdt: z.coerce.number().min(0).optional(),
-  stopLossPct: z.coerce.number().min(1).max(100).optional(),
-  maxDrawdownPct: z.coerce.number().min(1).max(100).optional(),
-});
+}).merge(CopyRiskConfigSchema);
 
 export const CopyVaultWithdrawSchema = SignedWalletActionSchema.extend({
   followerAddress: z.string().min(3),

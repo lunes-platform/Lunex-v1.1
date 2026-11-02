@@ -81,7 +81,8 @@ describe('rebalancerService.getManager dry-run gas (gas-fix regression)', () => 
 
     let capturedGas: any = null;
     const createType = jest.fn((type: string, value: any) => {
-      if (type === 'WeightV2') return makeWeight(value.refTime, value.proofSize);
+      if (type === 'WeightV2')
+        return makeWeight(value.refTime, value.proofSize);
       return { __type: type, value };
     });
 
@@ -91,7 +92,10 @@ describe('rebalancerService.getManager dry-run gas (gas-fix regression)', () => 
         public query = {
           getManager: jest.fn((_caller: string, opts: any) => {
             capturedGas = opts.gasLimit;
-            return { output: { toJSON: () => '5Fmanager' } };
+            return {
+              result: { isErr: false },
+              output: { toJSON: () => ({ ok: null }) },
+            };
           }),
         };
       },

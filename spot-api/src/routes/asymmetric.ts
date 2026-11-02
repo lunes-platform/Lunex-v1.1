@@ -14,6 +14,7 @@ import {
   type StrategyLiveStateOutput,
 } from '../services/asymmetricService';
 import { rebalancerService } from '../services/rebalancerService';
+import { verifyAsymmetricContract } from '../services/asymmetricContractVerifier';
 
 // Expected code hash of the official AsymmetricPair contract.
 // Set via env var ASYMMETRIC_PAIR_CODE_HASH after first compilation.
@@ -174,77 +175,21 @@ function handleAsync(
 
 async function validateOfficialAsymmetricContract(
   pairAddress: string,
+  ownerAddress: string,
   res: Response,
 ) {
-  const isProd = process.env.NODE_ENV === 'production';
-
-  if (!EXPECTED_CODE_HASH) {
-    if (isProd) {
-      send(
-        res,
-        {
-          error:
-            'ASYMMETRIC_PAIR_CODE_HASH is required in production to enforce official contract validation.',
-        },
-        503,
-      );
-      return false;
-    }
-    return true;
+  const verification = await verifyAsymmetricContract({
+    address: pairAddress,
+    ownerAddress,
+    rpcUrl: process.env.LUNES_WS_URL ?? 'ws://127.0.0.1:9944',
+    expectedCodeHash: EXPECTED_CODE_HASH,
+    requireCodeHash: process.env.NODE_ENV === 'production',
+    loadAbi: () => JSON.parse(fs.readFileSync(CONTRACT_BUNDLE_PATH, 'utf-8')),
+  });
+  if (!verification.ok) {
+    send(res, { error: verification.error }, verification.status);
+    return false;
   }
-
-  try {
-    const { ApiPromise, WsProvider } = await import('@polkadot/api');
-    const nodeUrl = process.env.LUNES_WS_URL ?? 'ws://127.0.0.1:9944';
-    const api = await ApiPromise.create({
-      provider: new WsProvider(nodeUrl),
-      noInitWarn: true,
-    });
-    const info = await (api.query as any).contracts?.contractInfoOf(
-      pairAddress,
-    );
-    await api.disconnect();
-    const codeHash: string = info?.isSome
-      ? (info.unwrap().codeHash?.toHex?.() ?? '')
-      : '';
-
-    if (!codeHash) {
-      send(
-        res,
-        {
-          error:
-            'Unable to validate contract code hash for this pair. Only officially deployed AsymmetricPair contracts are allowed.',
-        },
-        403,
-      );
-      return false;
-    }
-
-    if (codeHash && codeHash !== EXPECTED_CODE_HASH) {
-      send(
-        res,
-        {
-          error:
-            'Contract code hash does not match the official AsymmetricPair. Deploy using the Lunex interface.',
-        },
-        403,
-      );
-      return false;
-    }
-  } catch {
-    if (isProd) {
-      send(
-        res,
-        {
-          error:
-            'Contract validation is temporarily unavailable. Retry when chain connectivity is restored.',
-        },
-        503,
-      );
-      return false;
-    }
-  }
-
   return true;
 }
 
@@ -402,6 +347,7 @@ router.post(
 
     const validContract = await validateOfficialAsymmetricContract(
       parsed.data.pairAddress,
+      parsed.data.userAddress,
       res,
     );
     if (!validContract) return;
@@ -652,6 +598,7 @@ router.post(
 
     const validContract = await validateOfficialAsymmetricContract(
       parsed.data.pairAddress,
+      req.agent!.walletAddress,
       res,
     );
     if (!validContract) return;

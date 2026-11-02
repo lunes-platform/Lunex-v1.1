@@ -43,7 +43,11 @@ type InputProps = {
 */
 const Input = ({ cursor, ...props }: Partial<InputProps>) => {
   return (
-    <S.Wrapper {...props} alignItems={props.alignItems} margin={props.margin}>
+    <S.Wrapper
+      width={props.width}
+      alignItems={props.alignItems}
+      margin={props.margin}
+    >
       {props.inputName && (
         <S.Text weightText sizeInputName={props.sizeInputName}>
           {props.inputName}
@@ -86,7 +90,7 @@ const Input = ({ cursor, ...props }: Partial<InputProps>) => {
       </S.Content>
 
       {props.textStatus && (
-        <S.Text {...props} sizeInputName="14px">
+        <S.Text status={props.status} sizeInputName="14px">
           <img
             src={
               (props.status === 'success' && 'img/success.svg') ||

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState } from 'react'
 import * as B from 'components/bases'
 import * as S from './styles'
 import { Tooltip } from 'components/bases/tooltip'
@@ -7,13 +7,15 @@ import FooterTag from 'components/FooterTag'
 import TradeSubNav from '../../components/tradeSubNav'
 //Modals
 import * as M from './modals'
-import tokens, {
-  searchableTokens
-} from './modals/chooseToken/tokenRegistry'
+import { searchableTokens } from './modals/chooseToken/tokenRegistry'
 import useSelectOptions from 'hooks/useSelectOptions'
 import { Option } from 'context/useContext'
 import { useSDK } from '../../context/SDKContext'
-import { classifyTrade, isLunes, toRoutingAddress } from '../../utils/nativeToken'
+import {
+  classifyTrade,
+  isLunes,
+  toRoutingAddress
+} from '../../utils/nativeToken'
 
 const Home = () => {
   // SDK Integration
@@ -23,7 +25,6 @@ const Home = () => {
     selectedOption1,
     selectedOption2,
     inputValue1,
-    inputValue2,
     setInputValue1,
     setInputValue2,
     selectOptionForFirst,
@@ -36,20 +37,39 @@ const Home = () => {
 
   // Estado para integração com SDK
   interface QuoteState {
+    key: string
     amountOut: string
     executionPrice?: string
     priceImpact?: string
     minimumReceived?: string
   }
-  const [quote, setQuote] = useState<QuoteState | null>(null)
-  const [outputAmount, setOutputAmount] = useState('')
-  const [priceImpact, setPriceImpact] = useState('0')
-  const [minimumReceived, setMinimumReceived] = useState('0')
+  const [quoteState, setQuote] = useState<QuoteState | null>(null)
+  const [quoteError, setQuoteError] = useState<string | null>(null)
   const [tokenBalances, setTokenBalances] = useState<{ [key: string]: string }>(
     {}
   )
   const [slippage, setSlippage] = useState(0.5) // 0.5% default
   const [deadline, setDeadline] = useState(20) // 20 minutes default
+  const quoteKey = `${selectedOption1?.address}:${selectedOption2?.address}:${inputValue1}`
+  const quote = quoteState?.key === quoteKey ? quoteState : null
+  const tradeKind =
+    selectedOption1 && selectedOption2
+      ? classifyTrade(selectedOption1, selectedOption2).kind
+      : 'swap'
+  const isConversion = tradeKind === 'wrap' || tradeKind === 'unwrap'
+  const outputDecimals = selectedOption2?.decimals ?? 8
+  const outputAmount = quote
+    ? sdk.formatAmount(quote.amountOut, outputDecimals)
+    : ''
+  const priceImpact = quote?.priceImpact || '0'
+  const minimumReceived = quote
+    ? sdk.formatAmount(
+        isConversion
+          ? quote.amountOut
+          : sdk.calculateMinAmount(quote.amountOut, slippage),
+        outputDecimals
+      )
+    : '0'
 
   const handleOpenModal = (forFirst: boolean) => {
     setSelectingForFirst(forFirst)
@@ -65,69 +85,57 @@ const Home = () => {
     setModal('null')
   }
 
-  // Buscar quote quando mudar o input
-  const fetchQuote = useCallback(async () => {
+  // A quote belongs to one input/token combination. Cleanup also prevents an
+  // older RPC response from replacing the latest quote after a selection edit.
+  useEffect(() => {
+    let cancelled = false
+    setQuote(null)
+    setQuoteError(null)
+    setInputValue2('')
     if (
       !selectedOption1?.address ||
       !selectedOption2?.address ||
-      !inputValue1 ||
-      inputValue1 === '0'
-    ) {
-      setQuote(null)
-      setOutputAmount('')
+      selectedOption1.address === selectedOption2.address ||
+      !/^(?:\d+\.?\d*|\.\d+)$/.test(inputValue1) ||
+      Number(inputValue1) <= 0
+    )
       return
-    }
 
-    try {
-      const decimals = selectedOption1.decimals || 8
-      const amountInWei = sdk.parseAmount(inputValue1, decimals)
-      const outputDecimals = selectedOption2.decimals || 8
-
-      // LUNES <-> WLUNES is a 1:1 wrap/unwrap — no pool, no quote, no slippage.
-      const trade = classifyTrade(selectedOption1, selectedOption2)
-      if (trade.kind === 'wrap' || trade.kind === 'unwrap') {
-        setQuote({
-          amountOut: amountInWei,
-          executionPrice: '1',
-          priceImpact: '0',
-          minimumReceived: amountInWei
-        })
-        setOutputAmount(inputValue1)
-        setInputValue2(inputValue1)
-        setPriceImpact('0')
-        setMinimumReceived(inputValue1)
-        return
-      }
-
-      // Pools trade WLUNES/X — route the native sentinel through the WLUNES
-      // address so the quote hits the real pair.
-      const quoteResult = await sdk.getQuote(
-        amountInWei,
-        [toRoutingAddress(selectedOption1), toRoutingAddress(selectedOption2)],
-        decimals,
-        outputDecimals
-      )
-
-      if (quoteResult) {
-        setQuote(quoteResult)
-        setOutputAmount(sdk.formatAmount(quoteResult.amountOut, outputDecimals))
-        setPriceImpact(quoteResult.priceImpact || '0')
-        setMinimumReceived(
-          sdk.formatAmount(quoteResult.minimumReceived, outputDecimals)
+    const timer = setTimeout(async () => {
+      try {
+        const decimals = selectedOption1.decimals ?? 8
+        const amountInWei = sdk.parseAmount(inputValue1, decimals)
+        if (BigInt(amountInWei) <= 0n) return
+        const trade = classifyTrade(selectedOption1, selectedOption2)
+        const conversion = trade.kind === 'wrap' || trade.kind === 'unwrap'
+        const result = conversion
+          ? { amountOut: amountInWei, executionPrice: '1', priceImpact: '0' }
+          : await sdk.getQuote(
+              amountInWei,
+              [
+                toRoutingAddress(selectedOption1),
+                toRoutingAddress(selectedOption2)
+              ],
+              decimals,
+              selectedOption2.decimals ?? 8
+            )
+        if (cancelled) return
+        if (!result) {
+          setQuoteError('Insufficient liquidity for this trade')
+          return
+        }
+        setQuote({ ...result, key: quoteKey })
+        setInputValue2(
+          sdk.formatAmount(result.amountOut, selectedOption2.decimals ?? 8)
         )
-        setInputValue2(sdk.formatAmount(quoteResult.amountOut, outputDecimals))
+      } catch {
+        if (!cancelled) setQuoteError('Could not get a quote for this trade')
       }
-    } catch (error) {
-      console.error('Erro ao buscar quote:', error)
-    }
-  }, [selectedOption1, selectedOption2, inputValue1, sdk, setInputValue2])
-
-  // Debounce para buscar quote
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchQuote()
     }, 500)
-    return () => clearTimeout(timer)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [inputValue1, selectedOption1, selectedOption2])
 
   // Buscar balances quando conectar wallet
@@ -136,7 +144,7 @@ const Home = () => {
       if (!sdk.walletAddress) return
 
       const balances: { [key: string]: string } = {}
-      for (const token of tokens) {
+      for (const token of searchableTokens) {
         if (!token.address) continue
         // LUNES is the native coin — read the on-chain account balance, not a
         // PSP22 balanceOf (its sentinel address has no token contract).
@@ -200,7 +208,6 @@ const Home = () => {
         setInputValue1('')
         setInputValue2('')
         setQuote(null)
-        setOutputAmount('')
       } else {
         setModal('modalError')
       }
@@ -218,10 +225,6 @@ const Home = () => {
   }
 
   // LUNES<->WLUNES is a wrap/unwrap action, not a swap — relabel the button.
-  const tradeKind =
-    selectedOption1 && selectedOption2
-      ? classifyTrade(selectedOption1, selectedOption2).kind
-      : 'swap'
   const actionLabel =
     tradeKind === 'wrap'
       ? 'Wrap'
@@ -297,10 +300,8 @@ const Home = () => {
               height="112px"
               sizeInput="24px"
               disabled={!selectedOption2}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setInputValue2(e.target.value)
-              }
-              value={outputAmount || inputValue2}
+              readOnly
+              value={outputAmount}
             />
             {selectedOption1 && selectedOption2 && quote && (
               <S.Details inset="auto auto 16px 16px" active size="14px">
@@ -374,7 +375,9 @@ const Home = () => {
             >
               {priceImpact}%
             </span>
-            <span>0.3% LP + 0.1% Protocolo + 0.1% Stakers</span>
+            <span>
+              {isConversion ? '0%' : '0.3% LP + 0.1% Protocolo + 0.1% Stakers'}
+            </span>
           </B.Wrapper>
         </S.Descriptions>
 
@@ -386,9 +389,10 @@ const Home = () => {
         )}
 
         {/* Error message */}
-        {sdk.error && (
+        {(quoteError ||
+          (sdk.error && (!sdk.isConnected || modal === 'modalError'))) && (
           <S.Paragraph style={{ textAlign: 'center', color: '#ff6b6b' }}>
-            {sdk.error}
+            {quoteError || sdk.error}
           </S.Paragraph>
         )}
 
@@ -396,7 +400,8 @@ const Home = () => {
           disabled={
             sdk.isConnected &&
             (sdk.isLoading ||
-              (!selectedOption1?.id && !selectedOption2?.id) ||
+              !selectedOption1 ||
+              !selectedOption2 ||
               inputValue1.length < 1 ||
               !quote)
           }
@@ -406,13 +411,15 @@ const Home = () => {
         >
           {!sdk.isConnected
             ? 'Connect Wallet'
-            : !selectedOption1?.id && !selectedOption2?.id
+            : !selectedOption1 || !selectedOption2
               ? 'Select a token'
-              : inputValue1.length < 1
+              : !inputValue1 || Number(inputValue1) <= 0
                 ? 'Enter an amount'
-                : !quote
-                  ? 'Loading quote...'
-                  : actionLabel}
+                : quoteError
+                  ? 'Quote unavailable'
+                  : !quote
+                    ? 'Loading quote...'
+                    : actionLabel}
         </B.Button>
       </S.Box>
       <FooterTag />
@@ -430,7 +437,7 @@ const Home = () => {
       )}
 
       {modal === 'transactionSubmitted' && (
-        <M.TransactionSubmitted close={() => setModal('modalError')} />
+        <M.TransactionSubmitted close={() => setModal('null')} />
       )}
 
       {modal === 'confirmSwap' && (

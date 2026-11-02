@@ -84,7 +84,7 @@ const allTokens: Token[] = [
 // Token sem endereço configurado no env não pode aparecer na UI: selecioná-lo
 // produziria queries/aprovações contra address vazio, falhando de forma
 // confusa. Filtrar aqui é fail-closed e o warn aponta a env var que falta.
-const configuredTokens: Token[] = allTokens.filter((t) => {
+const configuredTokens: Token[] = allTokens.filter(t => {
   if (t.address) return true
   console.warn(
     `[tokenRegistry] ${t.acronym} sem endereço configurado (REACT_APP_TOKEN_${t.acronym}) — removido da lista de tokens`
@@ -102,14 +102,14 @@ const isWlunesEntry = (t: Token): boolean =>
 /** Default selectable list: native LUNES first, WLUNES omitted. */
 const tokens: Token[] = [
   LUNES_TOKEN,
-  ...configuredTokens.filter((t) => !isWlunesEntry(t))
+  ...configuredTokens.filter(t => !isWlunesEntry(t))
 ]
 
 /** Full list including WLUNES — used by the token selector's search so the
  *  wrapped token can still be found and selected when explicitly searched. */
 export const searchableTokens: Token[] = [
   LUNES_TOKEN,
-  ...configuredTokens.filter((t) => !isWlunesEntry(t)),
+  ...configuredTokens.filter(t => !isWlunesEntry(t)),
   ...configuredTokens.filter(isWlunesEntry)
 ]
 

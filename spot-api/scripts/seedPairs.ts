@@ -3,7 +3,7 @@
  *
  * Run: npx ts-node scripts/seedPairs.ts
  *
- * Registers the 5 core spot pairs (WLUNES, LBTC, LETH, GMC, LUP — all /LUSDT)
+ * Registers native LUNES and the 5 PSP22 spot pairs (all /LUSDT)
  * using on-chain addresses from deployed-addresses.json. Idempotent: updates
  * existing rows, creates missing ones. Never drops/deletes anything.
  */
@@ -23,14 +23,16 @@ type PairSeed = {
   baseName: string
   baseDecimals: number
   pairKey: string
+  isNativeBase?: boolean
 }
 
 const QUOTE = { token: ADDR.lusdt, name: 'LUSDT', decimals: 6 }
 
 const SEED_PAIRS: PairSeed[] = [
+  { symbol: 'LUNES/LUSDT', baseTokenKey: '', baseName: 'LUNES', baseDecimals: 8, pairKey: 'pairWlunesLusdt', isNativeBase: true },
   { symbol: 'WLUNES/LUSDT', baseTokenKey: 'wnative', baseName: 'WLUNES', baseDecimals: 8, pairKey: 'pairWlunesLusdt' },
   { symbol: 'LBTC/LUSDT', baseTokenKey: 'lbtc', baseName: 'LBTC', baseDecimals: 8, pairKey: 'pairLBTCLusdt' },
-  { symbol: 'LETH/LUSDT', baseTokenKey: 'leth', baseName: 'LETH', baseDecimals: 18, pairKey: 'pairLETHLusdt' },
+  { symbol: 'LETH/LUSDT', baseTokenKey: 'leth', baseName: 'LETH', baseDecimals: 8, pairKey: 'pairLETHLusdt' },
   { symbol: 'GMC/LUSDT', baseTokenKey: 'gmc', baseName: 'GMC', baseDecimals: 8, pairKey: 'pairGMCLusdt' },
   { symbol: 'LUP/LUSDT', baseTokenKey: 'lup', baseName: 'LUP', baseDecimals: 8, pairKey: 'pairLUPLusdt' },
 ]
@@ -39,7 +41,7 @@ async function main() {
   console.log('Seeding Pair table with core spot pairs...\n')
 
   for (const p of SEED_PAIRS) {
-    const baseToken = ADDR[p.baseTokenKey]
+    const baseToken = p.isNativeBase ? 'native' : ADDR[p.baseTokenKey]
     const pairAddress = ADDR[p.pairKey] ?? null
     if (!baseToken) {
       console.warn(`  ⚠ skip ${p.symbol}: missing base token address (${p.baseTokenKey})`)
@@ -54,7 +56,7 @@ async function main() {
       quoteName: QUOTE.name,
       baseDecimals: p.baseDecimals,
       quoteDecimals: QUOTE.decimals,
-      isNativeBase: false,
+      isNativeBase: p.isNativeBase ?? false,
       isNativeQuote: false,
       isActive: true,
       makerFeeBps: 10,
