@@ -294,7 +294,7 @@ async function main() {
 
     // Try FeeDistributed
     if (Array.isArray(rawData) && rawData.length >= 4 && !listed?.tokenAddress) {
-      log(`💸 FeeDistributed — listing ${rawData[0]}: burn=${rawData[1]}, treasury=${rawData[2]}, rewards=${rawData[3]}`)
+      log(`💸 FeeDistributed — listing ${rawData[0]}: staking=${rawData[1]}, treasury=${rawData[2]}, rewards=${rawData[3]}`)
     }
   }
 
