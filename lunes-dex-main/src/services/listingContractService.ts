@@ -2,14 +2,16 @@
  * listingContractService — on-chain token listing (ListingManager).
  *
  * The contract is the source of truth for the listing fee, the minimum
- * LUNES liquidity and the lock period (`tier_config`). Flow, as required by
- * `Lunex/contracts/listing_manager` `list_token`:
+ * LUNES liquidity, the lock period (`tier_config`) and the fee token
+ * (`lunes_token`). Flow, as required by `Lunex/contracts/listing_manager`
+ * `list_token(tier, token, pair, lp_amount)`:
  *
  *   1. PSP22 `approve(listing_manager, listing_fee)` on the fee token
  *   2. PSP22 `approve(listing_manager, lp_amount)` on the LP (pair) token
- *   3. `list_token(tier, token, pair, lp_token, lp_amount, lunes, tokens)`
- *      — pulls the fee with `transfer_from`, splits it 20/50/30 and records
- *      the listing + lock id (lock_id = listing_id)
+ *   3. `list_token` — in ONE transaction: checks the pair is the Factory
+ *      TOKEN/WLUNES pair, derives the LUNES/TOKEN share from reserves,
+ *      collects + splits the fee 20/50/30, moves the LP into LiquidityLock
+ *      and creates the lock (owner = caller). Any failure reverts it all.
  *
  * Every write follows contractService.ts: dry-run query for gas (and to
  * surface contract errors before the wallet opens), sign with the injected
@@ -49,18 +51,21 @@ export type OnChainListing = {
   tokenAddress: string
   pairAddress: string
   lpAmount: bigint
+  lunesLiquidity: bigint
+  tokenLiquidity: bigint
   lockId: number
+  /** ms timestamp the LP can be withdrawn from LiquidityLock */
+  unlockAt: number
+  feePaid: bigint
   status: string
 }
 
 export type ListTokenParams = {
   tier: ListingTierNumber
   tokenAddress: string
+  /** Factory TOKEN/WLUNES pair — also the LP token on Lunex */
   pairAddress: string
-  lpToken: string
   lpAmount: bigint
-  lunesLiquidity: bigint
-  tokenLiquidity: bigint
 }
 
 const CONTRACT_ERRORS: Record<string, string> = {
@@ -72,6 +77,13 @@ const CONTRACT_ERRORS: Record<string, string> = {
   ZeroAmount: 'LP amount and pool liquidity must be greater than zero.',
   TransferFailed:
     'The fee transfer failed — check your fee token balance and approval.',
+  LpTransferFailed:
+    'Moving your LP tokens into the lock failed — check your LP balance and approval.',
+  LockCreationFailed: 'The liquidity lock could not be created.',
+  InvalidPair:
+    'This pool is not the Lunex TOKEN/WLUNES pair for this token, or it has no liquidity.',
+  PairQueryFailed: 'Could not read the pool on-chain.',
+
   InsufficientAllowance: 'Token approval is too low.',
   InsufficientBalance: 'Insufficient token balance.'
 }
@@ -284,9 +296,26 @@ export const readTokenListing = async (
     tokenAddress: String(pick(rec, 'tokenAddress', 'token_address')),
     pairAddress: String(pick(rec, 'pairAddress', 'pair_address')),
     lpAmount: toBig(pick(rec, 'lpAmount', 'lp_amount')),
+    lunesLiquidity: toBig(pick(rec, 'lunesLiquidity', 'lunes_liquidity')),
+    tokenLiquidity: toBig(pick(rec, 'tokenLiquidity', 'token_liquidity')),
     lockId: Number(pick(rec, 'lockId', 'lock_id')),
+    unlockAt: Number(toBig(pick(rec, 'unlockAt', 'unlock_at'))),
+    feePaid: toBig(pick(rec, 'feePaid', 'fee_paid')),
     status: String(rec.status)
   }
+}
+
+/** Fee token (= pool base token, WLUNES) and the decimals tiers are scaled by. */
+export const readFeeToken = async (): Promise<{
+  address: string
+  decimals: number
+}> => {
+  const c = await manager()
+  const [address, decimals] = await Promise.all([
+    query(c, 'lunesToken', LISTING_MANAGER_ADDRESS, []),
+    query(c, 'lunesDecimals', LISTING_MANAGER_ADDRESS, [])
+  ])
+  return { address: String(address), decimals: Number(decimals) }
 }
 
 export const readAllowance = async (
@@ -315,8 +344,8 @@ export const approveForListing = async (
   )
 
 /**
- * list_token — pays the tier fee and records the listing + LP lock. Resolves
- * once finalized, after re-reading the listing from chain.
+ * list_token — pays the tier fee and moves the LP into LiquidityLock in one
+ * transaction. Resolves once finalized, after re-reading the listing.
  */
 export const listToken = async (
   p: ListTokenParams,
@@ -327,15 +356,7 @@ export const listToken = async (
     await manager(),
     'listToken',
     signer,
-    [
-      p.tier,
-      p.tokenAddress,
-      p.pairAddress,
-      p.lpToken,
-      p.lpAmount.toString(),
-      p.lunesLiquidity.toString(),
-      p.tokenLiquidity.toString()
-    ],
+    [p.tier, p.tokenAddress, p.pairAddress, p.lpAmount.toString()],
     onBroadcast
   )
   const listing = await readTokenListing(p.tokenAddress)

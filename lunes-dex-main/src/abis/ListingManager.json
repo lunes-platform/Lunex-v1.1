@@ -1,6 +1,6 @@
 {
   "source": {
-    "hash": "0x58f3d25a890a85a9821afdacbb2da9b946988463c70616f8b24c954e71081e5f",
+    "hash": "0x1c85ed201a23230f3e3bc0e3c77f1b4709d052d7835c8794b560fba00eb3f474",
     "language": "ink! 4.3.0",
     "compiler": "rustc 1.85.0",
     "build_info": {
@@ -27,6 +27,24 @@
         "args": [
           {
             "label": "lunes_token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "lunes_decimals",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "label": "factory",
             "type": {
               "displayName": [
                 "AccountId"
@@ -72,7 +90,10 @@
           }
         ],
         "default": false,
-        "docs": [],
+        "docs": [
+          "`lunes_decimals` must equal the fee token's `token_decimals()`",
+          "(WLUNES = 8); tier amounts are scaled with it."
+        ],
         "label": "new",
         "payable": false,
         "returnType": {
@@ -103,19 +124,19 @@
         "displayName": [
           "BlockNumber"
         ],
-        "type": 30
+        "type": 34
       },
       "chainExtension": {
         "displayName": [
           "ChainExtension"
         ],
-        "type": 31
+        "type": 35
       },
       "hash": {
         "displayName": [
           "Hash"
         ],
-        "type": 29
+        "type": 33
       },
       "maxEventTopics": 4,
       "timestamp": {
@@ -414,6 +435,73 @@
         ],
         "docs": [],
         "label": "FeeDistributed"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "tier",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "config",
+            "type": {
+              "displayName": [
+                "TierConfig"
+              ],
+              "type": 23
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "execute_at",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 3
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TierConfigProposed"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "tier",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "config",
+            "type": {
+              "displayName": [
+                "TierConfig"
+              ],
+              "type": 23
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TierConfigUpdated"
       }
     ],
     "lang_error": {
@@ -454,34 +542,7 @@
             }
           },
           {
-            "label": "lp_token",
-            "type": {
-              "displayName": [
-                "AccountId"
-              ],
-              "type": 0
-            }
-          },
-          {
             "label": "lp_amount",
-            "type": {
-              "displayName": [
-                "Balance"
-              ],
-              "type": 4
-            }
-          },
-          {
-            "label": "lunes_liquidity",
-            "type": {
-              "displayName": [
-                "Balance"
-              ],
-              "type": 4
-            }
-          },
-          {
-            "label": "token_liquidity",
             "type": {
               "displayName": [
                 "Balance"
@@ -492,18 +553,19 @@
         ],
         "default": false,
         "docs": [
-          " Main entry-point. The caller must have:",
-          "  1. Approved `listing_fee` LUNES to this contract",
-          "  2. Approved `lp_amount` LP tokens to this contract (after adding liq)",
+          " Pays the listing fee and locks the caller's LP in ONE transaction.",
           "",
-          " Parameters",
-          "  - tier            : 1 | 2 | 3",
-          "  - token_address   : PSP22 address of the new token",
-          "  - pair_address    : LP pair contract address (already created)",
-          "  - lp_token        : LP token PSP22 address (same as pair_address on Lunex)",
-          "  - lp_amount       : LP tokens to lock",
-          "  - lunes_liquidity : LUNES amount deposited into the pool",
-          "  - token_liquidity : project token amount deposited into the pool"
+          " The caller must have:",
+          "  1. created the TOKEN/LUNES pool via the Factory and added liquidity,",
+          "  2. approved `tier_config(tier).listing_fee` of `lunes_token` to this",
+          "     contract,",
+          "  3. approved `lp_amount` LP tokens (the pair contract) to this",
+          "     contract.",
+          "",
+          " The LUNES/TOKEN amounts recorded are derived on-chain from the pair",
+          " reserves for `lp_amount`; the LUNES side must reach the tier minimum.",
+          " LP tokens go to the LiquidityLock, owned by the caller, unlockable",
+          " after `lock_duration_ms`. Any failure reverts everything."
         ],
         "label": "list_token",
         "mutates": true,
@@ -650,6 +712,118 @@
       {
         "args": [
           {
+            "label": "tier",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          },
+          {
+            "label": "listing_fee",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "min_lunes_liq",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "lock_duration_ms",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 3
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Proposes a new tier config (amounts in fee-token base units).",
+          " Executable after the governance timelock."
+        ],
+        "label": "propose_tier_config",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x9f75f098"
+      },
+      {
+        "args": [
+          {
+            "label": "tier",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Applies a proposed tier config once its timelock expired (anyone)."
+        ],
+        "label": "execute_tier_config",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x2f34db7d"
+      },
+      {
+        "args": [
+          {
+            "label": "tier",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Cancels a pending tier config proposal (admin)."
+        ],
+        "label": "cancel_tier_config",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x8a7d9bfc"
+      },
+      {
+        "args": [
+          {
             "label": "listing_id",
             "type": {
               "displayName": [
@@ -738,7 +912,9 @@
           }
         ],
         "default": false,
-        "docs": [],
+        "docs": [
+          " Effective on-chain tier config (fee-token base units)."
+        ],
         "label": "tier_config",
         "mutates": false,
         "payable": false,
@@ -752,6 +928,100 @@
         "selector": "0x77d2ca2c"
       },
       {
+        "args": [
+          {
+            "label": "tier",
+            "type": {
+              "displayName": [
+                "u8"
+              ],
+              "type": 2
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Pending tier config proposal and the time it becomes executable."
+        ],
+        "label": "get_pending_tier_config",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 24
+        },
+        "selector": "0xe8ef1d13"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Fee token (also the pool base token, WLUNES) and its decimals."
+        ],
+        "label": "lunes_token",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 27
+        },
+        "selector": "0xc86d5ff5"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [],
+        "label": "lunes_decimals",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 28
+        },
+        "selector": "0xeeabbb10"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [],
+        "label": "factory",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 27
+        },
+        "selector": "0x7067ac20"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [],
+        "label": "liquidity_lock",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 27
+        },
+        "selector": "0xddf9355f"
+      },
+      {
         "args": [],
         "default": false,
         "docs": [],
@@ -763,7 +1033,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 24
+          "type": 29
         },
         "selector": "0x03f016fb"
       },
@@ -779,7 +1049,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 24
+          "type": 29
         },
         "selector": "0x36d67128"
       },
@@ -795,7 +1065,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 25
+          "type": 27
         },
         "selector": "0x1aa66b39"
       },
@@ -811,7 +1081,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 25
+          "type": 27
         },
         "selector": "0x44b9a1be"
       },
@@ -893,7 +1163,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 26
+          "type": 30
         },
         "selector": "0xbcd31d76"
       },
@@ -949,6 +1219,24 @@
                 }
               },
               "name": "lunes_token"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 2
+                }
+              },
+              "name": "lunes_decimals"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "factory"
             },
             {
               "layout": {
@@ -1093,6 +1381,24 @@
                         },
                         {
                           "layout": {
+                            "leaf": {
+                              "key": "0xb3b42ccc",
+                              "ty": 3
+                            }
+                          },
+                          "name": "unlock_at"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xb3b42ccc",
+                              "ty": 4
+                            }
+                          },
+                          "name": "fee_paid"
+                        },
+                        {
+                          "layout": {
                             "enum": {
                               "dispatchKey": "0xb3b42ccc",
                               "name": "ListingStatus",
@@ -1145,6 +1451,109 @@
                 }
               },
               "name": "token_listing"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "struct": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x2abd6510",
+                              "ty": 4
+                            }
+                          },
+                          "name": "listing_fee"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x2abd6510",
+                              "ty": 4
+                            }
+                          },
+                          "name": "min_lunes_liq"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x2abd6510",
+                              "ty": 3
+                            }
+                          },
+                          "name": "lock_duration_ms"
+                        }
+                      ],
+                      "name": "TierConfig"
+                    }
+                  },
+                  "root_key": "0x2abd6510"
+                }
+              },
+              "name": "tier_configs"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "struct": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "struct": {
+                              "fields": [
+                                {
+                                  "layout": {
+                                    "leaf": {
+                                      "key": "0x2eff0409",
+                                      "ty": 4
+                                    }
+                                  },
+                                  "name": "listing_fee"
+                                },
+                                {
+                                  "layout": {
+                                    "leaf": {
+                                      "key": "0x2eff0409",
+                                      "ty": 4
+                                    }
+                                  },
+                                  "name": "min_lunes_liq"
+                                },
+                                {
+                                  "layout": {
+                                    "leaf": {
+                                      "key": "0x2eff0409",
+                                      "ty": 3
+                                    }
+                                  },
+                                  "name": "lock_duration_ms"
+                                }
+                              ],
+                              "name": "TierConfig"
+                            }
+                          },
+                          "name": "0"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x2eff0409",
+                              "ty": 3
+                            }
+                          },
+                          "name": "1"
+                        }
+                      ],
+                      "name": "(A, B)"
+                    }
+                  },
+                  "root_key": "0x2eff0409"
+                }
+              },
+              "name": "pending_tiers"
             },
             {
               "layout": {
@@ -1501,6 +1910,26 @@
               {
                 "index": 12,
                 "name": "TimelockNotExpired"
+              },
+              {
+                "index": 13,
+                "name": "InvalidPair"
+              },
+              {
+                "index": 14,
+                "name": "PairQueryFailed"
+              },
+              {
+                "index": 15,
+                "name": "LpTransferFailed"
+              },
+              {
+                "index": 16,
+                "name": "InvalidConfig"
+              },
+              {
+                "index": 17,
+                "name": "NoPendingConfig"
               }
             ]
           }
@@ -1726,6 +2155,16 @@
                 "name": "lock_id",
                 "type": 3,
                 "typeName": "u64"
+              },
+              {
+                "name": "unlock_at",
+                "type": 3,
+                "typeName": "Timestamp"
+              },
+              {
+                "name": "fee_paid",
+                "type": 4,
+                "typeName": "Balance"
               },
               {
                 "name": "status",
@@ -2016,6 +2455,176 @@
               {
                 "fields": [
                   {
+                    "type": 25
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 25
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 26
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 26
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "type": {
+        "def": {
+          "tuple": [
+            23,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 28,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 2
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 2
+          },
+          {
+            "name": "E",
+            "type": 8
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
                     "type": 4
                   }
                 ],
@@ -2050,7 +2659,7 @@
       }
     },
     {
-      "id": 25,
+      "id": 30,
       "type": {
         "def": {
           "variant": {
@@ -2058,7 +2667,7 @@
               {
                 "fields": [
                   {
-                    "type": 0
+                    "type": 31
                   }
                 ],
                 "index": 0,
@@ -2079,7 +2688,7 @@
         "params": [
           {
             "name": "T",
-            "type": 0
+            "type": 31
           },
           {
             "name": "E",
@@ -2092,60 +2701,18 @@
       }
     },
     {
-      "id": 26,
-      "type": {
-        "def": {
-          "variant": {
-            "variants": [
-              {
-                "fields": [
-                  {
-                    "type": 27
-                  }
-                ],
-                "index": 0,
-                "name": "Ok"
-              },
-              {
-                "fields": [
-                  {
-                    "type": 8
-                  }
-                ],
-                "index": 1,
-                "name": "Err"
-              }
-            ]
-          }
-        },
-        "params": [
-          {
-            "name": "T",
-            "type": 27
-          },
-          {
-            "name": "E",
-            "type": 8
-          }
-        ],
-        "path": [
-          "Result"
-        ]
-      }
-    },
-    {
-      "id": 27,
+      "id": 31,
       "type": {
         "def": {
           "tuple": [
-            28,
+            32,
             3
           ]
         }
       }
     },
     {
-      "id": 28,
+      "id": 32,
       "type": {
         "def": {
           "variant": {
@@ -2178,7 +2745,7 @@
       }
     },
     {
-      "id": 29,
+      "id": 33,
       "type": {
         "def": {
           "composite": {
@@ -2198,7 +2765,7 @@
       }
     },
     {
-      "id": 30,
+      "id": 34,
       "type": {
         "def": {
           "primitive": "u32"
@@ -2206,7 +2773,7 @@
       }
     },
     {
-      "id": 31,
+      "id": 35,
       "type": {
         "def": {
           "variant": {}

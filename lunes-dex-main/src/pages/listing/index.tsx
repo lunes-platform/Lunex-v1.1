@@ -36,7 +36,6 @@ import {
   createSignedActionMetadata
 } from '../../utils/signing'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
-import { TOKENS } from '../../config/contracts'
 import contractService from '../../services/contractService'
 import {
   LISTING_FEE_TOKEN,
@@ -47,6 +46,7 @@ import {
   isListingContractConfigured,
   listToken,
   readAllowance,
+  readFeeToken,
   readIsPaused,
   readTierConfig,
   readTokenListing
@@ -188,6 +188,8 @@ type Done = {
   id: string | null
   onChainId: number
   txHash: string | null
+  /** ms timestamp from the on-chain listing record */
+  unlockAt: number | null
 }
 
 // ── Styles ───────────────────────────────────────────────────────
@@ -473,6 +475,8 @@ export const Listing: React.FC = () => {
   const [apiTiers, setApiTiers] = useState<Record<number, ApiTier> | null>(null)
   const [paused, setPaused] = useState(false)
   const [feeDecimals, setFeeDecimals] = useState<number | null>(null)
+  /** Fee token = pool base token (WLUNES); read from the contract */
+  const [feeToken, setFeeToken] = useState(LISTING_FEE_TOKEN)
   const [feeSymbol, setFeeSymbol] = useState('LUNES')
   const [wlunesDecimals, setWlunesDecimals] = useState<number | null>(null)
   const [feeBalance, setFeeBalance] = useState<bigint | null>(null)
@@ -484,6 +488,12 @@ export const Listing: React.FC = () => {
     token: string
     txHash: string
     onChainId: number
+    unlockAt: number | null
+    /** amounts recorded on-chain (derived from reserves at list time) */
+    lunesRaw: bigint
+    tokenRaw: bigint
+    pair: string
+    lp: bigint
   } | null>(null)
 
   const tier = TIERS.find(t => t.key === tierKey)!
@@ -525,18 +535,31 @@ export const Listing: React.FC = () => {
       .catch(() => null)
   }, [])
 
+  // Pool base token decimals + symbol (WLUNES)
   useEffect(() => {
     let alive = true
-    const s = sdkRef.current
-    s.getTokenInfo(TOKENS.WLUNES)
-      .then(i => alive && i && setWlunesDecimals(i.decimals))
-      .catch(() => null)
-    if (!configured) return
-    s.getTokenInfo(LISTING_FEE_TOKEN)
+    sdkRef.current
+      .getTokenInfo(feeToken)
       .then(i => {
         if (!alive || !i) return
-        setFeeDecimals(i.decimals)
-        if (i.symbol && i.symbol !== '???') setFeeSymbol(i.symbol)
+        setWlunesDecimals(i.decimals)
+        if (configured && i.symbol && i.symbol !== '???') setFeeSymbol(i.symbol)
+      })
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [feeToken, configured])
+
+  useEffect(() => {
+    let alive = true
+    if (!configured) return
+    readFeeToken()
+      .then(t => {
+        if (!alive) return
+        setFeeToken(t.address)
+        // tiers are scaled on-chain by these decimals
+        setFeeDecimals(t.decimals)
       })
       .catch(() => null)
     Promise.all(TIERS.map(t => readTierConfig(t.n)))
@@ -562,13 +585,13 @@ export const Listing: React.FC = () => {
     if (!wallet || !configured) return
     let alive = true
     sdkRef.current
-      .getTokenBalance(LISTING_FEE_TOKEN, wallet)
+      .getTokenBalance(feeToken, wallet)
       .then(b => alive && setFeeBalance(BigInt(b || '0')))
       .catch(() => null)
     return () => {
       alive = false
     }
-  }, [wallet, configured, done])
+  }, [wallet, configured, done, feeToken])
 
   // LP position for TOKEN/WLUNES (the amount to lock = full LP balance)
   const tokenAddr = form.tokenAddress.trim()
@@ -583,7 +606,7 @@ export const Listing: React.FC = () => {
     const t = setTimeout(async () => {
       try {
         const s = sdkRef.current
-        const info = await s.getPairInfo(tokenAddr, TOKENS.WLUNES)
+        const info = await s.getPairInfo(tokenAddr, feeToken)
         if (!alive) return
         if (!info) return setPos({ status: 'nopair' })
         const [lpStr, token0] = await Promise.all([
@@ -595,7 +618,7 @@ export const Listing: React.FC = () => {
         const supply = BigInt(info.totalSupply || '0')
         const r0 = BigInt(info.reserve0 || '0')
         const r1 = BigInt(info.reserve1 || '0')
-        const wIs0 = !!token0 && sameAddress(token0, TOKENS.WLUNES)
+        const wIs0 = !!token0 && sameAddress(token0, feeToken)
         const [rw, rt] = wIs0 ? [r0, r1] : [r1, r0]
         const share = (r: bigint) =>
           supply > BigInt(0) ? (r * lp) / supply : BigInt(0)
@@ -728,8 +751,8 @@ export const Listing: React.FC = () => {
     const f = { ...form, tokenAddress: tokenAddr }
     const p = pos
     const logo = logoFile
-    const lunesStr = toDecimalString(p.lunesRaw, wlunesDecimals)
-    const tokenStr = toDecimalString(p.tokenRaw, tokenDecimals)
+    const baseDecimals = wlunesDecimals
+    const token = feeToken
     setSubmitError(null)
 
     // Preflight: allowances + whether this token is already listed on-chain
@@ -738,7 +761,7 @@ export const Listing: React.FC = () => {
     let lpAllow: bigint
     try {
       const [fa, la, existing] = await Promise.all([
-        readAllowance(LISTING_FEE_TOKEN, owner),
+        readAllowance(token, owner),
         readAllowance(p.pair, owner),
         readTokenListing(f.tokenAddress)
       ])
@@ -752,7 +775,12 @@ export const Listing: React.FC = () => {
           paidRef.current = {
             token: f.tokenAddress,
             txHash: '',
-            onChainId: existing.id
+            onChainId: existing.id,
+            unlockAt: existing.unlockAt || null,
+            lunesRaw: existing.lunesLiquidity,
+            tokenRaw: existing.tokenLiquidity,
+            pair: existing.pairAddress,
+            lp: existing.lpAmount
           }
       }
     } catch (e) {
@@ -773,9 +801,9 @@ export const Listing: React.FC = () => {
         wallet: true,
         run: async () => {
           if (paid()) return true
-          const now = await readAllowance(LISTING_FEE_TOKEN, owner)
+          const now = await readAllowance(token, owner)
           if (now >= cfg.listingFee) return true
-          return approveForListing(LISTING_FEE_TOKEN, cfg.listingFee, owner)
+          return approveForListing(token, cfg.listingFee, owner)
         }
       })
     if (!paid() && lpAllow < p.lp)
@@ -792,9 +820,9 @@ export const Listing: React.FC = () => {
     if (!paid())
       steps.push(
         {
-          // list_token collects the fee and records the listing; it does NOT move
-          // LP into LiquidityLock today (see contract note), so don't claim a lock.
-          label: 'Pay listing fee and record the listing',
+          // One tx: fee collected + split, LP moved into LiquidityLock and
+          // the lock created (owner = you). Any failure reverts everything.
+          label: 'Pay fee and lock liquidity',
           wallet: true,
           run: async ({ advance }) => {
             const prev = paid()
@@ -803,12 +831,8 @@ export const Listing: React.FC = () => {
               {
                 tier: t.n,
                 tokenAddress: f.tokenAddress,
-                pairAddress: p.pair,
-                // On Lunex the LP token is the pair contract itself
-                lpToken: p.pair,
-                lpAmount: p.lp,
-                lunesLiquidity: p.lunesRaw,
-                tokenLiquidity: p.tokenRaw
+                pairAddress: p.pair, // also the LP token on Lunex
+                lpAmount: p.lp
               },
               owner,
               advance
@@ -816,7 +840,12 @@ export const Listing: React.FC = () => {
             paidRef.current = {
               token: f.tokenAddress,
               txHash: res.txHash,
-              onChainId: res.listing.id
+              onChainId: res.listing.id,
+              unlockAt: res.listing.unlockAt || null,
+              lunesRaw: res.listing.lunesLiquidity,
+              tokenRaw: res.listing.tokenLiquidity,
+              pair: res.listing.pairAddress,
+              lp: res.listing.lpAmount
             }
             return res.txHash
           }
@@ -829,6 +858,17 @@ export const Listing: React.FC = () => {
       run: async () => {
         const chain = paid()
         if (!chain) throw new Error('The on-chain listing was not confirmed.')
+        const lunesStr = toDecimalString(chain.lunesRaw, baseDecimals)
+        const tokenStr = toDecimalString(chain.tokenRaw, tokenDecimals)
+        // On-chain facts, signed AND posted with identical string values
+        // (spot-api verifies them as part of `listing.create`).
+        const onChain = {
+          ...(chain.txHash ? { txHash: chain.txHash } : {}),
+          pairAddress: chain.pair,
+          lpTokenAddress: chain.pair, // the pair is the LP token on Lunex
+          lpAmount: chain.lp.toString(), // LP base units, as locked on-chain
+          onChainListingId: String(chain.onChainId)
+        }
         const fail = (msg: string) =>
           new Error(
             `Fee paid on-chain (listing #${chain.onChainId}), but registering it with Lunex failed: ${msg}. Try again — you will not be charged twice.`
@@ -847,7 +887,8 @@ export const Listing: React.FC = () => {
               tokenSymbol: f.tokenSymbol,
               tier: t.key,
               lunesLiquidity: lunesStr,
-              tokenLiquidity: tokenStr
+              tokenLiquidity: tokenStr,
+              ...onChain
             }
           })
         )
@@ -860,11 +901,7 @@ export const Listing: React.FC = () => {
         fd.append('tier', t.key)
         fd.append('lunesLiquidity', lunesStr)
         fd.append('tokenLiquidity', tokenStr)
-        fd.append('pairAddress', p.pair)
-        fd.append('lpTokenAddress', p.pair)
-        fd.append('lpAmount', p.lp.toString())
-        if (chain.txHash) fd.append('txHash', chain.txHash)
-        fd.append('onChainListingId', String(chain.onChainId))
+        for (const [k, val] of Object.entries(onChain)) fd.append(k, val)
         fd.append('nonce', meta.nonce)
         fd.append('timestamp', String(meta.timestamp))
         fd.append('signature', signature)
@@ -892,18 +929,19 @@ export const Listing: React.FC = () => {
       title: 'Listing token',
       summary: `${f.tokenSymbol} · ${t.label} tier · ${feeLabel(v)} fee`,
       actTitle: `List ${f.tokenSymbol} (${t.label})`,
-      successTitle: 'Listing fee paid',
+      successTitle: 'Fee paid and liquidity locked',
       steps,
       onSuccess: () => {
         const chain = paid()
         setDone({
           sym: f.tokenSymbol,
           tier: t.label,
-          lunes: toNum(p.lunesRaw, wlunesDecimals),
+          lunes: toNum(chain?.lunesRaw ?? p.lunesRaw, baseDecimals),
           lock: Math.round(cfg.lockDurationMs / 86_400_000),
           id: listingId,
           onChainId: chain?.onChainId ?? -1,
-          txHash: chain?.txHash || null
+          txHash: chain?.txHash || null,
+          unlockAt: chain?.unlockAt ?? null
         })
       }
     })
@@ -1028,7 +1066,7 @@ export const Listing: React.FC = () => {
               fontWeight: 600
             }}
           >
-            Listing fee paid on-chain
+            Fee paid and liquidity locked
           </span>
           <span
             style={{
@@ -1038,9 +1076,13 @@ export const Listing: React.FC = () => {
               lineHeight: 1.55
             }}
           >
-            {done.sym} is recorded by the listing contract with a {done.lock}
-            -day LP lock. It becomes tradable on Lunex once the listing is
-            activated.
+            Your {done.sym}/WLUNES LP tokens are held by the LiquidityLock
+            contract until{' '}
+            {done.unlockAt
+              ? fmtDate(new Date(done.unlockAt))
+              : `${done.lock} days from now`}
+            ; only your wallet can withdraw them after that. {done.sym} becomes
+            tradable on Lunex once the listing is activated.
           </span>
           <DoneGrid>
             <StatCard style={{ padding: '14px 16px' }}>
@@ -1475,7 +1517,7 @@ export const Listing: React.FC = () => {
                 <span>{view ? `${view.lock} days` : '—'}</span>
               </KvRow>
               <KvRow>
-                <span>Unlock date</span>
+                <span>Estimated unlock</span>
                 <span>{unlock}</span>
               </KvRow>
               <KvRow>
@@ -1508,7 +1550,9 @@ export const Listing: React.FC = () => {
                 <span>Wallet, if needed</span>
               </KvRow>
               <KvRow>
-                <span>2. Fee paid, split 20/50/30, LP lock recorded</span>
+                <span>
+                  2. One tx: fee paid (20/50/30 split), LP moved into the lock
+                </span>
                 <span>On finalization</span>
               </KvRow>
               <KvRow>

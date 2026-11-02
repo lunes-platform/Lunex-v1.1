@@ -17,7 +17,13 @@
  *   NETWORK             — testnet | mainnet | local  (default: local)
  *   TREASURY_ADDRESS    — treasury wallet            (default: deployer address)
  *   REWARDS_POOL_ADDRESS— rewards pool wallet        (default: deployer address)
- *   LUNES_TOKEN_ADDRESS — WLUNES PSP22 address       (required for non-local)
+ *   STAKING_POOL_ADDRESS— staking pool wallet        (default: deployer address)
+ *   LUNES_TOKEN_ADDRESS — WLUNES PSP22 address       (REQUIRED, every network):
+ *                         the listing fee token AND the pool base token
+ *   LUNES_TOKEN_DECIMALS— optional cross-check; decimals are read on-chain
+ *                         from LUNES_TOKEN_ADDRESS.token_decimals()
+ *   FACTORY_ADDRESS     — Lunex Factory address      (REQUIRED): list_token only
+ *                         accepts the Factory's canonical TOKEN/WLUNES pair
  *   DRY_RUN             — true = skip on-chain tx    (default: false)
  */
 
@@ -73,6 +79,39 @@ function err(msg: string) {
 }
 
 /**
+ * Bundle location: the Cargo workspace puts artifacts under
+ * <root>/target/ink/<name>/; a standalone build uses <dir>/target/ink/.
+ */
+function bundlePath(contractDir: string, contractName: string): string {
+  const candidates = [
+    path.join(ROOT_DIR, 'target', 'ink', contractName, `${contractName}.contract`),
+    path.join(contractDir, 'target', 'ink', `${contractName}.contract`),
+  ]
+  return candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
+}
+
+/**
+ * Reads token_decimals() (selector 0x9715e3ca, WNative ABI) of a PSP22.
+ */
+async function readTokenDecimals(api: ApiPromise, token: string, caller: string): Promise<number> {
+  const abiPath = path.join(ROOT_DIR, 'lunes-dex-main', 'src', 'abis', 'WNative.json')
+  const abi = JSON.parse(fs.readFileSync(abiPath, 'utf8'))
+  const contract = new ContractPromise(api as any, abi, token)
+  const gasLimit = api.registry.createType('WeightV2', {
+    refTime: new BN('50000000000'),
+    proofSize: new BN('1000000'),
+  }) as any
+  const { result, output } = await (contract.query as any).tokenDecimals(caller, { gasLimit })
+  if (!result.isOk || !output) throw new Error(`token_decimals() failed on ${token}`)
+  const json = output.toJSON() as any
+  const dec = Number(json?.ok ?? json)
+  if (!Number.isInteger(dec) || dec < 0 || dec > 24) {
+    throw new Error(`Unexpected token_decimals() = ${JSON.stringify(json)} on ${token}`)
+  }
+  return dec
+}
+
+/**
  * Runs `cargo contract build` in the given contract directory.
  * Returns the path to the generated .contract bundle.
  */
@@ -81,7 +120,7 @@ function buildContract(contractDir: string, contractName: string): string {
 
   if (DRY_RUN) {
     log(`DRY RUN — skipping cargo build for ${contractName}`)
-    return path.join(contractDir, 'target', 'ink', `${contractName}.contract`)
+    return bundlePath(contractDir, contractName)
   }
 
   execSync(`cargo contract build --release --manifest-path ${path.join(contractDir, 'Cargo.toml')}`, {
@@ -89,7 +128,7 @@ function buildContract(contractDir: string, contractName: string): string {
     cwd:   ROOT_DIR,
   })
 
-  const bundle = path.join(contractDir, 'target', 'ink', `${contractName}.contract`)
+  const bundle = bundlePath(contractDir, contractName)
   if (!fs.existsSync(bundle)) {
     throw new Error(`Build artifact not found: ${bundle}`)
   }
@@ -233,10 +272,28 @@ async function main() {
   // ── Resolve constructor args ────────────────────────────────────
   const treasuryAddr    = process.env.TREASURY_ADDRESS     || deployer.address
   const rewardsPoolAddr = process.env.REWARDS_POOL_ADDRESS || deployer.address
-  const lunesTokenAddr  = process.env.LUNES_TOKEN_ADDRESS  || deployer.address
+  const lunesTokenAddr  = process.env.LUNES_TOKEN_ADDRESS || ''
+  const factoryAddr     = process.env.FACTORY_ADDRESS || ''
 
-  if (NETWORK !== 'local' && !process.env.LUNES_TOKEN_ADDRESS) {
-    log('⚠ LUNES_TOKEN_ADDRESS not set — using deployer address as placeholder for non-local deploy')
+  // No placeholders: a wrong fee token / factory makes every listing fail or
+  // collect fees in the wrong asset.
+  if (!lunesTokenAddr) {
+    err('LUNES_TOKEN_ADDRESS (WLUNES PSP22) is required.')
+    process.exit(1)
+  }
+  if (!factoryAddr) {
+    err('FACTORY_ADDRESS (Lunex Factory) is required.')
+    process.exit(1)
+  }
+
+  const lunesDecimals = await readTokenDecimals(api, lunesTokenAddr, deployer.address)
+  log(`Fee token decimals (on-chain): ${lunesDecimals}`)
+  if (
+    process.env.LUNES_TOKEN_DECIMALS &&
+    Number(process.env.LUNES_TOKEN_DECIMALS) !== lunesDecimals
+  ) {
+    err(`LUNES_TOKEN_DECIMALS=${process.env.LUNES_TOKEN_DECIMALS} but the token reports ${lunesDecimals}`)
+    process.exit(1)
   }
 
   // ── Step 1: Build contracts ─────────────────────────────────────
@@ -271,6 +328,8 @@ async function main() {
 
   log(`Constructor args:`)
   log(`  lunes_token:    ${lunesTokenAddr}`)
+  log(`  lunes_decimals: ${lunesDecimals}`)
+  log(`  factory:        ${factoryAddr}`)
   log(`  liquidity_lock: ${lockResult.address}`)
   log(`  treasury:       ${treasuryAddr}`)
   log(`  rewards_pool:   ${rewardsPoolAddr}`)
@@ -282,7 +341,15 @@ async function main() {
     'ListingManager',
     managerBundle,
     'new',
-    [lunesTokenAddr, lockResult.address, treasuryAddr, rewardsPoolAddr, stakingPoolAddr],
+    [
+      lunesTokenAddr,
+      lunesDecimals,
+      factoryAddr,
+      lockResult.address,
+      treasuryAddr,
+      rewardsPoolAddr,
+      stakingPoolAddr,
+    ],
   )
 
   // ── Step 4: Update LiquidityLock manager to ListingManager ─────
@@ -294,11 +361,16 @@ async function main() {
     const lockBundle2 = JSON.parse(fs.readFileSync(lockBundle, 'utf8'))
     const lockContract = new ContractPromise(api as any, lockBundle2, lockResult.address)
 
+    // set_manager is ONE-SHOT on LiquidityLock (frozen afterwards).
     await new Promise<void>((resolve, reject) => {
-      ;(lockContract.tx['set_manager'] as any)(
+      ;(lockContract.tx.setManager as any)(
         { gasLimit: new BN('1000000000000'), storageDepositLimit: null },
         managerResult.address,
-      ).signAndSend(deployer, ({ status }: any) => {
+      ).signAndSend(deployer, ({ status, dispatchError }: any) => {
+        if (dispatchError) {
+          reject(new Error(`set_manager failed: ${dispatchError.toString()}`))
+          return
+        }
         if (status.isFinalized) {
           log(`✅ LiquidityLock manager updated to ${managerResult.address}`)
           resolve()
@@ -308,6 +380,17 @@ async function main() {
         }
       }).catch(reject)
     })
+
+    const gasLimit = api.registry.createType('WeightV2', {
+      refTime: new BN('50000000000'),
+      proofSize: new BN('1000000'),
+    }) as any
+    const { output } = await (lockContract.query as any).manager(deployer.address, { gasLimit })
+    const json = output?.toJSON() as any
+    const manager = String(json?.ok ?? json)
+    if (manager !== managerResult.address) {
+      throw new Error(`LiquidityLock.manager() is ${manager}, expected ${managerResult.address}`)
+    }
   } else {
     log('DRY RUN — skipping set_manager call')
   }

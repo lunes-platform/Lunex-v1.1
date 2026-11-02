@@ -29,8 +29,8 @@ export const CONTRACTS = {
   /** ListingManager (list_token). Empty = on-chain listing disabled. */
   LISTING_MANAGER: env('REACT_APP_LISTING_MANAGER_CONTRACT', ''),
   /**
-   * PSP22 the ListingManager collects its fee in (its `lunes_token`
-   * constructor arg — the contract has no getter for it). Empty = WLUNES.
+   * Fallback only: the page reads the fee token from ListingManager
+   * `lunes_token()`. Used before that read resolves. Empty = WLUNES.
    */
   LISTING_FEE_TOKEN: env('REACT_APP_LISTING_FEE_TOKEN', '')
 } as const
