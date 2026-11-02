@@ -26,6 +26,7 @@ import {
   useTokenPrices
 } from 'components/TokenSelect'
 import { useSDK } from 'context/SDKContext'
+import { openWalletModal } from 'pages/header/modals/wallets'
 import { useTx } from 'context/TxContext'
 import useSelectOptions from 'hooks/useSelectOptions'
 import useSwap from 'hooks/useSwap'
@@ -41,6 +42,8 @@ import {
 } from './details'
 
 const SLIP_KEY = 'lunex-swap-slippage'
+/** Default slippage set in the header settings menu. */
+const DEFAULT_SLIP_KEY = 'lunex_default_slippage'
 const DEADLINE_KEY = 'lunex-swap-deadline'
 
 const readNum = (key: string, fallback: number) => {
@@ -100,7 +103,9 @@ const Home = () => {
 
   const [picking, setPicking] = useState<Side | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [slippage, setSlippageState] = useState(() => readNum(SLIP_KEY, 0.5))
+  const [slippage, setSlippageState] = useState(() =>
+    readNum(SLIP_KEY, readNum(DEFAULT_SLIP_KEY, 0.5))
+  )
   const [deadline, setDeadlineState] = useState(() => readNum(DEADLINE_KEY, 20))
   const [flipDeg, setFlipDeg] = useState(0)
   const [invert, setInvert] = useState(false)
@@ -270,8 +275,7 @@ const Home = () => {
     danger?: boolean
   }
   let cta: Cta
-  if (!connected)
-    cta = { label: 'Connect wallet', on: () => void sdk.connectWallet() }
+  if (!connected) cta = { label: 'Connect wallet', on: openWalletModal }
   else if (!from || !to)
     cta = {
       label: 'Select a token',
