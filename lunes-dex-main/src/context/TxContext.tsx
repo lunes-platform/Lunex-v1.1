@@ -34,7 +34,7 @@ import React, {
   useState
 } from 'react'
 import { useToast } from '../components/feedback/ToastProvider'
-import { parseBlockchainError } from './SDKContext'
+import { parseBlockchainError, useSDK } from './SDKContext'
 
 export type TxType =
   | 'swap'
@@ -138,6 +138,9 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
   children
 }) => {
   const { toast } = useToast()
+  const sdk = useSDK()
+  const sdkRef = useRef(sdk)
+  sdkRef.current = sdk
   const [tx, setTx] = useState<TxState | null>(null)
   const [activity, setActivity] = useState<ActivityItem[]>(loadActivity)
   const txRef = useRef<TxState | null>(null)
@@ -265,7 +268,11 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
             if (slowTimer) clearTimeout(slowTimer)
             if (!alive()) return
             if (res === false) {
-              throw new Error(cfg.errorText || 'The transaction did not complete.')
+              throw new Error(
+                sdkRef.current.getLastError() ||
+                  cfg.errorText ||
+                  'The transaction did not complete.'
+              )
             }
             if (looksLikeHash(res)) hash = res
             // skip visual-only steps covered by this run

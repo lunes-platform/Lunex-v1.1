@@ -5,7 +5,8 @@ import React, {
   useState,
   ReactNode,
   useCallback,
-  useMemo
+  useMemo,
+  useRef
 } from 'react'
 import { contractService } from '../services/contractService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
@@ -78,6 +79,9 @@ interface SDKContextState {
   connectWallet: (walletSource?: string) => Promise<void>
   disconnectWallet: () => void
   signMessage: (message: string) => Promise<string>
+  /** Last error set by any SDK call (sync, unlike `error`). Used by TxContext
+   *  to tell a wallet rejection apart from a failure when a call returns false. */
+  getLastError: () => string | null
 
   // Funções de Swap
   getQuote: (amountIn: string, path: string[]) => Promise<Quote | null>
@@ -204,7 +208,13 @@ interface SDKProviderProps {
 export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setErrorState] = useState<string | null>(null)
+  const lastErrorRef = useRef<string | null>(null)
+  const setError = useCallback((e: string | null) => {
+    lastErrorRef.current = e
+    setErrorState(e)
+  }, [])
+  const getLastError = useCallback(() => lastErrorRef.current, [])
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [balance, setBalance] = useState('0')
   const [currentAccount, setCurrentAccount] =
@@ -964,6 +974,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       connectWallet,
       disconnectWallet,
       signMessage,
+      getLastError,
       getQuote,
       executeSwap,
       addLiquidity,
