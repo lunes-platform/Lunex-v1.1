@@ -792,7 +792,9 @@ export const Listing: React.FC = () => {
     if (!paid())
       steps.push(
         {
-          label: 'Pay fee and lock liquidity',
+          // list_token collects the fee and records the listing; it does NOT move
+          // LP into LiquidityLock today (see contract note), so don't claim a lock.
+          label: 'Pay listing fee and record the listing',
           wallet: true,
           run: async ({ advance }) => {
             const prev = paid()
