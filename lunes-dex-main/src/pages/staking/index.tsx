@@ -24,6 +24,7 @@ import {
   tint
 } from 'components/ui/kit'
 import { AnimatedNumber } from 'components/ui/AnimatedNumber'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 // The staking contract is optional until deployed on the target network.
 const stakingAvailable = CONTRACTS.STAKING.length >= 10
@@ -167,7 +168,7 @@ const Staking: React.FC = () => {
   if (!connected) {
     cta = {
       label: 'Connect wallet',
-      onClick: () => sdk.connectWallet(),
+      onClick: () => requestWalletConnect(),
       ok: true
     }
   } else if (!stakingAvailable) {

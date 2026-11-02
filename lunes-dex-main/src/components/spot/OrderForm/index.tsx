@@ -27,6 +27,7 @@ import {
 import ConfirmOrderModal, { OrderKind, PendingOrder } from './ConfirmOrderModal'
 import MarginTab from './MarginTab'
 import { useSpotBalances } from './useSpotBalances'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 // Display fallbacks only — the pair's makerFeeBps / takerFeeBps from
 // spot-api win when present; the backend computes the real fee.
@@ -126,7 +127,7 @@ const Cta = styled(Button)<{ $tone: 'buy' | 'sell' | 'primary' }>`
 
 const OrderForm: React.FC = () => {
   const { selectedPair, pairs, ticker, orderbook, refreshOrders } = useSpot()
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const tx = useTx()
   const { picked, setHistoryTab } = useTerminal()
 
@@ -221,7 +222,7 @@ const OrderForm: React.FC = () => {
         label: 'Connect wallet',
         ok: true,
         tone: 'primary',
-        on: () => void connectWallet()
+        on: () => void requestWalletConnect()
       }
     if (isStopT && stp <= 0)
       return { label: 'Enter a stop price', ok: false, tone: 'primary' }
@@ -265,7 +266,6 @@ const OrderForm: React.FC = () => {
     }
   }, [
     connected,
-    connectWallet,
     isStopT,
     stp,
     tab,

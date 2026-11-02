@@ -25,6 +25,7 @@ import { useCopyPositions, useCopyWithdraw } from '../copytrade/useCopytrade'
 import { Trader } from './types'
 import TraderCard, { CardShell, TraderGrid } from './TraderCard'
 import { DashedEmpty, fmtCompactUsd } from './shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type Tab = 'top' | 'copying'
 type Kind = 'all' | 'traders' | 'bots'
@@ -77,7 +78,7 @@ const SkeletonCard: React.FC = () => (
 
 const SocialTrade: React.FC = () => {
   const navigate = useNavigate()
-  const { walletAddress, connectWallet } = useSDK()
+  const { walletAddress } = useSDK()
   const { toast } = useToast()
   const [tab, setTab] = useState<Tab>('top')
   const [kind, setKind] = useState<Kind>('all')
@@ -205,7 +206,7 @@ const SocialTrade: React.FC = () => {
   }
 
   const connect = () =>
-    connectWallet().catch((err: unknown) =>
+    requestWalletConnect().catch((err: unknown) =>
       toast(
         'error',
         'Wallet not connected',

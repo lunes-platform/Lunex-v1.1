@@ -26,6 +26,7 @@ import {
   buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../utils/signing'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type Proposal = {
   id: number
@@ -297,7 +298,7 @@ export const Governance: React.FC = () => {
 
   const vote = (p: Proposal, choice: 'yes' | 'no') => {
     if (!connected) {
-      sdk.connectWallet()
+      requestWalletConnect()
       return
     }
     const approve = choice === 'yes'
@@ -384,7 +385,7 @@ export const Governance: React.FC = () => {
               Stake to increase
             </Button>
           ) : (
-            <Button variant="secondary" onClick={() => sdk.connectWallet()}>
+            <Button variant="secondary" onClick={() => requestWalletConnect()}>
               Connect wallet
             </Button>
           )}

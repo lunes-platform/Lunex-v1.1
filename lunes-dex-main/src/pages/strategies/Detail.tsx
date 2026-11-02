@@ -58,6 +58,7 @@ import {
   fmtUsd,
   roiColor
 } from './shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type DayRange = '7' | '30' | '90'
 type Metric = 'equity' | 'roi'
@@ -222,7 +223,7 @@ const ChartTip: React.FC<TipProps> = ({ active, payload }) => {
 const StrategyDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { walletAddress, signMessage, connectWallet } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const { toast } = useToast()
 
   const [strategy, setStrategy] = useState<Strategy | null>(null)
@@ -281,7 +282,7 @@ const StrategyDetail: React.FC = () => {
   const toggleFollow = async () => {
     if (!strategy) return
     if (!walletAddress) {
-      connectWallet().catch((e: unknown) =>
+      requestWalletConnect().catch((e: unknown) =>
         toast('error', 'Could not connect wallet', errMsg(e, ''))
       )
       return

@@ -48,6 +48,7 @@ import {
   fmtUsd,
   roiColor
 } from '../strategies/shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 const LOG_POLL_MS = 15000
@@ -387,7 +388,7 @@ const logMessage = (l: ExecLog) => {
 
 const AgentDashboard: React.FC = () => {
   const navigate = useNavigate()
-  const { walletAddress, connectWallet } = useSDK()
+  const { walletAddress } = useSDK()
   const { toast } = useToast()
 
   const [keyInput, setKeyInput] = useState('')
@@ -595,7 +596,7 @@ const AgentDashboard: React.FC = () => {
   )
 
   const connect = () =>
-    connectWallet().catch((e: unknown) =>
+    requestWalletConnect().catch((e: unknown) =>
       toast('error', 'Could not connect wallet', errMsg(e, ''))
     )
 

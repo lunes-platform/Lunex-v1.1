@@ -273,7 +273,16 @@ export const TxProgressModal: React.FC = () => {
           {active && <BigSpin data-motion="pulse" />}
           {success && (
             <SuccessIcon>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg
+                width="28"
+                height="28"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M20 6 9 17l-5-5" />
               </svg>
             </SuccessIcon>
@@ -305,7 +314,11 @@ export const TxProgressModal: React.FC = () => {
                 : isActive
                   ? C.primary
                   : C.field
-            const fg = done ? '#0D0D0D' : isActive || isErr ? '#FFFFFF' : C.muted
+            const fg = done
+              ? '#0D0D0D'
+              : isActive || isErr
+                ? '#FFFFFF'
+                : C.muted
             return (
               <StepRow key={i} $first={i === 0}>
                 <StepBadge $bg={bg} $fg={fg} $glow={isActive}>
@@ -371,16 +384,32 @@ export const TxProgressModal: React.FC = () => {
           </Button>
         )}
         {success && (
-          <Button size="xl" block onClick={close} style={{ height: 52, fontSize: 16 }}>
+          <Button
+            size="xl"
+            block
+            onClick={close}
+            style={{ height: 52, fontSize: 16 }}
+          >
             Done
           </Button>
         )}
         {failed && (
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button variant="secondary" size="xl" block onClick={close} style={{ height: 52, fontSize: 15 }}>
+            <Button
+              variant="secondary"
+              size="xl"
+              block
+              onClick={close}
+              style={{ height: 52, fontSize: 15 }}
+            >
               Close
             </Button>
-            <Button size="xl" block onClick={retry} style={{ height: 52, fontSize: 15 }}>
+            <Button
+              size="xl"
+              block
+              onClick={retry}
+              style={{ height: 52, fontSize: 15 }}
+            >
               Try again
             </Button>
           </div>

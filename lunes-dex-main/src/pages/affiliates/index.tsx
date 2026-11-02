@@ -30,6 +30,7 @@ import {
   buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../utils/signing'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const SPOT_API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
@@ -448,7 +449,7 @@ const Affiliates: React.FC = () => {
         ) : (
           <Row $justify="space-between" $gap={12} $wrap>
             <Muted $size={14}>Connect a wallet to generate your link.</Muted>
-            <Button size="lg" onClick={() => sdk.connectWallet()}>
+            <Button size="lg" onClick={() => requestWalletConnect()}>
               Connect wallet
             </Button>
           </Row>

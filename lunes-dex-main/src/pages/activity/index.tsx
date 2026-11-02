@@ -27,6 +27,7 @@ import {
   Sub,
   grotesk
 } from 'components/ui/kit'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type Filter = 'all' | 'swap' | 'liquidity' | 'staking'
 
@@ -166,7 +167,7 @@ const Activity: React.FC = () => {
               Make a swap
             </Button>
           ) : (
-            <Button size="lg" onClick={() => sdk.connectWallet()}>
+            <Button size="lg" onClick={() => requestWalletConnect()}>
               Connect wallet
             </Button>
           )}

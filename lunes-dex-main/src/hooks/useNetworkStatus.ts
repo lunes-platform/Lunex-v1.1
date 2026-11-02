@@ -13,7 +13,8 @@ import { useEffect, useState } from 'react'
 import contractService from '../services/contractService'
 import { NETWORK } from '../config/contracts'
 
-export type NetworkStatus = 'ok' | 'degraded' | 'wrong' | 'maintenance' | 'testnet'
+export type NetworkStatus =
+  'ok' | 'degraded' | 'wrong' | 'maintenance' | 'testnet'
 
 const BLOCK_MS = 6000
 const env = (k: string): string | undefined =>
@@ -22,7 +23,8 @@ const env = (k: string): string | undefined =>
 const forced = (): NetworkStatus | null => {
   try {
     const v = new URLSearchParams(window.location.search).get('network')
-    return v && ['ok', 'degraded', 'wrong', 'maintenance', 'testnet'].includes(v)
+    return v &&
+      ['ok', 'degraded', 'wrong', 'maintenance', 'testnet'].includes(v)
       ? (v as NetworkStatus)
       : null
   } catch {

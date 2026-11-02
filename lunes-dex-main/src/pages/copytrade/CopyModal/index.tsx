@@ -12,6 +12,7 @@ import {
   traderVaultToken
 } from '../../social/shared'
 import { useCopyDeposit } from '../useCopytrade'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const AmountInput = styled.input.attrs({ 'data-bare': '' })`
   background: transparent;
@@ -108,7 +109,7 @@ const CopyModal: React.FC<CopyModalProps> = ({
   // (the deposit API has no stop-loss field).
   const [stop, setStop] = useState(20)
   const [connecting, setConnecting] = useState(false)
-  const { walletAddress, connectWallet } = useSDK()
+  const { walletAddress } = useSDK()
   const { toast } = useToast()
   const deposit = useCopyDeposit()
 
@@ -128,7 +129,7 @@ const CopyModal: React.FC<CopyModalProps> = ({
       ok: !connecting,
       on: () => {
         setConnecting(true)
-        connectWallet()
+        requestWalletConnect()
           .catch((err: unknown) =>
             toast(
               'error',

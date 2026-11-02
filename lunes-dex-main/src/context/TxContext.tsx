@@ -37,13 +37,7 @@ import { useToast } from '../components/feedback/ToastProvider'
 import { parseBlockchainError, useSDK } from './SDKContext'
 
 export type TxType =
-  | 'swap'
-  | 'liquidity'
-  | 'staking'
-  | 'spot'
-  | 'governance'
-  | 'social'
-  | 'other'
+  'swap' | 'liquidity' | 'staking' | 'spot' | 'governance' | 'social' | 'other'
 
 export type TxStepCtx = { advance: () => void }
 
@@ -119,9 +113,11 @@ const loadActivity = (): ActivityItem[] => {
     const arr = raw ? JSON.parse(raw) : []
     // a pending item from a previous session can't be tracked any more
     return Array.isArray(arr)
-      ? arr.slice(0, 50).map((a: ActivityItem) =>
-          a.status === 'pending' ? { ...a, status: 'failed' } : a
-        )
+      ? arr
+          .slice(0, 50)
+          .map((a: ActivityItem) =>
+            a.status === 'pending' ? { ...a, status: 'failed' } : a
+          )
       : []
   } catch {
     return []
@@ -196,14 +192,22 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
       })
       setActivity(prev =>
         [
-          { id, type: cfg.type, title: cfg.actTitle, ts: Date.now(), status: 'pending' as const },
+          {
+            id,
+            type: cfg.type,
+            title: cfg.actTitle,
+            ts: Date.now(),
+            status: 'pending' as const
+          },
           ...prev
         ].slice(0, 50)
       )
 
       const setAct = (status: ActivityStatus, hash?: string) =>
         setActivity(prev =>
-          prev.map(a => (a.id === id ? { ...a, status, hash: hash ?? a.hash } : a))
+          prev.map(a =>
+            a.id === id ? { ...a, status, hash: hash ?? a.hash } : a
+          )
         )
 
       const update = (patch: Partial<TxState>) => {
@@ -255,7 +259,10 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
             // the last runnable step covers the confirmation wait → slow hint
             const isLastRun = !steps.slice(i + 1).some(s => s.run)
             if (isLastRun) {
-              slowTimer = setTimeout(() => update({ slow: true }), SLOW_AFTER_MS)
+              slowTimer = setTimeout(
+                () => update({ slow: true }),
+                SLOW_AFTER_MS
+              )
             }
             let advanced = false
             const res = await step.run({
@@ -282,7 +289,12 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
           }
           if (!alive()) return
           cfg.onSuccess?.(hash)
-          update({ status: 'success', current: steps.length, slow: false, hash })
+          update({
+            status: 'success',
+            current: steps.length,
+            slow: false,
+            hash
+          })
           setAct('confirmed', hash)
           finish(
             'success',
@@ -296,7 +308,12 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
           if (!alive()) return
           const raw = err instanceof Error ? err.message : String(err)
           if (REJECT_RE.test(raw)) {
-            update({ status: 'rejected', hidden: false, slow: false, error: raw })
+            update({
+              status: 'rejected',
+              hidden: false,
+              slow: false,
+              error: raw
+            })
             setAct('rejected')
             finish(
               'warning',
@@ -309,7 +326,13 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
             const msg = parseBlockchainError(err)
             update({ status: 'error', hidden: false, slow: false, error: msg })
             setAct('failed')
-            finish('error', 'Transaction failed', `${cfg.actTitle} — ${msg}`, retryAction, true)
+            finish(
+              'error',
+              'Transaction failed',
+              `${cfg.actTitle} — ${msg}`,
+              retryAction,
+              true
+            )
           }
         }
       })()
@@ -335,7 +358,8 @@ export const TxProvider: React.FC<{ children: React.ReactNode }> = ({
           return s.status === 'active' ? next : null
         }),
       show: () => setTx(s => (s ? { ...s, hidden: false } : s)),
-      close: () => setTx(s => (s && s.status === 'active' ? { ...s, hidden: true } : null))
+      close: () =>
+        setTx(s => (s && s.status === 'active' ? { ...s, hidden: true } : null))
     }),
     [tx, activity, run, pendingToast]
   )

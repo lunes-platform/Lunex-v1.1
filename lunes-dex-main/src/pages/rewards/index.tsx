@@ -27,6 +27,7 @@ import rewardsApi, {
   RewardLeaderRankingEntry,
   RewardTraderRankingEntry
 } from '../../services/rewardsService'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 // ─── Tiers ───────────────────────────────────────────────────────
 // Display mirror of the tier ladder (thresholds in staked LUNES). The
@@ -595,7 +596,9 @@ export const Rewards: React.FC = () => {
                     Claim
                   </Button>
                 ) : (
-                  <Button onClick={() => sdk.connectWallet()}>Connect</Button>
+                  <Button onClick={() => requestWalletConnect()}>
+                    Connect
+                  </Button>
                 )}
               </ClaimCard>
             )

@@ -27,7 +27,6 @@ export const useIsMobile = () => useMediaQuery(`(max-width: ${MOBILE_MAX}px)`)
 
 /** 760–1199px */
 export const useIsTablet = () =>
-  useMediaQuery(`(min-width: ${MOBILE_MAX + 1}px) and (max-width: ${TABLET_MAX}px)`)
-
-export const usePrefersReducedMotion = () =>
-  useMediaQuery('(prefers-reduced-motion: reduce)')
+  useMediaQuery(
+    `(min-width: ${MOBILE_MAX + 1}px) and (max-width: ${TABLET_MAX}px)`
+  )

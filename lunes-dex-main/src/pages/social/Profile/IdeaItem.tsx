@@ -22,6 +22,7 @@ import socialApi, {
 } from '../../../services/socialService'
 import { Idea, IdeaComment } from '../types'
 import { relTime } from '../shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const Desc = styled.p<{ $clamp: boolean }>`
   font-size: 14px;
@@ -83,7 +84,7 @@ const Initials = styled.span`
 `
 
 const IdeaItem: React.FC<{ idea: Idea }> = ({ idea }) => {
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const { toast } = useToast()
   const [liked, setLiked] = useState(false)
   const [likes, setLikes] = useState(idea.likes)
@@ -101,7 +102,7 @@ const IdeaItem: React.FC<{ idea: Idea }> = ({ idea }) => {
   const ensureWallet = async () => {
     if (walletAddress) return walletAddress
     try {
-      await connectWallet()
+      await requestWalletConnect()
     } catch (err: unknown) {
       fail('Wallet not connected', err)
     }

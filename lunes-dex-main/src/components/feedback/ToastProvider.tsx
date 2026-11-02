@@ -320,7 +320,10 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
   const [notifs, setNotifs] = useState<NotificationItem[]>(loadNotifs)
   const [bellRing, setBellRing] = useState(0)
   const timers = useRef<
-    Record<string, { h?: ReturnType<typeof setTimeout>; left: number; at: number }>
+    Record<
+      string,
+      { h?: ReturnType<typeof setTimeout>; left: number; at: number }
+    >
   >({})
 
   useEffect(() => {
@@ -379,7 +382,8 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const toast = useCallback<ToastApi['toast']>(
     (tone, title, body, opts = {}) => {
-      const id = opts.id || `t${Date.now()}${Math.random().toString(36).slice(2, 6)}`
+      const id =
+        opts.id || `t${Date.now()}${Math.random().toString(36).slice(2, 6)}`
       const route = opts.route ?? opts.action?.route
 
       if (!opts.silent && tone !== 'pending') {
@@ -456,7 +460,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
       markAllRead: () =>
         setNotifs(prev => prev.map(n => (n.read ? n : { ...n, read: true }))),
       markRead: id =>
-        setNotifs(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n))),
+        setNotifs(prev =>
+          prev.map(n => (n.id === id ? { ...n, read: true } : n))
+        ),
       clear: () => setNotifs([])
     }),
     [notifs, bellRing]
@@ -472,7 +478,11 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({
             return (
               <Card
                 key={t.id}
-                role={t.tone === 'error' || t.tone === 'warning' ? 'alert' : 'status'}
+                role={
+                  t.tone === 'error' || t.tone === 'warning'
+                    ? 'alert'
+                    : 'status'
+                }
                 $border={c[2]}
                 $leaving={t.leaving}
                 $mobile={mobile}

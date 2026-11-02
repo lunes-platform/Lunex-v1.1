@@ -58,11 +58,12 @@ export const AnimatedNumber: React.FC<Props> = ({
   style,
   noFlash
 }) => {
-  const target =
-    text ?? (format ? format(value ?? 0) : String(value ?? 0))
+  const target = text ?? (format ? format(value ?? 0) : String(value ?? 0))
   const parsed = parseText(target)
   const [out, setOut] = useState(() =>
-    parsed && !reduced() ? parsed.pre + fmtNum(0, parsed.dec, parsed.comma) + parsed.suf : target
+    parsed && !reduced()
+      ? parsed.pre + fmtNum(0, parsed.dec, parsed.comma) + parsed.suf
+      : target
   )
   const fromRef = useRef<number | null>(null)
   const spanRef = useRef<HTMLSpanElement>(null)
@@ -95,7 +96,9 @@ export const AnimatedNumber: React.FC<Props> = ({
       const k = Math.min(1, (performance.now() - t0) / D)
       const e = 1 - Math.pow(1 - k, 3)
       if (k < 1) {
-        setOut(p.pre + fmtNum(from + (p.val - from) * e, p.dec, p.comma) + p.suf)
+        setOut(
+          p.pre + fmtNum(from + (p.val - from) * e, p.dec, p.comma) + p.suf
+        )
         timer.current = setTimeout(step, 16)
       } else {
         setOut(target)

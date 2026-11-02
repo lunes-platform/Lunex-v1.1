@@ -27,6 +27,7 @@ import {
   createSignedActionMetadata
 } from '../../../utils/signing'
 import { BackToSocial, DashedEmpty, fmtPct, initials } from '../shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type AgentType = 'AI_AGENT' | 'OPENCLAW_BOT' | 'ALGO_BOT'
 type Perm = 'TRADE_SPOT' | 'TRADE_MARGIN' | 'COPYTRADE_SIGNAL' | 'READ_ONLY'
@@ -209,7 +210,7 @@ const AgentRow: React.FC<{ a: AgentProfile; mine?: boolean }> = ({
 )
 
 const BotRegistry: React.FC = () => {
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const tx = useTx()
   const { toast } = useToast()
   const [agents, setAgents] = useState<AgentProfile[]>([])
@@ -291,7 +292,7 @@ const BotRegistry: React.FC = () => {
       ok: !connecting,
       on: () => {
         setConnecting(true)
-        connectWallet()
+        requestWalletConnect()
           .catch((err: unknown) =>
             toast(
               'error',

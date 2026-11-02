@@ -31,6 +31,7 @@ import {
   handle,
   TraderAvatar
 } from '../shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const Layout = styled.div`
   display: flex;
@@ -154,7 +155,7 @@ const BIO_MAX = 160
 
 const SocialSettings: React.FC = () => {
   const navigate = useNavigate()
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const tx = useTx()
   const { toast } = useToast()
   const fileRef = useRef<HTMLInputElement | null>(null)
@@ -259,7 +260,7 @@ const SocialSettings: React.FC = () => {
   const save = () => {
     if (!walletAddress) {
       setBusy(true)
-      connectWallet()
+      requestWalletConnect()
         .catch((err: unknown) =>
           toast(
             'error',

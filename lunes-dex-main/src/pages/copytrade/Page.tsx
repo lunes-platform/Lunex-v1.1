@@ -46,6 +46,7 @@ import {
 } from '../social/shared'
 import CopyModal from './CopyModal'
 import { useCopyPositions, useCopyWithdraw } from './useCopytrade'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const VaultRow = styled.div<{ $selected?: boolean }>`
   display: flex;
@@ -219,7 +220,7 @@ const activityLine = (a: CopytradeActivityItem) => {
 
 const CopytradePage: React.FC = () => {
   const navigate = useNavigate()
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const { toast } = useToast()
   const [leaders, setLeaders] = useState<Trader[]>([])
   const [loadingLeaders, setLoadingLeaders] = useState(true)
@@ -306,7 +307,7 @@ const CopytradePage: React.FC = () => {
   }
 
   const connect = () =>
-    connectWallet().catch((err: unknown) =>
+    requestWalletConnect().catch((err: unknown) =>
       toast(
         'error',
         'Wallet not connected',

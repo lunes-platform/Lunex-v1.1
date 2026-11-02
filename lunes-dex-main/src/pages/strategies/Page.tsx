@@ -51,6 +51,7 @@ import {
   fmtUsd,
   roiColor
 } from './shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type TypeKey = 'all' | 'COPYTRADE' | 'MARKET_MAKER' | 'ARBITRAGE'
 type RiskKey = 'all' | 'LOW' | 'MEDIUM' | 'HIGH'
@@ -207,7 +208,7 @@ const authorOf = (s: Strategy) => {
 // ─── Component ───────────────────────────────────────────────────
 
 const StrategyMarketplacePage: React.FC = () => {
-  const { walletAddress, signMessage, connectWallet } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -294,7 +295,7 @@ const StrategyMarketplacePage: React.FC = () => {
   }, [walletAddress, signMessage])
 
   const connect = () =>
-    connectWallet().catch((e: unknown) =>
+    requestWalletConnect().catch((e: unknown) =>
       toast('error', 'Could not connect wallet', errMsg(e, ''))
     )
 

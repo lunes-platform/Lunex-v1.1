@@ -42,6 +42,7 @@ import {
 } from '../shared'
 import PnLChart from './PnLChart'
 import IdeaItem from './IdeaItem'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const Header = styled(Card)`
   flex-direction: row;
@@ -181,7 +182,7 @@ const Profile: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const { toast } = useToast()
   const [trader, setTrader] = useState<Trader | null>(
     () => (location.state as ProfileLocationState | null)?.trader ?? null
@@ -241,7 +242,7 @@ const Profile: React.FC = () => {
   const onFollow = async () => {
     if (!id || !trader) return
     if (!walletAddress) {
-      connectWallet().catch((err: unknown) =>
+      requestWalletConnect().catch((err: unknown) =>
         toast(
           'error',
           'Wallet not connected',

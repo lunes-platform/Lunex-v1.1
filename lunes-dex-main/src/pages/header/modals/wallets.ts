@@ -55,3 +55,13 @@ export const OPEN_WALLET_EVENT = 'lunex:open-wallet'
 
 export const openWalletModal = () =>
   window.dispatchEvent(new Event(OPEN_WALLET_EVENT))
+
+/**
+ * Promise-returning variant for screens: opens the header's Connect wallet
+ * modal (network + wallet picker) instead of connecting silently to the
+ * first extension account. Resolves once the request is dispatched.
+ */
+export const requestWalletConnect = (): Promise<void> => {
+  openWalletModal()
+  return Promise.resolve()
+}

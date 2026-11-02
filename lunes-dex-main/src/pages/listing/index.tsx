@@ -32,6 +32,7 @@ import {
   buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../utils/signing'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
@@ -564,7 +565,11 @@ export const Listing: React.FC = () => {
   if (step < 4)
     cta = { label: 'Continue', ok: stepOk, on: () => setStep(step + 1) }
   else if (!sdk.isConnected)
-    cta = { label: 'Connect wallet', ok: true, on: () => sdk.connectWallet() }
+    cta = {
+      label: 'Connect wallet',
+      ok: true,
+      on: () => requestWalletConnect()
+    }
   else
     cta = {
       label: `Submit listing (${fmt(tier.fee)} LUNES fee)`,

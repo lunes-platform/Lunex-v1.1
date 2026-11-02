@@ -31,6 +31,7 @@ import {
   fmtAmt,
   fmtPx
 } from '../terminal'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const LEVERAGES = [2, 3, 5, 10] as const
 const RISK_ACK_FROM = 5
@@ -262,7 +263,7 @@ const ErrorLine = styled.div`
  */
 const MarginTab: React.FC = () => {
   const { selectedPair, ticker } = useSpot()
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
   const tx = useTx()
   const [overview, setOverview] = useState<MarginOverview | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -493,7 +494,11 @@ const MarginTab: React.FC = () => {
 
   let cta: { label: string; ok: boolean; on?: () => void }
   if (!connected)
-    cta = { label: 'Connect wallet', ok: true, on: () => void connectWallet() }
+    cta = {
+      label: 'Connect wallet',
+      ok: true,
+      on: () => void requestWalletConnect()
+    }
   else if (mc <= 0) cta = { label: 'Enter collateral', ok: false }
   else if (overview && mc > available)
     cta = { label: 'Not enough collateral', ok: false }

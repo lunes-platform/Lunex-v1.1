@@ -29,6 +29,7 @@ import strategyService, {
   StrategyType
 } from '../../services/strategyService'
 import { ChoiceChip, RISK_STYLE, TYPE_LABEL } from './shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type Props = {
   open: boolean
@@ -115,7 +116,7 @@ const CreateStrategyModal: React.FC<Props> = ({
   onCreated,
   initialApiKey = ''
 }) => {
-  const { walletAddress, connectWallet } = useSDK()
+  const { walletAddress } = useSDK()
   const { toast } = useToast()
   const tx = useTx()
   const [form, setForm] = useState({ ...EMPTY, apiKey: initialApiKey })
@@ -173,7 +174,7 @@ const CreateStrategyModal: React.FC<Props> = ({
   }
 
   const connect = () =>
-    connectWallet().catch((e: unknown) =>
+    requestWalletConnect().catch((e: unknown) =>
       toast(
         'error',
         'Could not connect wallet',
