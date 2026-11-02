@@ -1,3 +1,10 @@
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  signedReadQuery,
+  type ReadAuth
+} from './sessionService'
+
 const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
 interface SignedAgentActionPayload {
@@ -78,12 +85,15 @@ async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> | undefined)
+    }
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `Request failed: ${res.status}`)
+    throw handleReadAuthError(body.error || `Request failed: ${res.status}`)
   }
   return res.json() as Promise<T>
 }
@@ -123,16 +133,13 @@ const agentService = {
 
   async getAgentByWallet(
     wallet: string,
-    auth: SignedAgentActionPayload
+    auth: ReadAuth
   ): Promise<AgentProfile | null> {
     try {
-      const query = new URLSearchParams({
-        nonce: auth.nonce,
-        timestamp: String(auth.timestamp),
-        signature: auth.signature
-      })
+      const query = signedReadQuery(auth).slice(1)
       const data = await apiRequest<{ agent: any }>(
-        `/api/v1/agents/by-wallet/${wallet}?${query.toString()}`
+        `/api/v1/agents/by-wallet/${wallet}${query ? `?${query}` : ''}`,
+        { headers: readAuthHeaders(auth) }
       )
       return normalizeAgentProfile(data.agent)
     } catch {

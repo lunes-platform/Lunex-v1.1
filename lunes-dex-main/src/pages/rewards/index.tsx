@@ -28,6 +28,7 @@ import rewardsApi, {
   RewardTraderRankingEntry
 } from '../../services/rewardsService'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
+import { useReadSession } from '../../hooks/useReadSession'
 
 // ─── Tiers ───────────────────────────────────────────────────────
 // Display mirror of the tier ladder (thresholds in staked LUNES). The
@@ -255,6 +256,8 @@ export const Rewards: React.FC = () => {
 
   const address = sdk.walletAddress
   const connected = sdk.isConnected && !!address
+  // Trading rewards are a private read served by the one-signature session.
+  const session = useReadSession()
 
   const loadRewards = useCallback(async () => {
     const s = sdkRef.current
@@ -266,7 +269,7 @@ export const Rewards: React.FC = () => {
     try {
       const [stakingRes, tradingRes] = await Promise.allSettled([
         s.getStakingUserInfo(s.walletAddress),
-        rewardsApi.getPendingRewards(s.walletAddress, s.signMessage)
+        rewardsApi.getPendingRewards(s.walletAddress)
       ])
       const staking =
         stakingRes.status === 'fulfilled' ? stakingRes.value : null
@@ -289,7 +292,7 @@ export const Rewards: React.FC = () => {
 
   useEffect(() => {
     loadRewards()
-  }, [loadRewards, sdk.isConnected, address])
+  }, [loadRewards, sdk.isConnected, address, session.hasSession])
 
   useEffect(() => {
     let alive = true
@@ -406,7 +409,8 @@ export const Rewards: React.FC = () => {
       sub: data
         ? `Leader ${fmt(data.leaderPending)} · Trader ${fmt(data.traderPending)}`
         : 'From this week’s volume',
-      onClaim: claimTrading
+      onClaim: claimTrading,
+      needsSession: true
     }
   ]
 
@@ -587,7 +591,16 @@ export const Rewards: React.FC = () => {
                   )}
                   <Muted $size={12}>{c.sub}</Muted>
                 </Col>
-                {connected ? (
+                {connected && c.needsSession && !session.hasSession ? (
+                  <Button
+                    variant="secondary"
+                    disabled={session.signingIn}
+                    onClick={() => void session.signIn()}
+                    title="Sign in to view your private data"
+                  >
+                    Sign in
+                  </Button>
+                ) : connected ? (
                   <Button
                     variant={can ? 'success' : 'secondary'}
                     disabled={!can}

@@ -10,8 +10,9 @@ import usePools, { Pool } from 'hooks/usePools'
 import { fmtAmount, toNative } from '../BalanceDropdown'
 import { Popover } from '../styles'
 import { currentWallet } from './wallets'
-
-const SPOT_API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
+import { hasReadSession, readSessionFetch } from 'services/sessionService'
+import rewardsApi from 'services/rewardsService'
+import { useReadSession } from 'hooks/useReadSession'
 
 type LpPosition = { pool: Pool; share: number; usd: number }
 
@@ -22,6 +23,7 @@ const cache: Record<
   {
     staked?: number
     stakeRewards?: number
+    tradingRewards?: number
     affiliate?: number
     lp?: LpPosition[]
   }
@@ -222,11 +224,13 @@ const AccountPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const wallet = currentWallet()
   const { pools, isLoading: poolsLoading, getUserLiquidity } = usePools()
   const [data, setData] = useState(() => cache[address] ?? {})
+  const { hasSession } = useReadSession()
 
   const native = toNative(sdk.balance)
   const refLink = `${window.location.origin}/?ref=${address}`
 
-  // Staking (on-chain) + affiliate earnings (spot-api, unsigned read).
+  // Staking (on-chain) + trading rewards / affiliate earnings (spot-api
+  // private reads via the read session — never prompts the wallet).
   useEffect(() => {
     if (!address) return
     let alive = true
@@ -243,17 +247,29 @@ const AccountPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         })
       )
       .catch(() => merge({ staked: 0, stakeRewards: 0 }))
-    fetch(`${SPOT_API}/api/v1/affiliates/dashboard?address=${address}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(res => {
-        const d = res?.dashboard
-        merge({ affiliate: Number(d?.totalUnpaid ?? d?.totalEarnings ?? 0) })
-      })
-      .catch(() => merge({ affiliate: 0 }))
+    if (hasReadSession(address)) {
+      readSessionFetch<{
+        dashboard?: { totalUnpaid?: number; totalEarnings?: number }
+      }>(
+        address,
+        `/api/v1/affiliate/dashboard?address=${encodeURIComponent(address)}`
+      )
+        .then(res => {
+          const d = res?.dashboard
+          merge({
+            affiliate: Number(d?.totalUnpaid ?? d?.totalEarnings ?? 0)
+          })
+        })
+        .catch(() => merge({ affiliate: 0 }))
+      rewardsApi
+        .getPendingRewards(address)
+        .then(p => merge({ tradingRewards: Number(p?.total ?? 0) }))
+        .catch(() => undefined)
+    }
     return () => {
       alive = false
     }
-  }, [address]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [address, hasSession]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // LP positions: LP token balance per discovered pair.
   useEffect(() => {
@@ -403,13 +419,19 @@ const AccountPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         </Line>
         <Line $green>
           <span>Trading rewards</span>
-          {/* Pending trading rewards need a signed request — link out instead
-              of prompting the wallet just for opening this panel. */}
-          <LinkBtn onClick={() => go('/rewards')}>View</LinkBtn>
+          {/* Private read: shown with the read session; otherwise link out
+              instead of prompting the wallet just for opening this panel. */}
+          {hasSession && data.tradingRewards !== undefined ? (
+            <span>{fmtAmount(data.tradingRewards)} LUNES</span>
+          ) : (
+            <LinkBtn onClick={() => go('/rewards')}>View</LinkBtn>
+          )}
         </Line>
         <Line $green>
           <span>Affiliate commissions</span>
-          {data.affiliate !== undefined ? (
+          {!hasSession ? (
+            <LinkBtn onClick={() => go('/affiliates')}>View</LinkBtn>
+          ) : data.affiliate !== undefined ? (
             <span>{usd(data.affiliate)}</span>
           ) : (
             loading

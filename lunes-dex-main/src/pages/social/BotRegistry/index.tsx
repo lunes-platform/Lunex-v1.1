@@ -23,10 +23,11 @@ import agentService, { AgentProfile } from '../../../services/agentService'
 import {
   buildAgentCreateApiKeySignMessage,
   buildAgentRegisterSignMessage,
-  buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../../utils/signing'
 import { BackToSocial, DashedEmpty, fmtPct, initials } from '../shared'
+import { getReadSessionToken } from '../../../services/sessionService'
+import { useReadSession } from '../../../hooks/useReadSession'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 type AgentType = 'AI_AGENT' | 'OPENCLAW_BOT' | 'ALGO_BOT'
@@ -211,6 +212,7 @@ const AgentRow: React.FC<{ a: AgentProfile; mine?: boolean }> = ({
 
 const BotRegistry: React.FC = () => {
   const { walletAddress, signMessage } = useSDK()
+  const readSession = useReadSession()
   const tx = useTx()
   const { toast } = useToast()
   const [agents, setAgents] = useState<AgentProfile[]>([])
@@ -253,35 +255,23 @@ const BotRegistry: React.FC = () => {
     void loadAgents()
   }, [])
 
-  // The by-wallet lookup is a signed read
+  // The by-wallet lookup is a private read served by the read session
+  // (never prompts the wallet on load).
   useEffect(() => {
-    if (!walletAddress) {
+    const token = getReadSessionToken(walletAddress)
+    if (!walletAddress || !token) {
       setMyAgent(null)
       return
     }
     let alive = true
-    const auth = createSignedActionMetadata()
-    signMessage(
-      buildWalletActionMessage({
-        action: 'agents.by-wallet',
-        address: walletAddress,
-        nonce: auth.nonce,
-        timestamp: auth.timestamp
-      })
-    )
-      .then(signature =>
-        agentService.getAgentByWallet(walletAddress, {
-          nonce: auth.nonce,
-          timestamp: auth.timestamp,
-          signature
-        })
-      )
+    agentService
+      .getAgentByWallet(walletAddress, { sessionToken: token })
       .then(a => alive && setMyAgent(a))
       .catch(() => alive && setMyAgent(null))
     return () => {
       alive = false
     }
-  }, [walletAddress, signMessage])
+  }, [walletAddress, readSession.hasSession])
 
   const permsOn = PERMS.filter(p => perms[p])
 
@@ -302,6 +292,12 @@ const BotRegistry: React.FC = () => {
           )
           .finally(() => setConnecting(false))
       }
+    }
+  } else if (!readSession.hasSession) {
+    cta = {
+      label: readSession.signingIn ? 'Signing in…' : 'Sign in to Lunex',
+      ok: !readSession.signingIn,
+      on: () => void readSession.signIn()
     }
   } else if (myAgent) {
     cta = { label: 'This wallet already has an agent', ok: false }

@@ -4,6 +4,14 @@ import type {
   LeaderFollower,
   Trader
 } from '../pages/social/types'
+import {
+  authHeaders,
+  getReadSessionToken,
+  handleReadAuthError,
+  readAuthHeaders,
+  signedReadParams,
+  type ReadAuth
+} from './sessionService'
 
 const SOCIAL_API_URL =
   process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
@@ -276,11 +284,11 @@ export interface LeaderApiKeyResult {
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${SOCIAL_API_URL}${path}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(options?.headers ?? {})
-    },
-    ...options
+      ...((options?.headers as Record<string, string> | undefined) ?? {})
+    }
   })
 
   const isJson = response.headers
@@ -290,7 +298,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     if (isJson) {
       const data = await response.json()
-      throw new Error(data.error || 'API error')
+      throw handleReadAuthError(data.error)
     } else {
       const text = await response.text()
       throw new Error(
@@ -632,63 +640,40 @@ export const socialApi = {
     return data.leaders.map(mapTrader)
   },
 
+  /**
+   * Public leader profile. When `viewerAddress` has a read session, the
+   * viewer-specific fields (e.g. isFollowing) are included via the session
+   * bearer — no wallet prompt. Without a session the public profile is read.
+   */
   async getLeaderProfile(
     leaderId: string,
-    viewerAddress?: string,
-    signMessage?: (message: string) => Promise<string>
+    viewerAddress?: string
   ): Promise<Trader> {
-    let query = toQueryString({ viewerAddress })
-    if (viewerAddress && signMessage) {
-      const metadata = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action: 'social.leader-profile',
-          address: viewerAddress,
-          nonce: metadata.nonce,
-          timestamp: metadata.timestamp,
-          fields: { leaderId }
-        })
-      )
-      query = toQueryString({
-        viewerAddress,
-        nonce: metadata.nonce,
-        timestamp: metadata.timestamp,
-        signature
-      })
-    }
+    const viewer = getReadSessionToken(viewerAddress)
+      ? viewerAddress
+      : undefined
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
-      `/api/v1/social/leaders/${leaderId}${query}`
+      `/api/v1/social/leaders/${leaderId}${toQueryString({
+        viewerAddress: viewer
+      })}`,
+      { headers: authHeaders(viewer) }
     )
     return mapTrader(data.leader)
   },
 
   async getLeaderProfileByAddress(
     address: string,
-    viewerAddress?: string,
-    signMessage?: (message: string) => Promise<string>
+    viewerAddress?: string
   ): Promise<Trader> {
-    let query = toQueryString({ address, viewerAddress })
-    if (viewerAddress && signMessage) {
-      const metadata = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action: 'social.leader-profile-by-address',
-          address: viewerAddress,
-          nonce: metadata.nonce,
-          timestamp: metadata.timestamp,
-          fields: { address }
-        })
-      )
-      query = toQueryString({
-        address,
-        viewerAddress,
-        nonce: metadata.nonce,
-        timestamp: metadata.timestamp,
-        signature
-      })
-    }
+    const viewer = getReadSessionToken(viewerAddress)
+      ? viewerAddress
+      : undefined
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
-      `/api/v1/social/leaders/by-address${query}`
+      `/api/v1/social/leaders/by-address${toQueryString({
+        address,
+        viewerAddress: viewer
+      })}`,
+      { headers: authHeaders(viewer) }
     )
     return mapTrader(data.leader)
   },
@@ -807,34 +792,25 @@ export const socialApi = {
 
   async getPositions(
     address: string,
-    auth: SignedAddressActionInput
+    auth: ReadAuth
   ): Promise<CopytradePosition[]> {
-    const query = toQueryString({
-      address,
-      nonce: auth.nonce,
-      timestamp: auth.timestamp,
-      signature: auth.signature
-    })
+    const query = toQueryString({ address, ...signedReadParams(auth) })
     const data = await fetchApi<{ positions: CopytradePosition[] }>(
-      `/api/v1/copytrade/positions${query}`
+      `/api/v1/copytrade/positions${query}`,
+      { headers: readAuthHeaders(auth) }
     )
     return data.positions
   },
 
   async getActivity(
     address: string,
-    auth: SignedAddressActionInput,
+    auth: ReadAuth,
     limit = 20
   ): Promise<CopytradeActivityItem[]> {
-    const query = toQueryString({
-      address,
-      limit,
-      nonce: auth.nonce,
-      timestamp: auth.timestamp,
-      signature: auth.signature
-    })
+    const query = toQueryString({ address, limit, ...signedReadParams(auth) })
     const data = await fetchApi<{ activity: CopytradeActivityItem[] }>(
-      `/api/v1/copytrade/activity${query}`
+      `/api/v1/copytrade/activity${query}`,
+      { headers: readAuthHeaders(auth) }
     )
     return data.activity
   },

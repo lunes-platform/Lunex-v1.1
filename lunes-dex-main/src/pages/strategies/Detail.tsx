@@ -46,6 +46,7 @@ import strategyService, {
   StrategyPerformancePoint
 } from '../../services/strategyService'
 import { useSDK } from '../../context/SDKContext'
+import { useReadSession } from '../../hooks/useReadSession'
 import {
   BackLink,
   RISK_STYLE,
@@ -224,6 +225,7 @@ const StrategyDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { walletAddress, signMessage } = useSDK()
+  const { hasSession } = useReadSession()
   const { toast } = useToast()
 
   const [strategy, setStrategy] = useState<Strategy | null>(null)
@@ -263,11 +265,12 @@ const StrategyDetail: React.FC = () => {
       setFollowing(false)
       return
     }
+    // Private read via the read session — never prompts the wallet.
     strategyService
-      .getFollowedStrategies(walletAddress, signMessage)
+      .getFollowedStrategies(walletAddress)
       .then(list => setFollowing(list.some(s => s.id === id)))
       .catch(() => {})
-  }, [id, walletAddress, signMessage])
+  }, [id, walletAddress, hasSession])
 
   const changeRange = async (d: DayRange) => {
     if (!id) return

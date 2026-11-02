@@ -42,9 +42,11 @@ import {
   StrategyStatus
 } from '../../../sdk/AsymmetricClient'
 import {
-  buildWalletActionMessage,
-  createSignedActionMetadata
-} from '../../../utils/signing'
+  ReadSessionRequiredError,
+  requireReadAuth
+} from '../../../services/sessionService'
+import { useReadSession } from '../../../hooks/useReadSession'
+import { ReadSessionPrompt } from '../../../components/session/ReadSessionPrompt'
 import { openWalletModal } from '../../header/modals/wallets'
 import { fmt, usd } from '../format'
 
@@ -267,27 +269,10 @@ const AsymmetricPool: React.FC = () => {
     setSell({ ...p.sell })
   }
 
-  // ── Signed reads of the wallet's strategies ───────────────────
-  const signedAuth = useCallback(
-    async (
-      action: string,
-      fields?: Record<string, string | number | boolean | undefined | null>
-    ) => {
-      if (!walletAddress) throw new Error('Wallet not connected')
-      const m = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action,
-          address: walletAddress,
-          nonce: m.nonce,
-          timestamp: m.timestamp,
-          fields
-        })
-      )
-      return { nonce: m.nonce, timestamp: m.timestamp, signature }
-    },
-    [walletAddress, signMessage]
-  )
+  // ── Private reads of the wallet's strategies (read session) ───
+  // No wallet prompt: without a session the panel shows "Sign in".
+  const { hasSession } = useReadSession()
+  const [needsSignIn, setNeedsSignIn] = useState(false)
 
   const loadStrategies = useCallback(
     async (prefer?: string | null) => {
@@ -295,7 +280,8 @@ const AsymmetricPool: React.FC = () => {
       setListLoading(true)
       setStatusError(null)
       try {
-        const auth = await signedAuth('asymmetric.strategies.list')
+        const auth = requireReadAuth(walletAddress)
+        setNeedsSignIn(false)
         const list = await client.listStrategies(walletAddress, auth)
         setStrategies(list)
         const next =
@@ -304,6 +290,10 @@ const AsymmetricPool: React.FC = () => {
           ''
         setSelectedId(next)
       } catch (err: unknown) {
+        if (err instanceof ReadSessionRequiredError) {
+          setNeedsSignIn(true)
+          return
+        }
         setStatusError(
           err instanceof Error ? err.message : 'Failed to list strategies'
         )
@@ -311,7 +301,7 @@ const AsymmetricPool: React.FC = () => {
         setListLoading(false)
       }
     },
-    [walletAddress, signedAuth, client, selectedId]
+    [walletAddress, client, selectedId]
   )
 
   const loadDetails = useCallback(
@@ -320,20 +310,18 @@ const AsymmetricPool: React.FC = () => {
       setStatusLoading(true)
       setStatusError(null)
       try {
-        const statusAuth = await signedAuth('asymmetric.strategy.read', {
-          strategyId: id
-        })
-        const logsAuth = await signedAuth('asymmetric.strategy.logs', {
-          strategyId: id,
-          limit: 10
-        })
+        const auth = requireReadAuth(walletAddress)
         const [s, l] = await Promise.all([
-          client.getStrategyStatus(id, walletAddress, statusAuth),
-          client.getRebalanceLogs(id, walletAddress, logsAuth, 10)
+          client.getStrategyStatus(id, walletAddress, auth),
+          client.getRebalanceLogs(id, walletAddress, auth, 10)
         ])
         setStatus(s)
         setLogs(l)
       } catch (err: unknown) {
+        if (err instanceof ReadSessionRequiredError) {
+          setNeedsSignIn(true)
+          return
+        }
         setStatusError(
           err instanceof Error ? err.message : 'Failed to load strategy status'
         )
@@ -341,7 +329,7 @@ const AsymmetricPool: React.FC = () => {
         setStatusLoading(false)
       }
     },
-    [walletAddress, signedAuth, client]
+    [walletAddress, client]
   )
 
   useEffect(() => {
@@ -659,6 +647,12 @@ const AsymmetricPool: React.FC = () => {
           </span>
         ) : listLoading ? (
           <SkeletonLine $h={40} />
+        ) : needsSignIn && !hasSession ? (
+          <ReadSessionPrompt
+            compact
+            message="Sign in to see your deployed strategies"
+            onSignedIn={() => void loadStrategies()}
+          />
         ) : statusError ? (
           <Notice $tone="critical">{statusError}</Notice>
         ) : strategies && strategies.length === 0 ? (

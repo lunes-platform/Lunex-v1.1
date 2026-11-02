@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import styled from 'styled-components'
 import { Copy, Send } from 'lucide-react'
 import { useSDK } from '../../context/SDKContext'
@@ -26,13 +26,10 @@ import {
   short,
   tabular
 } from '../../components/ui/kit'
-import {
-  buildWalletActionMessage,
-  createSignedActionMetadata
-} from '../../utils/signing'
+import { readSessionFetch } from '../../services/sessionService'
+import { useReadSession } from '../../hooks/useReadSession'
+import { ReadSessionPrompt } from '../../components/session/ReadSessionPrompt'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
-
-const SPOT_API = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
 type LevelInfo = { level: number; ratePct: number; rateBps: number }
 type EarningByLevel = {
@@ -217,8 +214,6 @@ type NetTab = 'network' | 'payouts'
 const Affiliates: React.FC = () => {
   const sdk = useSDK()
   const { toast } = useToast()
-  const sdkRef = useRef(sdk)
-  sdkRef.current = sdk
 
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [tree, setTree] = useState<TreeNode[]>([])
@@ -230,33 +225,16 @@ const Affiliates: React.FC = () => {
   const address = sdk.walletAddress || ''
   const connected = sdk.isConnected && !!address
 
-  const signRead = useCallback(
-    async (action: string, fields?: Record<string, string | number>) => {
-      const s = sdkRef.current
-      const addr = s.walletAddress
-      if (!addr) throw new Error('Wallet address required')
-      const meta = createSignedActionMetadata()
-      const signature = await s.signMessage(
-        buildWalletActionMessage({
-          action,
-          address: addr,
-          nonce: meta.nonce,
-          timestamp: meta.timestamp,
-          fields
-        })
+  // Private reads use the one-signature read session — no wallet prompts
+  // on page load. Without a session the page shows a "Sign in" fallback.
+  const { hasSession } = useReadSession()
+  const readQuery = (fields?: Record<string, string | number>) =>
+    new URLSearchParams({
+      address,
+      ...Object.fromEntries(
+        Object.entries(fields ?? {}).map(([k, v]) => [k, String(v)])
       )
-      return new URLSearchParams({
-        address: addr,
-        nonce: meta.nonce,
-        timestamp: String(meta.timestamp),
-        signature,
-        ...Object.fromEntries(
-          Object.entries(fields ?? {}).map(([k, v]) => [k, String(v)])
-        )
-      }).toString()
-    },
-    []
-  )
+    }).toString()
 
   useEffect(() => {
     if (!connected) {
@@ -284,20 +262,31 @@ const Affiliates: React.FC = () => {
       }
     })()
 
+    if (!hasSession) {
+      setDashboard(null)
+      setTree([])
+      setPayouts([])
+      return () => {
+        alive = false
+      }
+    }
+
     const load = async () => {
       setLoading(true)
       try {
-        const q = await signRead('affiliate.code')
-        const r = await fetch(`${SPOT_API}/api/v1/affiliate/code?${q}`)
-        const d = await r.json()
+        const d = await readSessionFetch<{ code?: string }>(
+          address,
+          `/api/v1/affiliate/code?${readQuery()}`
+        )
         if (alive && d.code) setReferralCode(d.code)
       } catch {
         /* keep local code */
       }
       try {
-        const q = await signRead('affiliate.dashboard')
-        const r = await fetch(`${SPOT_API}/api/v1/affiliate/dashboard?${q}`)
-        const d = await r.json()
+        const d = await readSessionFetch<{ dashboard?: DashboardData }>(
+          address,
+          `/api/v1/affiliate/dashboard?${readQuery()}`
+        )
         if (alive && d.dashboard) {
           setDashboard(d.dashboard)
           if (d.dashboard.referralCode)
@@ -309,17 +298,19 @@ const Affiliates: React.FC = () => {
         if (alive) setLoading(false)
       }
       try {
-        const q = await signRead('affiliate.tree', { depth: 3 })
-        const r = await fetch(`${SPOT_API}/api/v1/affiliate/tree?${q}`)
-        const d = await r.json()
+        const d = await readSessionFetch<{ tree?: TreeNode[] }>(
+          address,
+          `/api/v1/affiliate/tree?${readQuery({ depth: 3 })}`
+        )
         if (alive) setTree(d.tree || [])
       } catch (err) {
         console.error('Failed to fetch referral tree:', err)
       }
       try {
-        const q = await signRead('affiliate.payouts', { limit: 20 })
-        const r = await fetch(`${SPOT_API}/api/v1/affiliate/payouts?${q}`)
-        const d = await r.json()
+        const d = await readSessionFetch<{ payouts?: PayoutRow[] }>(
+          address,
+          `/api/v1/affiliate/payouts?${readQuery({ limit: 20 })}`
+        )
         if (alive) setPayouts(d.payouts || [])
       } catch (err) {
         console.error('Failed to fetch payouts:', err)
@@ -329,7 +320,8 @@ const Affiliates: React.FC = () => {
     return () => {
       alive = false
     }
-  }, [connected, address, signRead])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, address, hasSession])
 
   const referralLink = referralCode
     ? `${window.location.origin}/?ref=${referralCode}`
@@ -455,6 +447,15 @@ const Affiliates: React.FC = () => {
           </Row>
         )}
       </Card>
+
+      {connected && !hasSession && (
+        <Card>
+          <ReadSessionPrompt
+            compact
+            message="Sign in to see your affiliate earnings, network and payouts"
+          />
+        </Card>
+      )}
 
       <StatGrid>
         {stats.map(s => (

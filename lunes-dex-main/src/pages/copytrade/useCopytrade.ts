@@ -4,11 +4,14 @@ import { useTx } from '../../context/TxContext'
 import socialApi, {
   buildCopytradeDepositMessage,
   buildCopytradeWithdrawMessage,
-  buildWalletActionMessage,
   createSignedActionMetadata,
   CopytradeActivityItem,
   CopytradePosition
 } from '../../services/socialService'
+import {
+  ReadSessionRequiredError,
+  requireReadAuth
+} from '../../services/sessionService'
 
 const fmtAmt = (v: number) =>
   (Number.isFinite(v) ? v : 0).toLocaleString('en-US', {
@@ -16,64 +19,38 @@ const fmtAmt = (v: number) =>
   })
 
 /**
- * Follower positions + activity. Both endpoints require a signed read, so
- * loading is explicit (triggered by the page) instead of on every render.
+ * Follower positions + activity. Both are private reads served with the
+ * one-signature read session (no wallet prompt). Without a session, `load`
+ * sets `needsSignIn` so the page can show the "Sign in" fallback.
  */
 export const useCopyPositions = () => {
-  const { signMessage } = useSDK()
   const [positions, setPositions] = useState<CopytradePosition[]>([])
   const [activity, setActivity] = useState<CopytradeActivityItem[]>([])
   const [loading, setLoading] = useState(false)
   const [loadedFor, setLoadedFor] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [needsSignIn, setNeedsSignIn] = useState(false)
 
   const load = useCallback(
     async (address: string, opts: { withActivity?: boolean } = {}) => {
       setLoading(true)
       setError('')
       try {
-        const sp = createSignedActionMetadata()
-        const spSig = await signMessage(
-          buildWalletActionMessage({
-            action: 'copytrade.positions',
-            address,
-            nonce: sp.nonce,
-            timestamp: sp.timestamp
-          })
-        )
-        const nextPositions = await socialApi.getPositions(address, {
-          address,
-          nonce: sp.nonce,
-          timestamp: sp.timestamp,
-          signature: spSig
-        })
+        const auth = requireReadAuth(address)
+        setNeedsSignIn(false)
+        const nextPositions = await socialApi.getPositions(address, auth)
         setPositions(nextPositions)
 
         if (opts.withActivity) {
-          const sa = createSignedActionMetadata()
-          const saSig = await signMessage(
-            buildWalletActionMessage({
-              action: 'copytrade.activity',
-              address,
-              nonce: sa.nonce,
-              timestamp: sa.timestamp,
-              fields: { limit: 20 }
-            })
-          )
-          const nextActivity = await socialApi.getActivity(
-            address,
-            {
-              address,
-              nonce: sa.nonce,
-              timestamp: sa.timestamp,
-              signature: saSig
-            },
-            20
-          )
+          const nextActivity = await socialApi.getActivity(address, auth, 20)
           setActivity(nextActivity)
         }
         setLoadedFor(address)
       } catch (err: unknown) {
+        if (err instanceof ReadSessionRequiredError) {
+          setNeedsSignIn(true)
+          return
+        }
         setError(
           err instanceof Error ? err.message : 'Could not load your positions'
         )
@@ -81,7 +58,7 @@ export const useCopyPositions = () => {
         setLoading(false)
       }
     },
-    [signMessage]
+    []
   )
 
   const reset = useCallback(() => {
@@ -91,7 +68,16 @@ export const useCopyPositions = () => {
     setError('')
   }, [])
 
-  return { positions, activity, loading, loadedFor, error, load, reset }
+  return {
+    positions,
+    activity,
+    loading,
+    loadedFor,
+    error,
+    needsSignIn,
+    load,
+    reset
+  }
 }
 
 /** Deposit into a leader's copy vault through the shared tx flow. */

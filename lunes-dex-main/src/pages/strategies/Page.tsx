@@ -37,6 +37,7 @@ import strategyService, {
   StrategyType
 } from '../../services/strategyService'
 import { useSDK } from '../../context/SDKContext'
+import { useReadSession } from '../../hooks/useReadSession'
 import CreateStrategyModal from './CreateStrategyModal'
 import {
   FilterPill,
@@ -209,6 +210,7 @@ const authorOf = (s: Strategy) => {
 
 const StrategyMarketplacePage: React.FC = () => {
   const { walletAddress, signMessage } = useSDK()
+  const { hasSession } = useReadSession()
   const { toast } = useToast()
   const navigate = useNavigate()
 
@@ -288,11 +290,12 @@ const StrategyMarketplacePage: React.FC = () => {
       setFollowing(new Set())
       return
     }
+    // Private read via the read session — never prompts the wallet.
     strategyService
-      .getFollowedStrategies(walletAddress, signMessage)
+      .getFollowedStrategies(walletAddress)
       .then(list => setFollowing(new Set(list.map(s => s.id))))
       .catch(() => {})
-  }, [walletAddress, signMessage])
+  }, [walletAddress, hasSession])
 
   const connect = () =>
     requestWalletConnect().catch((e: unknown) =>

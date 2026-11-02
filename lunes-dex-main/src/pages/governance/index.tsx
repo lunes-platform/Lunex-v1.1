@@ -27,6 +27,8 @@ import {
   createSignedActionMetadata
 } from '../../utils/signing'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
+import { readSessionFetch } from '../../services/sessionService'
+import { useReadSession } from '../../hooks/useReadSession'
 
 type Proposal = {
   id: number
@@ -196,6 +198,7 @@ export const Governance: React.FC = () => {
 
   const address = sdk.walletAddress
   const connected = sdk.isConnected && !!address
+  const { hasSession } = useReadSession()
 
   const signAction = useCallback(
     async (action: string, fields?: Record<string, string | number>) => {
@@ -263,16 +266,19 @@ export const Governance: React.FC = () => {
         if (alive) setPower(0)
       }
       try {
-        const auth = await signAction('governance.vote.history')
-        const res = await fetch(
+        // Private read via the read session — never prompts the wallet.
+        // Without a session the cooldown display is skipped (the server
+        // still enforces it when recording a vote).
+        if (!hasSession) return
+        const { votes } = await readSessionFetch<{
+          votes?: Array<{ proposalId: number; votedAt: string }>
+        }>(
+          address,
           `/api/v1/governance/vote/history?walletAddress=${encodeURIComponent(
             address
-          )}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${
-            auth.timestamp
-          }&signature=${encodeURIComponent(auth.signature)}`
+          )}`
         )
-        if (res.ok && alive) {
-          const { votes } = await res.json()
+        if (alive) {
           const rec: Record<number, number> = {}
           for (const v of votes || []) {
             const ts = new Date(v.votedAt).getTime()
@@ -288,7 +294,7 @@ export const Governance: React.FC = () => {
     return () => {
       alive = false
     }
-  }, [connected, address, signAction])
+  }, [connected, address, hasSession])
 
   const cooldownLeft = (id: number) => {
     const last = lastVotes[id]

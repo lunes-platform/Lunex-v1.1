@@ -188,7 +188,7 @@ const SocialSettings: React.FC = () => {
     setLoadingProfile(true)
     setLoadNote(null)
     socialApi
-      .getLeaderProfileByAddress(walletAddress, walletAddress, signMessage)
+      .getLeaderProfileByAddress(walletAddress, walletAddress)
       .then(t => {
         if (!alive) return
         setSaved(t)

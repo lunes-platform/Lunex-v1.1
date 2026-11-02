@@ -211,7 +211,7 @@ const Profile: React.FC = () => {
       try {
         const [next, nextFollowers] = await Promise.all([
           signed && walletAddress
-            ? socialApi.getLeaderProfile(id, walletAddress, signMessage)
+            ? socialApi.getLeaderProfile(id, walletAddress)
             : socialApi.getLeaderProfile(id),
           socialApi.getLeaderFollowers(id, 8)
         ])

@@ -13,12 +13,12 @@ import styled from 'styled-components'
 import { Check, Copy } from 'lucide-react'
 import { web3Accounts } from '@polkadot/extension-dapp'
 import agentService from '../../services/agentService'
+import { ensureReadSession } from '../../services/sessionService'
 import { contractService } from '../../services/contractService'
 import { asymmetricContractService } from '../../services/asymmetricContractService'
 import {
   buildAgentCreateApiKeySignMessage,
   buildAgentRegisterSignMessage,
-  buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../utils/signing'
 import { C, Button, Notice, grotesk } from '../ui/kit'
@@ -55,19 +55,10 @@ async function createApiKey(
   walletAddress: string,
   signMessage: (message: string) => Promise<string>
 ): Promise<{ key: string; agentId: string }> {
-  const signedLookup = createSignedActionMetadata()
-  const lookupSignature = await signMessage(
-    buildWalletActionMessage({
-      action: 'agents.by-wallet',
-      address: walletAddress,
-      nonce: signedLookup.nonce,
-      timestamp: signedLookup.timestamp
-    })
-  )
+  // Lookup is a private read: reuse (or create, once) the read session.
+  const sessionToken = await ensureReadSession(walletAddress, signMessage)
   let agent = await agentService.getAgentByWallet(walletAddress, {
-    nonce: signedLookup.nonce,
-    timestamp: signedLookup.timestamp,
-    signature: lookupSignature
+    sessionToken
   })
 
   if (!agent) {

@@ -46,6 +46,8 @@ import {
 } from '../social/shared'
 import CopyModal from './CopyModal'
 import { useCopyPositions, useCopyWithdraw } from './useCopytrade'
+import { ReadSessionPrompt } from '../../components/session/ReadSessionPrompt'
+import { useReadSession } from '../../hooks/useReadSession'
 import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const VaultRow = styled.div<{ $selected?: boolean }>`
@@ -235,6 +237,7 @@ const CopytradePage: React.FC = () => {
   const [keyLoading, setKeyLoading] = useState(false)
   const [noLeader, setNoLeader] = useState(false)
   const copy = useCopyPositions()
+  const { hasSession } = useReadSession()
   const withdraw = useCopyWithdraw()
 
   const refreshLeaders = async () => {
@@ -258,14 +261,15 @@ const CopytradePage: React.FC = () => {
     void refreshLeaders()
   }, [])
 
-  // Follower dashboard: signed reads, once per connected wallet
+  // Follower dashboard: private reads via the read session (no wallet
+  // prompt); re-runs when the wallet or the session changes.
   useEffect(() => {
     copy.reset()
     setApiKey('')
     setNoLeader(false)
     if (walletAddress) void copy.load(walletAddress, { withActivity: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [walletAddress])
+  }, [walletAddress, hasSession])
 
   const loadExecutions = async (leaderId: string) => {
     setExecLoading(true)
@@ -407,6 +411,15 @@ const CopytradePage: React.FC = () => {
               Connect wallet
             </Button>
           </div>
+        </DashedEmpty>
+      )
+    if (copy.needsSignIn)
+      return (
+        <DashedEmpty>
+          <ReadSessionPrompt
+            compact
+            message="Sign in to see your vault deposits"
+          />
         </DashedEmpty>
       )
     if (copy.loading && copy.loadedFor !== walletAddress)
@@ -651,6 +664,10 @@ const CopytradePage: React.FC = () => {
             {!walletAddress ? (
               <span style={{ fontSize: 13, color: C.muted }}>
                 Connect your wallet to see activity on your vaults.
+              </span>
+            ) : copy.needsSignIn ? (
+              <span style={{ fontSize: 13, color: C.muted }}>
+                Sign in to see activity on your vaults.
               </span>
             ) : copy.loading && copy.loadedFor !== walletAddress ? (
               <>
