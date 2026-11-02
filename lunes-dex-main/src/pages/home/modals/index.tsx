@@ -1,15 +1,4 @@
-import ChooseToken from './chooseToken'
-import WaitingConfirmation from './waitingConfirmation'
-import TransactionSubmitted from './transactionSubmitted'
-import ConfirmSwap from './confirmSwap'
-import TransactionSetting from './transactionSetting'
-import ModalError from './modalError'
+import ReviewSwap from './review'
+import SwapSettings from './transactionSetting'
 
-export {
-  ChooseToken,
-  WaitingConfirmation,
-  TransactionSubmitted,
-  ConfirmSwap,
-  TransactionSetting,
-  ModalError
-}
+export { ReviewSwap, SwapSettings }
