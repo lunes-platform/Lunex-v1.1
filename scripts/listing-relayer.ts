@@ -95,6 +95,41 @@ async function findListingByTokenAddress(tokenAddress: string): Promise<string |
   }
 }
 
+const ACTIVATION_RETRY_MS = 15_000
+const ACTIVATION_MAX_ATTEMPTS = 240 // ~1h
+const pendingActivations = new Map<string, ReturnType<typeof setTimeout>>()
+
+function activateWithRetry(tokenAddress: string, onChainId: number, attempt = 1) {
+  const prev = pendingActivations.get(tokenAddress)
+  if (prev) clearTimeout(prev)
+  findListingByTokenAddress(tokenAddress)
+    .then((dbId) => {
+      if (dbId) {
+        pendingActivations.delete(tokenAddress)
+        return activateListing(dbId, onChainId)
+      }
+      if (attempt >= ACTIVATION_MAX_ATTEMPTS) {
+        pendingActivations.delete(tokenAddress)
+        err(`Gave up activating ${tokenAddress} (on-chain ID ${onChainId}): no DB listing after ${attempt} attempts`)
+        return
+      }
+      if (attempt === 1) warn(`No DB listing yet for token ${tokenAddress} — retrying every ${ACTIVATION_RETRY_MS / 1000}s`)
+      pendingActivations.set(
+        tokenAddress,
+        setTimeout(() => activateWithRetry(tokenAddress, onChainId, attempt + 1), ACTIVATION_RETRY_MS),
+      )
+    })
+    .catch((e) => {
+      err(`Error looking up listing for ${tokenAddress}: ${e}`)
+      if (attempt < ACTIVATION_MAX_ATTEMPTS) {
+        pendingActivations.set(
+          tokenAddress,
+          setTimeout(() => activateWithRetry(tokenAddress, onChainId, attempt + 1), ACTIVATION_RETRY_MS),
+        )
+      }
+    })
+}
+
 async function withdrawLockRecord(lockId: string, ownerAddress: string, txHash: string) {
   try {
     const res = await fetch(`${API_BASE}/api/v1/listing/lock/${lockId}/withdraw`, {
@@ -251,15 +286,10 @@ async function main() {
       log(`📋 TokenListed event — token: ${listed.tokenAddress}, tier: ${listed.tier}, on-chain ID: ${listed.listingId}`)
 
       // Find the DB listing by token address and activate it
-      findListingByTokenAddress(listed.tokenAddress).then((dbId) => {
-        if (!dbId) {
-          warn(`No DB listing found for token ${listed.tokenAddress}`)
-          return
-        }
-        activateListing(dbId, listed.listingId)
-      }).catch((e) => {
-        err(`Error looking up listing for ${listed.tokenAddress}: ${e}`)
-      })
+      // The UI registers the listing in spot-api only AFTER list_token
+      // finalizes, so the chain event usually arrives first. Retry instead
+      // of dropping the activation.
+      activateWithRetry(listed.tokenAddress, listed.listingId)
     }
 
     // Try FeeDistributed

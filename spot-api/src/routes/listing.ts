@@ -115,6 +115,21 @@ const CreateListingSchema = z
     tokenLiquidity: z.union([z.string(), z.number()]),
     description: z.string().max(2000).optional(),
     website: z.string().trim().url().max(300).optional().or(z.literal('')),
+    // On-chain list_token result (fee paid + LP lock). Optional for
+    // backwards compatibility; when present they are covered by the wallet
+    // signature. Activation still only happens from the chain event.
+    txHash: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/)
+      .optional(),
+    pairAddress: z.string().min(40).max(64).optional(),
+    lpTokenAddress: z.string().min(40).max(64).optional(),
+    lpAmount: z
+      .string()
+      .regex(/^\d+(\.\d+)?$/)
+      .max(80)
+      .optional(),
+    onChainListingId: z.coerce.number().int().min(0).optional(),
   })
   .merge(SignedActionSchema);
 
@@ -262,6 +277,11 @@ router.post(
           tier: parsed.data.tier,
           lunesLiquidity: parsed.data.lunesLiquidity,
           tokenLiquidity: parsed.data.tokenLiquidity,
+          txHash: parsed.data.txHash,
+          pairAddress: parsed.data.pairAddress,
+          lpTokenAddress: parsed.data.lpTokenAddress,
+          lpAmount: parsed.data.lpAmount,
+          onChainListingId: parsed.data.onChainListingId,
         },
       });
       if (!auth.ok) {

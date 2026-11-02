@@ -89,6 +89,7 @@ export type CreateListingInput = {
   lpTokenAddress?: string;
   lpAmount?: string;
   txHash?: string;
+  onChainListingId?: number;
   logoURI?: string;
 };
 
@@ -149,6 +150,7 @@ export async function createListing(input: CreateListingInput) {
       tokenLiquidity: input.tokenLiquidity,
       lpAmount,
       txHash: input.txHash,
+      onChainListingId: input.onChainListingId ?? null,
       logoURI: input.logoURI ?? null,
       liquidityLock: {
         create: {
