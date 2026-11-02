@@ -47,6 +47,7 @@ const Back = styled(LinkButton)`
 `
 
 const ProBanner = styled.button`
+  white-space: normal;
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -556,6 +556,7 @@ const StepBox = styled.div`
 `
 
 const StepLink = styled.button`
+  white-space: normal;
   ${stepCss};
   cursor: pointer;
   transition: border-color 150ms ease;

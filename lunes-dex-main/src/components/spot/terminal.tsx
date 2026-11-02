@@ -378,8 +378,8 @@ export const cleanNum = (v: string): string => {
 }
 
 const ICONS: Record<string, string> = {
-  LUNES: '/img/lunes-logo.svg',
-  WLUNES: '/img/lunes-logo.svg',
+  LUNES: '/img/lunes-green.svg',
+  WLUNES: '/img/lunes-green.svg',
   LUSDT: '/img/lusdt.png',
   GMC: '/img/gmc.svg',
   LETH: '/img/leth.svg',

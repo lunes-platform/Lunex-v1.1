@@ -29,7 +29,7 @@ export interface Token {
 const tokens: Token[] = [
   {
     id: 0,
-    icon: '/img/lunes-logo.svg',
+    icon: '/img/lunes-green.svg',
     acronym: 'WLUNES',
     token: 'Wrapped Lunes',
     tokenPrice: '$ 0.00',

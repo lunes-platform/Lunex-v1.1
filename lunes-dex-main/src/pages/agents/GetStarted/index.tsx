@@ -95,6 +95,7 @@ const Types = styled.div`
 `
 
 const TypeCard = styled.button<{ $active: boolean }>`
+  white-space: normal;
   text-align: left;
   padding: 16px;
   border-radius: 16px;

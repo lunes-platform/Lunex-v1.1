@@ -61,6 +61,7 @@ const Grid = styled.div`
 `
 
 const Card = styled.button<{ $on: boolean }>`
+  white-space: normal;
   text-align: left;
   padding: 16px;
   border-radius: 16px;
