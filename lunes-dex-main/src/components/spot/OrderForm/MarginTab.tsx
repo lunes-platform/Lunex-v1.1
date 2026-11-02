@@ -35,9 +35,12 @@ import { requestWalletConnect } from 'pages/header/modals/wallets'
 
 const LEVERAGES = [2, 3, 5, 10] as const
 const RISK_ACK_FROM = 5
-// UI guard mirroring spot-api MAX_SAFE_INITIAL_LEVERAGE (7.9×). The risk
-// engine stays authoritative — it rejects anything above its own limit.
-const RISK_ENGINE_MAX_LEVERAGE = 7.9
+// UI guard mirroring spot-api MAX_SAFE_INITIAL_LEVERAGE (10× with a 5%
+// maintenance margin). The risk engine stays authoritative — it rejects
+// anything above its own limit and computes the real liquidation price.
+const RISK_ENGINE_MAX_LEVERAGE = 10
+// Mirrors spot-api MAINTENANCE_MARGIN_RATIO — used only for the estimate.
+const MAINTENANCE_MARGIN_RATIO = 0.05
 // Collateral token label used by the margin API
 const COLLATERAL = 'USDT'
 
@@ -317,8 +320,8 @@ const MarginTab: React.FC = () => {
   const liqEst =
     mark > 0
       ? dir === 'long'
-        ? mark * (1 - 0.9 / lev)
-        : mark * (1 + 0.9 / lev)
+        ? mark * (1 - (1 / lev - MAINTENANCE_MARGIN_RATIO))
+        : mark * (1 + (1 / lev - MAINTENANCE_MARGIN_RATIO))
       : 0
   const needsAck = lev >= RISK_ACK_FROM
   const positions = (overview?.positions || []).filter(p => p.status === 'OPEN')

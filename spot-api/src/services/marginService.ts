@@ -31,7 +31,10 @@ const prismaAny = prisma as any;
 const DEFAULT_COLLATERAL_TOKEN = 'USDT';
 const MIN_LEVERAGE = 1;
 const MAX_LEVERAGE = 10;
-const MAINTENANCE_MARGIN_RATIO = 0.1;
+// 5% maintenance margin: lets 10x positions open with a 2.0 health factor
+// (min 1.25). Positions store their own maintenanceMargin at open time, so
+// changing this only affects new positions.
+const MAINTENANCE_MARGIN_RATIO = 0.05;
 const LIQUIDATION_PENALTY_RATIO = 0.025;
 const MIN_OPEN_POSITION_HEALTH_FACTOR = 1.25;
 const MAX_SAFE_INITIAL_LEVERAGE = Math.min(
