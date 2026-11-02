@@ -7,7 +7,7 @@ const result = spawnSync(
     '.',
     '--json',
     '--ignore-dirs=build,dist',
-    '--ignores=pages,context,routers,components,styles,theme,hooks,services',
+    '--ignores=pages,context,routers,components,styles,theme,hooks,services,utils,wallet,config,abis,types',
   ],
   { encoding: 'utf8' },
 );
