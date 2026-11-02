@@ -1,399 +1,430 @@
-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import styled, { keyframes } from 'styled-components'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import styled from 'styled-components'
+import { ChevronDown, Search } from 'lucide-react'
 import { useSpot } from 'context/SpotContext'
+import { spotApi, SpotTicker } from 'services/spotService'
+import { C, EASE_OUT, grotesk, tabular } from 'components/ui/kit'
+import { riseIn } from '../../../styles/motion'
 import { useFavorites } from '../../../hooks/useFavorites'
+import { T, fmtPx, fq, splitPair, tokenIcon } from '../terminal'
 
-// ──────────── Animations ────────────
+// Lunes ecosystem bases — used by the LUNES filter
+const LUNES_BASES = ['LUNES', 'WLUNES', 'LBTC', 'LETH', 'GMC', 'LUP']
 
-const slideDown = keyframes`
-  from { opacity: 0; transform: translateY(-8px); }
-  to   { opacity: 1; transform: translateY(0); }
-`
+type Filter = 'fav' | 'all' | 'LUNES' | 'LUSDT'
+const FILTERS: Array<[Filter, string]> = [
+  ['fav', '★'],
+  ['all', 'All'],
+  ['LUNES', 'LUNES'],
+  ['LUSDT', 'LUSDT']
+]
 
-// ──────────── Styled Components ────────────
-
-const Wrapper = styled.div`
+const Wrap = styled.div`
   position: relative;
   flex-shrink: 0;
 `
 
-const Button = styled.button`
+const Trigger = styled.button<{ $open: boolean }>`
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 8px 14px;
-  cursor: pointer;
-  color: #ffffff;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  transition: background 0.2s;
-
+  gap: 10px;
+  height: 42px;
+  padding: 0 12px 0 8px;
+  border-radius: 12px;
+  border: 1px solid ${p => (p.$open ? C.primary : C.borderStrong)};
+  background: ${C.surface};
+  color: ${C.text};
+  transition: border-color 150ms ease;
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
+    border-color: ${C.primary};
+  }
+  > b {
+    ${grotesk};
+    font-size: 17px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  > svg {
+    color: ${C.muted};
+    transition: transform 200ms ${EASE_OUT};
+    transform: rotate(${p => (p.$open ? 180 : 0)}deg);
   }
 `
 
-const Arrow = styled.span<{ open: boolean }>`
-  font-size: 10px;
-  opacity: 0.6;
-  transition: transform 0.2s;
-  transform: ${({ open }) => (open ? 'rotate(180deg)' : 'rotate(0deg)')};
+export const PairIcons = styled.div<{ $s?: number }>`
+  display: flex;
+  flex-shrink: 0;
+  img {
+    width: ${p => p.$s ?? 26}px;
+    height: ${p => p.$s ?? 26}px;
+    border-radius: 50%;
+  }
+  img + img {
+    margin-left: -8px;
+    border: 2px solid ${C.surface};
+  }
 `
 
-const Dropdown = styled.div`
+const Pop = styled.div`
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  background: #1a1a1a;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  padding: 8px;
-  min-width: 320px;
-  z-index: 100;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  animation: ${slideDown} 0.2s ease;
-`
-
-const SearchInput = styled.input`
-  width: 100%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  color: #ffffff;
-  outline: none;
-  box-sizing: border-box;
-  margin-bottom: 8px;
-  transition: border-color 0.15s;
-
-  &:focus {
-    border-color: #00c076;
-  }
-
-  &::placeholder {
-    color: rgba(255, 255, 255, 0.25);
-  }
-`
-
-const FilterTabs = styled.div`
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  background: ${C.surface};
+  border: 1px solid ${C.borderStrong};
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  padding: 12px;
   display: flex;
-  gap: 4px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 50;
+  animation: ${riseIn} 200ms ${EASE_OUT};
 `
 
-const FilterTab = styled.button<{ active?: boolean }>`
-  padding: 4px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s;
-  background: ${({ active }) =>
-    active ? 'rgba(108, 56, 255, 0.15)' : 'rgba(255,255,255,0.04)'};
-  color: ${({ active }) => (active ? '#6C38FF' : 'rgba(255,255,255,0.5)')};
-
-  &:hover {
-    background: ${({ active }) =>
-      active ? 'rgba(108, 56, 255, 0.2)' : 'rgba(255,255,255,0.08)'};
-  }
-`
-
-const PairList = styled.div`
-  max-height: 280px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
-
-  &::-webkit-scrollbar {
-    width: 4px;
-  }
-  &::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 4px;
-  }
-`
-
-const PairRow = styled.div<{ active?: boolean }>`
-  display: grid;
-  grid-template-columns: 24px 1fr auto auto;
+const SearchBox = styled.div.attrs({ 'data-field': '' })`
+  display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.15s;
-  background: ${({ active }) =>
-    active ? 'rgba(108, 56, 255, 0.08)' : 'transparent'};
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.06);
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid ${C.primary};
+  background: ${C.bg};
+  color: ${C.muted};
+  input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: ${C.text};
+    font-size: 14px;
   }
 `
 
-const StarBtn = styled.button<{ isFav?: boolean }>`
-  background: transparent;
+const Filters = styled.div`
+  display: flex;
+  gap: 4px;
+`
+
+const FilterBtn = styled.button<{ $on: boolean }>`
+  height: 30px;
+  padding: 0 12px;
   border: none;
-  cursor: pointer;
-  font-size: 14px;
-  padding: 0;
-  color: ${({ isFav }) => (isFav ? '#FFB800' : 'rgba(255,255,255,0.15)')};
-  transition: color 0.15s;
-
+  border-radius: 8px;
+  background: ${p => (p.$on ? T.line : 'transparent')};
+  color: ${p => (p.$on ? C.text : C.muted)};
+  font-size: 12px;
+  font-weight: 600;
   &:hover {
-    color: #ffb800;
+    color: ${C.text};
   }
 `
 
-const PairName = styled.span`
+const GRID = '24px 1fr auto 64px'
+
+const Head = styled.div`
+  display: grid;
+  grid-template-columns: ${GRID};
+  gap: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: ${C.muted};
+  span:nth-child(n + 3) {
+    text-align: right;
+  }
+`
+
+const List = styled.div`
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+`
+
+const Item = styled.div<{ $on: boolean }>`
+  display: grid;
+  grid-template-columns: ${GRID};
+  gap: 8px;
+  align-items: center;
+  padding: 8px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: ${p => (p.$on ? 'rgba(108,56,255,0.12)' : 'transparent')};
+  transition: background-color 150ms ease;
+  &:hover {
+    background: ${T.line};
+  }
+`
+
+const Star = styled.button<{ $on: boolean }>`
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: ${p => (p.$on ? C.warning : C.borderStrong)};
+  font-size: 15px;
+  padding: 0;
+  transition: color 150ms ease;
+  &:hover {
+    color: ${C.warning};
+  }
+`
+
+const Sym = styled.span`
+  ${grotesk};
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 0;
+  img {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+  }
+`
+
+const PriceCol = styled.span`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  ${tabular};
+  b {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  small {
+    font-size: 11px;
+    color: ${C.muted};
+  }
+`
+
+const Chg = styled.span<{ $up: boolean }>`
+  ${tabular};
+  text-align: right;
   font-size: 13px;
   font-weight: 600;
-  color: #ffffff;
+  color: ${p => (p.$up ? T.up : T.down)};
 `
 
-const PairPrice = styled.span`
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.6);
-  text-align: right;
+const None = styled.div`
+  padding: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: ${C.muted};
 `
 
-const PairChange = styled.span<{ positive: boolean }>`
-  font-size: 11px;
-  font-weight: 600;
-  text-align: right;
-  color: ${({ positive }) => (positive ? '#00C076' : '#FF4B55')};
-  min-width: 60px;
-`
-
-const PairVolume = styled.span`
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.3);
-  display: block;
-`
-
-const PriceCol = styled.div`
-  text-align: right;
-`
-
-// ──────────── Data ────────────
-
-interface PairData {
-  symbol: string
-  price: number
-  change24h: number
-  volume24h: number
-  quote: string
-}
-
-// Lunes ecosystem base tokens — used to match LUNES tab filter
-const LUNES_ECOSYSTEM_BASES = ['LUNES', 'WLUNES', 'LBTC', 'LETH', 'GMC', 'LUP']
-
-type FilterType = 'all' | 'favorites' | 'LUNES' | 'LUSDT'
-
-function formatVolume(vol: number): string {
-  if (vol >= 1000000) return `${(vol / 1000000).toFixed(1)}M`
-  if (vol >= 1000) return `${(vol / 1000).toFixed(0)}K`
-  return vol.toString()
-}
-
-function formatPrice(price: number): string {
-  if (price >= 1000) return price.toFixed(2)
-  if (price >= 1) return price.toFixed(4)
-  if (price >= 0.001) return price.toFixed(5)
-  return price.toFixed(8)
-}
-
-// ──────────── Component ────────────
-
-interface PairSelectorProps {
-  value?: string
-  onChange?: (pair: string) => void
-}
-
-const PairSelector: React.FC<PairSelectorProps> = ({ value, onChange }) => {
-  const {
-    selectedPair,
-    setSelectedPair,
-    pairs: apiPairs,
-    ticker,
-    walletAddress
-  } = useSpot()
+const PairSelector: React.FC = () => {
+  const { selectedPair, setSelectedPair, pairs, ticker, walletAddress } =
+    useSpot()
   const { isFavorite, toggleFavorite } = useFavorites(walletAddress)
   const [open, setOpen] = useState(false)
-  const [selected, setSelected] = useState(value || selectedPair)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<FilterType>('all')
-
-  // Build PairData[] from API pairs (with ticker for live price).
-  // Returns empty array if API is unavailable — never shows fake pairs.
-  const allPairs: PairData[] = useMemo(() => {
-    if (apiPairs.length > 0) {
-      return apiPairs.map(p => {
-        const quote = p.symbol.split('/')[1] || 'LUSDT'
-        const livePrice = ticker?.symbol === p.symbol ? ticker.lastPrice : 0
-        const liveChange = ticker?.symbol === p.symbol ? ticker.change24h : 0
-        const liveVol = ticker?.symbol === p.symbol ? ticker.volume24h : 0
-        return {
-          symbol: p.symbol,
-          price: livePrice,
-          change24h: liveChange,
-          volume24h: liveVol,
-          quote
-        }
-      })
-    }
-    // API unavailable — return empty, do NOT show fake pairs
-    return []
-  }, [apiPairs, ticker])
-  const wrapperRef = useRef<HTMLDivElement>(null)
+  const [filter, setFilter] = useState<Filter>('all')
+  const [tickers, setTickers] = useState<Record<string, SpotTicker>>({})
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
-  // Close on outside click
+  // Load a ticker for every listed pair when the list opens (real data).
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (
-        wrapperRef.current &&
-        !wrapperRef.current.contains(e.target as Node)
-      ) {
+    if (!open || pairs.length === 0) return
+    let alive = true
+    Promise.all(
+      pairs.map(p =>
+        spotApi
+          .getTicker(p.symbol)
+          .then(t => [p.symbol, t] as const)
+          .catch(() => null)
+      )
+    ).then(res => {
+      if (!alive) return
+      const next: Record<string, SpotTicker> = {}
+      res.forEach(r => {
+        if (r) next[r[0]] = r[1]
+      })
+      setTickers(next)
+    })
+    return () => {
+      alive = false
+    }
+  }, [open, pairs])
+
+  // Outside click + Esc close
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node))
         setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
       }
     }
-    if (open) document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  // Focus search when opening
-  useEffect(() => {
-    if (open && searchRef.current) {
-      searchRef.current.focus()
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    searchRef.current?.focus()
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
     }
   }, [open])
 
-  const handleToggleFav = useCallback(
-    (symbol: string, e: React.MouseEvent) => {
-      e.stopPropagation()
-      toggleFavorite(symbol)
+  const rows = useMemo(() => {
+    const q = search.trim().toUpperCase()
+    return pairs
+      .map(p => {
+        const live =
+          ticker?.symbol === p.symbol ? ticker : tickers[p.symbol] || null
+        const [base, quote] = splitPair(p.symbol)
+        return {
+          symbol: p.symbol,
+          base,
+          quote,
+          price: live?.lastPrice ?? 0,
+          chg: live?.change24h ?? 0,
+          vol: live?.volume24h ?? 0
+        }
+      })
+      .filter(r => {
+        if (filter === 'fav' && !isFavorite(r.symbol)) return false
+        if (
+          filter === 'LUNES' &&
+          !(LUNES_BASES.includes(r.base) || r.quote === 'LUNES')
+        )
+          return false
+        if (filter === 'LUSDT' && r.quote !== 'LUSDT') return false
+        return !q || r.symbol.includes(q)
+      })
+  }, [pairs, ticker, tickers, filter, isFavorite, search])
+
+  const pick = useCallback(
+    (symbol: string) => {
+      setSelectedPair(symbol)
+      setOpen(false)
+      setSearch('')
     },
-    [toggleFavorite]
+    [setSelectedPair]
   )
 
-  const filteredPairs = useMemo(() => {
-    let result = allPairs
-
-    if (filter === 'favorites') {
-      result = result.filter(p => isFavorite(p.symbol))
-    } else if (filter === 'LUNES') {
-      // Native-coin pairs: base is LUNES or WLUNES, or quote is LUNES
-      result = result.filter(p => {
-        const [base, quote] = p.symbol.split('/')
-        return LUNES_ECOSYSTEM_BASES.includes(base) || quote === 'LUNES'
-      })
-    } else if (filter === 'LUSDT') {
-      result = result.filter(p => p.quote === 'LUSDT')
-    }
-
-    if (search.trim()) {
-      const q = search.trim().toUpperCase()
-      result = result.filter(p => p.symbol.includes(q))
-    }
-
-    return result
-  }, [allPairs, filter, isFavorite, search])
-
-  const handleSelect = (pair: string) => {
-    setSelected(pair)
-    setSelectedPair(pair)
-    onChange?.(pair)
-    setOpen(false)
-    setSearch('')
-  }
+  const [base, quote] = splitPair(selectedPair)
 
   return (
-    <Wrapper ref={wrapperRef}>
-      <Button onClick={() => setOpen(o => !o)}>
-        {selected}
-        <Arrow open={open}>▼</Arrow>
-      </Button>
+    <Wrap ref={wrapRef}>
+      <Trigger
+        ref={triggerRef}
+        $open={open}
+        onClick={() => {
+          setOpen(o => !o)
+          setSearch('')
+        }}
+        aria-label="Select market"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+      >
+        <PairIcons>
+          <img src={tokenIcon(base)} alt="" />
+          <img src={tokenIcon(quote)} alt="" />
+        </PairIcons>
+        <b>{selectedPair}</b>
+        <ChevronDown size={14} strokeWidth={2} />
+      </Trigger>
+
       {open && (
-        <Dropdown>
-          <SearchInput
-            ref={searchRef}
-            placeholder="Search pairs..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-          <FilterTabs>
-            <FilterTab
-              active={filter === 'favorites'}
-              onClick={() => setFilter('favorites')}
-            >
-              ★
-            </FilterTab>
-            <FilterTab
-              active={filter === 'all'}
-              onClick={() => setFilter('all')}
-            >
-              All
-            </FilterTab>
-            <FilterTab
-              active={filter === 'LUNES'}
-              onClick={() => setFilter('LUNES')}
-            >
-              LUNES
-            </FilterTab>
-            <FilterTab
-              active={filter === 'LUSDT'}
-              onClick={() => setFilter('LUSDT')}
-            >
-              LUSDT
-            </FilterTab>
-          </FilterTabs>
-          <PairList>
-            {filteredPairs.map(p => (
-              <PairRow
-                key={p.symbol}
-                active={p.symbol === selected}
-                onClick={() => handleSelect(p.symbol)}
+        <Pop>
+          <SearchBox>
+            <Search size={15} strokeWidth={2} />
+            <input
+              ref={searchRef}
+              data-bare=""
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search markets"
+              aria-label="Search markets"
+            />
+          </SearchBox>
+          <Filters>
+            {FILTERS.map(([k, l]) => (
+              <FilterBtn
+                key={k}
+                $on={filter === k}
+                onClick={() => setFilter(k)}
+                aria-pressed={filter === k}
+                aria-label={k === 'fav' ? 'Favourites' : undefined}
               >
-                <StarBtn
-                  isFav={isFavorite(p.symbol)}
-                  onClick={e => handleToggleFav(p.symbol, e)}
-                >
-                  ★
-                </StarBtn>
-                <PairName>{p.symbol}</PairName>
-                <PriceCol>
-                  <PairPrice>{formatPrice(p.price)}</PairPrice>
-                  <PairVolume>Vol: {formatVolume(p.volume24h)}</PairVolume>
-                </PriceCol>
-                <PairChange positive={p.change24h >= 0}>
-                  {p.change24h >= 0 ? '+' : ''}
-                  {p.change24h.toFixed(2)}%
-                </PairChange>
-              </PairRow>
+                {l}
+              </FilterBtn>
             ))}
-            {filteredPairs.length === 0 && (
-              <PairRow style={{ justifyContent: 'center', cursor: 'default' }}>
-                <PairName
-                  style={{
-                    color: 'rgba(255,255,255,0.3)',
-                    gridColumn: '1 / -1',
-                    textAlign: 'center'
+          </Filters>
+          <Head>
+            <span />
+            <span>Market</span>
+            <span>Price / Vol</span>
+            <span>24h</span>
+          </Head>
+          <List role="listbox" aria-label="Markets">
+            {rows.map(r => (
+              <Item
+                key={r.symbol}
+                role="option"
+                aria-selected={r.symbol === selectedPair}
+                tabIndex={0}
+                $on={r.symbol === selectedPair}
+                onClick={() => pick(r.symbol)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    pick(r.symbol)
+                  }
+                }}
+              >
+                <Star
+                  $on={isFavorite(r.symbol)}
+                  aria-label={
+                    isFavorite(r.symbol)
+                      ? 'Remove from favourites'
+                      : 'Add to favourites'
+                  }
+                  onClick={e => {
+                    e.stopPropagation()
+                    toggleFavorite(r.symbol)
                   }}
                 >
-                  No pairs found
-                </PairName>
-              </PairRow>
+                  ★
+                </Star>
+                <Sym>
+                  <img src={tokenIcon(r.base)} alt="" />
+                  {r.symbol}
+                </Sym>
+                <PriceCol>
+                  <b>{fmtPx(r.price)}</b>
+                  <small>Vol {r.vol > 0 ? fq(r.vol) : '—'}</small>
+                </PriceCol>
+                <Chg $up={r.chg >= 0}>
+                  {r.price > 0
+                    ? `${r.chg > 0 ? '+' : ''}${r.chg.toFixed(2)}%`
+                    : '—'}
+                </Chg>
+              </Item>
+            ))}
+            {rows.length === 0 && (
+              <None>
+                {pairs.length === 0
+                  ? 'Markets unavailable — spot-api offline'
+                  : 'No markets found'}
+              </None>
             )}
-          </PairList>
-        </Dropdown>
+          </List>
+        </Pop>
       )}
-    </Wrapper>
+    </Wrap>
   )
 }
 
