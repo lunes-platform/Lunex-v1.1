@@ -15,6 +15,7 @@ import {
   tabular
 } from '../../components/ui/kit'
 import TokenIcon from '../../components/TokenIcon'
+import { getTokenLogo } from '../../utils/getTokenLogo'
 import { useTx, TxStep } from '../../context/TxContext'
 import { useSDK } from '../../context/SDKContext'
 import useLiquidity, { LP_DECIMALS } from '../../hooks/useLiquidity'
@@ -298,6 +299,8 @@ const Dashed = styled.div`
 
 // ─── Helpers ────────────────────────────────────────────────────
 
+const SS58_RE = /^[1-9A-HJ-NP-Za-km-z]{46,48}$/
+
 const bySymbol = (sym?: string | null): KnownToken | undefined =>
   sym
     ? LIQUIDITY_TOKENS.find(t => t.symbol.toLowerCase() === sym.toLowerCase())
@@ -351,12 +354,47 @@ const Pool: React.FC = () => {
   const { tokenA, tokenB, amountA, amountB, poolInfo, isNewPool } = liquidity
   const connected = !!sdk.walletAddress
 
-  // Initial pair from the URL (?a=SYM&b=SYM), default WLUNES / LUSDT
+  // Initial pair from the URL (?a=SYM|ADDRESS&b=SYM|ADDRESS), default
+  // WLUNES / LUSDT. A token address (e.g. from the listing wizard) that is
+  // not in the known list is resolved on-chain via getTokenInfo.
   useEffect(() => {
-    const a = bySymbol(params.get('a')) ?? bySymbol('WLUNES')
-    const b = bySymbol(params.get('b')) ?? bySymbol('LUSDT')
-    if (a) liquidity.setTokenA(a)
-    if (b && b.symbol !== a?.symbol) liquidity.setTokenB(b)
+    let cancelled = false
+    const resolve = async (
+      raw: string | null,
+      fallback: string
+    ): Promise<KnownToken | undefined> => {
+      const known =
+        bySymbol(raw) ??
+        (raw ? LIQUIDITY_TOKENS.find(t => t.address === raw) : undefined)
+      if (known || !raw || !SS58_RE.test(raw))
+        return known ?? bySymbol(fallback)
+      try {
+        const info = await sdk.getTokenInfo(raw)
+        if (info?.symbol) {
+          return {
+            address: raw,
+            symbol: info.symbol,
+            name: info.name || info.symbol,
+            decimals: info.decimals,
+            icon: getTokenLogo(raw, info.symbol)
+          }
+        }
+      } catch {
+        /* unknown token — fall back below */
+      }
+      return bySymbol(fallback)
+    }
+    Promise.all([
+      resolve(params.get('a'), 'WLUNES'),
+      resolve(params.get('b'), 'LUSDT')
+    ]).then(([a, b]) => {
+      if (cancelled) return
+      if (a) liquidity.setTokenA(a)
+      if (b && b.address !== a?.address) liquidity.setTokenB(b)
+    })
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
