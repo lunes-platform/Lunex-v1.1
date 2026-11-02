@@ -96,6 +96,7 @@ services:
       STAKING_CONTRACT_ADDRESS: ${TESTNET_STAKING_CONTRACT:-}
       LISTING_MANAGER_CONTRACT_ADDRESS: ${TESTNET_LISTING_MANAGER_CONTRACT:-}
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET in .env.testnet}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env.testnet}
     networks:
       - testnet_internal
     healthcheck:

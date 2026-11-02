@@ -2,10 +2,11 @@ import { NextFunction, Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { agentService } from '../services/agentService';
 import { agentAuth, optionalAgentAuth } from '../middleware/agentAuth';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 
 const router = Router();
@@ -147,13 +148,15 @@ router.get(
   '/by-wallet/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedWalletActionSchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, SignedWalletActionSchema).safeParse(
+        req.query,
+      );
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'agents.by-wallet',
         address: req.params.address,
         nonce: parsed.data.nonce,

@@ -57,6 +57,10 @@ echo "# ── API Admin Secret (listing approval) ─────────�
 echo "ADMIN_SECRET=$(gen_hex 32)"
 echo ""
 
+echo "# ── API read-session HMAC secret ───────────────────────"
+echo "SESSION_SECRET=$(gen_hex 32)"
+echo ""
+
 echo "# ── Redis (opcional, se auth habilitado) ───────────────"
 echo "REDIS_PASSWORD=$(gen 32)"
 echo ""

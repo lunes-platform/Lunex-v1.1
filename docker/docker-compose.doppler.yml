@@ -76,6 +76,7 @@ services:
       # Secrets sensíveis — vêm do Doppler, nunca escritos em arquivo
       RELAYER_SEED: ${RELAYER_SEED}
       ADMIN_SECRET: ${ADMIN_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET:?Defina SESSION_SECRET no Doppler}
       LUNES_WS_URL: ${LUNES_WS_URL}
       FACTORY_CONTRACT_ADDRESS: ${FACTORY_CONTRACT_ADDRESS}
       SPOT_CONTRACT_ADDRESS: ${SPOT_CONTRACT_ADDRESS:-}

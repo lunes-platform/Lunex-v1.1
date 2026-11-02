@@ -12,10 +12,11 @@
 import { NextFunction, Router, Request, Response } from 'express';
 import { z } from 'zod';
 import prisma from '../db';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 
 const router = Router();
 
@@ -49,7 +50,7 @@ router.post(
   '/vote/check',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = VoteCheckSchema.safeParse(req.body);
+      const parsed = readAuthSchema(req, VoteCheckSchema).safeParse(req.body);
       if (!parsed.success) {
         return res
           .status(400)
@@ -57,7 +58,7 @@ router.post(
       }
 
       const { walletAddress, proposalId } = parsed.data;
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'governance.vote.check',
         address: walletAddress,
         nonce: parsed.data.nonce,
@@ -184,15 +185,18 @@ router.get(
   '/vote/history',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedActionSchema.extend({
-        walletAddress: z.string().min(8).max(128),
-      }).safeParse(req.query);
+      const parsed = readAuthSchema(
+        req,
+        SignedActionSchema.extend({
+          walletAddress: z.string().min(8).max(128),
+        }),
+      ).safeParse(req.query);
 
       if (!parsed.success) {
         return res.status(400).json({ error: 'walletAddress required' });
       }
 
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'governance.vote.history',
         address: parsed.data.walletAddress,
         nonce: parsed.data.nonce,

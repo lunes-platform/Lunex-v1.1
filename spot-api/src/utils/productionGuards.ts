@@ -2,6 +2,9 @@ type ProductionGuardConfig = {
   isProd: boolean;
   nodeEnv: string;
   adminSecret: string;
+  session: {
+    secret: string;
+  };
   cors: {
     allowedOrigins: string[];
   };
@@ -60,6 +63,14 @@ export function collectProductionConfigErrors(config: ProductionGuardConfig) {
     errors.push('ADMIN_SECRET is required in production');
   } else if (config.adminSecret.length < 32) {
     errors.push('ADMIN_SECRET must be at least 32 characters in production');
+  }
+
+  if (!config.session.secret) {
+    errors.push('SESSION_SECRET is required in production');
+  } else if (config.session.secret.length < 32) {
+    errors.push('SESSION_SECRET must be at least 32 characters in production');
+  } else if (config.session.secret === config.adminSecret) {
+    errors.push('SESSION_SECRET must differ from ADMIN_SECRET');
   }
 
   if (

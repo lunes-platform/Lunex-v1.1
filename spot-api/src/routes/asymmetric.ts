@@ -3,10 +3,11 @@ import path from 'path';
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { agentAuth } from '../middleware/agentAuth';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import {
   asymmetricService,
   type StrategyLiveCurveStateOutput,
@@ -296,7 +297,7 @@ async function buildCanonicalStatusResponse(strategyId: string) {
   const liveAvailable = Boolean(buyCurve && sellCurve);
   const liveState: StrategyLiveStateOutput = {
     available: liveAvailable,
-    reason: liveAvailable ? null : reason ?? 'LIVE_STATE_UNAVAILABLE',
+    reason: liveAvailable ? null : (reason ?? 'LIVE_STATE_UNAVAILABLE'),
     source: liveAvailable ? 'on-chain' : 'unavailable',
     checkedAt,
     managerAddress,
@@ -336,7 +337,9 @@ router.get(
 router.get(
   '/strategies',
   handleAsync(async (req, res) => {
-    const parsed = ListStrategiesReadSchema.safeParse(req.query);
+    const parsed = readAuthSchema(req, ListStrategiesReadSchema).safeParse(
+      req.query,
+    );
     if (!parsed.success) {
       return send(
         res,
@@ -345,7 +348,7 @@ router.get(
       );
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'asymmetric.strategies.list',
       address: parsed.data.address,
       nonce: parsed.data.nonce,
@@ -425,7 +428,7 @@ router.post(
 router.get(
   '/strategies/:id',
   handleAsync(async (req, res) => {
-    const parsed = StrategyReadSchema.safeParse(req.query);
+    const parsed = readAuthSchema(req, StrategyReadSchema).safeParse(req.query);
     if (!parsed.success) {
       return send(
         res,
@@ -434,7 +437,7 @@ router.get(
       );
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'asymmetric.strategy.read',
       address: parsed.data.userAddress,
       nonce: parsed.data.nonce,
@@ -534,7 +537,9 @@ router.patch(
 router.get(
   '/strategies/:id/logs',
   handleAsync(async (req, res) => {
-    const parsed = StrategyLogsReadSchema.safeParse(req.query);
+    const parsed = readAuthSchema(req, StrategyLogsReadSchema).safeParse(
+      req.query,
+    );
     if (!parsed.success) {
       return send(
         res,
@@ -543,7 +548,7 @@ router.get(
       );
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'asymmetric.strategy.logs',
       address: parsed.data.userAddress,
       nonce: parsed.data.nonce,

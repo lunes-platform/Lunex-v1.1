@@ -22,10 +22,11 @@ import {
   TierKey,
 } from '../services/listingService';
 import { requireAdmin } from '../middleware/adminGuard';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { z } from 'zod';
 
 const router = Router();
@@ -191,7 +192,7 @@ router.get(
   '/owner/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedOwnerReadSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedOwnerReadSchema).safeParse({
         ...req.query,
         address: req.params.address,
       });
@@ -200,7 +201,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'listing.owner',
         address: parsed.data.address,
         nonce: parsed.data.nonce,

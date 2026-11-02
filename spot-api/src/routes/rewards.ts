@@ -1,10 +1,11 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { rewardDistributionService } from '../services/rewardDistributionService';
 import { rewardScheduler } from '../services/rewardScheduler';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 import { z } from 'zod';
 
@@ -69,13 +70,13 @@ router.get(
   '/pending',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse(req.query);
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'rewards.pending',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -100,13 +101,13 @@ router.get(
   '/history',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse(req.query);
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'rewards.history',
         address: parsed.data.address,
         nonce: parsed.data.nonce,

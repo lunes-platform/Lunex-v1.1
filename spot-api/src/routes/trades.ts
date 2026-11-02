@@ -4,7 +4,10 @@ import {
   RetryTradeSettlementsSchema,
   TradeSettlementQuerySchema,
 } from '../utils/validation';
-import { verifyWalletReadSignature } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 import { z } from 'zod';
 
@@ -94,13 +97,15 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
       );
       return res.json({ trades });
     }
-    const parsed = SignedTradesReadSchema.safeParse(req.query);
+    const parsed = readAuthSchema(req, SignedTradesReadSchema).safeParse(
+      req.query,
+    );
     if (!parsed.success) {
       return res
         .status(400)
         .json({ error: 'Validation failed', details: parsed.error.issues });
     }
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'trades.list',
       address: parsed.data.address,
       nonce: parsed.data.nonce,

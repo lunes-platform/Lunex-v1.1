@@ -70,6 +70,14 @@ export const config = {
     process.env.ADMIN_SECRET ||
     (process.env.NODE_ENV === 'test' ? TEST_ADMIN_SECRET : ''),
 
+  // One-signature READ sessions (HMAC-SHA256 bearer tokens, scope "read").
+  // Required (>= 32 chars) in production; a random per-process secret is
+  // generated in development when unset.
+  session: {
+    secret: process.env.SESSION_SECRET || '',
+    ttlSeconds: 8 * 60 * 60,
+  },
+
   settlement: {
     retryIntervalMs: parseInt(
       process.env.SETTLEMENT_RETRY_INTERVAL_MS || '10000',
