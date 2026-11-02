@@ -251,7 +251,8 @@ export function useWebMCP() {
     // Load WebMCP library via CDN
     if (window.WebMCP) {
       init()
-    } else {
+    } else if (!window.lunexDesktop?.isDesktop) {
+      // The desktop app's CSP forbids third-party scripts; skip the CDN.
       const script = document.createElement('script')
       script.src = WEBMCP_CDN
       script.async = true
