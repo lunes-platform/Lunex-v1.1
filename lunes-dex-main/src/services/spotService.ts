@@ -2,6 +2,13 @@
  * Spot API Service — REST + WebSocket client for the Lunex Spot Orderbook backend.
  */
 
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  signedReadQuery,
+  type ReadAuth
+} from './sessionService'
+
 const SPOT_API_URL =
   process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 const SPOT_WS_URL = process.env.REACT_APP_SPOT_WS_URL || 'ws://localhost:4001'
@@ -286,11 +293,14 @@ export const spotWs = new SpotWebSocket()
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${SPOT_API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options?.headers as Record<string, string> | undefined)
+    }
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'API error')
+  if (!res.ok) throw handleReadAuthError(data.error)
   return data
 }
 
@@ -335,16 +345,18 @@ export const spotApi = {
 
   async getUserOrders(
     makerAddress: string,
-    auth: SignedActionAuth,
+    auth: ReadAuth,
     status?: string,
     limit = 50,
     offset = 0
   ): Promise<{ orders: SpotOrder[] }> {
     let url = `/api/v1/orders?makerAddress=${encodeURIComponent(
       makerAddress
-    )}&limit=${limit}&offset=${offset}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+    )}&limit=${limit}&offset=${offset}${signedReadQuery(auth)}`
     if (status) url += `&status=${status}`
-    return await fetchApi<{ orders: SpotOrder[] }>(url)
+    return await fetchApi<{ orders: SpotOrder[] }>(url, {
+      headers: readAuthHeaders(auth)
+    })
   },
 
   // ─── Trades ───
@@ -359,14 +371,15 @@ export const spotApi = {
 
   async getUserTrades(
     address: string,
-    auth: SignedActionAuth,
+    auth: ReadAuth,
     limit = 50,
     offset = 0
   ): Promise<{ trades: SpotTrade[] }> {
     return await fetchApi<{ trades: SpotTrade[] }>(
       `/api/v1/trades?address=${encodeURIComponent(
         address
-      )}&limit=${limit}&offset=${offset}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+      )}&limit=${limit}&offset=${offset}${signedReadQuery(auth)}`,
+      { headers: readAuthHeaders(auth) }
     )
   },
 
@@ -384,12 +397,12 @@ export const spotApi = {
   },
 
   // ─── Favorites ───
-  async getFavorites(
-    address: string,
-    auth: SignedActionAuth
-  ): Promise<string[]> {
+  async getFavorites(address: string, auth: ReadAuth): Promise<string[]> {
     const data = await fetchApi<{ favorites: string[] }>(
-      `/api/v1/user/${encodeURIComponent(address)}/favorites?nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+      `/api/v1/user/${encodeURIComponent(address)}/favorites?${signedReadQuery(
+        auth
+      ).slice(1)}`,
+      { headers: readAuthHeaders(auth) }
     )
     return data.favorites
   },

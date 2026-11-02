@@ -9,6 +9,7 @@ import React, {
   useRef
 } from 'react'
 import { contractService } from '../services/contractService'
+import { clearReadSession, ensureReadSession } from '../services/sessionService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
 
@@ -271,6 +272,17 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     return () => clearInterval(interval)
   }, [walletAddress, isConnected])
 
+  // Read sessions are per address: drop (and revoke) the previous account's
+  // session when the connected account changes.
+  const prevAddressRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevAddressRef.current
+    if (prev && walletAddress && prev !== walletAddress) {
+      void clearReadSession(prev, { revoke: true })
+    }
+    prevAddressRef.current = walletAddress
+  }, [walletAddress])
+
   // Connect Wallet (Polkadot.js / SubWallet / Talisman Extension)
   const connectWallet = async (walletSource?: string): Promise<void> => {
     setIsLoading(true)
@@ -317,6 +329,24 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         account.meta.source || ''
       )
 
+      // "Sign in to Lunex": one signature for an 8h READ-ONLY session so
+      // private pages never prompt again. Non-blocking; if the user declines,
+      // pages show a "Sign in" button instead of prompting on load.
+      void ensureReadSession(account.address, async message => {
+        const { web3FromSource } = await import('@polkadot/extension-dapp')
+        const injector = await web3FromSource(account.meta.source)
+        const signRaw = injector?.signer?.signRaw
+        if (!signRaw) {
+          throw new Error('Signer not available in the connected wallet')
+        }
+        const { signature } = await signRaw({
+          address: account.address,
+          data: message,
+          type: 'bytes'
+        })
+        return signature
+      }).catch(() => undefined)
+
       // Fetch real native balance from blockchain
       if (!contractService.getIsConnected()) {
         await contractService.connect(NETWORK)
@@ -336,6 +366,7 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
   // Desconectar Wallet
   const disconnectWallet = useCallback((): void => {
+    void clearReadSession(null, { revoke: true })
     setWalletAddress(null)
     setCurrentAccount(null)
     setIsConnected(false)

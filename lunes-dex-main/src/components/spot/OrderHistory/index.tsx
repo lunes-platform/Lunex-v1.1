@@ -6,6 +6,8 @@ import { useTx } from 'context/TxContext'
 import { calcFeeBreakdown, spotApi, SpotOrder } from 'services/spotService'
 import { buildSpotCancelSignMessage } from '../../../utils/signing'
 import { C, tabular } from 'components/ui/kit'
+import { ReadSessionPrompt } from 'components/session/ReadSessionPrompt'
+import { useReadSession } from 'hooks/useReadSession'
 import {
   Fade,
   HistoryTab,
@@ -148,6 +150,7 @@ const OrderHistory: React.FC = () => {
     refreshOrders
   } = useSpot()
   const { signMessage } = useSDK()
+  const { hasSession } = useReadSession()
   const tx = useTx()
   const { historyTab: tab, setHistoryTab } = useTerminal()
 
@@ -286,7 +289,16 @@ const OrderHistory: React.FC = () => {
                 <span key={i}>{h}</span>
               ))}
             </Grid>
-            {rows.length ? rows : <TEmpty>{emptyText}</TEmpty>}
+            {rows.length ? (
+              rows
+            ) : isConnected && walletAddress && !hasSession ? (
+              <ReadSessionPrompt
+                compact
+                message="Sign in to view your orders and trades"
+              />
+            ) : (
+              <TEmpty>{emptyText}</TEmpty>
+            )}
           </Inner>
         </Scroll>
       </Fade>

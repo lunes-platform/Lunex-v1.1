@@ -15,15 +15,18 @@ import {
   SpotOrder,
   SpotTrade,
   OrderbookSnapshot,
-  CreateOrderParams,
-  SignedActionAuth
+  CreateOrderParams
 } from '../services/spotService'
 import {
   buildSpotCancelSignMessage,
-  buildSpotOrderSignMessage,
-  buildWalletActionMessage,
-  createSignedActionMetadata
+  buildSpotOrderSignMessage
 } from '../utils/signing'
+import {
+  fetchMyOrders,
+  getReadSessionToken,
+  subscribeReadSession,
+  type SessionReadAuth
+} from '../services/sessionService'
 import { useSDK } from './SDKContext'
 
 // ─── Types ───
@@ -71,7 +74,7 @@ interface SpotProviderProps {
 }
 
 export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
-  const { walletAddress: sdkWalletAddress, signMessage } = useSDK()
+  const { walletAddress: sdkWalletAddress } = useSDK()
   const [isConnected, setIsConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [pairs, setPairs] = useState<SpotPair[]>([])
@@ -87,27 +90,16 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
   const nonceCounter = useRef(Date.now())
   const prevPairRef = useRef(selectedPair)
 
-  const signReadAction = useCallback(
-    async (
-      action: string,
-      address: string,
-      fields?: Record<string, string | number>
-    ): Promise<SignedActionAuth> => {
-      const metadata = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action,
-          address,
-          nonce: metadata.nonce,
-          timestamp: metadata.timestamp,
-          fields
-        })
-      )
-
-      return { ...metadata, signature }
-    },
-    [signMessage]
-  )
+  // Private reads use the one-signature read session (never prompt here).
+  const [sessionToken, setSessionToken] = useState<string | null>(null)
+  useEffect(() => {
+    const sync = () => setSessionToken(getReadSessionToken(walletAddress))
+    sync()
+    return subscribeReadSession(sync)
+  }, [walletAddress])
+  const readAuth: SessionReadAuth | null = sessionToken
+    ? { sessionToken }
+    : null
 
   useEffect(() => {
     setWalletAddress(sdkWalletAddress)
@@ -203,28 +195,21 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
   // ─── Fetch user data when wallet changes ───
   useEffect(() => {
-    if (!walletAddress || !isConnected) {
+    if (!walletAddress || !isConnected || !sessionToken) {
       setUserOrders([])
       setUserTrades([])
       return
     }
+    const auth: SessionReadAuth = { sessionToken }
 
     const fetchUserData = async () => {
       try {
-        const [ordersAuth, tradesAuth] = await Promise.all([
-          signReadAction('orders.list', walletAddress, {
-            limit: 50,
-            offset: 0
-          }),
-          signReadAction('trades.list', walletAddress, { limit: 50, offset: 0 })
-        ])
-
         const [ordersRes, tradesRes] = await Promise.all([
           spotApi
-            .getUserOrders(walletAddress, ordersAuth, undefined, 50)
+            .getUserOrders(walletAddress, auth, undefined, 50)
             .catch(() => ({ orders: [] })),
           spotApi
-            .getUserTrades(walletAddress, tradesAuth, 50)
+            .getUserTrades(walletAddress, auth, 50)
             .catch(() => ({ trades: [] }))
         ])
         setUserOrders(ordersRes.orders)
@@ -246,7 +231,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
     return () => {
       spotWs.unsubscribe(userChannel, handleUserUpdate)
     }
-  }, [walletAddress, isConnected, signReadAction])
+  }, [walletAddress, isConnected, sessionToken])
 
   // ─── Actions ───
 
@@ -308,13 +293,13 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
           makerAddress: walletAddress
         })
 
-        // Refresh user orders
-        const ordersAuth = await signReadAction('orders.list', walletAddress, {
-          limit: 50,
-          offset: 0
-        })
-        const ordersRes = await spotApi.getUserOrders(walletAddress, ordersAuth)
-        setUserOrders(ordersRes.orders)
+        // Refresh user orders (read session — no extra wallet prompt)
+        if (readAuth) {
+          const ordersRes = await spotApi
+            .getUserOrders(walletAddress, readAuth)
+            .catch(() => null)
+          if (ordersRes) setUserOrders(ordersRes.orders)
+        }
 
         return true
       } catch (err: unknown) {
@@ -324,7 +309,7 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         setIsLoading(false)
       }
     },
-    [walletAddress, generateNonce, signReadAction]
+    [walletAddress, generateNonce, sessionToken]
   )
 
   const cancelOrder = useCallback(
@@ -346,13 +331,13 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
 
         await spotApi.cancelOrder(orderId, walletAddress, signature)
 
-        // Refresh user orders
-        const ordersAuth = await signReadAction('orders.list', walletAddress, {
-          limit: 50,
-          offset: 0
-        })
-        const ordersRes = await spotApi.getUserOrders(walletAddress, ordersAuth)
-        setUserOrders(ordersRes.orders)
+        // Refresh user orders (read session — no extra wallet prompt)
+        if (readAuth) {
+          const ordersRes = await spotApi
+            .getUserOrders(walletAddress, readAuth)
+            .catch(() => null)
+          if (ordersRes) setUserOrders(ordersRes.orders)
+        }
 
         return true
       } catch (err: unknown) {
@@ -362,36 +347,29 @@ export const SpotProvider: React.FC<SpotProviderProps> = ({ children }) => {
         setIsLoading(false)
       }
     },
-    [walletAddress, signReadAction]
+    [walletAddress, sessionToken]
   )
 
   const refreshOrders = useCallback(async () => {
-    if (!walletAddress || !isConnected) return
+    if (!walletAddress || !isConnected || !sessionToken) return
     try {
-      const auth = await signReadAction('orders.list', walletAddress, {
-        limit: 50,
-        offset: 0
-      })
-      const res = await spotApi.getUserOrders(walletAddress, auth)
-      setUserOrders(res.orders)
+      setUserOrders(
+        await fetchMyOrders<SpotOrder>(walletAddress, { limit: 50 })
+      )
     } catch {
       // ignore
     }
-  }, [walletAddress, isConnected, signReadAction])
+  }, [walletAddress, isConnected, sessionToken])
 
   const refreshTrades = useCallback(async () => {
-    if (!walletAddress || !isConnected) return
+    if (!walletAddress || !isConnected || !readAuth) return
     try {
-      const auth = await signReadAction('trades.list', walletAddress, {
-        limit: 50,
-        offset: 0
-      })
-      const res = await spotApi.getUserTrades(walletAddress, auth)
+      const res = await spotApi.getUserTrades(walletAddress, readAuth)
       setUserTrades(res.trades)
     } catch {
       // ignore
     }
-  }, [walletAddress, isConnected, signReadAction])
+  }, [walletAddress, isConnected, sessionToken])
 
   const value: SpotContextState = {
     isConnected,
