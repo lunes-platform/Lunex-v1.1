@@ -171,6 +171,20 @@ async function getRevocationState(sid: string): Promise<RevocationState> {
   }
 }
 
+/**
+ * Validate a raw read-session token (signature, expiry, revocation) outside
+ * an HTTP request — used by the WebSocket server to authorize private
+ * `user:<address>` channels. Returns the claims or null.
+ */
+export async function validateReadSessionToken(
+  token: string,
+): Promise<ReadSessionClaims | null> {
+  const verified = verifyReadSessionToken(token);
+  if (!verified.ok) return null;
+  const revocation = await getRevocationState(verified.claims.sid);
+  return revocation === 'active' ? verified.claims : null;
+}
+
 export async function revokeReadSession(claims: ReadSessionClaims) {
   const nowMs = Date.now();
   const ttlSeconds = Math.max(1, claims.exp - Math.floor(nowMs / 1000));
