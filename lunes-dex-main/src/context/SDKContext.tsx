@@ -411,8 +411,17 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         // price_impact ≈ amountIn / (reserve_in + amountIn)  [simplified]
         let priceImpact = '0'
         if (pairInfo) {
-          const reserveIn = BigInt(pairInfo.reserve0)
-          const reserveOut = BigInt(pairInfo.reserve1)
+          // Orient reserves to the swap direction: reserve0 belongs to token0,
+          // which is not necessarily path[0].
+          const inIsToken0 =
+            !pairInfo.token0 ||
+            pairInfo.token0.toLowerCase() === path[0].toLowerCase()
+          const reserveIn = BigInt(
+            inIsToken0 ? pairInfo.reserve0 : pairInfo.reserve1
+          )
+          const reserveOut = BigInt(
+            inIsToken0 ? pairInfo.reserve1 : pairInfo.reserve0
+          )
           const aIn = BigInt(amountIn)
           const aOut = BigInt(amountOut)
 
