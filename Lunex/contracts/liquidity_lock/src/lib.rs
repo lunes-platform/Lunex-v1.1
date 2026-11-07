@@ -11,6 +11,7 @@
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
 #![allow(unexpected_cfgs)]
 #![warn(clippy::arithmetic_side_effects)]
+#![allow(clippy::too_many_arguments)] // ink! message/constructor signatures are the ABI
 
 #[ink::contract]
 mod liquidity_lock {

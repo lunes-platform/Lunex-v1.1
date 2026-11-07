@@ -248,9 +248,7 @@ pub mod factory {
         /// * `Hash` - Hash usado para deterministic deployment dos pares
         #[ink(message)]
         pub fn pair_contract_code_hash(&self) -> Hash {
-            self.pair_contract_code_hash
-                .get()
-                .unwrap_or(Hash::default())
+            self.pair_contract_code_hash.get().unwrap_or_default()
         }
 
         /// Cria um novo par de tokens

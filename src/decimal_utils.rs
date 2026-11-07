@@ -264,7 +264,7 @@ impl SwapValidator {
         amount_out: u128,
         is_a_to_b: bool,
     ) -> Result<(), DecimalError> {
-        let (in_decimals, out_decimals) = if is_a_to_b {
+        let (_in_decimals, out_decimals) = if is_a_to_b {
             (self.token_a_decimals, self.token_b_decimals)
         } else {
             (self.token_b_decimals, self.token_a_decimals)

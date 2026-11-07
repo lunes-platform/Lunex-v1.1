@@ -30,6 +30,9 @@ pub mod spot_settlement {
     use ink::prelude::vec::Vec;
     use ink::storage::Mapping;
 
+    /// Canonical 32-byte order hash.
+    type OrderHash = [u8; 32];
+
     // ========================================
     // PSP22 ERROR TYPE (DEFINIDO LOCALMENTE)
     // ========================================
@@ -340,7 +343,7 @@ pub mod spot_settlement {
         /// Cumulative amount filled per maker nonce.
         filled_amounts: Mapping<(AccountId, u64), Balance>,
         /// Canonical immutable order hash per maker nonce.
-        order_hashes: Mapping<(AccountId, u64), [u8; 32]>,
+        order_hashes: Mapping<(AccountId, u64), OrderHash>,
         /// Cancelled order nonces
         cancelled_nonces: Mapping<(AccountId, u64), bool>,
         /// Authorized relayers that can call settle_trade
@@ -1484,8 +1487,11 @@ pub mod spot_settlement {
         #[ink(message)]
         pub fn propose_disable_enforcement(&mut self) -> Result<(), SpotError> {
             self.ensure_owner()?;
-            self.pending_enforcement_off =
-                Some(self.env().block_timestamp() + self.enforcement_timelock_ms);
+            self.pending_enforcement_off = Some(
+                self.env()
+                    .block_timestamp()
+                    .saturating_add(self.enforcement_timelock_ms),
+            );
             Ok(())
         }
 

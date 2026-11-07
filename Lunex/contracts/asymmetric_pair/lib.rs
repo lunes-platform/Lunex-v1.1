@@ -20,6 +20,8 @@
 //! - `manager` — update_curve_parameters within guardrails set by owner
 
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
+#![allow(unexpected_cfgs)] // ink! interno gera cfg conditions que não podem ser suprimidas de outra forma
+#![allow(clippy::too_many_arguments)] // ink! message/constructor signatures are the ABI
 
 // ink! 4 event macros generate bounded topic-index casts flagged by cargo-contract 5.
 #[allow(clippy::cast_possible_truncation)]
@@ -30,6 +32,7 @@ mod asymmetric_pair {
     // ─── Constants ───────────────────────────────────────────────
 
     /// Scale factor for all u128 amounts (10^12 = 1 LUNES in plancks)
+    #[allow(dead_code)] // used by the unit tests
     const PLANCK: u128 = 1_000_000_000_000;
 
     /// Fixed-point scale for fractions (1_000_000 = 1.0)
@@ -180,7 +183,7 @@ mod asymmetric_pair {
         // x0 > 0 garantido pelo early-return acima; checked_div satisfaz o lint
         // clippy::arithmetic-side-effects (obrigatório no cargo-contract 4.x).
         let numerator = x0.saturating_sub(x);
-        let base_frac = (numerator as u128)
+        let base_frac = numerator
             .checked_mul(FRAC_SCALE)
             .unwrap_or(0)
             .checked_div(x0)
@@ -231,14 +234,8 @@ mod asymmetric_pair {
             sell_max_capacity: u128,
             sell_fee_bps: u16,
         ) -> Self {
-            assert!(
-                buy_gamma >= 1 && buy_gamma <= MAX_GAMMA,
-                "Invalid buy gamma"
-            );
-            assert!(
-                sell_gamma >= 1 && sell_gamma <= MAX_GAMMA,
-                "Invalid sell gamma"
-            );
+            assert!((1..=MAX_GAMMA).contains(&buy_gamma), "Invalid buy gamma");
+            assert!((1..=MAX_GAMMA).contains(&sell_gamma), "Invalid sell gamma");
             assert!(buy_fee_bps <= MAX_FEE_BPS, "Buy fee too high");
             assert!(sell_fee_bps <= MAX_FEE_BPS, "Sell fee too high");
 
@@ -348,13 +345,11 @@ mod asymmetric_pair {
             let mut next_fee_bps = current_curve.fee_bps;
 
             if let Some(g) = new_gamma {
-                if g < 1 || g > MAX_GAMMA {
+                if !(1..=MAX_GAMMA).contains(&g) {
                     return Err(Error::InvalidGamma);
                 }
-                if !is_owner {
-                    if g < self.guardrails.gamma_min || g > self.guardrails.gamma_max {
-                        return Err(Error::GuardrailViolation);
-                    }
+                if !is_owner && (g < self.guardrails.gamma_min || g > self.guardrails.gamma_max) {
+                    return Err(Error::GuardrailViolation);
                 }
                 next_gamma = g;
             }

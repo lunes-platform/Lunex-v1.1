@@ -128,6 +128,12 @@ pub struct NativeAssetRegistry {
     approved_for_dex: HashMap<String, bool>,
 }
 
+impl Default for NativeAssetRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NativeAssetRegistry {
     pub fn new() -> Self {
         Self {
@@ -225,7 +231,7 @@ impl LunesNodeApiClient {
     }
 
     /// Busca balance de um asset para um endereço
-    pub fn get_asset_balance(&self, address: &str, asset_id: &str) -> Result<u128, &'static str> {
+    pub fn get_asset_balance(&self, _address: &str, _asset_id: &str) -> Result<u128, &'static str> {
         // Na implementação real:
         // GET {node_url}/assets/balance/{address}/{asset_id}
 
@@ -234,7 +240,7 @@ impl LunesNodeApiClient {
     }
 
     /// Lista todos os assets de um endereço
-    pub fn list_assets(&self, address: &str) -> Result<Vec<(String, u128)>, &'static str> {
+    pub fn list_assets(&self, _address: &str) -> Result<Vec<(String, u128)>, &'static str> {
         // Na implementação real:
         // GET {node_url}/assets/balance/{address}
 
