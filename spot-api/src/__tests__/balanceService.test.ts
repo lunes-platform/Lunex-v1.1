@@ -2,6 +2,7 @@ const mockPrisma = {
   userBalance: { findMany: jest.fn() },
   order: { findMany: jest.fn() },
   pair: { findMany: jest.fn() },
+  trade: { findMany: jest.fn() },
 };
 const mockSettlement = { isEnabled: jest.fn(), getVaultBalance: jest.fn() };
 jest.mock('../db', () => ({ __esModule: true, default: mockPrisma }));
@@ -26,6 +27,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockSettlement.isEnabled.mockReturnValue(true);
   mockPrisma.order.findMany.mockResolvedValue([]);
+  mockPrisma.trade.findMany.mockResolvedValue([]);
   mockPrisma.userBalance.findMany.mockResolvedValue([
     { token: 'quote', available: '999999', locked: '0' },
   ]);
@@ -89,4 +91,58 @@ it('separates native and wrapped assets even when Pair.baseToken is the same', a
 it('fails instead of replacing an unavailable vault query with a ledger or zero', async () => {
   mockSettlement.getVaultBalance.mockResolvedValue(null);
   await expect(getBalances('wallet')).rejects.toThrow('unavailable');
+});
+
+// ─── Unsettled trades (matched off-chain, not yet debited on-chain) ───
+// A filled order stops reserving funds, but the vault is only debited when
+// settle_trade finalizes. Until then the fill must stay locked, otherwise the
+// same vault balance could back a second order whose settlement then fails.
+it('locks the base of a filled-but-unsettled SELL until settlement', async () => {
+  mockPrisma.trade.findMany.mockResolvedValue([
+    {
+      side: 'BUY', // taker buys → maker ('wallet') is the seller
+      makerAddress: 'wallet',
+      takerAddress: 'other',
+      price: '2',
+      amount: '100',
+      pair,
+    },
+  ]);
+  expect((await getBalances('wallet', 'base'))[0]).toEqual({
+    token: 'base',
+    total: '500',
+    locked: '100',
+    available: '400',
+  });
+  expect(mockPrisma.trade.findMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: {
+        settlementStatus: {
+          in: ['PENDING', 'SETTLING', 'FAILED', 'RECONCILE_REQUIRED'],
+        },
+        OR: [{ makerAddress: 'wallet' }, { takerAddress: 'wallet' }],
+      },
+    }),
+  );
+});
+it('locks quote + max fee for the buyer side of an unsettled trade', async () => {
+  mockPrisma.trade.findMany.mockResolvedValue([
+    {
+      side: 'SELL', // taker sells → maker ('wallet') is the buyer
+      makerAddress: 'wallet',
+      takerAddress: 'other',
+      price: '2',
+      amount: '1',
+      pair,
+    },
+  ]);
+  const rows = await getBalances('wallet');
+  expect(rows.find((b) => b.token === 'quote')?.locked).toBe('2.005');
+  // The base the buyer will receive is NOT counted until it settles.
+  expect(rows.find((b) => b.token === 'base')?.available).toBe('500');
+});
+it('does not consult unsettled trades when on-chain settlement is disabled', async () => {
+  mockSettlement.isEnabled.mockReturnValue(false);
+  await getBalances('wallet');
+  expect(mockPrisma.trade.findMany).not.toHaveBeenCalled();
 });

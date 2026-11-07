@@ -13,6 +13,7 @@ const mockPrisma = {
   },
   trade: {
     findFirst: jest.fn(),
+    findMany: jest.fn(),
   },
 };
 
@@ -139,6 +140,8 @@ describe('orderService stop orders', () => {
     mockPrisma.order.findMany.mockReset();
     mockPrisma.order.findMany.mockResolvedValue([]);
     mockPrisma.trade.findFirst.mockReset();
+    mockPrisma.trade.findMany.mockReset();
+    mockPrisma.trade.findMany.mockResolvedValue([]);
     mockBook.addMarketOrder.mockReset();
     mockBook.addLimitOrder.mockReset();
     mockBook.cancelOrder.mockReset();
@@ -193,6 +196,193 @@ describe('orderService stop orders', () => {
       expect(mockBook.addLimitOrder).not.toHaveBeenCalled();
     },
   );
+
+  it('rejects a SELL backed only by vault funds an unsettled trade still owes', async () => {
+    // Vault holds exactly 1 base (8 decimals) but a matched, not-yet-settled
+    // trade already sold 1 base: nothing is available for a new SELL.
+    mockSettlementService.getVaultBalance.mockResolvedValue(100_000_000n);
+    mockPrisma.trade.findMany.mockResolvedValue([
+      {
+        side: 'BUY',
+        makerAddress: 'maker-1',
+        takerAddress: 'taker-9',
+        price: '2',
+        amount: '1',
+        pair,
+      },
+    ]);
+    await expect(
+      orderService.createOrder({
+        makerAddress: 'maker-1',
+        pairSymbol: pair.symbol,
+        side: 'SELL',
+        type: 'LIMIT',
+        price: '2',
+        amount: '1',
+        timeInForce: 'GTC',
+        nonce: '124',
+        signature: 'sig',
+        timestamp: Date.now(),
+      }),
+    ).rejects.toMatchObject({
+      statusCode: 400,
+      message: 'Insufficient base token balance in Spot vault',
+    });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a BUY whose vault quote does not cover principal plus fee', async () => {
+    // 2 quote units * 1e8 = exactly the principal, but the 0.25% max fee
+    // is not covered.
+    mockSettlementService.getVaultBalance.mockResolvedValue(200_000_000n);
+    await expect(
+      orderService.createOrder({
+        makerAddress: 'maker-1',
+        pairSymbol: pair.symbol,
+        side: 'BUY',
+        type: 'LIMIT',
+        price: '2',
+        amount: '1',
+        timeInForce: 'GTC',
+        nonce: '125',
+        signature: 'sig',
+        timestamp: Date.now(),
+      }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(mockPrisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it('serializes order admission per maker (outer lock) before the pair lock', async () => {
+    const calls: string[] = [];
+    mockMatchingLockService.withMatchingLock.mockImplementation(
+      async (key: string, callback: any) => {
+        calls.push(key);
+        return callback();
+      },
+    );
+    const createdOrder = makeOrder({
+      id: 'limit-order-2',
+      type: 'LIMIT',
+      side: 'SELL',
+      price: new Decimal('100'),
+      stopPrice: null,
+      status: 'OPEN',
+    });
+    mockPrisma.order.findFirst.mockResolvedValueOnce(null);
+    mockPrisma.order.create.mockResolvedValue(createdOrder);
+    mockPrisma.order.findUnique.mockResolvedValue(createdOrder);
+    mockBook.addLimitOrder.mockReturnValue([]);
+
+    await orderService.createOrder({
+      pairSymbol: pair.symbol,
+      side: 'SELL',
+      type: 'LIMIT',
+      price: '100',
+      amount: '1',
+      nonce: '1700000000099',
+      timestamp: Date.now(),
+      signature: 'sig',
+      makerAddress: 'maker-1',
+      timeInForce: 'GTC',
+    });
+
+    // Two pairs sharing a token (e.g. LUNES as base and as quote) would
+    // otherwise both admit orders against the same vault balance.
+    expect(calls).toEqual(['maker:maker-1', pair.symbol]);
+  });
+
+  it('keeps accepting orders without vault checks when settlement is disabled', async () => {
+    mockSettlementService.isEnabled.mockReturnValue(false);
+    mockSettlementService.isNonceUsed.mockResolvedValue(null);
+    mockSettlementService.isNonceCancelled.mockResolvedValue(null);
+    mockSettlementService.getVaultBalance.mockResolvedValue(null);
+    const createdOrder = makeOrder({
+      id: 'limit-order-3',
+      type: 'LIMIT',
+      side: 'BUY',
+      price: new Decimal('2'),
+      stopPrice: null,
+      status: 'OPEN',
+    });
+    mockPrisma.order.findFirst.mockResolvedValueOnce(null);
+    mockPrisma.order.create.mockResolvedValue(createdOrder);
+    mockPrisma.order.findUnique.mockResolvedValue(createdOrder);
+    mockBook.addLimitOrder.mockReturnValue([]);
+
+    await expect(
+      orderService.createOrder({
+        pairSymbol: pair.symbol,
+        side: 'BUY',
+        type: 'LIMIT',
+        price: '2',
+        amount: '1',
+        nonce: '1700000000100',
+        timestamp: Date.now(),
+        signature: 'sig',
+        makerAddress: 'maker-1',
+        timeInForce: 'GTC',
+      }),
+    ).resolves.toBeTruthy();
+    expect(mockPrisma.order.create).toHaveBeenCalled();
+  });
+
+  it.each(['agent:agent-7', 'manual:maker-1'])(
+    'rejects synthetic signature %s with 409 before any side effect when settlement is on',
+    async (signature) => {
+      await expect(
+        orderService.createOrder({
+          makerAddress: 'maker-1',
+          pairSymbol: pair.symbol,
+          side: 'BUY',
+          type: 'LIMIT',
+          price: '2',
+          amount: '1',
+          timeInForce: 'GTC',
+          nonce: '126',
+          signature,
+          timestamp: Date.now(),
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'SYNTHETIC_SIGNATURE_SETTLEMENT_BLOCKED',
+      });
+      expect(mockPrisma.pair.findUnique).not.toHaveBeenCalled();
+      expect(mockMatchingLockService.withMatchingLock).not.toHaveBeenCalled();
+      expect(mockPrisma.order.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still accepts synthetic signatures in off-chain mode (settlement disabled)', async () => {
+    mockSettlementService.isEnabled.mockReturnValue(false);
+    mockSettlementService.isNonceUsed.mockResolvedValue(null);
+    mockSettlementService.isNonceCancelled.mockResolvedValue(null);
+    const createdOrder = makeOrder({
+      id: 'agent-order',
+      type: 'LIMIT',
+      side: 'BUY',
+      price: new Decimal('2'),
+      stopPrice: null,
+      status: 'OPEN',
+    });
+    mockPrisma.order.findFirst.mockResolvedValueOnce(null);
+    mockPrisma.order.create.mockResolvedValue(createdOrder);
+    mockPrisma.order.findUnique.mockResolvedValue(createdOrder);
+    mockBook.addLimitOrder.mockReturnValue([]);
+    await expect(
+      orderService.createOrder({
+        makerAddress: 'maker-1',
+        pairSymbol: pair.symbol,
+        side: 'BUY',
+        type: 'LIMIT',
+        price: '2',
+        amount: '1',
+        timeInForce: 'GTC',
+        nonce: '127',
+        signature: 'agent:agent-7',
+        timestamp: Date.now(),
+      }),
+    ).resolves.toBeTruthy();
+  });
 
   it('rejects an already expired order before persistence or matching', async () => {
     await expect(

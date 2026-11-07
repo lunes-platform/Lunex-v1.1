@@ -80,6 +80,22 @@ groups:
           description: '{{ $value }} settlements pending — possible blockchain connectivity issue.'
           runbook: 'docs/runbooks/settlement-backlog.md'
 
+      # BE-07: a settle_trade was broadcast but its outcome is unknown. The
+      # reconciler resolves it from finalized blocks within the 64-block
+      # mortal era (~7 min incl. finality); still present after 15m means the
+      # chain could not prove it either way → manual reconciliation. Never
+      # re-submit by hand: the contract is not idempotent per trade.
+      - alert: SettlementReconcileRequired
+        expr: lunex_settlements_reconcile_required > 0
+        for: 15m
+        labels:
+          severity: critical
+          category: blockchain
+        annotations:
+          summary: 'Settlement outcome unknown — reconciliation required'
+          description: '{{ $value }} trade(s) in RECONCILE_REQUIRED for 15m+. Reconcile against finalized blocks by submittedTxHash before any retry.'
+          runbook: 'docs/runbooks/settlement-backlog.md'
+
       - alert: BlockchainNodeUnreachable
         expr: lunex_blockchain_connected == 0
         for: 2m

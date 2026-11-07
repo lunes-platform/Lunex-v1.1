@@ -127,7 +127,12 @@ export const strategyService = {
     return strategy;
   },
 
-  async getStrategy(id: string) {
+  /**
+   * BE-11: private strategies (isPublic=false) are only visible to the owning
+   * agent (`viewerAgentId` from an authenticated API key); everyone else gets
+   * the same "not found" as for a missing id.
+   */
+  async getStrategy(id: string, options?: { viewerAgentId?: string }) {
     const strategy = await prisma.strategy.findUnique({
       where: { id },
       include: {
@@ -152,6 +157,9 @@ export const strategyService = {
       },
     });
     if (!strategy) throw new Error('Strategy not found');
+    if (!strategy.isPublic && strategy.agentId !== options?.viewerAgentId) {
+      throw new Error('Strategy not found');
+    }
     return strategy;
   },
 
@@ -320,23 +328,31 @@ export const strategyService = {
     return { following: false, followersCount: updated.followersCount };
   },
 
-  async getFollowers(strategyId: string, limit = 50, offset = 0) {
-    const [followers, total] = await Promise.all([
-      prisma.strategyFollow.findMany({
-        where: { strategyId, isActive: true },
-        orderBy: { followedAt: 'desc' },
-        take: limit,
-        skip: offset,
-        select: {
-          id: true,
-          followerAddress: true,
-          allocatedCapital: true,
-          followedAt: true,
-        },
+  /**
+   * BE-11: PUBLIC endpoint — aggregate only. Which wallets follow a strategy
+   * (and how much each allocated) is private; a follower reads its own list
+   * via the READ-signed GET /strategies/followed/:address.
+   */
+  async getFollowers(strategyId: string) {
+    const strategy = await prisma.strategy.findUnique({
+      where: { id: strategyId },
+      select: { id: true, isPublic: true },
+    });
+    if (!strategy || !strategy.isPublic) throw new Error('Strategy not found');
+
+    const where = { strategyId, isActive: true };
+    const [total, sums] = await Promise.all([
+      prisma.strategyFollow.count({ where }),
+      prisma.strategyFollow.aggregate({
+        where,
+        _sum: { allocatedCapital: true },
       }),
-      prisma.strategyFollow.count({ where: { strategyId, isActive: true } }),
     ]);
-    return { followers, total };
+    const allocated = sums._sum.allocatedCapital;
+    return {
+      total,
+      totalAllocatedCapital: allocated ? parseFloat(allocated.toString()) : 0,
+    };
   },
 
   async getFollowedStrategies(followerAddress: string) {

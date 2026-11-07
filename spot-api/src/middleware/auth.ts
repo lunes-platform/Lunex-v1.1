@@ -5,6 +5,53 @@ import { log } from '../utils/logger';
 import { walletRiskService } from '../services/walletRiskService';
 
 const SIGNED_ACTION_TTL_MS = 5 * 60 * 1000;
+// Max clock skew tolerated for timestamps in the future. A signed message is
+// usable while |now - timestamp| <= TTL, so without this bound a payload
+// stamped +5 min stays valid for 10 min.
+const MAX_FUTURE_SKEW_MS = 60 * 1000;
+/**
+ * Nonces must outlive every instant at which their signature is still
+ * accepted (first use can happen as early as timestamp - skew, last valid
+ * instant is timestamp + TTL). 2 × TTL covers it with margin and cannot be
+ * lowered by NONCE_TTL_SECONDS.
+ */
+export const NONCE_RETENTION_SECONDS = Math.ceil(
+  (2 * SIGNED_ACTION_TTL_MS) / 1000,
+);
+
+function nonceTtlSeconds() {
+  return Math.max(
+    config.redis?.nonceTtlSeconds ?? 0,
+    NONCE_RETENTION_SECONDS,
+  );
+}
+
+type TimestampCheck = 'ok' | 'expired' | 'future';
+
+/** Shared freshness rule for wallet actions, reads and order intake. */
+export function checkSignedTimestamp(
+  timestamp: number,
+  now = Date.now(),
+): TimestampCheck {
+  if (timestamp - now > MAX_FUTURE_SKEW_MS) return 'future';
+  if (now - timestamp > SIGNED_ACTION_TTL_MS) return 'expired';
+  return 'ok';
+}
+
+// ─── Signing context (FE-03) ─────────────────────────────────────
+export type SigningContext = { domain: string; chain: string };
+
+/** Domain + chain genesis this deployment binds every signature to. */
+export function getSigningContext(): SigningContext {
+  return {
+    domain: config.signing?.domain ?? 'localhost',
+    chain: config.signing?.genesisHash ?? '',
+  };
+}
+
+function acceptLegacySignatures() {
+  return config.signing?.acceptLegacy ?? !config.isProd;
+}
 
 // ─── Redis-backed nonce store (with in-memory fallback) ──────────
 const fallbackNonces = new Map<string, number>();
@@ -57,7 +104,7 @@ async function consumeNonce(key: string): Promise<ConsumeNonceResult> {
       key,
       '1',
       'EX',
-      config.redis.nonceTtlSeconds,
+      nonceTtlSeconds(),
       'NX',
     );
     return result === 'OK' ? { ok: true } : { ok: false, error: 'replay' };
@@ -75,7 +122,7 @@ async function consumeNonce(key: string): Promise<ConsumeNonceResult> {
     if (fallbackNonces.has(key)) {
       return { ok: false, error: 'replay' };
     }
-    fallbackNonces.set(key, Date.now() + SIGNED_ACTION_TTL_MS);
+    fallbackNonces.set(key, Date.now() + nonceTtlSeconds() * 1000);
     return { ok: true };
   }
 }
@@ -115,9 +162,25 @@ function canonicalOrderDecimal(value: string | undefined): string {
   return digits.slice(0, point) + '.' + digits.slice(point);
 }
 
-export function buildSpotOrderMessage(input: SpotOrderMessageInput) {
+function spotOrderBody(input: SpotOrderMessageInput) {
   const expiry = input.expiresAt ? new Date(input.expiresAt).getTime() : 0;
-  return `lunex-order-v2:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp ?? 0}:${input.timeInForce || 'GTC'}:${expiry}`;
+  return `${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp ?? 0}:${input.timeInForce || 'GTC'}:${expiry}`;
+}
+
+/**
+ * Canonical order message (v3): bound to the signing domain and the chain
+ * genesis, so an order signed for sandbox/testnet never validates here.
+ */
+export function buildSpotOrderMessage(
+  input: SpotOrderMessageInput,
+  context: SigningContext = getSigningContext(),
+) {
+  return `lunex-order-v3:${context.domain}:${context.chain}:${spotOrderBody(input)}`;
+}
+
+/** Legacy v2 order message (no domain/chain). Deprecated. */
+export function buildSpotOrderMessageV2(input: SpotOrderMessageInput) {
+  return `lunex-order-v2:${spotOrderBody(input)}`;
 }
 
 export function buildLegacySpotOrderMessage(input: SpotOrderMessageInput) {
@@ -128,6 +191,39 @@ export function buildLegacySpotOrderMessage(input: SpotOrderMessageInput) {
 }
 
 export { consumeNonce, isNonceUsed, markNonceUsed };
+
+export type SpotOrderSignatureVersion = 'v3' | 'v2' | 'v1';
+
+/**
+ * Verifies an order signature against the bound v3 format and — only when
+ * SIGNING_ACCEPT_LEGACY is on — the unbound v2 / v1 formats (v1 only for a
+ * plain GTC order without expiry, which v1 never covered).
+ */
+export async function verifySpotOrderSignature(
+  input: SpotOrderMessageInput,
+  signature: string,
+  address: string,
+): Promise<SpotOrderSignatureVersion | null> {
+  if (await verifyAddressSignature(buildSpotOrderMessage(input), signature, address)) {
+    return 'v3';
+  }
+  if (!acceptLegacySignatures()) return null;
+  if (await verifyAddressSignature(buildSpotOrderMessageV2(input), signature, address)) {
+    return 'v2';
+  }
+  if (
+    (input.timeInForce || 'GTC') === 'GTC' &&
+    !input.expiresAt &&
+    (await verifyAddressSignature(
+      buildLegacySpotOrderMessage(input),
+      signature,
+      address,
+    ))
+  ) {
+    return 'v1';
+  }
+  return null;
+}
 
 function firstSignedValue(value: unknown): unknown {
   return Array.isArray(value) ? value[0] : value;
@@ -165,7 +261,7 @@ function normalizeSignedValue(
   return value == null ? '' : String(value);
 }
 
-export function buildWalletActionMessage(input: {
+type WalletActionMessageInput = {
   action: string;
   address: string;
   nonce: string;
@@ -174,8 +270,59 @@ export function buildWalletActionMessage(input: {
     string,
     string | number | boolean | Array<string | number> | undefined | null
   >;
-}) {
-  const lines = [`lunex-auth:${input.action}`, `address:${input.address}`];
+};
+
+/**
+ * Canonical wallet-action message: `lunex-auth:<action>`, then `domain:` and
+ * `chain:` (FE-03), then address, sorted fields, nonce and timestamp. The
+ * second line (`domain:` vs `address:`) makes it unambiguous with legacy.
+ */
+export function buildWalletActionMessage(
+  input: WalletActionMessageInput,
+  context: SigningContext = getSigningContext(),
+) {
+  return buildActionLines(input, [
+    `domain:${context.domain}`,
+    `chain:${context.chain}`,
+  ]);
+}
+
+/** Legacy unbound wallet-action message. Deprecated (SIGNING_ACCEPT_LEGACY). */
+export function buildLegacyWalletActionMessage(input: WalletActionMessageInput) {
+  return buildActionLines(input, []);
+}
+
+async function verifyWalletMessage(
+  input: WalletActionMessageInput & { signature: string },
+): Promise<'bound' | 'legacy' | null> {
+  if (
+    await verifyAddressSignature(
+      buildWalletActionMessage(input),
+      input.signature,
+      input.address,
+    )
+  ) {
+    return 'bound';
+  }
+  if (
+    acceptLegacySignatures() &&
+    (await verifyAddressSignature(
+      buildLegacyWalletActionMessage(input),
+      input.signature,
+      input.address,
+    ))
+  ) {
+    log.warn(
+      { address: input.address, action: input.action },
+      '[SECURITY] Legacy unbound wallet signature accepted (deprecated)',
+    );
+    return 'legacy';
+  }
+  return null;
+}
+
+function buildActionLines(input: WalletActionMessageInput, binding: string[]) {
+  const lines = [`lunex-auth:${input.action}`, ...binding, `address:${input.address}`];
 
   const orderedFields = Object.entries(input.fields ?? {})
     .filter(([, value]) => value !== undefined && value !== null)
@@ -229,17 +376,23 @@ export async function verifyWalletActionSignature(input: {
   }
 
   const now = Date.now();
-  if (Math.abs(now - timestamp) > SIGNED_ACTION_TTL_MS) {
+  const freshness = checkSignedTimestamp(timestamp, now);
+  if (freshness !== 'ok') {
     log.warn(
       {
         address: input.address,
         action: input.action,
-        reason: 'expired',
-        drift: Math.abs(now - timestamp),
+        reason: freshness,
+        drift: timestamp - now,
       },
-      '[SECURITY] Wallet signature rejected — expired TTL',
+      '[SECURITY] Wallet signature rejected — ' +
+        (freshness === 'future' ? 'timestamp in the future' : 'expired TTL'),
     );
-    return { ok: false as const, error: 'Expired signature' };
+    return {
+      ok: false as const,
+      error:
+        freshness === 'future' ? 'Timestamp in the future' : 'Expired signature',
+    };
   }
 
   const replayKey = `nonce:${input.action}:${input.address}:${input.nonce}`;
@@ -268,20 +421,22 @@ export async function verifyWalletActionSignature(input: {
     return { ok: false as const, error: 'Signature nonce already used' };
   }
 
-  const message = buildWalletActionMessage({
+  const messageInput = {
     action: input.action,
     address: input.address,
     nonce: input.nonce,
     timestamp,
     fields: input.fields,
+  };
+  const format = await verifyWalletMessage({
+    ...messageInput,
+    signature: input.signature,
   });
-
-  const isValid = await verifyAddressSignature(
-    message,
-    input.signature,
-    input.address,
-  );
-  if (!isValid) {
+  const message =
+    format === 'legacy'
+      ? buildLegacyWalletActionMessage(messageInput)
+      : buildWalletActionMessage(messageInput);
+  if (!format) {
     log.warn(
       {
         address: input.address,
@@ -354,17 +509,23 @@ export async function verifyWalletReadSignature(input: {
   }
 
   const now = Date.now();
-  if (Math.abs(now - timestamp) > SIGNED_ACTION_TTL_MS) {
+  const freshness = checkSignedTimestamp(timestamp, now);
+  if (freshness !== 'ok') {
     log.warn(
       {
         address: input.address,
         action: input.action,
-        reason: 'expired',
-        drift: Math.abs(now - timestamp),
+        reason: freshness,
+        drift: timestamp - now,
       },
-      '[SECURITY] Wallet read signature rejected — expired TTL',
+      '[SECURITY] Wallet read signature rejected — ' +
+        (freshness === 'future' ? 'timestamp in the future' : 'expired TTL'),
     );
-    return { ok: false as const, error: 'Expired signature' };
+    return {
+      ok: false as const,
+      error:
+        freshness === 'future' ? 'Timestamp in the future' : 'Expired signature',
+    };
   }
 
   const replayKey = `nonce:read:${input.action}:${input.address}:${input.nonce}`;
@@ -393,20 +554,22 @@ export async function verifyWalletReadSignature(input: {
     return { ok: false as const, error: 'Signature nonce already used' };
   }
 
-  const message = buildWalletActionMessage({
+  const messageInput = {
     action: input.action,
     address: input.address,
     nonce: input.nonce,
     timestamp,
     fields: input.fields,
+  };
+  const format = await verifyWalletMessage({
+    ...messageInput,
+    signature: input.signature,
   });
-
-  const isValid = await verifyAddressSignature(
-    message,
-    input.signature,
-    input.address,
-  );
-  if (!isValid) {
+  const message =
+    format === 'legacy'
+      ? buildLegacyWalletActionMessage(messageInput)
+      : buildWalletActionMessage(messageInput);
+  if (!format) {
     log.warn(
       {
         address: input.address,

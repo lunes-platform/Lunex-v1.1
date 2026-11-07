@@ -19,11 +19,9 @@ import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 // Cached lazily-imported constructors / functions.
 type PolkadotApiModule = typeof import('@polkadot/api')
 type PolkadotContractModule = typeof import('@polkadot/api-contract')
-type ExtensionDappModule = typeof import('@polkadot/extension-dapp')
 
 let apiModulePromise: Promise<PolkadotApiModule> | null = null
 let contractModulePromise: Promise<PolkadotContractModule> | null = null
-let extensionDappPromise: Promise<ExtensionDappModule> | null = null
 
 const loadApiModule = (): Promise<PolkadotApiModule> => {
   if (!apiModulePromise) apiModulePromise = import('@polkadot/api')
@@ -36,23 +34,40 @@ const loadContractModule = (): Promise<PolkadotContractModule> => {
   return contractModulePromise
 }
 
-const web3FromAddress = async (
-  address: string
-): ReturnType<ExtensionDappModule['web3FromAddress']> => {
-  if (!extensionDappPromise)
-    extensionDappPromise = import('@polkadot/extension-dapp')
-  const mod = await extensionDappPromise
-  return mod.web3FromAddress(address)
-}
+import { getSignerFor } from '../wallet/activeWallet'
 
 import RouterABI from '../abis/Router.json'
 import FactoryABI from '../abis/Factory.json'
 import PairABI from '../abis/Pair.json'
 import WNativeABI from '../abis/WNative.json'
 import StakingABI from '../abis/Staking.json'
-import { CONTRACTS } from '../config/contracts'
+import CopyVaultABI from '../abis/CopyVault.json'
+
+/** CopyVault COOLDOWN_PERIOD_MS (Lunex/contracts/copy_vault/lib.rs). */
+const COPY_VAULT_COOLDOWN_MS = 24 * 60 * 60 * 1000
+import SpotSettlementABI from '../abis/SpotSettlement.json'
+import { CONTRACTS, NETWORK } from '../config/contracts'
+import { setSigningChainGenesis } from '../utils/signing'
 import { isValidSubstrateAddress } from '../utils/address'
 import { normalizeReservesForPath } from '../utils/reserveUtils'
+import {
+  DAY_MS,
+  DEFAULT_PROPOSAL_FEE_PLANCK,
+  VOTE_COST_PLANCK,
+  decodeListingStats,
+  decodeProposal,
+  decodeStakePosition,
+  describeStakingError,
+  estimateAprBps,
+  inkError,
+  toPlanckString,
+  unwrapInk
+} from '../utils/staking'
+import type {
+  GovernanceProposal,
+  ListingStats,
+  StakePositionView
+} from '../utils/staking'
 
 // Network configuration — env vars override defaults so local dev node is used automatically
 const NETWORKS = {
@@ -144,6 +159,9 @@ class ContractService {
 
       await this.api.isReady
       this.isConnected = true
+      // Bind every wallet-signed message to this chain (REACT_APP_LUNES_GENESIS_HASH,
+      // when set, still takes precedence inside utils/signing).
+      setSigningChainGenesis(this.api.genesisHash.toHex())
 
       // Contract addresses may have been registered (via setContracts) before
       // connect() ran — e.g. at SDK boot, where connect() is now deferred until
@@ -456,7 +474,7 @@ class ContractService {
     if (!contract) return false
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       const { gasRequired } = await contract.query.approve(
         account.address,
@@ -472,23 +490,19 @@ class ContractService {
             spenderAddress,
             amount
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isFinalized) {
-                // Wait for finalization (not just isInBlock) so the nonce is
-                // fully committed on-chain before any subsequent signAndSend
-                // call reads accountNextIndex. Resolving at isInBlock caused a
-                // nonce race on the second remove-liquidity cycle: the approve
-                // nonce hadn't propagated yet when the remove tx was signed,
-                // producing "1010: Invalid Transaction: bad signature".
-                resolve()
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isFinalized) {
+              // Wait for finalization (not just isInBlock) so the nonce is
+              // fully committed on-chain before any subsequent signAndSend
+              // call reads accountNextIndex. Resolving at isInBlock caused a
+              // nonce race on the second remove-liquidity cycle: the approve
+              // nonce hadn't propagated yet when the remove tx was signed,
+              // producing "1010: Invalid Transaction: bad signature".
+              resolve()
             }
-          )
+          })
           .catch(reject)
       })
 
@@ -818,7 +832,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -861,17 +875,13 @@ class ContractService {
             to,
             deadlineMs
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -900,7 +910,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -979,19 +989,13 @@ class ContractService {
             to,
             deadlineMs
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(
-                  new Error(this.decodeDispatchError(result.dispatchError))
-                )
-              } else if (result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(this.decodeDispatchError(result.dispatchError)))
+            } else if (result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -1019,7 +1023,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -1059,17 +1063,13 @@ class ContractService {
             to,
             deadlineMs
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -1105,7 +1105,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
 
       const { gasRequired } =
@@ -1137,7 +1137,7 @@ class ContractService {
           )
           .signAndSend(
             account.address,
-            { signer: injector.signer },
+            { signer },
             (result: any) => {
               if (result.dispatchError) {
                 reject(
@@ -1174,7 +1174,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -1217,7 +1217,7 @@ class ContractService {
           )
           .signAndSend(
             account.address,
-            { signer: injector.signer },
+            { signer },
             (result: any) => {
               if (result.dispatchError) {
                 reject(
@@ -1256,7 +1256,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -1332,7 +1332,7 @@ class ContractService {
           )
           .signAndSend(
             account.address,
-            { signer: injector.signer },
+            { signer },
             (result: any) => {
               if (result.dispatchError) {
                 reject(
@@ -1371,7 +1371,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const deadlineMs = deadline > 1e12 ? deadline : deadline * 1000
 
       const { gasRequired } =
@@ -1403,7 +1403,7 @@ class ContractService {
           )
           .signAndSend(
             account.address,
-            { signer: injector.signer },
+            { signer },
             (result: any) => {
               if (result.dispatchError) {
                 reject(
@@ -1437,7 +1437,7 @@ class ContractService {
     if (!contract) throw new Error('WNative contract not available')
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       const { gasRequired } = await contract.query.deposit(account.address, {
         gasLimit: this.makeDryGas(),
@@ -1453,7 +1453,7 @@ class ContractService {
           })
           .signAndSend(
             account.address,
-            { signer: injector.signer },
+            { signer },
             (result: any) => {
               if (result.dispatchError) {
                 reject(
@@ -1483,7 +1483,7 @@ class ContractService {
     if (!contract) throw new Error('WNative contract not available')
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       const { gasRequired } = await contract.query.withdraw(
         account.address,
@@ -1499,7 +1499,7 @@ class ContractService {
           )
           .signAndSend(
             account.address,
-            { signer: injector.signer },
+            { signer },
             (result: any) => {
               if (result.dispatchError) {
                 reject(
@@ -1520,11 +1520,89 @@ class ContractService {
 
   // ========================================
   // Staking Methods
+  // (Lunex/contracts/staking/lib.rs — stakes NATIVE LUNES, one position per
+  //  account; durations/timestamps in ms. Every tx below dry-runs first,
+  //  then resolves ONLY on isFinalized — see sendStakingTx.)
   // ========================================
 
   /**
-   * Get user staking info
-   * ABI labels: get_stake → JS: getStake, get_stats → JS: getStats
+   * Dry-run `method` (surfacing contract errors before the wallet prompt),
+   * then sign/send it and resolve with the tx hash only once the block is
+   * FINALIZED. Rejects on dispatchError and on dropped/invalid/usurped.
+   */
+  private async sendStakingTx(
+    method: string,
+    account: InjectedAccountWithMeta,
+    args: unknown[],
+    value?: string
+  ): Promise<string> {
+    const contract = this.stakingContract
+    if (!this.api || !contract) {
+      throw new Error('Staking contract not connected')
+    }
+    const signer = getSignerFor(account.address)
+    const withValue = value !== undefined ? { value } : {}
+
+    const {
+      result: dryResult,
+      gasRequired,
+      output: dryOutput
+    } = await contract.query[method](
+      account.address,
+      { gasLimit: this.makeDryGas(), ...withValue },
+      ...args
+    )
+    if (dryResult?.isErr) {
+      throw new Error(this.decodeDispatchError(dryResult.asErr))
+    }
+    const dryErr = dryOutput ? inkError(dryOutput.toJSON()) : null
+    if (dryErr) throw new Error(describeStakingError(dryErr))
+
+    return await new Promise<string>((resolve, reject) => {
+      let unsub: (() => void) | null = null
+      let done = false
+      const finish = (fn: () => void) => {
+        if (done) return
+        done = true
+        fn()
+        if (unsub) unsub()
+      }
+      contract.tx[method](
+        { gasLimit: gasRequired, storageDepositLimit: null, ...withValue },
+        ...args
+      )
+        .signAndSend(account.address, { signer }, (result: any) => {
+          if (result.dispatchError) {
+            finish(() =>
+              reject(new Error(this.decodeDispatchError(result.dispatchError)))
+            )
+          } else if (
+            result.status?.isInvalid ||
+            result.status?.isDropped ||
+            result.status?.isUsurped
+          ) {
+            finish(() =>
+              reject(new Error('Transaction dropped or invalid — not included.'))
+            )
+          } else if (result.status?.isFinalized) {
+            finish(() => resolve(result.txHash.toHex()))
+          }
+        })
+        .then((u: () => void) => {
+          unsub = u
+          if (done) u()
+        })
+        .catch((err: unknown) => finish(() => reject(err)))
+    })
+  }
+
+  /**
+   * Get the account's stake position + contract totals.
+   * ABI: get_stake(account) -> Option<StakePosition>,
+   *      get_stats() -> (total_staked, total_rewards_distributed, stakers),
+   *      get_pending_rewards(account) -> Result<Balance>.
+   * `lockPeriod` is the position's lock in days; `apr` is the base APR % for
+   * its tier × quantity multiplier (excludes the early-adopter bonus).
    */
   async getStakingUserInfo(accountAddress: string): Promise<{
     totalStaked: string
@@ -1532,42 +1610,53 @@ class ContractService {
     pendingRewards: string
     apr: string
     lockPeriod: number
+    position: StakePositionView | null
+    /** Funded APY pool (planck) — caps what claim/unstake can pay now. */
+    rewardsPool: string | null
   } | null> {
     if (!this.api || !this.stakingContract) return null
     try {
-      const [stakeResult, statsResult] = await Promise.all([
-        this.stakingContract.query.getStake(
-          accountAddress,
-          { gasLimit: this.makeDryGas() },
-          accountAddress
-        ),
-        this.stakingContract.query.getStats(accountAddress, {
-          gasLimit: this.makeDryGas()
-        })
+      const dry = { gasLimit: this.makeDryGas() }
+      const [stakeResult, statsResult, pendingResult, pools] = await Promise.all([
+        this.stakingContract.query.getStake(accountAddress, dry, accountAddress),
+        this.stakingContract.query.getStats(accountAddress, dry),
+        this.stakingContract.query
+          .getPendingRewards(accountAddress, dry, accountAddress)
+          .catch(() => null),
+        this.getRewardPools()
       ])
 
       let totalStaked = '0'
-      const statsJson = statsResult.output?.toJSON() as any
-      const stats = statsJson?.ok ?? statsJson
-      if (statsResult.result.isOk && Array.isArray(stats)) {
-        totalStaked = String(stats[0] ?? '0').replace(/,/g, '')
+      const stats = statsResult.result.isOk
+        ? unwrapInk(statsResult.output?.toJSON())
+        : null
+      if (Array.isArray(stats)) totalStaked = toPlanckString(stats[0])
+
+      const decoded =
+        stakeResult.result.isOk && stakeResult.output
+          ? decodeStakePosition(stakeResult.output.toJSON())
+          : null
+      const position = decoded?.active ? decoded : null
+
+      let pendingRewards = '0'
+      // get_pending_rewards also returns APY still OWED after an unstake
+      // (pool was short) — keep it visible/claimable without a position.
+      if (pendingResult?.result?.isOk && pendingResult.output) {
+        const json = pendingResult.output.toJSON()
+        if (!inkError(json)) pendingRewards = toPlanckString(unwrapInk(json))
       }
 
-      if (stakeResult.result.isOk && stakeResult.output) {
-        const json = stakeResult.output.toJSON() as any
-        const maybeOption = json?.ok ?? json
-        const obj = maybeOption?.some ?? maybeOption?.Some ?? maybeOption
-        if (obj && typeof obj === 'object' && !('none' in obj)) {
-          return {
-            totalStaked,
-            userStaked: String(obj.amount ?? '0').replace(/,/g, ''),
-            pendingRewards: String(
-              obj.pendingRewards ?? obj.pending_rewards ?? '0'
-            ).replace(/,/g, ''),
-            apr: String(obj.apr ?? '0'),
-            lockPeriod: Number(obj.duration ?? 0)
-          }
-        }
+      const aprBps = position
+        ? estimateAprBps(position.tier, BigInt(position.amount))
+        : 0
+      return {
+        totalStaked,
+        userStaked: position ? position.amount : '0',
+        pendingRewards,
+        apr: String(aprBps / 100),
+        lockPeriod: position ? Math.round(position.durationMs / DAY_MS) : 0,
+        position,
+        rewardsPool: pools?.apyPool ?? null
       }
     } catch {
       console.warn(
@@ -1579,46 +1668,17 @@ class ContractService {
   }
 
   /**
-   * Stake LP tokens
+   * Stake native LUNES. `amount` is planck (8 decimals) sent as the call
+   * `value`; `durationMs` is the lock (7..365 days, in ms) — the contract's
+   * only argument. One active position per account.
    */
   async stake(
     amount: string,
+    durationMs: number,
     account: InjectedAccountWithMeta
   ): Promise<string | null> {
-    if (!this.api || !this.stakingContract) {
-      throw new Error('Staking contract not connected')
-    }
-
     try {
-      const injector = await web3FromAddress(account.address)
-
-      // Get gas required
-      const { gasRequired } = await this.stakingContract.query.stake(
-        account.address,
-        { gasLimit: this.makeDryGas() },
-        amount
-      )
-
-      return await new Promise((resolve, reject) => {
-        if (!this.stakingContract) {
-          reject(new Error('Staking contract not initialized'))
-          return
-        }
-        this.stakingContract.tx
-          .stake({ gasLimit: gasRequired, storageDepositLimit: null }, amount)
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
-            }
-          )
-          .catch(reject)
-      })
+      return await this.sendStakingTx('stake', account, [durationMs], amount)
     } catch (error) {
       console.error('Error staking:', error)
       throw error
@@ -1626,87 +1686,22 @@ class ContractService {
   }
 
   /**
-   * Unstake LP tokens
+   * Unstake the whole position (contract `unstake()` takes no args). Pays
+   * principal + rewards, minus a 5% penalty before the lock ends.
    */
-  async unstake(
-    amount: string,
-    account: InjectedAccountWithMeta
-  ): Promise<string | null> {
-    if (!this.api || !this.stakingContract) {
-      throw new Error('Staking contract not connected')
-    }
-
+  async unstake(account: InjectedAccountWithMeta): Promise<string | null> {
     try {
-      const injector = await web3FromAddress(account.address)
-
-      const { gasRequired } = await this.stakingContract.query.unstake(
-        account.address,
-        { gasLimit: this.makeDryGas() },
-        amount
-      )
-
-      return await new Promise((resolve, reject) => {
-        if (!this.stakingContract) {
-          reject(new Error('Staking contract not initialized'))
-          return
-        }
-        this.stakingContract.tx
-          .unstake({ gasLimit: gasRequired, storageDepositLimit: null }, amount)
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
-            }
-          )
-          .catch(reject)
-      })
+      return await this.sendStakingTx('unstake', account, [])
     } catch (error) {
       console.error('Error unstaking:', error)
       throw error
     }
   }
 
-  /**
-   * Claim Staking Rewards
-   */
+  /** Claim staking rewards without unstaking. */
   async claimRewards(account: InjectedAccountWithMeta): Promise<string | null> {
-    if (!this.api || !this.stakingContract) {
-      throw new Error('Staking contract not connected')
-    }
-
     try {
-      const injector = await web3FromAddress(account.address)
-
-      const { gasRequired } = await this.stakingContract.query.claimRewards(
-        account.address,
-        { gasLimit: this.makeDryGas() }
-      )
-
-      return await new Promise((resolve, reject) => {
-        if (!this.stakingContract) {
-          reject(new Error('Staking contract not initialized'))
-          return
-        }
-        this.stakingContract.tx
-          .claimRewards({ gasLimit: gasRequired, storageDepositLimit: null })
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
-            }
-          )
-          .catch(reject)
-      })
+      return await this.sendStakingTx('claimRewards', account, [])
     } catch (error) {
       console.error('Error claiming rewards:', error)
       throw error
@@ -1714,21 +1709,10 @@ class ContractService {
   }
 
   /**
-   * Get proposal details from the Staking/Governance contract
+   * Get proposal details from the Staking/Governance contract.
+   * YES votes = `vote_count`, NO votes = `votes_against` (see decodeProposal).
    */
-  async getProposal(proposalId: number): Promise<{
-    id: number
-    name: string
-    description: string
-    tokenAddress: string
-    proposer: string
-    votesYes: number
-    votesNo: number
-    votingDeadline: number
-    executed: boolean
-    active: boolean
-    fee: string
-  } | null> {
+  async getProposal(proposalId: number): Promise<GovernanceProposal | null> {
     if (!this.api || !this.stakingContract) return null
     try {
       const { result, output } = await this.stakingContract.query.getProposal(
@@ -1736,30 +1720,64 @@ class ContractService {
         { gasLimit: this.makeDryGas() },
         proposalId
       )
-
       if (result.isOk && output) {
-        const json = output.toJSON() as any
-        const obj = json?.ok ?? json
-        if (obj && typeof obj === 'object') {
-          return {
-            id: proposalId,
-            name: String(obj.name ?? ''),
-            description: String(obj.description ?? ''),
-            tokenAddress: String(obj.tokenAddress ?? ''),
-            proposer: String(obj.proposer ?? ''),
-            votesYes: Number(obj.votesYes ?? 0),
-            votesNo: Number(obj.votesNo ?? 0),
-            votingDeadline: Number(obj.votingDeadline ?? 0),
-            executed: Boolean(obj.executed),
-            active: Boolean(obj.active),
-            fee: String(obj.fee ?? '0')
-          }
-        }
+        return decodeProposal(output.toJSON(), proposalId)
       }
     } catch (err) {
       console.warn(`getProposal(${proposalId}): Query failed`, err)
     }
     return null
+  }
+
+  /**
+   * Funded reward pools: get_reward_pools() -> (apy_rewards_pool,
+   * trading_rewards_pool, total_credited_rewards). APY/bonus payouts are
+   * capped by `apyPool`; the rest stays owed (never paid from principal).
+   */
+  async getRewardPools(): Promise<{
+    apyPool: string
+    tradingPool: string
+    credited: string
+  } | null> {
+    if (!this.api || !this.stakingContract) return null
+    try {
+      const { result, output } =
+        await this.stakingContract.query.getRewardPools(
+          this.contracts?.staking || '',
+          { gasLimit: this.makeDryGas() }
+        )
+      const v = result?.isOk && output ? unwrapInk(output.toJSON()) : null
+      if (Array.isArray(v)) {
+        return {
+          apyPool: toPlanckString(v[0]),
+          tradingPool: toPlanckString(v[1]),
+          credited: toPlanckString(v[2])
+        }
+      }
+    } catch (err) {
+      console.warn('getRewardPools: Query failed', err)
+    }
+    return null
+  }
+
+  /** Live proposal fee (planck) from get_current_proposal_fee(). */
+  async getProposalFee(): Promise<string> {
+    const fallback = DEFAULT_PROPOSAL_FEE_PLANCK.toString()
+    if (!this.api || !this.stakingContract) return fallback
+    try {
+      const { result, output } =
+        await this.stakingContract.query.getCurrentProposalFee(
+          this.contracts?.staking || '',
+          { gasLimit: this.makeDryGas() }
+        )
+      if (result?.isOk && output) {
+        const fee = toPlanckString(unwrapInk(output.toJSON()))
+        if (fee !== '0') return fee
+      }
+    } catch (err) {
+      console.warn('getProposalFee: Query failed', err)
+    }
+    return fallback
   }
 
   /**
@@ -1776,9 +1794,9 @@ class ContractService {
         )
 
       if (result.isOk && output) {
-        const json = output.toJSON() as any
-        const inner = json?.ok ?? json
-        return String(inner ?? '0')
+        const json = output.toJSON()
+        if (inkError(json)) return '0'
+        return toPlanckString(unwrapInk(json))
       }
     } catch (err) {
       console.warn('getVotingPower: Query failed', err)
@@ -1787,51 +1805,21 @@ class ContractService {
   }
 
   /**
-   * Vote on a governance proposal (on-chain transaction)
+   * Vote on a governance proposal. The contract charges VOTE_COST
+   * (10 LUNES) per vote, sent as the call value; one vote per proposal.
    */
   async vote(
     proposalId: number,
     approve: boolean,
     account: InjectedAccountWithMeta
   ): Promise<string | null> {
-    if (!this.api || !this.stakingContract) {
-      throw new Error('Staking contract not connected')
-    }
-
     try {
-      const injector = await web3FromAddress(account.address)
-
-      const { gasRequired } = await this.stakingContract.query.vote(
-        account.address,
-        { gasLimit: this.makeDryGas() },
-        proposalId,
-        approve
+      return await this.sendStakingTx(
+        'vote',
+        account,
+        [proposalId, approve],
+        VOTE_COST_PLANCK.toString()
       )
-
-      return await new Promise((resolve, reject) => {
-        if (!this.stakingContract) {
-          reject(new Error('Staking contract not initialized'))
-          return
-        }
-        this.stakingContract.tx
-          .vote(
-            { gasLimit: gasRequired, storageDepositLimit: null },
-            proposalId,
-            approve
-          )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
-            }
-          )
-          .catch(reject)
-      })
     } catch (error) {
       console.error('Error voting:', error)
       throw error
@@ -1839,8 +1827,8 @@ class ContractService {
   }
 
   /**
-   * Create a listing proposal (on-chain transaction)
-   * Requires payment of proposal fee in native LUNES
+   * Create a listing proposal. Pays the live proposal fee (native LUNES) as
+   * the call value; requires ≥ 10,000 LUNES staked.
    */
   async createProposal(
     name: string,
@@ -1848,73 +1836,167 @@ class ContractService {
     tokenAddress: string,
     account: InjectedAccountWithMeta
   ): Promise<string | null> {
-    if (!this.api || !this.stakingContract) {
-      throw new Error('Staking contract not connected')
-    }
-
     try {
-      const injector = await web3FromAddress(account.address)
-
-      // Get the current proposal fee from contract
-      const { output: feeOutput } =
-        await this.stakingContract.query.getCurrentProposalFee(
-          account.address,
-          { gasLimit: this.makeDryGas() }
-        )
-
-      let fee = BigInt('100000000000') // Default 1000 LUNES (8 decimals)
-      if (feeOutput) {
-        const feeJson = feeOutput.toJSON() as any
-        const feeVal = feeJson?.ok ?? feeJson
-        if (feeVal) fee = BigInt(String(feeVal))
-      }
-
-      const { gasRequired } = await this.stakingContract.query.createProposal(
-        account.address,
-        { gasLimit: this.makeDryGas(), value: fee },
-        name,
-        description,
-        tokenAddress
+      const fee = await this.getProposalFee()
+      return await this.sendStakingTx(
+        'createProposal',
+        account,
+        [name, description, tokenAddress],
+        fee
       )
-
-      return await new Promise((resolve, reject) => {
-        if (!this.stakingContract) {
-          reject(new Error('Staking contract not initialized'))
-          return
-        }
-        this.stakingContract.tx
-          .createProposal(
-            { gasLimit: gasRequired, storageDepositLimit: null, value: fee },
-            name,
-            description,
-            tokenAddress
-          )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
-            }
-          )
-          .catch(reject)
-      })
     } catch (error) {
       console.error('Error creating proposal:', error)
       throw error
     }
   }
 
+  // ─── CopyVault (copy trading) ─────────────────────────────────
+  // The follower's OWN wallet signs deposit/withdraw on the vault contract
+  // (the contract credits/pays `caller`). The backend never moves vault funds;
+  // it only journals the finalized tx proven by { txHash, blockHash }.
+
   /**
-   * Get the total number of proposals (from listing stats)
+   * Deposit native LUNES into a CopyVault. `amountPlancks` is the payable
+   * call value (8-decimal plancks). Resolves only when finalized.
    */
-  async getListingStats(): Promise<{
-    totalProposals: number
-    approvedProposals: number
-  } | null> {
+  async depositToCopyVault(
+    vaultAddress: string,
+    amountPlancks: string,
+    account: InjectedAccountWithMeta
+  ): Promise<{ txHash: string; blockHash: string }> {
+    return this.sendCopyVaultTx('deposit', vaultAddress, account, {
+      value: amountPlancks,
+      args: []
+    })
+  }
+
+  /** Burn `sharesPlancks` vault shares; the contract pays the caller. */
+  async withdrawFromCopyVault(
+    vaultAddress: string,
+    sharesPlancks: string,
+    account: InjectedAccountWithMeta
+  ): Promise<{ txHash: string; blockHash: string }> {
+    return this.sendCopyVaultTx('withdraw', vaultAddress, account, {
+      args: [sharesPlancks]
+    })
+  }
+
+  /**
+   * Start the 24h cooldown required by the contract for a withdrawal larger
+   * than 10% of the vault shares (no funds move). Resolves on finality.
+   */
+  async requestCopyVaultWithdrawal(
+    vaultAddress: string,
+    sharesPlancks: string,
+    account: InjectedAccountWithMeta
+  ): Promise<{ txHash: string; blockHash: string }> {
+    return this.sendCopyVaultTx('requestWithdrawal', vaultAddress, account, {
+      args: [sharesPlancks]
+    })
+  }
+
+  /** Pending large-withdrawal request of `follower`, or null. */
+  async getCopyVaultWithdrawalRequest(
+    vaultAddress: string,
+    follower: string
+  ): Promise<{ shares: string; unlockAt: number } | null> {
+    if (!this.api) throw new Error('Not connected to blockchain')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vault: any = this.newContract(
+      this.api,
+      CopyVaultABI as any,
+      vaultAddress
+    )
+    const { result, output } = await vault.query.getWithdrawalRequest(
+      follower,
+      { gasLimit: this.makeDryGas(), storageDepositLimit: null },
+      follower
+    )
+    if (!result.isOk || !output) return null
+    let json = output.toJSON() as any
+    if (json && typeof json === 'object' && ('ok' in json || 'Ok' in json)) {
+      json = 'ok' in json ? json.ok : json.Ok
+    }
+    if (!json || typeof json !== 'object') return null
+    const shares = BigInt(json.shares).toString()
+    const requestedAt = Number(json.requestedAt ?? json.requested_at)
+    return { shares, unlockAt: requestedAt + COPY_VAULT_COOLDOWN_MS }
+  }
+
+  private async sendCopyVaultTx(
+    method: 'deposit' | 'withdraw' | 'requestWithdrawal',
+    vaultAddress: string,
+    account: InjectedAccountWithMeta,
+    call: { value?: string; args: string[] }
+  ): Promise<{ txHash: string; blockHash: string }> {
+    if (!this.api) throw new Error('Not connected to blockchain')
+    if (!this.isValidAddress(vaultAddress)) {
+      throw new Error('Copy vault is not deployed on-chain')
+    }
+    const signer = getSignerFor(account.address)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const vault: any = this.newContract(
+      this.api,
+      CopyVaultABI as any,
+      vaultAddress
+    )
+    const valueOpt = call.value !== undefined ? { value: call.value } : {}
+
+    const {
+      result: dryResult,
+      gasRequired,
+      output: dryOutput
+    } = await vault.query[method](
+      account.address,
+      { gasLimit: this.makeDryGas(), storageDepositLimit: null, ...valueOpt },
+      ...call.args
+    )
+    if (dryResult.isErr) {
+      throw new Error(this.decodeDispatchError(dryResult.asErr))
+    }
+    if (dryOutput) {
+      let dryJson = dryOutput.toJSON() as any
+      while (
+        dryJson &&
+        typeof dryJson === 'object' &&
+        ('ok' in dryJson || 'Ok' in dryJson)
+      ) {
+        dryJson = 'ok' in dryJson ? dryJson.ok : dryJson.Ok
+      }
+      const dryErr = dryJson?.err ?? dryJson?.Err
+      if (dryErr !== undefined && dryErr !== null) {
+        const errName =
+          typeof dryErr === 'string' ? dryErr : JSON.stringify(dryErr)
+        throw new Error(`CopyVault.${method} would revert on-chain: ${errName}`)
+      }
+    }
+
+    return await new Promise((resolve, reject) => {
+      vault.tx[method](
+        { gasLimit: gasRequired, storageDepositLimit: null, ...valueOpt },
+        ...call.args
+      )
+        .signAndSend(account.address, { signer }, (result: any) => {
+          if (result.dispatchError) {
+            reject(new Error(this.decodeDispatchError(result.dispatchError)))
+          } else if (result.status.isFinalized) {
+            // Fund-moving: resolve ONLY on finality. The finalized block hash
+            // is part of the proof the API verifies before crediting.
+            resolve({
+              txHash: result.txHash.toHex(),
+              blockHash: result.status.asFinalized.toHex()
+            })
+          }
+        })
+        .catch(reject)
+    })
+  }
+
+  /**
+   * get_listing_stats() -> (u32 proposals, u32 active_stakers, u32 approved).
+   * Proposal ids are 1..=totalProposals.
+   */
+  async getListingStats(): Promise<ListingStats | null> {
     if (!this.api || !this.stakingContract) return null
     try {
       const { result, output } =
@@ -1922,22 +2004,190 @@ class ContractService {
           this.contracts?.staking || '',
           { gasLimit: this.makeDryGas() }
         )
-
-      if (result.isOk && output) {
-        const json = output.toJSON() as any
-        const obj = json?.ok ?? json
-        if (obj && typeof obj === 'object') {
-          return {
-            totalProposals: Number(obj.totalProposals ?? 0),
-            approvedProposals: Number(obj.approvedProposals ?? 0)
-          }
-        }
-      }
+      if (result.isOk && output) return decodeListingStats(output.toJSON())
     } catch (err) {
       console.warn('getListingStats: Query failed', err)
     }
     return null
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // SPOT SETTLEMENT VAULT (spot orderbook custody) — P0-5
+  // ════════════════════════════════════════════════════════════════
+  // The user's OWN wallet funds and drains the spot_settlement vault
+  // (CONTRACTS.SPOT_SETTLEMENT). The contract credits/pays `caller`; spot-api
+  // reads the vault balance on-chain, it never moves vault funds itself.
+  // Every call is dry-run first (no broadcast on a SpotError) and resolves
+  // ONLY on isFinalized. Amounts are raw token units as decimal strings.
+
+  /** deposit_native (payable): `amountUnits` is the call value. */
+  async spotVaultDepositNative(
+    address: string,
+    amountUnits: string
+  ): Promise<{ txHash: string; blockHash: string }> {
+    return this.sendSpotVaultTx('depositNative', address, {
+      value: amountUnits,
+      args: []
+    })
+  }
+
+  /** deposit_psp22(token, amount). Requires an allowance ≥ amount first. */
+  async spotVaultDepositPsp22(
+    address: string,
+    token: string,
+    amountUnits: string
+  ): Promise<{ txHash: string; blockHash: string }> {
+    return this.sendSpotVaultTx('depositPsp22', address, {
+      args: [token, amountUnits]
+    })
+  }
+
+  async spotVaultWithdrawNative(
+    address: string,
+    amountUnits: string
+  ): Promise<{ txHash: string; blockHash: string }> {
+    return this.sendSpotVaultTx('withdrawNative', address, {
+      args: [amountUnits]
+    })
+  }
+
+  async spotVaultWithdrawPsp22(
+    address: string,
+    token: string,
+    amountUnits: string
+  ): Promise<{ txHash: string; blockHash: string }> {
+    return this.sendSpotVaultTx('withdrawPsp22', address, {
+      args: [token, amountUnits]
+    })
+  }
+
+  /**
+   * PSP22 approve(vault, amount) — EXACT amount, never infinite. PSP22
+   * approve sets (not adds) the allowance, and deposit_psp22 consumes it.
+   */
+  async spotVaultApprove(
+    address: string,
+    token: string,
+    amountUnits: string
+  ): Promise<{ txHash: string; blockHash: string }> {
+    const vault = this.requireSpotVault()
+    await this.ensureSpotVaultApi()
+    // Pair ABI carries the PSP22 messages with the repo's selectors.
+    const contract = this.newContract(this.api!, PairABI as any, token)
+    return this.dryRunAndSendFinalized(contract, 'approve', address, {
+      args: [vault, amountUnits]
+    })
+  }
+
+  /** Current allowance of the vault on `token` (raw units). */
+  async spotVaultAllowance(address: string, token: string): Promise<bigint> {
+    const vault = this.requireSpotVault()
+    await this.ensureSpotVaultApi()
+    return BigInt((await this.getAllowance(token, address, vault)) || '0')
+  }
+
+  private requireSpotVault(): string {
+    const vault = CONTRACTS.SPOT_SETTLEMENT
+    if (!this.isValidAddress(vault)) {
+      throw new Error('Spot settlement vault is not configured')
+    }
+    return vault
+  }
+
+  private async ensureSpotVaultApi(): Promise<void> {
+    if (!this.api || !this.isConnected) await this.connect(NETWORK.name)
+    if (!this.api) throw new Error('Not connected to blockchain')
+  }
+
+  private async sendSpotVaultTx(
+    method: 'depositNative' | 'depositPsp22' | 'withdrawNative' | 'withdrawPsp22',
+    address: string,
+    call: { value?: string; args: string[] }
+  ): Promise<{ txHash: string; blockHash: string }> {
+    const vault = this.requireSpotVault()
+    await this.ensureSpotVaultApi()
+    const contract = this.newContract(this.api!, SpotSettlementABI as any, vault)
+    return this.dryRunAndSendFinalized(contract, method, address, call)
+  }
+
+  private async dryRunAndSendFinalized(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    contract: any,
+    method: string,
+    address: string,
+    call: { value?: string; args: string[] }
+  ): Promise<{ txHash: string; blockHash: string }> {
+    const signer = getSignerFor(address)
+    const valueOpt = call.value !== undefined ? { value: call.value } : {}
+    const {
+      result: dryResult,
+      gasRequired,
+      output: dryOutput
+    } = await contract.query[method](
+      address,
+      { gasLimit: this.makeDryGas(), storageDepositLimit: null, ...valueOpt },
+      ...call.args
+    )
+    if (dryResult.isErr) {
+      throw new Error(this.decodeDispatchError(dryResult.asErr))
+    }
+    if (dryOutput) {
+      let json = dryOutput.toJSON() as any
+      while (json && typeof json === 'object' && ('ok' in json || 'Ok' in json)) {
+        json = 'ok' in json ? json.ok : json.Ok
+      }
+      const err = json?.err ?? json?.Err
+      if (err !== undefined && err !== null) {
+        throw new Error(describeSpotVaultError(err))
+      }
+    }
+
+    return await new Promise((resolve, reject) => {
+      contract.tx[method](
+        { gasLimit: gasRequired, storageDepositLimit: null, ...valueOpt },
+        ...call.args
+      )
+        .signAndSend(address, { signer }, (result: any) => {
+          if (result.dispatchError) {
+            reject(new Error(this.decodeDispatchError(result.dispatchError)))
+          } else if (result.status.isFinalized) {
+            // Fund-moving: resolve ONLY on finality (never isInBlock).
+            resolve({
+              txHash: result.txHash.toHex(),
+              blockHash: result.status.asFinalized.toHex()
+            })
+          }
+        })
+        .catch(reject)
+    })
+  }
+  // ═══════════════════════ end SPOT SETTLEMENT VAULT ═══════════════
+}
+
+/** Human message for a spot_settlement `SpotError` / PSP22Error dry-run. */
+function describeSpotVaultError(err: unknown): string {
+  const name =
+    typeof err === 'string'
+      ? err
+      : err && typeof err === 'object'
+        ? Object.keys(err as Record<string, unknown>)[0]
+        : String(err)
+  const key = (name || '').charAt(0).toLowerCase() + (name || '').slice(1)
+  const messages: Record<string, string> = {
+    depositTooSmall: 'Below the vault minimum deposit.',
+    zeroAmount: 'Enter an amount.',
+    withdrawExceedsBalance: 'Exceeds your available vault balance.',
+    contractPaused: 'The spot vault is paused.',
+    pSP22TransferFailed:
+      'Token transfer failed — check your token balance and allowance.',
+    psp22TransferFailed:
+      'Token transfer failed — check your token balance and allowance.',
+    nativeTransferFailed: 'The vault could not send LUNES.',
+    reentrancy: 'Vault busy — try again.',
+    insufficientBalance: 'Insufficient balance.',
+    insufficientAllowance: 'Allowance too low — approve again.'
+  }
+  return messages[key] ?? `Spot vault call would revert on-chain: ${name}`
 }
 
 // Export singleton instance

@@ -44,10 +44,12 @@ export function agentAuth(requiredPermissions?: AgentApiKeyPermission[]) {
           result.permissions.includes(p),
         );
         if (!hasAll) {
+          // Do not echo the key's granted scopes (BE-18): a leaked key
+          // should not double as a permission oracle.
           return res.status(403).json({
             error: 'Insufficient permissions',
+            code: 'INSUFFICIENT_PERMISSIONS',
             required: requiredPermissions,
-            granted: result.permissions,
           });
         }
       }
@@ -65,8 +67,8 @@ export function agentAuth(requiredPermissions?: AgentApiKeyPermission[]) {
       };
 
       next();
-    } catch {
-      return res.status(500).json({ error: 'Authentication failed' });
+    } catch (err: unknown) {
+      next(err);
     }
   };
 }

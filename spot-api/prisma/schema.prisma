@@ -57,6 +57,11 @@ enum TradeSettlementStatus {
   SETTLED
   FAILED
   SKIPPED
+  // A settle_trade extrinsic was broadcast but its outcome is unknown (e.g.
+  // timeout before finality). Never auto-resubmitted: the reconciler checks
+  // the chain for the persisted extrinsic hash within its mortality window and
+  // only then resolves to SETTLED / FAILED (BE-07).
+  RECONCILE_REQUIRED
 }
 
 enum CopyVaultStatus {
@@ -249,6 +254,15 @@ model Trade {
   nextSettlementRetryAt   DateTime?
   txHash                  String?               @unique
   settledAt               DateTime?
+  // Submission marker persisted BEFORE broadcasting settle_trade (BE-07): the
+  // signed extrinsic hash, relayer nonce and mortal-era window. While set, the
+  // trade is never re-submitted until the chain proves the extrinsic can no
+  // longer land (finalized head past birth + mortality without inclusion).
+  submittedTxHash         String?
+  submittedRelayerNonce   Int?
+  submittedBirthBlock     Int?
+  submittedMortality      Int?
+  submittedAt             DateTime?
   createdAt               DateTime              @default(now())
 
   pair       Pair  @relation(fields: [pairId], references: [id])
@@ -259,6 +273,7 @@ model Trade {
   @@index([makerAddress])
   @@index([takerAddress])
   @@index([settlementStatus, nextSettlementRetryAt])
+  @@index([settlementStatus, settledAt])
 }
 
 model Candle {
@@ -457,6 +472,9 @@ model CopyVaultPosition {
   highWaterMarkValue Decimal  @default(0) @db.Decimal(36, 18)
   feePaid            Decimal  @default(0) @db.Decimal(36, 18)
   realizedPnl        Decimal  @default(0) @db.Decimal(36, 18)
+  // Follower-level stop-loss preference (signed at deposit). Stored per
+  // position — a follower can never rewrite the vault-wide risk config (BE-04).
+  stopLossPct        Decimal? @db.Decimal(10, 4)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -473,7 +491,9 @@ model CopyVaultDeposit {
   token           String
   amount          Decimal  @db.Decimal(36, 18)
   sharesMinted    Decimal  @db.Decimal(36, 18)
-  txHash          String?
+  // Finalized follower-signed tx proving the deposit; unique = replay guard.
+  txHash          String?  @unique
+  blockHash       String?
   createdAt       DateTime @default(now())
 
   vault CopyVault @relation(fields: [vaultId], references: [id])
@@ -492,7 +512,9 @@ model CopyVaultWithdrawal {
   feeAmount       Decimal  @db.Decimal(36, 18)
   netAmount       Decimal  @db.Decimal(36, 18)
   profitAmount    Decimal  @db.Decimal(36, 18)
-  txHash          String?
+  // Finalized follower-signed tx proving the withdrawal; unique = replay guard.
+  txHash          String?  @unique
+  blockHash       String?
   createdAt       DateTime @default(now())
 
   vault CopyVault @relation(fields: [vaultId], references: [id])
@@ -1252,19 +1274,23 @@ model RewardWeek {
 }
 
 model UserReward {
-  id            String    @id @default(uuid())
-  rewardWeekId  String
-  walletAddress String
-  amount        Decimal   @db.Decimal(36, 18)
-  rewardType    String // LEADER | TRADER (staker claims live on-chain)
-  rank          Int?
-  weight        Decimal?  @db.Decimal(36, 18)
-  claimed       Boolean   @default(false)
-  claimedAt     DateTime?
-  txHash        String? // On-chain payout tx hash
-  payoutStatus  String    @default("PENDING") // PENDING | SUBMITTED | CONFIRMED | FAILED
-  payoutError   String?
-  createdAt     DateTime  @default(now())
+  id                String    @id @default(uuid())
+  rewardWeekId      String
+  walletAddress     String
+  amount            Decimal   @db.Decimal(36, 18)
+  rewardType        String // LEADER | TRADER (staker claims live on-chain)
+  rank              Int?
+  weight            Decimal?  @db.Decimal(36, 18)
+  claimed           Boolean   @default(false)
+  claimedAt         DateTime?
+  txHash            String? // On-chain payout tx hash (persisted BEFORE broadcast)
+  payoutStatus      String    @default("PENDING") // PENDING | SUBMITTED | CONFIRMED | FAILED | UNKNOWN (ambiguous; reconciled by hash, never auto-re-paid)
+  payoutError       String?
+  // Mortal era of the submitted transfer: valid only in [birth, birth+mortality)
+  payoutBirthBlock  Int?
+  payoutMortality   Int?
+  payoutSubmittedAt DateTime?
+  createdAt         DateTime  @default(now())
 
   rewardWeek RewardWeek @relation(fields: [rewardWeekId], references: [id])
 
@@ -1272,4 +1298,44 @@ model UserReward {
   @@index([walletAddress, claimed])
   @@index([rewardWeekId])
   @@index([payoutStatus])
+}
+
+// ─── Beta feedback & client telemetry (P0-10) ───────────────────
+// Anonymous tester reports from the DEX "Report a bug" modal. No IP / e-mail
+// is stored; walletAddress only when the tester chose to attach it.
+model ClientFeedback {
+  id            String   @id @default(uuid())
+  category      String // BUG | UX | FEATURE | FAUCET | OTHER
+  message       String
+  walletAddress String?
+  txHash        String?
+  page          String?
+  userAgent     String?
+  appVersion    String?
+  network       String?
+  status        String   @default("NEW") // NEW | TRIAGED | CLOSED
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([category, createdAt])
+}
+
+// Frontend runtime errors (ErrorBoundary, window.onerror, unhandledrejection),
+// deduplicated by a server-side fingerprint per app version.
+model ClientError {
+  id          String   @id @default(uuid())
+  fingerprint String
+  appVersion  String   @default("")
+  source      String // boundary | window | unhandledrejection | manual
+  message     String
+  stack       String?
+  page        String?
+  userAgent   String?
+  network     String?
+  count       Int      @default(1)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  @@unique([fingerprint, appVersion])
+  @@index([lastSeenAt])
 }

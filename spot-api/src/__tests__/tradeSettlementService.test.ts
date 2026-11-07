@@ -164,9 +164,11 @@ describe('tradeSettlementService', () => {
         }),
       }),
     );
-    expect(mockPrisma.trade.update).toHaveBeenCalledWith(
+    // BE-07: results are applied with an optimistic guard on the attempt
+    // number this worker claimed (updateMany), not an unconditional update.
+    expect(mockPrisma.trade.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'trade-1' },
+        where: { id: 'trade-1', settlementAttempts: 1 },
         data: expect.objectContaining({
           settlementStatus: 'SETTLED',
           txHash: '0xabc',
@@ -195,9 +197,9 @@ describe('tradeSettlementService', () => {
 
     await tradeSettlementService.processNewTradeSettlements([baseInput]);
 
-    expect(mockPrisma.trade.update).toHaveBeenCalledWith(
+    expect(mockPrisma.trade.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'trade-1' },
+        where: { id: 'trade-1', settlementAttempts: 1 },
         data: expect.objectContaining({
           settlementStatus: 'FAILED',
           settlementError: 'temporary failure',
@@ -241,7 +243,12 @@ describe('tradeSettlementService', () => {
 
     const result = await tradeSettlementService.retryPendingSettlements();
 
-    expect(result).toEqual({ processed: 1, settled: 1, failed: 0 });
+    expect(result).toEqual({
+      processed: 1,
+      settled: 1,
+      failed: 0,
+      reconciled: 0,
+    });
     expect(mockPrisma.trade.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -254,14 +261,18 @@ describe('tradeSettlementService', () => {
         }),
       }),
     );
-    expect(mockSettlementService.settleTrades).toHaveBeenCalledWith([
-      expect.objectContaining({
-        tradeId: 'trade-1',
-        makerOrder: expect.objectContaining({
-          expiresAt: expect.any(Date),
+    expect(mockSettlementService.settleTrades).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          tradeId: 'trade-1',
+          makerOrder: expect.objectContaining({
+            expiresAt: expect.any(Date),
+          }),
         }),
-      }),
-    ]);
+      ],
+      // BE-07: pre-broadcast persistence hook.
+      expect.objectContaining({ onBeforeBroadcast: expect.any(Function) }),
+    );
   });
 
   describe('post-settlement affiliate hook (Task 2)', () => {

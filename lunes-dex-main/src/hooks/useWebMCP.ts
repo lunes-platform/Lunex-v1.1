@@ -16,9 +16,6 @@ declare global {
   }
 }
 
-const WEBMCP_CDN =
-  'https://unpkg.com/@anthropic-ai/webmcp@latest/dist/webmcp.min.js'
-
 // Available routes in the app
 const APP_ROUTES: Record<string, string> = {
   swap: '/swap',
@@ -38,7 +35,6 @@ export function useWebMCP() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    // Try native window.ai first, fallback to CDN library
     const init = () => {
       if (!window.WebMCP) return
 
@@ -248,15 +244,9 @@ export function useWebMCP() {
       )
     }
 
-    // Load WebMCP library via CDN
-    if (window.WebMCP) {
-      init()
-    } else {
-      const script = document.createElement('script')
-      script.src = WEBMCP_CDN
-      script.async = true
-      script.onload = init
-      document.head.appendChild(script)
-    }
+    // FE-02: only a WebMCP the browser/extension already provides is used.
+    // Third-party code is never loaded at runtime (the old unpkg `@latest`
+    // script had no SRI, 404s today, and is blocked by the prod CSP).
+    if (window.WebMCP) init()
   }, [navigate])
 }

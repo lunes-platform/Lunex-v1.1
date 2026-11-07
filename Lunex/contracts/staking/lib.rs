@@ -83,6 +83,9 @@ pub mod staking_contract {
         InvalidAmount,
         /// No stake found - user must have active staking to vote
         NoStakeFound,
+        /// The funded rewards pool cannot cover this payout (principal is
+        /// never used to pay rewards/bonuses)
+        InsufficientRewardsPool,
     }
 
     /// Governance proposal for project listing
@@ -135,7 +138,7 @@ pub mod staking_contract {
         pub amount: Balance,
         /// Timestamp when stake was created
         pub start_time: Timestamp,
-        /// Staking duration in blocks
+        /// Staking duration in milliseconds (unlock = start_time + duration)
         pub duration: u64,
         /// Last reward claim timestamp
         pub last_claim: Timestamp,
@@ -263,6 +266,15 @@ pub mod staking_contract {
 
     #[ink(event)]
     pub struct TradingRewardsFunded {
+        pub amount: Balance,
+        pub timestamp: Timestamp,
+    }
+
+    /// APY rewards pool funded (anyone may fund it; penalties also flow in)
+    #[ink(event)]
+    pub struct ApyRewardsFunded {
+        #[ink(topic)]
+        pub funder: AccountId,
         pub amount: Balance,
         pub timestamp: Timestamp,
     }
@@ -408,11 +420,23 @@ pub mod staking_contract {
         /// Minimum stake amount (1000 LUNES)
         pub const MIN_STAKE: Balance = 100_000_000_000; // 1000 * 10^8
 
-        /// Minimum staking duration (7 days in blocks, ~2 sec per block)
-        pub const MIN_DURATION: u64 = 7 * 24 * 60 * 30; // 7 days
+        /// One day in milliseconds. ALL durations in this contract are in ms
+        /// because they are compared/added to `block_timestamp()` (ms).
+        pub const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 
-        /// Maximum staking duration (365 days)
-        pub const MAX_DURATION: u64 = 365 * 24 * 60 * 30; // 1 year
+        /// One (365-day) year in milliseconds — APY denominator.
+        pub const YEAR_MS: u64 = 365 * DAY_MS;
+
+        /// Minimum staking duration (7 days, in ms)
+        pub const MIN_DURATION: u64 = 7 * DAY_MS;
+
+        /// Maximum staking duration (365 days, in ms)
+        pub const MAX_DURATION: u64 = 365 * DAY_MS;
+
+        /// Tier thresholds (staking duration, in ms)
+        pub const SILVER_MIN_DURATION: u64 = 31 * DAY_MS;
+        pub const GOLD_MIN_DURATION: u64 = 91 * DAY_MS;
+        pub const PLATINUM_MIN_DURATION: u64 = 181 * DAY_MS;
 
         /// === REWARD RATES POR TIER (em basis points) ===
 
@@ -452,15 +476,15 @@ pub mod staking_contract {
 
         /// Top 100 early adopters: +50% for 3 months
         pub const TOP_100_BONUS: u32 = 5000; // +50% = 5000 basis points
-        pub const TOP_100_DURATION: u64 = 90 * 24 * 60 * 30; // 3 months
+        pub const TOP_100_DURATION: u64 = 90 * DAY_MS; // 3 months
 
         /// Top 500 early adopters: +25% for 2 months  
         pub const TOP_500_BONUS: u32 = 2500; // +25% = 2500 basis points
-        pub const TOP_500_DURATION: u64 = 60 * 24 * 60 * 30; // 2 months
+        pub const TOP_500_DURATION: u64 = 60 * DAY_MS; // 2 months
 
         /// Top 1000 early adopters: +10% for 1 month
         pub const TOP_1000_BONUS: u32 = 1000; // +10% = 1000 basis points
-        pub const TOP_1000_DURATION: u64 = 30 * 24 * 60 * 30; // 1 month
+        pub const TOP_1000_DURATION: u64 = 30 * DAY_MS; // 1 month
 
         /// === GOVERNANCE BONUSES ===
 
@@ -486,8 +510,8 @@ pub mod staking_contract {
         /// Early unstaking penalty (5%)
         pub const EARLY_PENALTY_RATE: u32 = 500; // 5% = 500 basis points
 
-        /// Voting period for proposals (14 days)
-        pub const VOTING_PERIOD: u64 = 14 * 24 * 60 * 30; // 14 days in blocks
+        /// Voting period for proposals (14 days, in ms — added to block_timestamp)
+        pub const VOTING_PERIOD: u64 = 14 * DAY_MS;
 
         /// Minimum voting power required to create proposal (10,000 LUNES staked)
         pub const MIN_PROPOSAL_POWER: Balance = 1_000_000_000_000; // 10,000 * 10^8
@@ -573,6 +597,24 @@ pub mod staking_contract {
         total_trading_rewards_distributed: Balance,
         /// Taxa atual para criação de propostas (ajustável via governança)
         current_proposal_fee: Balance,
+
+        /// === SOLVÊNCIA (rewards nunca saem do principal) ===
+        ///
+        /// Saldo do contrato = principal (`total_staked`)
+        ///   + trading rewards ainda não distribuídas (`trading_rewards_pool`)
+        ///   + trading rewards já creditadas em `stake.pending_rewards`
+        ///     (`total_credited_rewards`)
+        ///   + pool financiado de APY/bônus (`apy_rewards_pool`)
+        ///   + excedente (taxas de voto/proposta retidas).
+        /// APY e bônus de governança só são pagos de `apy_rewards_pool`.
+        apy_rewards_pool: Balance,
+        /// Soma de `stake.pending_rewards` (trading rewards creditadas, lastreadas).
+        total_credited_rewards: Balance,
+        /// APY acumulado mas não pago por falta de pool (passivo NÃO lastreado,
+        /// sacável quando o pool for financiado, inclusive após o unstake).
+        owed_rewards: Mapping<AccountId, Balance>,
+        /// Snapshot do pool no início de uma distribuição paginada.
+        distribution_amount: Balance,
     }
 
     impl StakingContract {
@@ -605,6 +647,10 @@ pub mod staking_contract {
                 next_campaign_id: 1,
                 total_trading_rewards_distributed: 0,
                 current_proposal_fee: constants::PROPOSAL_FEE, // Inicia com 1,000 LUNES
+                apy_rewards_pool: 0,
+                total_credited_rewards: 0,
+                owed_rewards: Mapping::default(),
+                distribution_amount: 0,
             };
 
             // Campos já inicializados diretamente no struct
@@ -674,7 +720,8 @@ pub mod staking_contract {
         // STAKING & REWARDS
         // ========================================
 
-        /// Stakes LUNES tokens for a specified duration
+        /// Stakes native LUNES (transferred value) for `duration` milliseconds
+        /// (MIN_DURATION..=MAX_DURATION, i.e. 7..=365 days).
         #[ink(message, payable)]
         pub fn stake(&mut self, duration: u64) -> Result<(), StakingError> {
             self.ensure_not_paused()?;
@@ -755,12 +802,23 @@ pub mod staking_contract {
             Ok(())
         }
 
-        /// Unstakes tokens and claims rewards
+        /// Unstakes the whole position.
+        ///
+        /// Pays: principal − early penalty (always, never capped), the
+        /// trading rewards credited to the position (backed), and the APY
+        /// accrued capped by `apy_rewards_pool`. Any APY the pool cannot cover
+        /// stays in `owed_rewards` (claimable later via `claim_rewards`).
+        /// The 5% early-unstake penalty goes to `apy_rewards_pool`.
         #[ink(message)]
         pub fn unstake(&mut self) -> Result<(), StakingError> {
             self.ensure_not_paused()?;
             self.acquire_lock()?;
+            let result = self.unstake_inner();
+            self.release_lock();
+            result
+        }
 
+        fn unstake_inner(&mut self) -> Result<(), StakingError> {
             let caller = self.env().caller();
             let current_time = self.env().block_timestamp();
 
@@ -768,24 +826,41 @@ pub mod staking_contract {
                 .stakes
                 .get(&caller)
                 .ok_or(StakingError::NoActiveStake)?;
-
             if !stake.active {
-                self.release_lock();
                 return Err(StakingError::NoActiveStake);
             }
 
-            // Calculate rewards and penalties
-            let (rewards, penalty) = self.calculate_rewards_and_penalty(&stake, current_time)?;
-            let total_amount = stake
+            let (accrued, penalty) = self.calculate_rewards_and_penalty(&stake, current_time)?;
+            let credited = stake.pending_rewards;
+            let (apy_paid, apy_unpaid) = self.split_apy_payout(caller, accrued)?;
+
+            let principal_out = stake
                 .amount
-                .checked_add(rewards)
-                .ok_or(StakingError::Overflow)?
                 .checked_sub(penalty)
                 .ok_or(StakingError::Overflow)?;
+            let rewards_out = credited
+                .checked_add(apy_paid)
+                .ok_or(StakingError::Overflow)?;
+            let total_out = principal_out
+                .checked_add(rewards_out)
+                .ok_or(StakingError::Overflow)?;
 
-            // Update state
+            // Effects
             stake.active = false;
+            stake.pending_rewards = 0;
+            stake.last_claim = current_time;
             self.stakes.insert(&caller, &stake);
+            self.owed_rewards.insert(&caller, &apy_unpaid);
+            self.apy_rewards_pool = self
+                .apy_rewards_pool
+                .checked_sub(apy_paid)
+                .ok_or(StakingError::Overflow)?
+                .checked_add(penalty)
+                .ok_or(StakingError::Overflow)?;
+            self.total_credited_rewards = self
+                .total_credited_rewards
+                .checked_sub(credited)
+                .ok_or(StakingError::Overflow)?;
             self.active_stakers = self
                 .active_stakers
                 .checked_sub(1)
@@ -796,91 +871,110 @@ pub mod staking_contract {
                 .ok_or(StakingError::Overflow)?;
             self.total_rewards_distributed = self
                 .total_rewards_distributed
-                .checked_add(rewards)
+                .checked_add(rewards_out)
                 .ok_or(StakingError::Overflow)?;
 
-            // Transfer tokens back to user
-            if self.env().transfer(caller, total_amount).is_err() {
-                self.release_lock();
+            // Interaction (an Err reverts every effect above on-chain)
+            if total_out > 0 && self.env().transfer(caller, total_out).is_err() {
                 return Err(StakingError::InsufficientBalance);
             }
 
-            // Emit event
             self.env().emit_event(Unstaked {
                 staker: caller,
                 amount: stake.amount,
-                rewards,
+                rewards: rewards_out,
                 penalty,
                 timestamp: current_time,
             });
-
-            self.release_lock();
             Ok(())
         }
 
-        /// Claims pending rewards without unstaking
+        /// Claims rewards without unstaking: credited trading rewards (backed)
+        /// + APY capped by `apy_rewards_pool`. The uncovered remainder is kept
+        /// in `owed_rewards` — never paid from principal. Also works after
+        /// unstake when `owed_rewards > 0`. Returns Ok with no transfer when
+        /// nothing is payable right now.
         #[ink(message)]
         pub fn claim_rewards(&mut self) -> Result<(), StakingError> {
             self.ensure_not_paused()?;
             self.acquire_lock()?;
+            let result = self.claim_rewards_inner();
+            self.release_lock();
+            result
+        }
 
+        fn claim_rewards_inner(&mut self) -> Result<(), StakingError> {
             let caller = self.env().caller();
             let current_time = self.env().block_timestamp();
 
-            let mut stake = self
-                .stakes
-                .get(&caller)
-                .ok_or(StakingError::NoActiveStake)?;
-
-            if !stake.active {
-                self.release_lock();
+            let active_stake = self.stakes.get(&caller).filter(|s| s.active);
+            let owed_before = self.owed_rewards.get(&caller).unwrap_or(0);
+            if active_stake.is_none() && owed_before == 0 {
                 return Err(StakingError::NoActiveStake);
             }
 
-            let rewards = self.calculate_pending_rewards(&stake, current_time)?;
+            let (accrued, credited) = match &active_stake {
+                Some(stake) => (
+                    self.calculate_pending_rewards(stake, current_time)?,
+                    stake.pending_rewards,
+                ),
+                None => (0, 0),
+            };
+            let (apy_paid, apy_unpaid) = self.split_apy_payout(caller, accrued)?;
+            let payout = credited
+                .checked_add(apy_paid)
+                .ok_or(StakingError::Overflow)?;
 
-            if rewards == 0 {
-                self.release_lock();
-                return Ok(()); // No rewards to claim
+            // Effects
+            if let Some(mut stake) = active_stake {
+                stake.last_claim = current_time;
+                stake.pending_rewards = 0;
+                self.stakes.insert(&caller, &stake);
+            }
+            self.owed_rewards.insert(&caller, &apy_unpaid);
+            self.apy_rewards_pool = self
+                .apy_rewards_pool
+                .checked_sub(apy_paid)
+                .ok_or(StakingError::Overflow)?;
+            self.total_credited_rewards = self
+                .total_credited_rewards
+                .checked_sub(credited)
+                .ok_or(StakingError::Overflow)?;
+            self.total_rewards_distributed = self
+                .total_rewards_distributed
+                .checked_add(payout)
+                .ok_or(StakingError::Overflow)?;
+
+            if payout == 0 {
+                return Ok(()); // nothing payable now; accrual moved to owed
             }
 
-            // CEI (Checks-Effects-Interactions): perform the external transfer
-            // BEFORE mutating the stake state. If we zeroed pending_rewards
-            // first and the transfer failed, the user would have lost the
-            // rewards (state says "claimed" but no funds moved).
-            //
-            // Order:
-            //   1. Compute new state in memory.
-            //   2. Transfer (external interaction).
-            //   3. Persist the new state only after transfer succeeds.
-            if self.env().transfer(caller, rewards).is_err() {
-                self.release_lock();
+            // Interaction (an Err reverts every effect above on-chain)
+            if self.env().transfer(caller, payout).is_err() {
                 return Err(StakingError::InsufficientBalance);
             }
 
-            // Transfer succeeded — now persist the bookkeeping. If any of
-            // these checked_add operations overflows we still released the
-            // funds, but the stake state stays consistent with the previous
-            // pending_rewards (so a retry would re-pay — extremely unlikely
-            // path because total_rewards_distributed only grows).
-            stake.last_claim = current_time;
-            stake.pending_rewards = 0;
-            self.stakes.insert(&caller, &stake);
-
-            self.total_rewards_distributed = self
-                .total_rewards_distributed
-                .checked_add(rewards)
-                .ok_or(StakingError::Overflow)?;
-
-            // Emit event
             self.env().emit_event(RewardsClaimed {
                 staker: caller,
-                amount: rewards,
+                amount: payout,
                 timestamp: current_time,
             });
-
-            self.release_lock();
             Ok(())
+        }
+
+        /// (apy paid now, apy left owed) for `accrued` + previously owed APY,
+        /// capped by the funded `apy_rewards_pool`.
+        fn split_apy_payout(
+            &self,
+            account: AccountId,
+            accrued: Balance,
+        ) -> Result<(Balance, Balance), StakingError> {
+            let due = accrued
+                .checked_add(self.owed_rewards.get(&account).unwrap_or(0))
+                .ok_or(StakingError::Overflow)?;
+            let paid = due.min(self.apy_rewards_pool);
+            let unpaid = due.checked_sub(paid).ok_or(StakingError::Overflow)?;
+            Ok((paid, unpaid))
         }
 
         /// Creates a new project listing proposal
@@ -1205,18 +1299,38 @@ pub mod staking_contract {
 
         /// Gets current rewards for a staker
         #[ink(message)]
+        /// Total rewards owed to `account`: APY accrued since the last claim
+        /// + previously owed APY + credited trading rewards. What is payable
+        /// right now is capped by `get_reward_pools().0` (APY part).
         pub fn get_pending_rewards(&self, account: AccountId) -> Result<Balance, StakingError> {
-            let stake = self
-                .stakes
-                .get(&account)
-                .ok_or(StakingError::NoActiveStake)?;
-
-            if !stake.active {
-                return Err(StakingError::NoActiveStake);
+            let owed = self.owed_rewards.get(&account).unwrap_or(0);
+            match self.stakes.get(&account).filter(|s| s.active) {
+                Some(stake) => {
+                    let current_time = self.env().block_timestamp();
+                    self.calculate_pending_rewards(&stake, current_time)?
+                        .checked_add(stake.pending_rewards)
+                        .and_then(|v| v.checked_add(owed))
+                        .ok_or(StakingError::Overflow)
+                }
+                None if owed > 0 => Ok(owed),
+                None => Err(StakingError::NoActiveStake),
             }
+        }
 
-            let current_time = self.env().block_timestamp();
-            self.calculate_pending_rewards(&stake, current_time)
+        /// APY not paid yet because the pool was short (claimable later).
+        #[ink(message)]
+        pub fn get_owed_rewards(&self, account: AccountId) -> Balance {
+            self.owed_rewards.get(&account).unwrap_or(0)
+        }
+
+        /// (apy_rewards_pool, trading_rewards_pool, total_credited_rewards).
+        #[ink(message)]
+        pub fn get_reward_pools(&self) -> (Balance, Balance, Balance) {
+            (
+                self.apy_rewards_pool,
+                self.trading_rewards_pool,
+                self.total_credited_rewards,
+            )
         }
 
         /// Gets voting power for an account
@@ -1603,6 +1717,28 @@ pub mod staking_contract {
             Ok(())
         }
 
+        /// Funds the APY / governance-bonus pool with the transferred LUNES.
+        /// Open to anyone (treasury, team, rewards contract). This pool is the
+        /// ONLY source for APY rewards and governance bonuses.
+        #[ink(message, payable)]
+        pub fn fund_apy_rewards(&mut self) -> Result<(), StakingError> {
+            self.ensure_not_paused()?;
+            let amount = self.env().transferred_value();
+            if amount == 0 {
+                return Err(StakingError::ZeroAmount);
+            }
+            self.apy_rewards_pool = self
+                .apy_rewards_pool
+                .checked_add(amount)
+                .ok_or(StakingError::Overflow)?;
+            self.env().emit_event(ApyRewardsFunded {
+                funder: self.env().caller(),
+                amount,
+                timestamp: self.env().block_timestamp(),
+            });
+            Ok(())
+        }
+
         /// Distribui trading rewards para todos os stakers ativos (apenas admin)
         /// Para compatibilidade, distribui tudo em uma página
         #[ink(message)]
@@ -1645,8 +1781,15 @@ pub mod staking_contract {
                 return Ok((0, true, None)); // Nenhum staker ativo
             }
 
-            let amount_to_distribute = self.trading_rewards_pool;
             let start = start_index.unwrap_or(0);
+            // Snapshot at page 0 so every page shares the same base amount;
+            // each credit is still capped by what is left in the pool, so the
+            // total credited can never exceed what was funded.
+            if start == 0 || self.distribution_amount == 0 {
+                self.distribution_amount = self.trading_rewards_pool;
+            }
+            let amount_to_distribute = self.distribution_amount;
+            let mut credited_this_page: Balance = 0;
             let max_batch = batch_size.unwrap_or(100).min(100); // Limita a 100 para evitar gas excessivo
             let end = start
                 .checked_add(max_batch)
@@ -1670,11 +1813,23 @@ pub mod staking_contract {
                                 .checked_mul(weight)
                                 .ok_or(StakingError::Overflow)?
                                 .checked_div(total_weight)
-                                .ok_or(StakingError::Overflow)?;
+                                .ok_or(StakingError::Overflow)?
+                                .min(self.trading_rewards_pool);
 
                             if reward > 0 {
                                 stake.pending_rewards = stake
                                     .pending_rewards
+                                    .checked_add(reward)
+                                    .ok_or(StakingError::Overflow)?;
+                                self.trading_rewards_pool = self
+                                    .trading_rewards_pool
+                                    .checked_sub(reward)
+                                    .ok_or(StakingError::Overflow)?;
+                                self.total_credited_rewards = self
+                                    .total_credited_rewards
+                                    .checked_add(reward)
+                                    .ok_or(StakingError::Overflow)?;
+                                credited_this_page = credited_this_page
                                     .checked_add(reward)
                                     .ok_or(StakingError::Overflow)?;
 
@@ -1691,15 +1846,17 @@ pub mod staking_contract {
             let is_complete = end >= self.staker_index;
             let next_index = if is_complete { None } else { Some(end) };
 
+            self.total_trading_rewards_distributed = self
+                .total_trading_rewards_distributed
+                .checked_add(credited_this_page)
+                .ok_or(StakingError::Overflow)?;
+
             // Se é a primeira página ou a distribuição está completa, atualiza estado global
             if start == 0 || is_complete {
                 if is_complete {
-                    // Finaliza a distribuição
-                    self.total_trading_rewards_distributed = self
-                        .total_trading_rewards_distributed
-                        .checked_add(amount_to_distribute)
-                        .ok_or(StakingError::Overflow)?;
-                    self.trading_rewards_pool = 0;
+                    // Finaliza a distribuição. O resto de arredondamento fica
+                    // no pool para a próxima distribuição (não é zerado).
+                    self.distribution_amount = 0;
 
                     // Emit event final
                     self.env().emit_event(TradingRewardsDistributed {
@@ -1824,32 +1981,40 @@ pub mod staking_contract {
         pub fn claim_governance_bonus(&mut self) -> Result<Balance, StakingError> {
             self.ensure_not_paused()?;
             self.acquire_lock()?;
+            let result = self.claim_governance_bonus_inner();
+            self.release_lock();
+            result
+        }
 
+        /// Governance bonuses are paid ONLY from the funded APY pool; when the
+        /// pool cannot cover the full bonus the call fails and the bonus stays
+        /// credited (never paid from principal).
+        fn claim_governance_bonus_inner(&mut self) -> Result<Balance, StakingError> {
             let caller = self.env().caller();
             let bonus = self.governance_bonuses.get(&caller).unwrap_or(0);
-
             if bonus == 0 {
-                self.release_lock();
                 return Err(StakingError::NoRewardsToClaim);
             }
+            if bonus > self.apy_rewards_pool {
+                return Err(StakingError::InsufficientRewardsPool);
+            }
 
-            // Reset bonus (insert 0 para compatibilidade com seal0::clear_storage)
+            // Effects (insert 0 para compatibilidade com seal0::clear_storage)
             self.governance_bonuses.insert(caller, &0u128);
+            self.apy_rewards_pool = self
+                .apy_rewards_pool
+                .checked_sub(bonus)
+                .ok_or(StakingError::Overflow)?;
 
-            // Transfer LUNES
             if self.env().transfer(caller, bonus).is_err() {
-                self.release_lock();
                 return Err(StakingError::InsufficientBalance);
             }
 
-            // Emit event
             self.env().emit_event(GovernanceBonusClaimed {
                 staker: caller,
                 amount: bonus,
                 timestamp: self.env().block_timestamp(),
             });
-
-            self.release_lock();
             Ok(bonus)
         }
 
@@ -1908,8 +2073,8 @@ pub mod staking_contract {
             let early_adopter_bonus = self.get_early_adopter_bonus(stake, current_time);
 
             // Calculate base rewards
-            // Formula: (amount * rate * time) / (basis_points * year_in_blocks)
-            let year_in_blocks: u128 = 365 * 24 * 60 * 30; // Approximate blocks per year
+            // Formula: (amount * rate * time_ms) / (basis_points * year_ms)
+            let year_ms: u128 = constants::YEAR_MS as u128;
 
             let base_rewards = (stake.amount as u128)
                 .checked_mul(base_rate as u128)
@@ -1918,7 +2083,7 @@ pub mod staking_contract {
                 .ok_or(StakingError::Overflow)?
                 .checked_div(constants::BASIS_POINTS as u128)
                 .ok_or(StakingError::Overflow)?
-                .checked_div(year_in_blocks)
+                .checked_div(year_ms)
                 .ok_or(StakingError::Overflow)? as Balance;
 
             // Apply quantity multiplier
@@ -1946,13 +2111,13 @@ pub mod staking_contract {
 
         /// Calcula tier baseado na duração do stake
         fn calculate_staking_tier(&self, duration: u64) -> StakingTier {
-            if duration >= 181 * 24 * 60 * 30 {
+            if duration >= constants::PLATINUM_MIN_DURATION {
                 // 181+ dias
                 StakingTier::Platinum
-            } else if duration >= 91 * 24 * 60 * 30 {
+            } else if duration >= constants::GOLD_MIN_DURATION {
                 // 91-180 dias
                 StakingTier::Gold
-            } else if duration >= 31 * 24 * 60 * 30 {
+            } else if duration >= constants::SILVER_MIN_DURATION {
                 // 31-90 dias
                 StakingTier::Silver
             } else {
@@ -2309,7 +2474,7 @@ pub mod staking_contract {
             ink::env::test::set_value_transferred::<ink::env::DefaultEnvironment>(
                 2_000_000_000_000,
             ); // 20,000 LUNES (> 10,000 requeridos)
-            assert!(staking.stake(30 * 24 * 60 * 30).is_ok()); // 30 days
+            assert!(staking.stake(30 * constants::DAY_MS).is_ok()); // 30 days
 
             // Avançar tempo para que o stake seja considerado válido
             ink::env::test::advance_block::<ink::env::DefaultEnvironment>();
@@ -2356,7 +2521,7 @@ pub mod staking_contract {
             ink::env::test::set_value_transferred::<ink::env::DefaultEnvironment>(
                 2_000_000_000_000,
             ); // 20,000 LUNES
-            assert!(staking.stake(30 * 24 * 60 * 30).is_ok());
+            assert!(staking.stake(30 * constants::DAY_MS).is_ok());
 
             // Avançar tempo para que o stake seja válido
             ink::env::test::advance_block::<ink::env::DefaultEnvironment>();
@@ -2382,6 +2547,421 @@ pub mod staking_contract {
                 staking.propose_fee_change(30_000_000_000, "Valid amount".to_string()),
                 Err(StakingError::InsufficientFee)
             );
+        }
+
+        // ========================================
+        // UNIDADES DE TEMPO (block_timestamp é em MILISSEGUNDOS)
+        // Regressão P0-3/P0-2: as constantes eram "blocos" mas eram
+        // comparadas/somadas a block_timestamp() (ms), o que encurtava a
+        // votação para ~10 min e inflava o APY ~2000x.
+        // ========================================
+
+        const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+
+        fn staked_contract(amount: Balance, duration: u64) -> StakingContract {
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(1_000);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(amount);
+            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            contract.stake(duration).unwrap();
+            contract
+        }
+
+        #[ink::test]
+        fn test_voting_deadline_is_14_days_in_ms() {
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let mut contract = staked_contract(constants::MIN_PROPOSAL_POWER, 7 * DAY_MS);
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(10_000);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::PROPOSAL_FEE);
+            let id = contract
+                .create_proposal("P".to_string(), "D".to_string(), accounts.bob)
+                .unwrap();
+            let proposal = contract.get_proposal(id).unwrap();
+            assert_eq!(proposal.voting_deadline, 10_000 + 14 * DAY_MS);
+
+            // Votar 13 dias depois ainda é permitido.
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(10_000 + 13 * DAY_MS);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::VOTE_COST);
+            assert_eq!(contract.vote(id, true), Ok(()));
+        }
+
+        #[ink::test]
+        fn test_vote_after_deadline_is_rejected() {
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let mut contract = staked_contract(constants::MIN_PROPOSAL_POWER, 7 * DAY_MS);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::PROPOSAL_FEE);
+            let id = contract
+                .create_proposal("P".to_string(), "D".to_string(), accounts.bob)
+                .unwrap();
+            let deadline = contract.get_proposal(id).unwrap().voting_deadline;
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(deadline + 1);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::VOTE_COST);
+            assert_eq!(contract.vote(id, true), Err(StakingError::VotingPeriodExpired));
+        }
+
+        #[ink::test]
+        fn test_vote_requires_vote_cost() {
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let mut contract = staked_contract(constants::MIN_PROPOSAL_POWER, 7 * DAY_MS);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::PROPOSAL_FEE);
+            let id = contract
+                .create_proposal("P".to_string(), "D".to_string(), accounts.bob)
+                .unwrap();
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::VOTE_COST - 1);
+            assert_eq!(contract.vote(id, true), Err(StakingError::InsufficientFee));
+        }
+
+        #[ink::test]
+        fn test_duration_bounds_are_7_to_365_days_in_ms() {
+            assert_eq!(constants::MIN_DURATION, 7 * DAY_MS);
+            assert_eq!(constants::MAX_DURATION, 365 * DAY_MS);
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::MIN_STAKE);
+            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            assert_eq!(contract.stake(6 * DAY_MS), Err(StakingError::InvalidDuration));
+            assert_eq!(contract.stake(366 * DAY_MS), Err(StakingError::InvalidDuration));
+            assert_eq!(contract.stake(30 * DAY_MS), Ok(()));
+        }
+
+        #[ink::test]
+        fn test_tier_thresholds_are_in_days() {
+            let contract = StakingContract::new(AccountId::from([0x1; 32]));
+            assert_eq!(contract.calculate_staking_tier(7 * DAY_MS), StakingTier::Bronze);
+            assert_eq!(contract.calculate_staking_tier(30 * DAY_MS), StakingTier::Bronze);
+            assert_eq!(contract.calculate_staking_tier(31 * DAY_MS), StakingTier::Silver);
+            assert_eq!(contract.calculate_staking_tier(91 * DAY_MS), StakingTier::Gold);
+            assert_eq!(contract.calculate_staking_tier(181 * DAY_MS), StakingTier::Platinum);
+        }
+
+        #[ink::test]
+        fn test_rewards_accrue_at_nominal_apy_per_year_in_ms() {
+            // 1000 LUNES, Bronze (8% APY), multiplicador 1.0x. Após 365 dias o
+            // bônus early-adopter (90 dias) já expirou → 80 LUNES.
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let contract = staked_contract(constants::MIN_STAKE, 7 * DAY_MS);
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(1_000 + 365 * DAY_MS);
+            assert_eq!(
+                contract.get_pending_rewards(accounts.alice),
+                Ok(8_000_000_000) // 80 * 10^8
+            );
+        }
+
+        #[ink::test]
+        fn test_early_adopter_bonus_applies_within_90_days() {
+            // 30 dias, Bronze 8%, Top100 +50%:
+            // base = 1e11 * 800 * 30d_ms / 10_000 / 365d_ms = 657_534_246
+            // final = 657_534_246 * 15_000 / 10_000 = 986_301_369
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let contract = staked_contract(constants::MIN_STAKE, 7 * DAY_MS);
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(1_000 + 30 * DAY_MS);
+            assert_eq!(contract.get_pending_rewards(accounts.alice), Ok(986_301_369));
+        }
+
+        #[ink::test]
+        fn test_early_unstake_penalty_window_uses_ms() {
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let contract = staked_contract(constants::MIN_STAKE, 7 * DAY_MS);
+            let stake = contract.get_stake(accounts.alice).unwrap();
+            // 1 hora depois: ainda bloqueado → multa de 5%.
+            let (_, penalty) = contract
+                .calculate_rewards_and_penalty(&stake, 1_000 + 60 * 60 * 1000)
+                .unwrap();
+            assert_eq!(penalty, constants::MIN_STAKE / 20);
+            // Após 7 dias: sem multa.
+            let (_, penalty) = contract
+                .calculate_rewards_and_penalty(&stake, 1_000 + 7 * DAY_MS)
+                .unwrap();
+            assert_eq!(penalty, 0);
+        }
+
+        // ========================================
+        // SOLVÊNCIA: rewards nunca saem do principal dos stakers
+        // ========================================
+
+        type E = ink::env::DefaultEnvironment;
+        const CONTRACT: [u8; 32] = [0xC0; 32];
+        const LUNES: Balance = 100_000_000;
+
+        /// Contrato com conta própria (o callee padrão do ambiente off-chain é
+        /// a alice) e saldos iniciais generosos para os callers.
+        fn solvency_setup() -> (StakingContract, AccountId) {
+            solvency_setup_at(CONTRACT)
+        }
+
+        /// Cada instância precisa de uma conta própria: o storage off-chain é
+        /// indexado pela conta do contrato e persiste entre instâncias.
+        fn solvency_setup_at(contract: [u8; 32]) -> (StakingContract, AccountId) {
+            let accounts = test::default_accounts::<E>();
+            let contract_id = AccountId::from(contract);
+            test::set_callee::<E>(contract_id);
+            test::set_account_balance::<E>(contract_id, 0);
+            for who in [
+                accounts.alice,
+                accounts.bob,
+                accounts.charlie,
+                accounts.django,
+                accounts.eve,
+                accounts.frank,
+            ] {
+                test::set_account_balance::<E>(who, 1_000_000_000 * LUNES);
+            }
+            test::set_block_timestamp::<E>(1_000);
+            test::set_caller::<E>(accounts.alice);
+            test::set_value_transferred::<E>(0);
+            (StakingContract::new(AccountId::from([0x1; 32])), contract_id)
+        }
+
+        fn balance_of(who: AccountId) -> Balance {
+            test::get_account_balance::<E>(who).unwrap_or(0)
+        }
+
+        /// Chamada payable que move `value` do caller para o contrato.
+        fn as_caller(who: AccountId, value: Balance) {
+            test::set_caller::<E>(who);
+            test::set_value_transferred::<E>(0);
+            if value > 0 {
+                test::transfer_in::<E>(value);
+            }
+        }
+
+        /// Invariante de custódia: o saldo do contrato cobre o principal
+        /// devido + rewards já creditadas + pools financiados.
+        fn assert_solvent(c: &StakingContract, contract_id: AccountId) {
+            let (apy_pool, trading_pool, credited) = c.get_reward_pools();
+            let (total_staked, _, _) = c.get_stats();
+            let liabilities = total_staked + credited + apy_pool + trading_pool;
+            assert!(
+                balance_of(contract_id) >= liabilities,
+                "insolvent: balance {} < liabilities {} (staked {}, credited {}, apy {}, trading {})",
+                balance_of(contract_id),
+                liabilities,
+                total_staked,
+                credited,
+                apy_pool,
+                trading_pool
+            );
+            assert!(balance_of(contract_id) >= total_staked);
+        }
+
+        #[ink::test]
+        fn test_claim_with_empty_pool_pays_nothing_and_keeps_rewards_owed() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 10_000 * LUNES);
+            c.stake(31 * DAY_MS).unwrap();
+            as_caller(accounts.bob, 10_000 * LUNES);
+            c.stake(31 * DAY_MS).unwrap();
+
+            test::set_block_timestamp::<E>(1_000 + 30 * DAY_MS);
+            let accrued = c.get_pending_rewards(accounts.alice).unwrap();
+            assert!(accrued > 0);
+            let before = balance_of(accounts.alice);
+            as_caller(accounts.alice, 0);
+            assert_eq!(c.claim_rewards(), Ok(()));
+            // Nada pago (pool vazio) — o principal do bob continua intacto.
+            assert_eq!(balance_of(accounts.alice), before);
+            assert_eq!(balance_of(contract_id), 20_000 * LUNES);
+            // A reward continua devida, não se perde.
+            assert_eq!(c.get_owed_rewards(accounts.alice), accrued);
+            assert_eq!(c.get_pending_rewards(accounts.alice), Ok(accrued));
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_claim_is_capped_by_funded_pool() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 10_000 * LUNES);
+            c.stake(31 * DAY_MS).unwrap();
+            // Qualquer um pode financiar o pool de APY.
+            as_caller(accounts.charlie, LUNES);
+            assert_eq!(c.fund_apy_rewards(), Ok(()));
+            assert_eq!(c.get_reward_pools().0, LUNES);
+
+            test::set_block_timestamp::<E>(1_000 + 30 * DAY_MS);
+            let accrued = c.get_pending_rewards(accounts.alice).unwrap();
+            assert!(accrued > LUNES);
+            let before = balance_of(accounts.alice);
+            as_caller(accounts.alice, 0);
+            c.claim_rewards().unwrap();
+            assert_eq!(balance_of(accounts.alice), before + LUNES);
+            assert_eq!(c.get_reward_pools().0, 0);
+            assert_eq!(c.get_owed_rewards(accounts.alice), accrued - LUNES);
+            assert_solvent(&c, contract_id);
+
+            // Novo funding → o restante devido pode ser sacado depois.
+            as_caller(accounts.charlie, 1_000 * LUNES);
+            c.fund_apy_rewards().unwrap();
+            as_caller(accounts.alice, 0);
+            c.claim_rewards().unwrap();
+            assert_eq!(c.get_owed_rewards(accounts.alice), 0);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_unstake_always_returns_principal_even_with_empty_pool() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            as_caller(accounts.bob, 5_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+
+            test::set_block_timestamp::<E>(1_000 + 8 * DAY_MS);
+            let accrued = c.get_pending_rewards(accounts.alice).unwrap();
+            let before = balance_of(accounts.alice);
+            as_caller(accounts.alice, 0);
+            assert_eq!(c.unstake(), Ok(()));
+            // Principal integral (sem multa após o lock), sem rewards (pool vazio).
+            assert_eq!(balance_of(accounts.alice), before + 10_000 * LUNES);
+            assert_eq!(balance_of(contract_id), 5_000 * LUNES);
+            assert_eq!(c.get_owed_rewards(accounts.alice), accrued);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_early_unstake_penalty_goes_to_apy_pool() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 10_000 * LUNES);
+            c.stake(30 * DAY_MS).unwrap();
+            test::set_block_timestamp::<E>(1_000 + DAY_MS);
+            let before = balance_of(accounts.alice);
+            as_caller(accounts.alice, 0);
+            c.unstake().unwrap();
+            let penalty = 10_000 * LUNES / 20;
+            assert_eq!(balance_of(accounts.alice), before + 10_000 * LUNES - penalty);
+            assert_eq!(c.get_reward_pools().0, penalty);
+            assert_eq!(balance_of(contract_id), penalty);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_owed_rewards_claimable_after_unstake() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            test::set_block_timestamp::<E>(1_000 + 10 * DAY_MS);
+            as_caller(accounts.alice, 0);
+            c.unstake().unwrap();
+            let owed = c.get_owed_rewards(accounts.alice);
+            assert!(owed > 0);
+            as_caller(accounts.django, owed);
+            c.fund_apy_rewards().unwrap();
+            let before = balance_of(accounts.alice);
+            as_caller(accounts.alice, 0);
+            assert_eq!(c.claim_rewards(), Ok(()));
+            assert_eq!(balance_of(accounts.alice), before + owed);
+            assert_eq!(c.get_owed_rewards(accounts.alice), 0);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_governance_bonus_cannot_drain_principal() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.bob, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            as_caller(accounts.alice, 0); // owner
+            c.reward_approved_proposal(accounts.charlie).unwrap();
+            as_caller(accounts.charlie, 0);
+            assert_eq!(
+                c.claim_governance_bonus(),
+                Err(StakingError::InsufficientRewardsPool)
+            );
+            assert_eq!(balance_of(contract_id), 10_000 * LUNES);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_trading_rewards_distribution_is_paid_and_capped() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            let rewards_contract = accounts.eve;
+            test::set_account_balance::<E>(rewards_contract, 1_000_000 * LUNES);
+            as_caller(accounts.alice, 0);
+            c.set_trading_rewards_contract(rewards_contract).unwrap();
+            as_caller(accounts.bob, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            as_caller(accounts.charlie, 30_000 * LUNES);
+            c.stake(91 * DAY_MS).unwrap();
+            as_caller(rewards_contract, 100 * LUNES);
+            c.fund_staking_rewards().unwrap();
+            as_caller(accounts.alice, 0);
+            c.distribute_trading_rewards().unwrap();
+            let (_, trading_pool, credited) = c.get_reward_pools();
+            assert!(credited > 0 && credited <= 100 * LUNES);
+            assert_eq!(trading_pool + credited, 100 * LUNES);
+            assert_solvent(&c, contract_id);
+
+            // A reward creditada é paga de fato no claim (antes era zerada).
+            let bob_credit = c.get_stake(accounts.bob).unwrap().pending_rewards;
+            assert!(bob_credit > 0);
+            let before = balance_of(accounts.bob);
+            as_caller(accounts.bob, 0);
+            c.claim_rewards().unwrap();
+            assert_eq!(balance_of(accounts.bob), before + bob_credit);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_invariant_holds_over_random_sequences() {
+            let accounts = test::default_accounts::<E>();
+            let stakers = [accounts.bob, accounts.charlie, accounts.django, accounts.frank];
+            for seed in 1u64..=12 {
+                let (mut c, contract_id) = solvency_setup_at([0xC0 + seed as u8; 32]);
+                let mut rng = seed;
+                let mut next = || {
+                    rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    rng >> 33
+                };
+                let mut now = 1_000u64;
+                for _ in 0..120 {
+                    let who = stakers[(next() % 4) as usize];
+                    now += (next() % (20 * DAY_MS)) as u64;
+                    test::set_block_timestamp::<E>(now);
+                    match next() % 5 {
+                        0 | 1 => {
+                            let amount = (1_000 + (next() % 50_000) as u128) * LUNES;
+                            let days = 7 + next() % 359;
+                            as_caller(who, amount);
+                            if c.stake(days * DAY_MS).is_err() {
+                                // payable falhou → devolve (o runtime reverteria)
+                                test::set_account_balance::<E>(
+                                    contract_id,
+                                    balance_of(contract_id) - amount,
+                                );
+                            }
+                        }
+                        2 => {
+                            as_caller(who, 0);
+                            let _ = c.claim_rewards();
+                        }
+                        3 => {
+                            as_caller(who, 0);
+                            let _ = c.unstake();
+                        }
+                        _ => {
+                            let amount = (next() % 200) as u128 * LUNES;
+                            if amount > 0 {
+                                as_caller(accounts.eve, amount);
+                                c.fund_apy_rewards().unwrap();
+                            }
+                        }
+                    }
+                    assert_solvent(&c, contract_id);
+                }
+                // Todos saem: o principal é integralmente devolvido.
+                for who in stakers {
+                    as_caller(who, 0);
+                    let _ = c.unstake();
+                    assert_solvent(&c, contract_id);
+                }
+                assert_eq!(c.get_stats().0, 0);
+            }
         }
     }
 }

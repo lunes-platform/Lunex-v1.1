@@ -1,0 +1,98 @@
+# electron-builder configuration — https://www.electron.build/configuration
+# Signing is driven entirely by environment variables (see README.md):
+#   macOS:   CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+#   Windows: WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD
+# With none of them set (and CSC_IDENTITY_AUTO_DISCOVERY=false) builds are unsigned.
+appId: io.lunes.lunex
+productName: Lunex
+copyright: Copyright © Lunes Platform
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+directories:
+  output: release
+  buildResources: assets
+
+files:
+  - package.json
+  - dist/**/*
+  - web/**/*
+  - "!**/*.map"
+  - "!**/*.d.ts"
+
+asar: true
+
+# Electron fuses — disable Node-level escape hatches in shipped binaries.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+  resetAdHocDarwinSignature: true
+
+publish:
+  provider: github
+  owner: lunes-platform
+  repo: lunex-v1.1
+  releaseType: draft
+  tagNamePrefix: desktop-v
+
+mac:
+  category: public.app-category.finance
+  icon: assets/icon.png
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: assets/entitlements.mac.plist
+  entitlementsInherit: assets/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    # zip is required by electron-updater on macOS
+    - target: zip
+      arch: [x64, arm64]
+
+dmg:
+  sign: false
+
+win:
+  icon: assets/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Lunex
+  deleteAppDataOnUninstall: false
+
+linux:
+  executableName: lunex
+  syncDesktopName: true
+  icon: assets/icon.png
+  category: Finance
+  synopsis: Lunex decentralized exchange on the Lunes blockchain
+  maintainer: Lunes Platform <dev@lunes.io>
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0

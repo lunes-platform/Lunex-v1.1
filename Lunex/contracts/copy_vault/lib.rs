@@ -131,6 +131,9 @@ pub mod copy_vault {
         /// wnative is implicitly part of the equity (1:1) and must not
         /// enter the tracked list
         CannotTrackWnative,
+        /// Performance fee cannot be raised while depositors hold shares
+        /// (a raise would apply retroactively to capital already in)
+        FeeIncreaseWithDepositors,
     }
 
     // ─── Router interop (selectors + espelhos SCALE) ────────────
@@ -405,6 +408,17 @@ pub mod copy_vault {
         pub total: Balance,
     }
 
+    /// Large-withdrawal cooldown started (`request_withdrawal`). Declared
+    /// last so the indexes of the existing events stay stable.
+    #[ink(event)]
+    pub struct WithdrawalRequested {
+        #[ink(topic)]
+        pub depositor: AccountId,
+        pub shares: Balance,
+        pub unlock_at: Timestamp,
+        pub timestamp: Timestamp,
+    }
+
     // ─── Storage ────────────────────────────────────────────────
 
     #[ink(storage)]
@@ -677,30 +691,28 @@ pub mod copy_vault {
                 return Err(VaultError::InsufficientShares);
             }
 
-            // Check cooldown for large withdrawals
+            // Large withdrawals need a matured `request_withdrawal` covering
+            // `shares`. ink! 4 reverts every write of a message returning
+            // `Err`, so the request can NOT be created here (it used to be,
+            // which made large withdrawals impossible on-chain).
             let is_large = self.is_large_withdrawal(shares);
             if is_large {
-                if let Some(request) = self.withdrawal_requests.get(&caller) {
-                    let now = self.env().block_timestamp();
-                    if now < request.requested_at + constants::COOLDOWN_PERIOD_MS {
-                        self.release_lock();
-                        return Err(VaultError::CooldownActive);
+                let matured = match self.withdrawal_requests.get(&caller) {
+                    Some(request) => {
+                        let now = self.env().block_timestamp();
+                        let unlock_at = request
+                            .requested_at
+                            .saturating_add(constants::COOLDOWN_PERIOD_MS);
+                        now >= unlock_at && shares <= request.shares
                     }
-                    // Cooldown passed — proceed
-                    self.withdrawal_requests.remove(&caller);
-                } else {
-                    // No request yet — create one and return
-                    let now = self.env().block_timestamp();
-                    self.withdrawal_requests.insert(
-                        &caller,
-                        &WithdrawalRequest {
-                            shares,
-                            requested_at: now,
-                        },
-                    );
+                    None => false,
+                };
+                if !matured {
                     self.release_lock();
                     return Err(VaultError::CooldownActive);
                 }
+                // Consumed only if the withdrawal succeeds (Err reverts).
+                self.withdrawal_requests.remove(&caller);
             }
 
             // Calculate proportional equity (ADR-002: equity completo;
@@ -842,6 +854,45 @@ pub mod copy_vault {
 
             self.release_lock();
             Ok(net_payout)
+        }
+
+        /// Start the 24h cooldown required for a large withdrawal (> 10% of
+        /// the vault shares). Returns the timestamp from which `withdraw`
+        /// accepts up to `shares`. Calling again replaces the request and
+        /// restarts the cooldown.
+        #[ink(message)]
+        pub fn request_withdrawal(&mut self, shares: Balance) -> Result<Timestamp, VaultError> {
+            let caller = self.env().caller();
+            let caller_shares = self.shares.get(&caller).unwrap_or(0);
+            if shares == 0 || shares > caller_shares {
+                return Err(VaultError::InsufficientShares);
+            }
+
+            let now = self.env().block_timestamp();
+            let unlock_at = now
+                .checked_add(constants::COOLDOWN_PERIOD_MS)
+                .ok_or(VaultError::Overflow)?;
+            self.withdrawal_requests.insert(
+                &caller,
+                &WithdrawalRequest {
+                    shares,
+                    requested_at: now,
+                },
+            );
+
+            self.env().emit_event(WithdrawalRequested {
+                depositor: caller,
+                shares,
+                unlock_at,
+                timestamp: now,
+            });
+            Ok(unlock_at)
+        }
+
+        /// Pending large-withdrawal cooldown request of `account`, if any.
+        #[ink(message)]
+        pub fn get_withdrawal_request(&self, account: AccountId) -> Option<WithdrawalRequest> {
+            self.withdrawal_requests.get(&account)
         }
 
         /// Request emergency withdrawal (time-locked, bypasses all restrictions)
@@ -1462,12 +1513,17 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// Set performance fee (admin only, max 50%)
+        /// Set performance fee (admin only, max 50%). Raising it is only
+        /// allowed while no depositor holds shares, so a raise never applies
+        /// retroactively to capital already in the vault. Lowering is free.
         #[ink(message)]
         pub fn set_performance_fee(&mut self, new_fee_bps: u32) -> Result<(), VaultError> {
             self.ensure_admin()?;
             if new_fee_bps > constants::MAX_PERFORMANCE_FEE_BPS {
                 return Err(VaultError::FeeTooHigh);
+            }
+            if new_fee_bps > self.performance_fee_bps && self.total_shares > 0 {
+                return Err(VaultError::FeeIncreaseWithDepositors);
             }
 
             let old_fee = self.performance_fee_bps;
@@ -3122,6 +3178,135 @@ pub mod copy_vault {
                 vault.sync_equity(),
                 Err(VaultError::ValuationUnavailable),
             );
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Large-withdrawal cooldown (fix: request must persist)
+        // ════════════════════════════════════════════════════════
+        //
+        // ink! 4 reverts ALL storage writes of a message that returns
+        // `Err` (ink_codegen dispatch: `is_result_err` ⇒ REVERT flag). The
+        // off-chain test env does not roll back, so these tests assert
+        // the on-chain invariant directly: an `Err` path must not write.
+
+        fn set_now(ms: u64) {
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(ms);
+        }
+
+        /// Charlie alone in the vault: ANY withdrawal is > 10% (large).
+        fn vault_with_single_depositor(
+        ) -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+            let (mut vault, accounts) = create_vault();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_now(1_000);
+            set_caller(accounts.charlie);
+            set_value(100_000_000_000);
+            set_balance(contract_id, 100_000_000_000);
+            vault.deposit().unwrap();
+            set_value(0);
+            (vault, accounts)
+        }
+
+        #[ink::test]
+        fn test_large_withdraw_without_request_errs_without_writing() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
+            assert_eq!(
+                vault.withdraw(50_000_000_000),
+                Err(VaultError::CooldownActive)
+            );
+            // On-chain this write would be reverted anyway; the contract
+            // must not rely on it (it previously did → large withdrawals
+            // could never start their cooldown).
+            assert_eq!(vault.get_withdrawal_request(accounts.charlie), None);
+            assert!(!vault.locked);
+        }
+
+        #[ink::test]
+        fn test_request_withdrawal_persists_and_unlocks_after_cooldown() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_withdrawal(50_000_000_000).unwrap();
+            assert_eq!(unlock_at, 1_000 + constants::COOLDOWN_PERIOD_MS);
+            assert_eq!(
+                vault.get_withdrawal_request(accounts.charlie),
+                Some(WithdrawalRequest {
+                    shares: 50_000_000_000,
+                    requested_at: 1_000,
+                })
+            );
+
+            // Before the cooldown: rejected, request kept, shares intact.
+            set_now(unlock_at - 1);
+            assert_eq!(
+                vault.withdraw(50_000_000_000),
+                Err(VaultError::CooldownActive)
+            );
+            assert!(vault.get_withdrawal_request(accounts.charlie).is_some());
+
+            // After the cooldown: the large withdrawal goes through and
+            // consumes the request (no fee: no profit).
+            set_now(unlock_at);
+            assert_eq!(vault.withdraw(50_000_000_000), Ok(50_000_000_000));
+            assert_eq!(vault.get_withdrawal_request(accounts.charlie), None);
+            let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
+            assert_eq!(shares, 50_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_large_withdraw_cannot_exceed_requested_shares() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_withdrawal(20_000_000_000).unwrap();
+            set_now(unlock_at);
+            assert_eq!(
+                vault.withdraw(60_000_000_000),
+                Err(VaultError::CooldownActive)
+            );
+            assert!(vault.get_withdrawal_request(accounts.charlie).is_some());
+        }
+
+        #[ink::test]
+        fn test_request_withdrawal_validates_shares() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
+            assert_eq!(
+                vault.request_withdrawal(0),
+                Err(VaultError::InsufficientShares)
+            );
+            assert_eq!(
+                vault.request_withdrawal(100_000_000_001),
+                Err(VaultError::InsufficientShares)
+            );
+            set_caller(accounts.django);
+            assert_eq!(
+                vault.request_withdrawal(1),
+                Err(VaultError::InsufficientShares)
+            );
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Performance fee is not retroactive (item 9 / BE-15)
+        // ════════════════════════════════════════════════════════
+
+        #[ink::test]
+        fn test_fee_increase_blocked_while_depositors_hold_shares() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.set_performance_fee(3000),
+                Err(VaultError::FeeIncreaseWithDepositors)
+            );
+            assert_eq!(vault.performance_fee_bps, 2000);
+
+            // Decreasing always allowed (benefits followers).
+            assert_eq!(vault.set_performance_fee(1000), Ok(()));
+            assert_eq!(vault.performance_fee_bps, 1000);
         }
     }
 }

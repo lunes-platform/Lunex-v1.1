@@ -346,6 +346,8 @@ export interface CopytradeVaultSummary {
   name: string;
   collateralToken: string;
   status: string;
+  /** ink! CopyVault address; null until deployed (deposits rejected). */
+  contractAddress?: string | null;
   totalEquity: number;
   totalShares: number;
   totalDeposits: number;
@@ -370,7 +372,13 @@ export interface CopytradeVaultPositionSummary {
 
 export interface CopytradeVaultDetails extends CopytradeVaultSummary {
   leader: CopytradeVaultLeader;
-  positions: CopytradeVaultPositionSummary[];
+  /** Count of positions with shares > 0 (BE-11: no per-follower data). */
+  activePositions: number;
+  /**
+   * @deprecated Removed from the public API (BE-11). Per-follower data is only
+   * available to the follower via the signed `getPositions` read.
+   */
+  positions?: CopytradeVaultPositionSummary[];
 }
 
 export interface CopytradeFollowerVaultInfo {
@@ -380,6 +388,7 @@ export interface CopytradeFollowerVaultInfo {
   leaderId: string;
   leaderName: string;
   leaderUsername: string;
+  contractAddress?: string | null;
 }
 
 export interface CopytradePosition {
@@ -392,7 +401,23 @@ export interface CopytradePosition {
   highWaterMarkValue: number;
   feePaid: number;
   realizedPnl: number;
+  /** Follower stop-loss preference saved on this position (not auto-enforced). */
+  stopLossPct?: number | null;
   vault: CopytradeFollowerVaultInfo;
+}
+
+/**
+ * 'db-journal' is kept in the union only so old persisted payloads still
+ * type-check. @deprecated 'db-journal' — never returned by current APIs.
+ */
+export type CopytradeVaultExecutionMode = 'db-journal' | 'on-chain-confirmed';
+
+/** Proof of a follower-signed, finalized CopyVault extrinsic (BE-02). */
+export interface CopytradeVaultTxProof {
+  /** 0x-prefixed 32-byte extrinsic hash. */
+  txHash: string;
+  /** 0x-prefixed 32-byte hash of the finalized block that includes it. */
+  blockHash: string;
 }
 
 export interface CopytradeDepositResult {
@@ -401,13 +426,23 @@ export interface CopytradeDepositResult {
   amount: number;
   positionId: string;
   txHash: string | null;
-  executionMode: 'db-journal' | 'on-chain-confirmed';
+  /**
+   * Always 'on-chain-confirmed' since BE-01/BE-02. 'db-journal' is deprecated:
+   * the API no longer journals vault moves without a finalized on-chain tx.
+   */
+  executionMode: CopytradeVaultExecutionMode;
 }
 
-export interface CopytradeSignedDepositInput extends WalletActionSignaturePayload {
+export interface CopytradeSignedDepositInput
+  extends WalletActionSignaturePayload, CopytradeVaultTxProof {
   followerAddress: string;
   token: string;
   amount: string;
+  copyMultiplier?: number;
+  maxPerTradeUsdt?: number;
+  /** Saved on the follower's own position only (BE-04). */
+  stopLossPct?: number;
+  maxDrawdownPct?: number;
 }
 
 export interface CopytradeWithdrawResult {
@@ -420,10 +455,15 @@ export interface CopytradeWithdrawResult {
   collateralToken?: string;
   followerAddress?: string;
   txHash: string | null;
-  executionMode: 'db-journal' | 'on-chain-confirmed';
+  /**
+   * Always 'on-chain-confirmed' since BE-01/BE-02. 'db-journal' is deprecated:
+   * the API no longer journals vault moves without a finalized on-chain tx.
+   */
+  executionMode: CopytradeVaultExecutionMode;
 }
 
-export interface CopytradeSignedWithdrawInput extends WalletActionSignaturePayload {
+export interface CopytradeSignedWithdrawInput
+  extends WalletActionSignaturePayload, CopytradeVaultTxProof {
   followerAddress: string;
   shares: string;
 }

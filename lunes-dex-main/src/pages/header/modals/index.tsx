@@ -1,15 +1,6 @@
-import ModalConnectWallet from './connectWallet'
-import Connecting from './connecting'
-import Account from './account'
-import StatusTransaction from './statusTransaction'
-import Settings from './settings'
-import WalletModal from './walletModal'
+import WalletModal from './WalletModal'
+import AccountPanel from './AccountPanel'
+import NotificationPanel from './NotificationPanel'
+import SettingsMenu from './SettingsMenu'
 
-export {
-  ModalConnectWallet,
-  Connecting,
-  Account,
-  StatusTransaction,
-  Settings,
-  WalletModal
-}
+export { WalletModal, AccountPanel, NotificationPanel, SettingsMenu }

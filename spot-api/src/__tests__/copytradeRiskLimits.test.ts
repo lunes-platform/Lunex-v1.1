@@ -23,6 +23,9 @@ jest.mock('../db', () => ({
     leaderTrade: {
       findFirst: jest.fn(),
     },
+    leader: {
+      findUnique: jest.fn(),
+    },
   },
 }));
 
@@ -236,46 +239,50 @@ describe('RISK-BE: Zod schema validation', () => {
   });
 });
 
-describe('RISK-BE: persistence on deposit', () => {
+// BE-04: the vault-wide risk config is leader-only. Follower deposits never
+// touch it (covered in copytradeService.test.ts).
+describe('RISK-BE: leader-only vault risk config (BE-04)', () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it('persists risk config columns onto the vault during deposit', async () => {
-    const v = vault();
-    const tx = {
-      copyVault: {
-        findUnique: jest.fn().mockResolvedValue(v),
-        update: jest.fn().mockResolvedValue({}),
-      },
-      copyVaultPosition: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ id: 'position-1' }),
-        update: jest.fn().mockResolvedValue({ id: 'position-1' }),
-      },
-      copyVaultDeposit: {
-        create: jest.fn().mockResolvedValue({ id: 'deposit-1' }),
-      },
-      leader: { update: jest.fn().mockResolvedValue({}) },
-    };
-    (mockPrisma.$transaction as jest.Mock).mockImplementation(async (cb: any) =>
-      cb(tx),
+  it('persists risk config columns when the vault leader signs', async () => {
+    (mockPrisma.leader.findUnique as jest.Mock).mockResolvedValue({
+      id: 'leader-1',
+      address: '5Fleader',
+      vault: { id: 'vault-1' },
+    });
+    (mockPrisma.copyVault.update as jest.Mock).mockResolvedValue(
+      vault({ copyMultiplier: { toString: () => '2' } }),
     );
 
-    await copytradeService.depositToVault('leader-1', {
-      followerAddress: 'follower-1',
-      token: 'USDT',
-      amount: '100',
+    await copytradeService.updateVaultRiskConfig('leader-1', '5Fleader', {
       copyMultiplier: 2,
       maxPerTradeUsdt: 500,
       stopLossPct: 25,
       maxDrawdownPct: 35,
-      ...baseSigned,
-    } as any);
+    });
 
-    const updateArgs = (tx.copyVault.update as jest.Mock).mock.calls[0][0];
+    const updateArgs = (mockPrisma.copyVault.update as jest.Mock).mock
+      .calls[0][0];
+    expect(updateArgs.where).toEqual({ id: 'vault-1' });
     expect(updateArgs.data.copyMultiplier.toString()).toBe('2');
     expect(updateArgs.data.maxPerTradeUsdt.toString()).toBe('500');
     expect(updateArgs.data.stopLossPct.toString()).toBe('25');
     expect(updateArgs.data.maxDrawdownPct.toString()).toBe('35');
+  });
+
+  it('rejects a wallet that is not the vault leader (follower cannot rewrite risk)', async () => {
+    (mockPrisma.leader.findUnique as jest.Mock).mockResolvedValue({
+      id: 'leader-1',
+      address: '5Fleader',
+      vault: { id: 'vault-1' },
+    });
+
+    await expect(
+      copytradeService.updateVaultRiskConfig('leader-1', '5Ffollower', {
+        copyMultiplier: 10,
+      }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    expect(mockPrisma.copyVault.update).not.toHaveBeenCalled();
   });
 });
 

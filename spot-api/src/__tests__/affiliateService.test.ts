@@ -213,6 +213,7 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
     affiliateCommission: { findMany: jest.Mock; updateMany: jest.Mock };
     affiliatePayoutBatch: { create: jest.Mock; update: jest.Mock };
     trade: { findMany: jest.Mock };
+    copyVaultWithdrawal: { findMany: jest.Mock };
   };
   let callOrder: string[];
 
@@ -244,6 +245,9 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
       trade: {
         findMany: jest.fn(() => Promise.resolve([])),
       },
+      copyVaultWithdrawal: {
+        findMany: jest.fn(() => Promise.resolve([])),
+      },
     };
     mockPrisma.$transaction.mockImplementation(
       async (fn: (tx: unknown) => unknown) => fn(txMock),
@@ -270,8 +274,8 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
         Promise.resolve([
           {
             id: 'c1',
-            sourceType: 'COPYTRADE',
-            sourceTradeId: null,
+            sourceType: 'SPOT',
+            sourceTradeId: 't-1',
             commissionAmount: new Decimal('5'),
           },
         ]),
@@ -280,6 +284,7 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
       .mockImplementationOnce(() =>
         Promise.resolve([{ commissionAmount: new Decimal('5') }]),
       );
+    txMock.trade.findMany.mockResolvedValue([{ id: 't-1' }]);
     txMock.affiliateCommission.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await affiliateService.processPayoutBatch();
@@ -292,7 +297,10 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
     expect(result.totalPaid).toBe(5);
   });
 
-  it('excludes SPOT commissions whose trade is not SETTLED, keeps COPYTRADE / null / SETTLED-SPOT', async () => {
+  // BE-01 hardening: COPYTRADE now requires an on-chain-confirmed withdrawal
+  // and null sourceTradeId fails closed (previously both passed straight
+  // through to payout).
+  it('excludes unsettled SPOT, unproven COPYTRADE and null-source commissions; keeps SETTLED-SPOT and confirmed COPYTRADE', async () => {
     txMock.affiliateCommission.findMany
       .mockImplementationOnce(() =>
         Promise.resolve([
@@ -325,16 +333,19 @@ describe('affiliateService.processPayoutBatch — reconcile + lock + claim (Task
       .mockImplementationOnce(() => Promise.resolve([]));
     // Only t-settled is SETTLED.
     txMock.trade.findMany.mockResolvedValue([{ id: 't-settled' }]);
-    txMock.affiliateCommission.updateMany.mockResolvedValue({ count: 3 });
+    // wd-1 is an on-chain-confirmed withdrawal.
+    txMock.copyVaultWithdrawal.findMany.mockResolvedValue([{ id: 'wd-1' }]);
+    txMock.affiliateCommission.updateMany.mockResolvedValue({ count: 2 });
 
     await affiliateService.processPayoutBatch();
 
     const eligibleIds =
       txMock.affiliateCommission.updateMany.mock.calls[0][0].where.id.in;
     expect(eligibleIds).toEqual(
-      expect.arrayContaining(['spot-settled', 'copytrade', 'nullsrc']),
+      expect.arrayContaining(['spot-settled', 'copytrade']),
     );
     expect(eligibleIds).not.toContain('spot-unsettled');
+    expect(eligibleIds).not.toContain('nullsrc');
   });
 
   it('reconciles missed SETTLED trades before opening the transaction', async () => {

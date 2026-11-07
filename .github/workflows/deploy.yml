@@ -39,16 +39,16 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Scan for secrets (Gitleaks)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -69,9 +69,8 @@ jobs:
     if: ${{ !inputs.skip_tests }}
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -123,9 +122,8 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -165,17 +163,15 @@ jobs:
       image_tag: ${{ steps.vars.outputs.sha_short }}
 
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Set short SHA
         id: vars
         run: echo "sha_short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -184,7 +180,7 @@ jobs:
       # ── API ──
       - name: Docker metadata (API)
         id: meta-api
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api
           tags: |
@@ -193,7 +189,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build & push API image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./spot-api
           file: ./docker/Dockerfile.api
@@ -208,7 +204,7 @@ jobs:
       # ── Frontend ──
       - name: Docker metadata (Frontend)
         id: meta-frontend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
           tags: |
@@ -217,7 +213,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build & push Frontend image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./lunes-dex-main
           file: ./docker/Dockerfile.frontend
@@ -235,7 +231,7 @@ jobs:
       # ── Admin ──
       - name: Docker metadata (Admin)
         id: meta-admin
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/admin
           tags: |
@@ -244,7 +240,7 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build & push Admin image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ./lunex-admin
           file: ./docker/Dockerfile.admin
@@ -275,14 +271,14 @@ jobs:
 
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Scan ${{ matrix.image }} with Trivy
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ needs.build.outputs.image_tag }}
           format: 'sarif'
@@ -291,7 +287,7 @@ jobs:
           exit-code: '0'  # Report only, don't fail (non-zero to block: '1')
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@9418214df1f2c4b8128c770156c409013b07d6b9 # v3.39.3
         with:
           sarif_file: 'trivy-${{ matrix.image }}.sarif'
           category: 'trivy-${{ matrix.image }}'
@@ -310,55 +306,16 @@ jobs:
 
     steps:
       - name: Deploy Sandbox to VPS
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        # IN-08: the CI key is a dedicated user whose authorized_keys entry
+        # forces /usr/local/bin/lunex-deploy-ssh → sudo lunex-deploy (fixed
+        # compose files, validated tag). No shell, no docker group, no sudo docker.
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          username: ${{ secrets.VPS_CI_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           timeout: 120s
-          script: |
-            set -euo pipefail
-            cd /opt/lunex
-            export REGISTRY="${{ env.REGISTRY }}"
-            export IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
-            export IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
-
-            echo "📦 Deploying sandbox images tag: ${IMAGE_TAG}"
-
-            echo "📥 Pulling sandbox images..."
-            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
-              --env-file docker/.env.prod --env-file docker/.env.sandbox \
-              pull sandbox-api sandbox-frontend
-
-            echo "🗄️ Running sandbox DB migrations..."
-            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
-              --env-file docker/.env.prod --env-file docker/.env.sandbox \
-              run --rm sandbox-api npx prisma migrate deploy
-
-            echo "🔄 Rolling update (sandbox API first, then frontend)..."
-            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
-              --env-file docker/.env.prod --env-file docker/.env.sandbox \
-              up -d --no-deps sandbox-api
-            sleep 10
-
-            echo "⏳ Waiting for sandbox API health..."
-            for i in $(seq 1 12); do
-              if curl -sf http://localhost:4010/health > /dev/null; then
-                echo "✅ Sandbox API healthy after ${i}s"
-                break
-              fi
-              if [ "$i" -eq 12 ]; then echo "❌ Sandbox API health check failed" && exit 1; fi
-              sleep 5
-            done
-
-            docker compose -f docker/docker-compose.prod.yml -f docker/docker-compose.sandbox.yml \
-              --env-file docker/.env.prod --env-file docker/.env.sandbox \
-              up -d --no-deps sandbox-frontend nginx
-
-            echo "🧹 Pruning old images..."
-            docker system prune -f --filter "until=24h"
-
-            echo "✅ Sandbox deploy complete — $(git rev-parse --short HEAD)"
+          script: lunex-deploy sandbox ${{ needs.build.outputs.image_tag }}
 
   # ── 7. Deploy to Production ───────────────────────────────────────────────────
   deploy-prod:
@@ -373,67 +330,18 @@ jobs:
       url: https://lunex.lunes.io
 
     steps:
-      - uses: actions/checkout@v4
-
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Deploy to Production VPS
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        # IN-08: the CI key is a dedicated user whose authorized_keys entry
+        # forces /usr/local/bin/lunex-deploy-ssh → sudo lunex-deploy (fixed
+        # compose files, validated tag). No shell, no docker group, no sudo docker.
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          username: ${{ secrets.VPS_CI_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           timeout: 180s
-          script: |
-            set -euo pipefail
-            cd /opt/lunex
-            export REGISTRY="${{ env.REGISTRY }}"
-            export IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
-            export IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
-
-            echo "📦 Deploying production images tag: ${IMAGE_TAG}"
-
-            echo "📥 Pulling new images..."
-            docker compose -f docker/docker-compose.prod.yml pull api frontend admin
-
-            echo "🗄️ Running DB migrations..."
-            docker compose -f docker/docker-compose.prod.yml run --rm api \
-              npx prisma migrate deploy
-
-            echo "🔄 Zero-downtime rolling update..."
-            # Update API first (backend)
-            docker compose -f docker/docker-compose.prod.yml up -d --no-deps api
-
-            echo "⏳ API health check (60s timeout)..."
-            for i in $(seq 1 12); do
-              if curl -sf http://localhost:4000/health > /dev/null; then
-                echo "✅ API healthy (attempt ${i})"
-                break
-              fi
-              if [ "$i" -eq 12 ]; then
-                echo "❌ API health check failed — rolling back"
-                PREV_TAG=$(docker images "${REGISTRY}/${IMAGE_PREFIX}/api" --format '{{.Tag}}' | grep -E '^[0-9a-f]{7,}$' | sed -n '2p')
-                if [ -n "${PREV_TAG}" ]; then
-                  export IMAGE_TAG="${PREV_TAG}"
-                  echo "⏪ Rolling back API to tag: ${IMAGE_TAG}"
-                  docker compose -f docker/docker-compose.prod.yml up -d --no-deps api
-                else
-                  echo "⚠️ Could not resolve previous API tag for automatic rollback."
-                fi
-                exit 1
-              fi
-              sleep 5
-            done
-
-            # Update frontend and admin
-            docker compose -f docker/docker-compose.prod.yml up -d --no-deps frontend admin
-
-            # Reload nginx config (no downtime)
-            docker compose -f docker/docker-compose.prod.yml exec nginx nginx -s reload
-
-            echo "🧹 Pruning old images..."
-            docker system prune -f --filter "until=24h"
-
-            echo "✅ Production deploy complete — commit: $(git rev-parse --short HEAD)"
-            echo "   API:      $(curl -sf http://localhost:4000/health | jq -r '.status // "ok"')"
+          script: lunex-deploy prod ${{ needs.build.outputs.image_tag }}
 
       - name: Verify production health
         run: |
@@ -447,7 +355,7 @@ jobs:
 
       - name: Notify deployment
         if: always()
-        uses: slackapi/slack-github-action@v1.27
+        uses: slackapi/slack-github-action@fcfb566f8b0aab22203f066d80ca1d7e4b5d05b3 # v1.27.1
         with:
           payload: |
             {
@@ -466,28 +374,12 @@ jobs:
 
     steps:
       - name: Rollback to previous image
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        # IN-08: the CI key is a dedicated user whose authorized_keys entry
+        # forces /usr/local/bin/lunex-deploy-ssh → sudo lunex-deploy (fixed
+        # compose files, validated tag). No shell, no docker group, no sudo docker.
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          username: ${{ secrets.VPS_CI_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -euo pipefail
-            cd /opt/lunex
-            export REGISTRY="${{ env.REGISTRY }}"
-            export IMAGE_PREFIX="${{ env.IMAGE_PREFIX }}"
-
-            echo "⏪ Rolling back to previous images..."
-            PREV_TAG=$(docker images "${REGISTRY}/${IMAGE_PREFIX}/api" \
-              --format '{{.Tag}}' | grep -E '^[0-9a-f]{7,}$' | sed -n '2p')
-            if [ -z "${PREV_TAG}" ]; then
-              echo "❌ No previous immutable tag found for rollback"
-              exit 1
-            fi
-            echo "Rolling back to tag: ${PREV_TAG}"
-
-            export IMAGE_TAG="${PREV_TAG}"
-
-            docker compose -f docker/docker-compose.prod.yml pull api frontend admin || true
-            docker compose -f docker/docker-compose.prod.yml up -d --no-deps api frontend admin
-            echo "✅ Rollback complete to ${PREV_TAG}"
+          script: lunex-deploy rollback

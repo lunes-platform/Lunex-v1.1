@@ -9,12 +9,17 @@ import {
   verifyWalletReadSignature,
 } from '../middleware/auth';
 import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
+import {
   asymmetricService,
   type StrategyLiveCurveStateOutput,
   type StrategyLiveStateOutput,
 } from '../services/asymmetricService';
 import { rebalancerService } from '../services/rebalancerService';
 import { verifyAsymmetricContract } from '../services/asymmetricContractVerifier';
+import { log } from '../utils/logger';
 
 // Expected code hash of the official AsymmetricPair contract.
 // Set via env var ASYMMETRIC_PAIR_CODE_HASH after first compilation.
@@ -264,12 +269,16 @@ router.get(
   '/contract-bundle',
   handleAsync(async (_req, res) => {
     if (!fs.existsSync(CONTRACT_BUNDLE_PATH)) {
+      // Never expose server filesystem layout to clients (BE-18).
+      log.warn(
+        { path: CONTRACT_BUNDLE_PATH },
+        '[Asymmetric] contract bundle missing — build with cargo contract build --release',
+      );
       return send(
         res,
         {
-          error:
-            'Contract bundle not compiled yet. Run: cd Lunex/contracts/asymmetric_pair && cargo contract build --release',
-          path: CONTRACT_BUNDLE_PATH,
+          error: 'Contract bundle unavailable',
+          code: 'CONTRACT_BUNDLE_UNAVAILABLE',
         },
         503,
       );
@@ -282,10 +291,10 @@ router.get(
 router.get(
   '/strategies',
   handleAsync(async (req, res) => {
-    const parsed = ListStrategiesReadSchema.safeParse({
-      ...req.query,
-      ...getSignedAuthInput(req),
-    });
+    const parsed = readAuthSchema(req, ListStrategiesReadSchema).safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
     if (!parsed.success) {
       return send(
         res,
@@ -294,7 +303,7 @@ router.get(
       );
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'asymmetric.strategies.list',
       address: parsed.data.address,
       nonce: parsed.data.nonce,
@@ -375,10 +384,10 @@ router.post(
 router.get(
   '/strategies/:id',
   handleAsync(async (req, res) => {
-    const parsed = StrategyReadSchema.safeParse({
-      ...req.query,
-      ...getSignedAuthInput(req),
-    });
+    const parsed = readAuthSchema(req, StrategyReadSchema).safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
     if (!parsed.success) {
       return send(
         res,
@@ -387,7 +396,7 @@ router.get(
       );
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'asymmetric.strategy.read',
       address: parsed.data.userAddress,
       nonce: parsed.data.nonce,
@@ -487,10 +496,10 @@ router.patch(
 router.get(
   '/strategies/:id/logs',
   handleAsync(async (req, res) => {
-    const parsed = StrategyLogsReadSchema.safeParse({
-      ...req.query,
-      ...getSignedAuthInput(req),
-    });
+    const parsed = readAuthSchema(req, StrategyLogsReadSchema).safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
     if (!parsed.success) {
       return send(
         res,
@@ -499,7 +508,7 @@ router.get(
       );
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'asymmetric.strategy.logs',
       address: parsed.data.userAddress,
       nonce: parsed.data.nonce,

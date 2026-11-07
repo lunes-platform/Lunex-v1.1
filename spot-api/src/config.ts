@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { parseTrustProxy } from './utils/trustProxy';
 dotenv.config();
 
 function parseCsv(value: string | undefined, fallback: string[]) {
@@ -11,6 +12,18 @@ function parseCsv(value: string | undefined, fallback: string[]) {
 }
 
 const TEST_ADMIN_SECRET = 'test-admin-secret-local-only-000000000001';
+
+// Fail closed: only the two explicit non-production values relax the guards.
+// Anything else ("prod", "staging", "Production", typos) is treated as
+// production, and collectProductionConfigErrors then refuses to boot unless
+// NODE_ENV is exactly "production".
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const NON_PRODUCTION_ENVS = new Set(['development', 'test']);
+const IS_PROD = !NON_PRODUCTION_ENVS.has(NODE_ENV);
+
+function normalizeSigningDomain(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase();
+}
 const rewardPoolPct = parseInt(process.env.REWARD_POOL_PCT || '20', 10);
 const leaderPoolPct = parseInt(process.env.LEADER_POOL_PCT || '40', 10);
 const traderPoolPct = parseInt(process.env.TRADER_POOL_PCT || '30', 10);
@@ -20,21 +33,41 @@ const rewardSplitTotalPct = leaderPoolPct + traderPoolPct + stakerPoolPct;
 export const config = {
   port: parseInt(process.env.PORT || '4000', 10),
   wsPort: parseInt(process.env.WS_PORT || '4001', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
-  isProd: process.env.NODE_ENV === 'production',
-  trustProxy: process.env.TRUST_PROXY === 'true',
+  nodeEnv: NODE_ENV,
+  isProd: IS_PROD,
+  // TRUST_PROXY: hop count ("1" = nginx, "2" = Cloudflare → nginx), legacy
+  // "true" (= 1 hop) or a CIDR/IP list. Shared by Express and the WS server.
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
+  // Canonical public origin of this API (e.g. https://api.lunex.io). The
+  // HTTPS redirect uses it instead of the client-controlled Host header.
+  publicApiOrigin: (process.env.PUBLIC_API_ORIGIN || '').trim(),
+
+  // Domain/chain binding of every wallet-signed message (lunex-auth bound
+  // format and lunex-order-v3). A signature produced for another deployment
+  // (sandbox/testnet) or another chain never validates here.
+  signing: {
+    domain: normalizeSigningDomain(
+      process.env.SIGNING_DOMAIN ?? (IS_PROD ? '' : 'localhost'),
+    ),
+    genesisHash: (process.env.LUNES_GENESIS_HASH || '').trim().toLowerCase(),
+    // Unbound legacy formats (lunex-auth without domain/chain, lunex-order-v2
+    // and v1). Default OFF in production; ON elsewhere for local tooling.
+    acceptLegacy: process.env.SIGNING_ACCEPT_LEGACY
+      ? process.env.SIGNING_ACCEPT_LEGACY === 'true'
+      : !IS_PROD,
+  },
 
   cors: {
     allowedOrigins: parseCsv(
       process.env.CORS_ALLOWED_ORIGINS,
-      process.env.NODE_ENV === 'production' ? [] : ['*'],
+      IS_PROD ? [] : ['*'],
     ),
   },
 
   websocket: {
     allowedOrigins: parseCsv(
       process.env.ALLOWED_WS_ORIGINS,
-      process.env.NODE_ENV === 'production'
+      IS_PROD
         ? []
         : [
             'http://localhost:3000',
@@ -73,6 +106,14 @@ export const config = {
   adminSecret:
     process.env.ADMIN_SECRET ||
     (process.env.NODE_ENV === 'test' ? TEST_ADMIN_SECRET : ''),
+
+  // One-signature READ sessions (HMAC-SHA256 bearer tokens, scope "read").
+  // Required (>= 32 chars) in production; a random per-process secret is
+  // generated in development when unset.
+  session: {
+    secret: process.env.SESSION_SECRET || '',
+    ttlSeconds: 8 * 60 * 60,
+  },
 
   settlement: {
     retryIntervalMs: parseInt(

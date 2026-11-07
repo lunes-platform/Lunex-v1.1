@@ -13,6 +13,10 @@ import {
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 import { z } from 'zod';
 
@@ -29,16 +33,16 @@ const MarginOverviewReadSchema = z.object({
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = MarginOverviewReadSchema.safeParse({
-      ...req.query,
-      ...getSignedAuthInput(req),
-    });
+    const parsed = readAuthSchema(req, MarginOverviewReadSchema).safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
     if (!parsed.success) {
       return res
         .status(400)
         .json({ error: 'Validation failed', details: parsed.error.issues });
     }
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'margin.overview',
       address: parsed.data.address,
       nonce: parsed.data.nonce,

@@ -2,13 +2,49 @@
  * Utility functions for the Lunex SDK
  */
 
+/** Hard slippage ceiling (percent), independent of any UI value. */
+export const MAX_SLIPPAGE_PERCENT = 50;
+/** Deadline bounds (minutes): never in the past, never signable for days. */
+export const MIN_DEADLINE_MINUTES = 1;
+export const MAX_DEADLINE_MINUTES = 180;
+
+const assertFinite = (value: number, name: string): void => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new RangeError(`${name} must be a finite number`);
+  }
+};
+
+/**
+ * Bound a slippage tolerance to [0, MAX_SLIPPAGE_PERCENT] percent.
+ * @throws RangeError for NaN / Infinity
+ */
+export function clampSlippagePercent(slippagePercent: number): number {
+  assertFinite(slippagePercent, 'slippagePercent');
+  return Math.min(Math.max(slippagePercent, 0), MAX_SLIPPAGE_PERCENT);
+}
+
+/**
+ * Bound a deadline offset to [MIN_DEADLINE_MINUTES, MAX_DEADLINE_MINUTES].
+ * @throws RangeError for NaN / Infinity
+ */
+export function clampDeadlineMinutes(minutesFromNow: number): number {
+  assertFinite(minutesFromNow, 'minutesFromNow');
+  return Math.min(
+    Math.max(minutesFromNow, MIN_DEADLINE_MINUTES),
+    MAX_DEADLINE_MINUTES,
+  );
+}
+
 /**
  * Calculate deadline timestamp
- * @param minutesFromNow - Minutes from now
+ * @param minutesFromNow - Minutes from now (clamped to
+ *   [MIN_DEADLINE_MINUTES, MAX_DEADLINE_MINUTES])
  * @returns Unix timestamp
  */
 export function calculateDeadline(minutesFromNow: number): number {
-  return Math.floor(Date.now() / 1000) + minutesFromNow * 60;
+  return (
+    Math.floor(Date.now() / 1000) + clampDeadlineMinutes(minutesFromNow) * 60
+  );
 }
 
 /**

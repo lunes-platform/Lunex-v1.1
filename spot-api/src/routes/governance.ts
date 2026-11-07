@@ -1,10 +1,10 @@
 /**
- * Governance Routes — Server-side vote cooldown + deduplication
+ * Governance Routes — server-side mirror of on-chain votes (UX only)
  *
- * The smart contract handles on-chain enforcement.
- * This layer adds API-level cooldown tracking to prevent spam
- * and provides the frontend with last-vote timestamps without
- * trusting localStorage.
+ * The staking contract is the source of truth and allows exactly ONE vote
+ * per (proposal, wallet) (`AlreadyVoted`). This layer mirrors that rule:
+ * any existing record for (proposalId, walletAddress) means "already voted"
+ * (no time-based cooldown), and stores the vote's txHash when provided.
  *
  * POST /api/v1/governance/vote/check     — check if wallet can vote
  * POST /api/v1/governance/vote/record    — record a completed vote
@@ -17,10 +17,15 @@ import {
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 
 const router = Router();
 
-const VOTE_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+/** Substrate extrinsic hash: 0x + 32 bytes hex. */
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
 const SignedActionSchema = z.object({
   nonce: z.string().min(8),
@@ -37,7 +42,7 @@ const VoteRecordSchema = SignedActionSchema.extend({
   walletAddress: z.string().min(8).max(128),
   proposalId: z.coerce.number().int().positive(),
   voteType: z.enum(['YES', 'NO']),
-  txHash: z.string().max(128).optional(),
+  txHash: z.string().regex(TX_HASH_RE, 'txHash must be 0x + 64 hex chars').optional(),
 });
 
 /**
@@ -50,7 +55,7 @@ router.post(
   '/vote/check',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = VoteCheckSchema.safeParse(req.body);
+      const parsed = readAuthSchema(req, VoteCheckSchema).safeParse(req.body);
       if (!parsed.success) {
         return res
           .status(400)
@@ -58,7 +63,7 @@ router.post(
       }
 
       const { walletAddress, proposalId } = parsed.data;
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'governance.vote.check',
         address: walletAddress,
         nonce: parsed.data.nonce,
@@ -78,19 +83,21 @@ router.post(
       if (!last) {
         return res.json({
           canVote: true,
+          alreadyVoted: false,
           lastVotedAt: null,
           timeUntilNextVote: 0,
         });
       }
 
-      const elapsed = Date.now() - last.votedAt.getTime();
-      const timeUntilNextVote = Math.max(0, VOTE_COOLDOWN_MS - elapsed);
-
+      // One vote per proposal (contract rule) — no cooldown to wait out.
+      // `timeUntilNextVote` kept for response-shape compatibility.
       return res.json({
-        canVote: timeUntilNextVote === 0,
+        canVote: false,
+        alreadyVoted: true,
         lastVotedAt: last.votedAt.toISOString(),
         lastVoteType: last.voteType,
-        timeUntilNextVote,
+        txHash: last.txHash ?? null,
+        timeUntilNextVote: 0,
       });
     } catch (err) {
       next(err);
@@ -104,8 +111,8 @@ router.post(
  * Records a completed on-chain vote.
  * Called by the frontend AFTER the transaction is confirmed.
  *
- * Note: The source of truth is the smart contract.
- * This record is used only for cooldown UX.
+ * Note: The source of truth is the smart contract (one vote per proposal).
+ * This record is UX history only; `txHash` (0x + 64 hex) is optional.
  */
 router.post(
   '/vote/record',
@@ -135,22 +142,17 @@ router.post(
         return res.status(401).json({ error: auth.error });
       }
 
-      // Verify cooldown server-side
+      // Any existing record (YES or NO, any age) = already voted.
       const last = await prisma.governanceVote.findFirst({
         where: { walletAddress, proposalId },
         orderBy: { votedAt: 'desc' },
       });
 
       if (last) {
-        const elapsed = Date.now() - last.votedAt.getTime();
-        if (elapsed < VOTE_COOLDOWN_MS) {
-          const minutesLeft = Math.ceil((VOTE_COOLDOWN_MS - elapsed) / 60000);
-          return res.status(429).json({
-            error: `Vote cooldown active. Try again in ${minutesLeft} min.`,
-            code: 'VOTE_COOLDOWN',
-            timeUntilNextVote: VOTE_COOLDOWN_MS - elapsed,
-          });
-        }
+        return res.status(409).json({
+          error: 'Vote already recorded for this proposal',
+          code: 'ALREADY_VOTED',
+        });
       }
 
       const vote = await prisma.governanceVote.create({
@@ -164,11 +166,11 @@ router.post(
 
       return res.status(201).json({ vote });
     } catch (err: unknown) {
-      // P2002 = Prisma unique constraint — duplicate vote on same proposal
+      // P2002 = Prisma unique constraint — concurrent duplicate vote
       if ((err as { code?: string }).code === 'P2002') {
         return res.status(409).json({
           error: 'Vote already recorded for this proposal',
-          code: 'DUPLICATE_VOTE',
+          code: 'ALREADY_VOTED',
         });
       }
       next(err);
@@ -179,15 +181,18 @@ router.post(
 /**
  * GET /api/v1/governance/vote/history?walletAddress=
  *
- * Returns the vote history for a wallet (for UI cooldown display).
+ * Returns the vote history for a wallet (UI "already voted" display).
  */
 router.get(
   '/vote/history',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedActionSchema.extend({
-        walletAddress: z.string().min(8).max(128),
-      }).safeParse({
+      const parsed = readAuthSchema(
+        req,
+        SignedActionSchema.extend({
+          walletAddress: z.string().min(8).max(128),
+        }),
+      ).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
       });
@@ -196,7 +201,7 @@ router.get(
         return res.status(400).json({ error: 'walletAddress required' });
       }
 
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'governance.vote.history',
         address: parsed.data.walletAddress,
         nonce: parsed.data.nonce,

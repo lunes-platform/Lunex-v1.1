@@ -1,5 +1,10 @@
 import crypto from 'crypto';
-import { cryptoWaitReady, signatureVerify } from '@polkadot/util-crypto';
+import {
+  cryptoWaitReady,
+  decodeAddress,
+  signatureVerify,
+} from '@polkadot/util-crypto';
+import { u8aEq } from '@polkadot/util';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Prisma } from '@prisma/client';
 import prisma from '../db';
@@ -95,6 +100,16 @@ function buildRiskConfigUpdate(
     data.maxDrawdownPct = new Decimal(input.maxDrawdownPct.toString());
   }
   return data;
+}
+
+// Follower-level stop-loss preference, stored on the follower's OWN position
+// (BE-04). Never written to the shared vault.
+function followerStopLossUpdate(stopLossPct: number | undefined): {
+  stopLossPct?: Decimal;
+} {
+  return stopLossPct != null
+    ? { stopLossPct: new Decimal(stopLossPct.toString()) }
+    : {};
 }
 
 // Reads the persisted risk config off a vault record, applying defaults.
@@ -194,13 +209,8 @@ type ApiKeyChallenge = {
   expiresAt: number;
 };
 
-type CopyVaultExecutionMode = 'db-journal' | 'on-chain-confirmed';
 type CopytradeSignalMode = 'AUTO' | 'JOURNAL' | 'EXECUTE_VAULT';
 type CopytradeSignalModeResolved = 'JOURNAL' | 'EXECUTE_VAULT';
-type VaultOnChainConfirmation = {
-  txHash: string;
-  blockHash: string;
-};
 
 type LiveSignalExecutionSlice = {
   amountIn: number;
@@ -422,75 +432,76 @@ async function assertValidApiKeyChallenge(
   await deleteApiKeyChallenge(input.challengeId);
 }
 
-async function confirmDepositOnChainIfConfigured(
-  leaderId: string,
-  input: CopyVaultDepositInput,
-): Promise<VaultOnChainConfirmation | null> {
-  if (!copyVaultService.isEnabled()) return null;
+// ─── Vault deposit/withdraw proof (BE-01 / BE-02) ─────────────────
+// Fund movement into/out of a CopyVault is ALWAYS signed by the follower's
+// wallet on the vault contract. The API only journals a tx it has proven on a
+// finalized block (copyVaultService.verify*). There is no db-journal mode:
+// a vault without `contractAddress` rejects deposits and withdrawals.
 
-  const vault = await prisma.copyVault.findUnique({
-    where: { leaderId },
-  });
-  if (!vault) throw new Error('Vault not found');
-  if (vault.status !== 'ACTIVE') throw new Error('Vault is not active');
-  if (input.token !== vault.collateralToken) {
-    throw new Error(`Vault only accepts ${vault.collateralToken}`);
+/** The ink! CopyVault holds native LUNES only (payable `deposit`). */
+const ON_CHAIN_VAULT_COLLATERAL = 'LUNES';
+
+function sameAccountAddress(a: string, b: string): boolean {
+  try {
+    return u8aEq(decodeAddress(a), decodeAddress(b));
+  } catch {
+    return a === b;
   }
+}
 
-  const amount = toNumber(input.amount);
-  const minDeposit = decimalToNumber(vault.minDeposit);
-  if (amount < minDeposit) throw new Error(`Minimum deposit is ${minDeposit}`);
-  if (!vault.contractAddress) return null;
+type VaultTxProofInput = { txHash: string; blockHash: string };
+export type CopyVaultDepositProofInput = CopyVaultDepositInput &
+  VaultTxProofInput;
+export type CopyVaultWithdrawProofInput = CopyVaultWithdrawInput &
+  VaultTxProofInput;
 
-  const result = await copyVaultService.deposit(
-    vault.contractAddress,
-    input.followerAddress,
-    input.amount,
-  );
+type ContractVault = {
+  id: string;
+  contractAddress: string;
+  collateralToken: string;
+};
 
+async function loadContractVault(leaderId: string): Promise<ContractVault> {
+  const vault = await prisma.copyVault.findUnique({ where: { leaderId } });
+  if (!vault) throw ApiError.notFound('Vault not found');
+  if (!vault.contractAddress) {
+    throw ApiError.conflict(
+      'Vault has no on-chain contract yet; deposits and withdrawals are disabled',
+    );
+  }
+  if (vault.collateralToken !== ON_CHAIN_VAULT_COLLATERAL) {
+    throw ApiError.conflict(
+      `On-chain vault collateral must be ${ON_CHAIN_VAULT_COLLATERAL}; vault is misconfigured`,
+    );
+  }
+  if (!copyVaultService.isEnabled()) {
+    throw new ApiError(
+      503,
+      'CHAIN_UNAVAILABLE',
+      'On-chain vault verification is unavailable',
+    );
+  }
   return {
-    txHash: result.txHash,
-    blockHash: result.blockHash,
+    id: vault.id,
+    contractAddress: vault.contractAddress,
+    collateralToken: vault.collateralToken,
   };
 }
 
-async function confirmWithdrawalOnChainIfConfigured(
-  leaderId: string,
-  input: CopyVaultWithdrawInput,
-): Promise<VaultOnChainConfirmation | null> {
-  if (!copyVaultService.isEnabled()) return null;
-
-  const vault = await prisma.copyVault.findUnique({
-    where: { leaderId },
-  });
-  if (!vault) throw new Error('Vault not found');
-  if (!vault.contractAddress) return null;
-
-  const position = await prisma.copyVaultPosition.findUnique({
-    where: {
-      vaultId_followerAddress: {
-        vaultId: vault.id,
-        followerAddress: input.followerAddress,
-      },
-    },
-  });
-  if (!position) throw new Error('Position not found');
-
-  const shares = toNumber(input.shares);
-  if (shares <= 0 || shares > decimalToNumber(position.shareBalance)) {
-    throw new Error('Invalid shares to burn');
-  }
-
-  const result = await copyVaultService.withdraw(
-    vault.contractAddress,
-    input.followerAddress,
-    input.shares,
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === 'P2002'
   );
+}
 
-  return {
-    txHash: result.txHash,
-    blockHash: result.blockHash,
-  };
+function sameDecimal(a: string, b: string): boolean {
+  try {
+    return new Decimal(a).eq(new Decimal(b));
+  } catch {
+    return false;
+  }
 }
 
 function resolveSignalMode(
@@ -885,6 +896,8 @@ export const copytradeService = {
       twapThreshold: decimalToNumber(vault.twapThreshold),
       maxSlippageBps: vault.maxSlippageBps,
       riskConfig: readVaultRiskConfig(vault),
+      // Followers sign deposit/withdraw directly on this contract.
+      contractAddress: vault.contractAddress ?? null,
       leader: {
         id: vault.leader.id,
         name: vault.leader.name,
@@ -899,18 +912,19 @@ export const copytradeService = {
   },
 
   async getVaultByLeader(leaderId: string) {
+    // BE-11: this endpoint is PUBLIC. Per-follower rows (address, deposits,
+    // withdrawals, PnL, fees) are only served by the READ-signed
+    // GET /copytrade/positions; here we expose aggregates only.
     const vault = await prisma.copyVault.findUnique({
       where: { leaderId },
-      include: {
-        leader: true,
-        positions: {
-          orderBy: { updatedAt: 'desc' },
-          take: 20,
-        },
-      },
+      include: { leader: true },
     });
 
     if (!vault) throw new Error('Vault not found');
+
+    const activePositions = await prisma.copyVaultPosition.count({
+      where: { vaultId: vault.id, shareBalance: { gt: 0 } },
+    });
 
     return {
       id: vault.id,
@@ -934,21 +948,8 @@ export const copytradeService = {
         isAI: vault.leader.isAi,
         performanceFee: vault.leader.performanceFeeBps / 100,
       },
-      positions: vault.positions.map((position) => ({
-        id: position.id,
-        followerAddress: position.followerAddress,
-        shareBalance: decimalToNumber(position.shareBalance),
-        estimatedValue: calculatePositionValue(
-          position.shareBalance.toString(),
-          vault.totalShares.toString(),
-          vault.totalEquity.toString(),
-        ),
-        netDeposited: decimalToNumber(position.netDeposited),
-        totalWithdrawn: decimalToNumber(position.totalWithdrawn),
-        highWaterMarkValue: decimalToNumber(position.highWaterMarkValue),
-        feePaid: decimalToNumber(position.feePaid),
-        realizedPnl: decimalToNumber(position.realizedPnl),
-      })),
+      contractAddress: vault.contractAddress ?? null,
+      activePositions,
     };
   },
 
@@ -979,6 +980,10 @@ export const copytradeService = {
       highWaterMarkValue: decimalToNumber(position.highWaterMarkValue),
       feePaid: decimalToNumber(position.feePaid),
       realizedPnl: decimalToNumber(position.realizedPnl),
+      stopLossPct:
+        position.stopLossPct != null
+          ? decimalToNumber(position.stopLossPct)
+          : null,
       vault: {
         id: position.vault.id,
         name: position.vault.name,
@@ -986,18 +991,50 @@ export const copytradeService = {
         leaderId: position.vault.leaderId,
         leaderName: position.vault.leader.name,
         leaderUsername: position.vault.leader.username,
+        contractAddress: position.vault.contractAddress ?? null,
       },
     }));
   },
 
-  async depositToVault(leaderId: string, input: CopyVaultDepositInput) {
-    const onChainConfirmation = await confirmDepositOnChainIfConfigured(
-      leaderId,
-      input,
-    );
-    const executionMode: CopyVaultExecutionMode = onChainConfirmation
-      ? 'on-chain-confirmed'
-      : 'db-journal';
+  /**
+   * Journal a CopyVault deposit the follower already made ON CHAIN.
+   *
+   * The follower's wallet signed `CopyVault.deposit` (payable) on the vault
+   * contract; we only credit after proving that finalized tx. Amount and
+   * shares come from the contract's Deposited event — never from the request.
+   * The DB mirrors the chain, so vault status / minDeposit are not re-checked
+   * here (the contract enforces pause + MIN_DEPOSIT before accepting funds).
+   */
+  async depositToVault(leaderId: string, input: CopyVaultDepositProofInput) {
+    const contractVault = await loadContractVault(leaderId);
+    if (input.token !== contractVault.collateralToken) {
+      throw ApiError.badRequest(
+        `Vault only accepts ${contractVault.collateralToken}`,
+      );
+    }
+
+    const alreadyUsed = await prisma.copyVaultDeposit.findUnique({
+      where: { txHash: input.txHash.toLowerCase() },
+    });
+    if (alreadyUsed) {
+      throw ApiError.conflict('This deposit transaction was already credited');
+    }
+
+    const proof = await copyVaultService.verifyDeposit({
+      vaultAddress: contractVault.contractAddress,
+      followerAddress: input.followerAddress,
+      txHash: input.txHash,
+      blockHash: input.blockHash,
+    });
+    if (!sameDecimal(proof.amount, input.amount)) {
+      throw ApiError.badRequest(
+        'Signed amount does not match the on-chain deposit',
+      );
+    }
+
+    const executionMode = 'on-chain-confirmed' as const;
+    const amount = toNumber(proof.amount);
+    const sharesMinted = toNumber(proof.shares);
 
     try {
       return await prisma.$transaction(async (tx) => {
@@ -1005,22 +1042,7 @@ export const copytradeService = {
           where: { leaderId },
           include: { leader: true },
         });
-        if (!vault) throw new Error('Vault not found');
-        if (vault.status !== 'ACTIVE') throw new Error('Vault is not active');
-        if (input.token !== vault.collateralToken) {
-          throw new Error(`Vault only accepts ${vault.collateralToken}`);
-        }
-
-        const amount = toNumber(input.amount);
-        const minDeposit = decimalToNumber(vault.minDeposit);
-        if (amount < minDeposit)
-          throw new Error(`Minimum deposit is ${minDeposit}`);
-
-        const sharesMinted = calculateSharesToMint(
-          amount,
-          vault.totalShares.toString(),
-          vault.totalEquity.toString(),
-        );
+        if (!vault) throw ApiError.notFound('Vault not found');
 
         const existingPosition = await tx.copyVaultPosition.findUnique({
           where: {
@@ -1043,6 +1065,7 @@ export const copytradeService = {
                 shareBalance: { increment: toDecimal(sharesMinted) },
                 netDeposited: { increment: toDecimal(amount) },
                 highWaterMarkValue: { increment: toDecimal(amount) },
+                ...followerStopLossUpdate(input.stopLossPct),
               },
             })
           : await tx.copyVaultPosition.create({
@@ -1052,6 +1075,7 @@ export const copytradeService = {
                 shareBalance: toDecimal(sharesMinted),
                 netDeposited: toDecimal(amount),
                 highWaterMarkValue: toDecimal(amount),
+                ...followerStopLossUpdate(input.stopLossPct),
               },
             });
 
@@ -1062,18 +1086,20 @@ export const copytradeService = {
             token: input.token,
             amount: toDecimal(amount),
             sharesMinted: toDecimal(sharesMinted),
-            txHash: onChainConfirmation?.txHash ?? null,
+            txHash: proof.txHash,
+            blockHash: proof.blockHash,
           },
         });
 
+        // BE-04: a follower deposit NEVER touches the vault-wide risk config
+        // (copyMultiplier / maxPerTradeUsdt / stopLossPct / maxDrawdownPct).
+        // Only the leader sets it via updateVaultRiskConfig().
         await tx.copyVault.update({
           where: { id: vault.id },
           data: {
             totalEquity: { increment: toDecimal(amount) },
             totalShares: { increment: toDecimal(sharesMinted) },
             totalDeposits: { increment: toDecimal(amount) },
-            // Persist copy-engine risk limits provided at deposit time.
-            ...buildRiskConfigUpdate(input),
           },
         });
 
@@ -1087,34 +1113,67 @@ export const copytradeService = {
           sharesMinted,
           amount,
           positionId: position.id,
-          txHash: onChainConfirmation?.txHash ?? null,
+          txHash: proof.txHash,
+          blockHash: proof.blockHash,
           executionMode,
         };
       });
-    } catch (err) {
-      if (onChainConfirmation) {
-        log.error(
-          {
-            err,
-            leaderId,
-            followerAddress: input.followerAddress,
-            txHash: onChainConfirmation.txHash,
-          },
-          '[Copytrade] DB deposit journal failed after on-chain confirmation',
+    } catch (err: unknown) {
+      if (isUniqueViolation(err)) {
+        throw ApiError.conflict(
+          'This deposit transaction was already credited',
         );
       }
+      log.error(
+        {
+          err,
+          leaderId,
+          followerAddress: input.followerAddress,
+          txHash: proof.txHash,
+        },
+        '[Copytrade] DB deposit journal failed after on-chain confirmation',
+      );
       throw err;
     }
   },
 
-  async withdrawFromVault(leaderId: string, input: CopyVaultWithdrawInput) {
-    const onChainConfirmation = await confirmWithdrawalOnChainIfConfigured(
-      leaderId,
-      input,
-    );
-    const executionMode: CopyVaultExecutionMode = onChainConfirmation
-      ? 'on-chain-confirmed'
-      : 'db-journal';
+  /**
+   * Journal a CopyVault withdrawal the follower already executed ON CHAIN.
+   *
+   * The contract pays `caller`, so the follower's wallet must sign
+   * `CopyVault.withdraw(shares)` itself (a relayer-signed call would pay the
+   * relayer). Shares burned, net payout and performance fee come from the
+   * contract's Withdrawn event; the off-chain HWM math is only used for the
+   * profit / high-water-mark bookkeeping.
+   */
+  async withdrawFromVault(
+    leaderId: string,
+    input: CopyVaultWithdrawProofInput,
+  ) {
+    const contractVault = await loadContractVault(leaderId);
+
+    const alreadyUsed = await prisma.copyVaultWithdrawal.findUnique({
+      where: { txHash: input.txHash.toLowerCase() },
+    });
+    if (alreadyUsed) {
+      throw ApiError.conflict(
+        'This withdrawal transaction was already recorded',
+      );
+    }
+
+    const proof = await copyVaultService.verifyWithdrawal({
+      vaultAddress: contractVault.contractAddress,
+      followerAddress: input.followerAddress,
+      txHash: input.txHash,
+      blockHash: input.blockHash,
+    });
+    if (!sameDecimal(proof.shares, input.shares)) {
+      throw ApiError.badRequest(
+        'Signed shares do not match the on-chain withdrawal',
+      );
+    }
+
+    const executionMode = 'on-chain-confirmed' as const;
 
     const result = await prisma
       .$transaction(async (tx) => {
@@ -1122,7 +1181,7 @@ export const copytradeService = {
           where: { leaderId },
           include: { leader: true },
         });
-        if (!vault) throw new Error('Vault not found');
+        if (!vault) throw ApiError.notFound('Vault not found');
 
         const position = await tx.copyVaultPosition.findUnique({
           where: {
@@ -1132,24 +1191,32 @@ export const copytradeService = {
             },
           },
         });
-        if (!position) throw new Error('Position not found');
+        if (!position) throw ApiError.notFound('Position not found');
 
-        const shares = toNumber(input.shares);
-        const grossAmount = calculateGrossWithdrawal(
-          shares,
-          vault.totalShares.toString(),
-          vault.totalEquity.toString(),
-        );
+        const shares = toNumber(proof.shares);
+        if (shares > decimalToNumber(position.shareBalance) + EPSILON) {
+          throw ApiError.conflict(
+            'On-chain shares exceed the journaled position; needs reconciliation',
+          );
+        }
+        const feeAmount = toNumber(proof.performanceFee);
+        const netAmount = toNumber(proof.amount);
+        const grossAmount = netAmount + feeAmount;
 
-        const feeInfo = calculatePerformanceFeeOnWithdrawal({
+        // Profit / HWM bookkeeping only — the fee actually charged is the
+        // on-chain one (contract fee, set by the contract admin).
+        const hwmInfo = calculatePerformanceFeeOnWithdrawal({
           grossAmount,
           sharesToBurn: shares,
           shareBalanceBefore: position.shareBalance.toString(),
           highWaterMarkValue: position.highWaterMarkValue.toString(),
-          performanceFeeBps: vault.leader.performanceFeeBps,
+          performanceFeeBps: 0,
         });
-
-        const netAmount = grossAmount - feeInfo.feeAmount;
+        const feeInfo = {
+          feeAmount,
+          profitAmount: hwmInfo.profitAmount,
+          remainingHighWaterMark: hwmInfo.remainingHighWaterMark,
+        };
         const updatedPosition = await tx.copyVaultPosition.update({
           where: {
             vaultId_followerAddress: {
@@ -1178,7 +1245,8 @@ export const copytradeService = {
             feeAmount: toDecimal(feeInfo.feeAmount),
             netAmount: toDecimal(netAmount),
             profitAmount: toDecimal(feeInfo.profitAmount),
-            txHash: onChainConfirmation?.txHash ?? null,
+            txHash: proof.txHash,
+            blockHash: proof.blockHash,
           },
         });
 
@@ -1210,22 +1278,26 @@ export const copytradeService = {
           remainingShares: decimalToNumber(updatedPosition.shareBalance),
           collateralToken: vault.collateralToken,
           followerAddress: input.followerAddress,
-          txHash: onChainConfirmation?.txHash ?? null,
+          txHash: proof.txHash,
+          blockHash: proof.blockHash,
           executionMode,
         };
       })
-      .catch((err) => {
-        if (onChainConfirmation) {
-          log.error(
-            {
-              err,
-              leaderId,
-              followerAddress: input.followerAddress,
-              txHash: onChainConfirmation.txHash,
-            },
-            '[Copytrade] DB withdrawal journal failed after on-chain confirmation',
+      .catch((err: unknown) => {
+        if (isUniqueViolation(err)) {
+          throw ApiError.conflict(
+            'This withdrawal transaction was already recorded',
           );
         }
+        log.error(
+          {
+            err,
+            leaderId,
+            followerAddress: input.followerAddress,
+            txHash: proof.txHash,
+          },
+          '[Copytrade] DB withdrawal journal failed after on-chain confirmation',
+        );
         throw err;
       });
 
@@ -1248,6 +1320,125 @@ export const copytradeService = {
     }
 
     return result;
+  },
+
+  /**
+   * BE-04: the vault-wide copy-engine risk config is owned by the leader.
+   * The caller (route) must have verified a wallet signature from
+   * `leaderAddress`; here we bind that wallet to the vault owner.
+   */
+  async updateVaultRiskConfig(
+    leaderId: string,
+    leaderAddress: string,
+    risk: RiskConfigInput,
+  ) {
+    const leader = await prisma.leader.findUnique({
+      where: { id: leaderId },
+      include: { vault: true },
+    });
+    if (!leader) throw ApiError.notFound('Leader not found');
+    if (leader.address !== leaderAddress) {
+      throw ApiError.forbidden('Only the vault leader can change risk config');
+    }
+    if (!leader.vault) throw ApiError.notFound('Vault not found');
+
+    const data = buildRiskConfigUpdate(risk);
+    if (Object.keys(data).length === 0) {
+      throw ApiError.badRequest('No risk config fields provided');
+    }
+    const updated = await prisma.copyVault.update({
+      where: { id: leader.vault.id },
+      data,
+    });
+    return { vaultId: updated.id, riskConfig: readVaultRiskConfig(updated) };
+  },
+
+  /**
+   * Item 7 (admin only — the route is behind `requireAdmin`): binds a DB vault
+   * to its deployed CopyVault contract. Fail-closed: the binding happens only
+   * after the chain proves the contract exists, runs the audited CopyVault
+   * code and its `get_leader` is this vault's leader wallet. A vault that
+   * still carries journal-only (pre-BE-01) state must be reset first.
+   */
+  async bindVaultContract(leaderId: string, contractAddress: string) {
+    const vault = await prisma.copyVault.findUnique({
+      where: { leaderId },
+      include: { leader: true },
+    });
+    if (!vault) throw ApiError.notFound('Vault not found');
+
+    if (vault.contractAddress) {
+      if (sameAccountAddress(vault.contractAddress, contractAddress)) {
+        return {
+          vaultId: vault.id,
+          leaderId: vault.leaderId,
+          contractAddress: vault.contractAddress,
+          collateralToken: vault.collateralToken,
+          codeHash: null,
+        };
+      }
+      throw new ApiError(
+        409,
+        'VAULT_ALREADY_BOUND',
+        'Vault is already bound to another contract',
+      );
+    }
+
+    const boundElsewhere = await prisma.copyVault.findFirst({
+      where: { contractAddress, NOT: { id: vault.id } },
+      select: { id: true },
+    });
+    if (boundElsewhere) {
+      throw new ApiError(
+        409,
+        'CONTRACT_ALREADY_BOUND',
+        'Contract is already bound to another vault',
+      );
+    }
+
+    const [openPositions, journalDeposits] = await Promise.all([
+      prisma.copyVaultPosition.count({
+        where: { vaultId: vault.id, shareBalance: { gt: 0 } },
+      }),
+      prisma.copyVaultDeposit.count({ where: { vaultId: vault.id } }),
+    ]);
+    if (
+      openPositions > 0 ||
+      journalDeposits > 0 ||
+      !new Decimal(vault.totalShares.toString()).isZero()
+    ) {
+      throw new ApiError(
+        409,
+        'VAULT_HAS_JOURNAL_STATE',
+        'Vault has journal-only deposits/positions; reset it before binding a contract',
+      );
+    }
+
+    const binding = await copyVaultService.verifyContractBinding({
+      contractAddress,
+      leaderAddress: vault.leader.address,
+    });
+
+    const updated = await prisma.copyVault.update({
+      where: { id: vault.id },
+      data: { contractAddress, collateralToken: ON_CHAIN_VAULT_COLLATERAL },
+    });
+    log.info(
+      {
+        vaultId: vault.id,
+        leaderId,
+        contractAddress,
+        codeHash: binding.codeHash,
+      },
+      '[Copytrade] Vault bound to on-chain contract',
+    );
+    return {
+      vaultId: updated.id,
+      leaderId: vault.leaderId,
+      contractAddress: updated.contractAddress,
+      collateralToken: updated.collateralToken,
+      codeHash: binding.codeHash,
+    };
   },
 
   async createSignal(leaderId: string, input: CopyTradeSignalInput) {

@@ -9,12 +9,18 @@
  *   import { AsymmetricClient } from '../sdk/AsymmetricClient'
  *
  *   const client = new AsymmetricClient(apiBaseUrl)
- *   const strategies = await client.listStrategies(walletAddress, signedReadAuth)
+ *   const strategies = await client.listStrategies(walletAddress, readAuth)
  *   const strategy = await client.createStrategy({ ... })
  *   await client.updateCurve(strategyId, walletAddress, { isBuySide: true, newGamma: 3 })
  *   await client.toggleAutoRebalance(strategyId, walletAddress, true)
- *   const status = await client.getStrategyStatus(strategyId, walletAddress, signedReadAuth)
+ *   const status = await client.getStrategyStatus(strategyId, walletAddress, readAuth)
  */
+
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  type ReadAuth
+} from '../services/sessionService'
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -133,11 +139,9 @@ export interface ToggleAutoRebalanceInput {
   signature: string
 }
 
-export interface SignedReadAuth {
-  nonce: string
-  timestamp: number
-  signature: string
-}
+// Private reads take a `ReadAuth`: a read-session token (`{ sessionToken }`,
+// preferred — no wallet prompt) or a legacy per-request signature. Both travel
+// in headers (`readAuthHeaders`), never in the query string.
 
 export interface RebalanceLog {
   id: string
@@ -173,16 +177,16 @@ export class AsymmetricClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const url = `${this.baseUrl}${path}`
     const res = await fetch(url, {
+      ...options,
       headers: {
         'Content-Type': 'application/json',
-        ...options?.headers
-      },
-      ...options
+        ...(options?.headers as Record<string, string> | undefined)
+      }
     })
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}))
-      throw new Error(
+      throw handleReadAuthError(
         body.error || `AsymmetricClient request failed: ${res.status}`
       )
     }
@@ -194,16 +198,14 @@ export class AsymmetricClient {
 
   async listStrategies(
     walletAddress: string,
-    auth: SignedReadAuth
+    auth: ReadAuth
   ): Promise<StrategyStatus[]> {
     const query = new URLSearchParams({
-      address: walletAddress,
-      nonce: auth.nonce,
-      timestamp: String(auth.timestamp),
-      signature: auth.signature
+      address: walletAddress
     })
     const response = await this.request<StrategyStatus[]>(
-      `/strategies?${query.toString()}`
+      `/strategies?${query.toString()}`,
+      { headers: readAuthHeaders(auth) }
     )
     return response.map(entry => this.normalizeStrategyStatus(entry))
   }
@@ -219,16 +221,14 @@ export class AsymmetricClient {
   async getStrategyStatus(
     strategyId: string,
     userAddress: string,
-    auth: SignedReadAuth
+    auth: ReadAuth
   ): Promise<StrategyStatus> {
     const query = new URLSearchParams({
-      userAddress,
-      nonce: auth.nonce,
-      timestamp: String(auth.timestamp),
-      signature: auth.signature
+      userAddress
     })
     const response = await this.request<StrategyStatus>(
-      `/strategies/${strategyId}?${query.toString()}`
+      `/strategies/${strategyId}?${query.toString()}`,
+      { headers: readAuthHeaders(auth) }
     )
     return this.normalizeStrategyStatus(response)
   }
@@ -274,16 +274,15 @@ export class AsymmetricClient {
   async getRebalanceLogs(
     strategyId: string,
     userAddress: string,
-    auth: SignedReadAuth,
+    auth: ReadAuth,
     limit = 50
   ): Promise<RebalanceLog[]> {
     const query = new URLSearchParams({
       userAddress,
-      limit: String(limit),
-      nonce: auth.nonce,
-      timestamp: String(auth.timestamp),
-      signature: auth.signature
+      limit: String(limit)
     })
-    return this.request(`/strategies/${strategyId}/logs?${query.toString()}`)
+    return this.request(`/strategies/${strategyId}/logs?${query.toString()}`, {
+      headers: readAuthHeaders(auth)
+    })
   }
 }

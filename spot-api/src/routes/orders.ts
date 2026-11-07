@@ -2,19 +2,19 @@ import { NextFunction, Router, Request, Response } from 'express';
 import { orderService } from '../services/orderService';
 import { CreateOrderSchema, CancelOrderSchema } from '../utils/validation';
 import {
-  buildSpotOrderMessage,
-  buildLegacySpotOrderMessage,
+  checkSignedTimestamp,
+  verifySpotOrderSignature,
   verifyWalletActionSignature,
-  verifyWalletReadSignature,
-  verifyAddressSignature,
   consumeNonce,
   isNonceUsed,
   getSignedAuthInput,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { checkRedisRateLimit } from '../utils/redisRateLimit';
 import { z } from 'zod';
-
-const SIGNED_ORDER_TTL_MS = 5 * 60 * 1000;
 
 const router = Router();
 
@@ -37,9 +37,15 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
         .json({ error: 'Validation failed', details: parsed.error.issues });
     }
 
-    // Validate timestamp freshness
-    if (Math.abs(Date.now() - parsed.data.timestamp) > SIGNED_ORDER_TTL_MS) {
-      return res.status(401).json({ error: 'Expired order signature' });
+    // Validate timestamp freshness (±5 min past, small future skew only)
+    const freshness = checkSignedTimestamp(parsed.data.timestamp);
+    if (freshness !== 'ok') {
+      return res.status(401).json({
+        error:
+          freshness === 'future'
+            ? 'Order timestamp in the future'
+            : 'Expired order signature',
+      });
     }
 
     // Prevent nonce replay
@@ -48,25 +54,13 @@ router.post('/', async (req: Request, res: Response, next: NextFunction) => {
       return res.status(401).json({ error: 'Order nonce already used' });
     }
 
-    let isValid = await verifyAddressSignature(
-      buildSpotOrderMessage(parsed.data),
+    // v3 (domain + chain bound). Unbound v2/v1 only with SIGNING_ACCEPT_LEGACY.
+    const version = await verifySpotOrderSignature(
+      parsed.data,
       parsed.data.signature,
       parsed.data.makerAddress,
     );
-    // Legacy signatures never authenticated execution policy or expiry.
-    // Accept them only for the original basic GTC order without a deadline.
-    if (
-      !isValid &&
-      parsed.data.timeInForce === 'GTC' &&
-      !parsed.data.expiresAt
-    ) {
-      isValid = await verifyAddressSignature(
-        buildLegacySpotOrderMessage(parsed.data),
-        parsed.data.signature,
-        parsed.data.makerAddress,
-      );
-    }
-    if (!isValid) return res.status(401).json({ error: 'Invalid signature' });
+    if (!version) return res.status(401).json({ error: 'Invalid signature' });
 
     const consumeResult = await consumeNonce(nonceKey);
     if (!consumeResult.ok) {
@@ -111,13 +105,9 @@ router.delete(
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
 
-      // Anti-spoofing: rate limit cancellations (Redis-backed sliding window)
-      if (await isCancelRateLimited(parsed.data.makerAddress)) {
-        return res
-          .status(429)
-          .json({ error: 'Too many cancellations. Max 20 per minute.' });
-      }
-
+      // Authenticate FIRST: the cancel quota is keyed by wallet, so counting
+      // unauthenticated attempts would let anyone exhaust a victim's quota
+      // (BE-08). Unauthenticated spam is bounded by the per-IP orderLimiter.
       const auth = await verifyWalletActionSignature({
         action: 'orders.cancel',
         address: parsed.data.makerAddress,
@@ -129,6 +119,14 @@ router.delete(
         },
       });
       if (!auth.ok) return res.status(401).json({ error: auth.error });
+
+      // Anti-spoofing: rate limit authenticated cancellations per wallet
+      if (await isCancelRateLimited(parsed.data.makerAddress)) {
+        return res.status(429).json({
+          error: 'Too many cancellations. Max 20 per minute.',
+          code: 'RATE_LIMITED',
+        });
+      }
 
       const order = await orderService.cancelOrder(
         req.params.id,
@@ -143,17 +141,17 @@ router.delete(
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = SignedReadSchema.safeParse({
-      ...req.query,
-      ...getSignedAuthInput(req),
-    });
+    const parsed = readAuthSchema(req, SignedReadSchema).safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
     if (!parsed.success) {
       return res
         .status(400)
         .json({ error: 'Validation failed', details: parsed.error.issues });
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'orders.list',
       address: parsed.data.makerAddress,
       nonce: parsed.data.nonce,

@@ -8,6 +8,15 @@
 #
 # This file extends the production compose with sandbox-specific services.
 # The sandbox runs an independent API + Frontend + DB + Redis targeting testnet.
+#
+# Networking: every sandbox service joins the prod `internal_network` (so the
+# prod nginx can proxy lunex-sandbox.lunes.io / sandbox.lunes.io to them —
+# nginx resolves them at request time, see nginx.prod.conf). sandbox-api and
+# faucet also join `egress_network` (public wss RPC / Turnstile siteverify).
+#
+# Faucet: needs a dedicated, funded treasury seed (FAUCET_SEED, no default —
+# //Alice and other dev seeds are refused with NODE_ENV=production). On this
+# --dev chain fund it once from //Alice by hand.
 # =============================================================================
 
 services:
@@ -21,6 +30,8 @@ services:
       POSTGRES_PASSWORD: ${SANDBOX_DB_PASSWORD:?Set SANDBOX_DB_PASSWORD}
     volumes:
       - sandbox-pgdata:/var/lib/postgresql/data
+    networks:
+      - internal_network
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${SANDBOX_DB_USER:-lunex_sandbox}" ]
       interval: 10s
@@ -31,7 +42,18 @@ services:
   sandbox-redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+    # IN-04: password + noeviction + AOF (nonces must survive restarts and
+    # never be evicted). Reuses REDIS_PASSWORD unless SANDBOX_REDIS_PASSWORD set.
+    command: >-
+      redis-server
+      --requirepass ${SANDBOX_REDIS_PASSWORD:-${REDIS_PASSWORD:?Set REDIS_PASSWORD}}
+      --maxmemory 128mb
+      --maxmemory-policy noeviction
+      --appendonly yes
+    environment:
+      REDISCLI_AUTH: ${SANDBOX_REDIS_PASSWORD:-${REDIS_PASSWORD}}
+    networks:
+      - internal_network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -51,22 +73,37 @@ services:
       sandbox-redis:
         condition: service_healthy
     environment:
-      NODE_ENV: staging
+      # spot-api only accepts exactly "production" outside dev/test
+      # (productionGuards.ts) — "staging" refuses to boot.
+      NODE_ENV: production
       DATABASE_URL: postgresql://${SANDBOX_DB_USER:-lunex_sandbox}:${SANDBOX_DB_PASSWORD}@sandbox-postgres:5432/lunex_sandbox?schema=public
       PORT: 4010
       WS_PORT: 4011
       CORS_ALLOWED_ORIGINS: ${SANDBOX_CORS_ORIGINS:-https://lunex-sandbox.lunes.io}
-      TRUST_PROXY: "true"
+      ALLOWED_WS_ORIGINS: ${SANDBOX_ALLOWED_WS_ORIGINS:-https://lunex-sandbox.lunes.io}
+      # nginx overwrites X-Forwarded-For with $remote_addr → exactly 1 hop.
+      TRUST_PROXY: "1"
       LUNES_WS_URL: ${SANDBOX_LUNES_WS_URL:-wss://sandbox.lunes.io/ws}
       RELAYER_SEED: ${SANDBOX_RELAYER_SEED:?Set SANDBOX_RELAYER_SEED}
-      REDIS_URL: redis://sandbox-redis:6379
-      SPOT_CONTRACT_ADDRESS: ${SANDBOX_SPOT_SETTLEMENT_CONTRACT:-}
+      BRIDGE_ADMIN_SEED: ${SANDBOX_BRIDGE_ADMIN_SEED:?Set SANDBOX_BRIDGE_ADMIN_SEED}
+      # Settlement attestor — must differ from SANDBOX_RELAYER_SEED.
+      ATTESTOR_SEED: ${SANDBOX_ATTESTOR_SEED:?Set SANDBOX_ATTESTOR_SEED}
+      # Wallet-signature binding; must equal sandbox-frontend REACT_APP_SIGNING_DOMAIN.
+      SIGNING_DOMAIN: ${SANDBOX_SIGNING_DOMAIN:-lunex-sandbox.lunes.io}
+      LUNES_GENESIS_HASH: ${SANDBOX_GENESIS_HASH:?Set SANDBOX_GENESIS_HASH (genesis of the sandbox chain)}
+      PUBLIC_API_ORIGIN: ${SANDBOX_PUBLIC_API_ORIGIN:-https://lunex-sandbox.lunes.io}
+      REDIS_URL: redis://:${SANDBOX_REDIS_PASSWORD:-${REDIS_PASSWORD}}@sandbox-redis:6379
+      SPOT_CONTRACT_ADDRESS: ${SANDBOX_SPOT_SETTLEMENT_CONTRACT:?Set SANDBOX_SPOT_SETTLEMENT_CONTRACT}
       SPOT_CONTRACT_METADATA_PATH: ${SANDBOX_SPOT_CONTRACT_METADATA_PATH:-./abis/Spot.json}
-      FACTORY_CONTRACT_ADDRESS: ${SANDBOX_FACTORY_CONTRACT:-}
+      FACTORY_CONTRACT_ADDRESS: ${SANDBOX_FACTORY_CONTRACT:?Set SANDBOX_FACTORY_CONTRACT}
       FACTORY_CONTRACT_METADATA_PATH: ${FACTORY_CONTRACT_METADATA_PATH:-./abis/Factory.json}
-      NATIVE_TOKEN_ADDRESS: ${SANDBOX_NATIVE_TOKEN_ADDRESS:-}
+      NATIVE_TOKEN_ADDRESS: ${SANDBOX_NATIVE_TOKEN_ADDRESS:?Set SANDBOX_NATIVE_TOKEN_ADDRESS}
       SOCIAL_ANALYTICS_ENABLED: "true"
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
+    networks:
+      - internal_network
+      - egress_network
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4010/health || exit 1"]
       interval: 15s
@@ -98,10 +135,35 @@ services:
         REACT_APP_ENABLE_STAKING: "true"
         REACT_APP_ENABLE_REWARDS: "true"
         REACT_APP_DEV_MODE: "true"
+        REACT_APP_RPC_TESTNET: ${SANDBOX_RPC_URL:-wss://sandbox.lunes.io/ws}
+        REACT_APP_SPOT_WS_URL: ${SANDBOX_SPOT_WS_URL:-}
+        REACT_APP_GENESIS_HASH: ${SANDBOX_GENESIS_HASH:?Set SANDBOX_GENESIS_HASH}
+        REACT_APP_LUNES_GENESIS_HASH: ${SANDBOX_GENESIS_HASH:?Set SANDBOX_GENESIS_HASH}
+        REACT_APP_CHAIN_NAME: ${SANDBOX_CHAIN_NAME:-Lunes Sandbox}
+        REACT_APP_SIGNING_DOMAIN: ${SANDBOX_SIGNING_DOMAIN:-lunex-sandbox.lunes.io}
+        REACT_APP_WALLETCONNECT_PROJECT_ID: ${WALLETCONNECT_PROJECT_ID:-}
+        REACT_APP_WNATIVE_CONTRACT: ${SANDBOX_WLUNES_ADDRESS:-}
+        REACT_APP_LISTING_MANAGER_CONTRACT: ${SANDBOX_LISTING_MANAGER_CONTRACT:-}
+        REACT_APP_LISTING_FEE_TOKEN: ${SANDBOX_LISTING_FEE_TOKEN:-}
+        REACT_APP_COPY_VAULT_CONTRACT: ${SANDBOX_COPY_VAULT_CONTRACT:-}
+        REACT_APP_SPOT_SETTLEMENT_CONTRACT: ${SANDBOX_SPOT_SETTLEMENT_CONTRACT:-}
+        # Faucet BASE origin (the client appends /faucet/config and POSTs
+        # /faucet). Served by the prod nginx on sandbox.lunes.io, already in
+        # the lunex-sandbox CSP connect-src.
+        REACT_APP_FAUCET_URL: ${SANDBOX_FAUCET_URL:-https://sandbox.lunes.io}
+        REACT_APP_TURNSTILE_SITE_KEY: ${SANDBOX_TURNSTILE_SITE_KEY:-${TURNSTILE_SITE_KEY:-}}
+        REACT_APP_SENTRY_DSN: ${SANDBOX_FRONTEND_SENTRY_DSN:-}
+        REACT_APP_VERSION: ${IMAGE_TAG:-dev}
+        REACT_APP_MAINTENANCE: ${SANDBOX_MAINTENANCE:-false}
+        REACT_APP_FEATURE_MARGIN: ${SANDBOX_FEATURE_MARGIN:-false}
+        REACT_APP_NATIVE_EXISTENTIAL_DEPOSIT_LUNES: ${NATIVE_EXISTENTIAL_DEPOSIT_LUNES:-}
+        REACT_APP_NATIVE_FEE_BUFFER_LUNES: ${NATIVE_FEE_BUFFER_LUNES:-}
     restart: unless-stopped
     depends_on:
       sandbox-api:
         condition: service_healthy
+    networks:
+      - internal_network
 
   # ── Lunes Testnet Node (blockchain — dev mode with Alice validator) ──
   lunes-testnet-node:
@@ -118,6 +180,8 @@ services:
       - "--base-path=/data"
     volumes:
       - testnet-chaindata:/data
+    networks:
+      - internal_network
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -H 'Content-Type: application/json' -d '{\"id\":1,\"jsonrpc\":\"2.0\",\"method\":\"system_health\"}' http://localhost:9933/ || exit 1"]
       interval: 30s
@@ -126,6 +190,8 @@ services:
       start_period: 60s
 
   # ── Faucet (distribui tokens de teste para a comunidade) ──
+  # Served by the prod nginx at https://sandbox.lunes.io/faucet (page + POST)
+  # and /faucet/* (config, status, assets). Config reference: faucet/.env.example.
   faucet:
     build:
       context: ../faucet
@@ -134,14 +200,48 @@ services:
     depends_on:
       lunes-testnet-node:
         condition: service_healthy
+      sandbox-redis:
+        condition: service_healthy
     environment:
-      FAUCET_PORT: 3333
+      NODE_ENV: production
+      FAUCET_PORT: "3333"
       LUNES_WS_URL: ws://lunes-testnet-node:9944
-      FAUCET_SEED: "//Alice"
-      FAUCET_DRIP_AMOUNT: "1000000000000"
-      FAUCET_COOLDOWN_MINUTES: "300"
-    volumes:
-      - faucet-data:/data
+      # Dedicated, funded treasury (Doppler/env). No default on purpose.
+      FAUCET_SEED: ${FAUCET_SEED:?Set FAUCET_SEED (funded sandbox treasury; never //Alice)}
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:?Set TURNSTILE_SECRET}
+      TURNSTILE_SITE_KEY: ${SANDBOX_TURNSTILE_SITE_KEY:-${TURNSTILE_SITE_KEY:-}}
+      # nginx overwrites X-Forwarded-For with $remote_addr → exactly 1 hop.
+      TRUST_PROXY: "1"
+      # Persistent cooldowns/counters (replaces the old faucet-data volume).
+      REDIS_URL: redis://:${SANDBOX_REDIS_PASSWORD:-${REDIS_PASSWORD}}@sandbox-redis:6379
+      FAUCET_REDIS_PREFIX: "faucet:"
+      FAUCET_CORS_ORIGINS: ${SANDBOX_FAUCET_CORS_ORIGINS:-https://lunex-sandbox.lunes.io,https://sandbox.lunes.io}
+      FAUCET_DRIP_AMOUNT: ${FAUCET_DRIP_AMOUNT:-1000000000000}
+      FAUCET_COOLDOWN_MINUTES: ${FAUCET_COOLDOWN_MINUTES:-300}
+      FAUCET_IP_MAX_PER_WINDOW: ${FAUCET_IP_MAX_PER_WINDOW:-3}
+      FAUCET_IP_WINDOW_MINUTES: ${FAUCET_IP_WINDOW_MINUTES:-1440}
+      # Community-beta sizing (assumption): ~250 active testers/day × ≤2
+      # drips (300-min address cooldown, IP cap 3/24h) ≈ 500 drips/day →
+      # ≤5M test-LUNES/day at 10,000 LUNES/drip. Fund FAUCET_SEED for that.
+      FAUCET_DAILY_LIMIT: ${FAUCET_DAILY_LIMIT:-500}
+      FAUCET_GLOBAL_RATE_PER_MINUTE: ${FAUCET_GLOBAL_RATE_PER_MINUTE:-20}
+      FAUCET_FINALIZE_TIMEOUT_MS: ${FAUCET_FINALIZE_TIMEOUT_MS:-120000}
+      FAUCET_TOKENS: ${FAUCET_TOKENS:-LUSDT,LBTC,LETH,GMC,LUP}
+      FAUCET_TOKEN_LUSDT_ADDRESS: ${SANDBOX_LUSDT_ADDRESS:-${TESTNET_LUSDT_ADDRESS:-}}
+      FAUCET_TOKEN_LUSDT_AMOUNT: ${FAUCET_TOKEN_LUSDT_AMOUNT:-1000}
+      FAUCET_TOKEN_LBTC_ADDRESS: ${SANDBOX_LBTC_ADDRESS:-${TESTNET_LBTC_ADDRESS:-}}
+      FAUCET_TOKEN_LBTC_AMOUNT: ${FAUCET_TOKEN_LBTC_AMOUNT:-0.05}
+      FAUCET_TOKEN_LETH_ADDRESS: ${SANDBOX_LETH_ADDRESS:-${TESTNET_LETH_ADDRESS:-}}
+      FAUCET_TOKEN_LETH_AMOUNT: ${FAUCET_TOKEN_LETH_AMOUNT:-1}
+      FAUCET_TOKEN_GMC_ADDRESS: ${SANDBOX_GMC_ADDRESS:-${TESTNET_GMC_ADDRESS:-}}
+      FAUCET_TOKEN_GMC_AMOUNT: ${FAUCET_TOKEN_GMC_AMOUNT:-1000}
+      FAUCET_TOKEN_LUP_ADDRESS: ${SANDBOX_LUP_ADDRESS:-${TESTNET_LUP_ADDRESS:-}}
+      FAUCET_TOKEN_LUP_AMOUNT: ${FAUCET_TOKEN_LUP_AMOUNT:-1000}
+      FAUCET_PUBLIC_WSS: ${SANDBOX_RPC_URL:-wss://sandbox.lunes.io/ws}
+      FAUCET_PUBLIC_RPC: ${FAUCET_PUBLIC_RPC:-https://sandbox.lunes.io}
+    networks:
+      - internal_network
+      - egress_network   # Turnstile siteverify (challenges.cloudflare.com)
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3333/health || exit 1"]
       interval: 15s
@@ -152,4 +252,3 @@ services:
 volumes:
   sandbox-pgdata:
   testnet-chaindata:
-  faucet-data:

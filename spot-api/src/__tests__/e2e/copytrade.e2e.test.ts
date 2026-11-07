@@ -1,6 +1,10 @@
 import request from 'supertest';
 import app from './testApp';
-import { buildSignedBody, buildSignedQuery } from './authTestUtils';
+import {
+  ADMIN_AUTH_HEADER,
+  buildSignedBody,
+  buildSignedQuery,
+} from './authTestUtils';
 import { copytradeService } from '../../services/copytradeService';
 
 jest.mock('../../middleware/auth', () => ({
@@ -33,6 +37,8 @@ jest.mock('../../services/copytradeService', () => ({
     createOrRotateApiKey: jest.fn().mockResolvedValue({ apiKey: 'key-123' }),
     depositToVault: jest.fn().mockResolvedValue({ deposit: 'ok' }),
     withdrawFromVault: jest.fn().mockResolvedValue({ withdrawal: 'ok' }),
+    updateVaultRiskConfig: jest.fn().mockResolvedValue({ vaultId: 'vault-1' }),
+    bindVaultContract: jest.fn().mockResolvedValue({ vaultId: 'vault-1' }),
     createSignal: jest.fn().mockResolvedValue({ signal: 'ok' }),
     confirmWalletSignalContinuation: jest
       .fn()
@@ -149,13 +155,28 @@ describe('Copytrade API E2E', () => {
       expect(res.status).toBe(400);
     });
 
+    it('should return 400 when the on-chain txHash/blockHash proof is missing (BE-02)', async () => {
+      const res = await request(app)
+        .post('/api/v1/copytrade/vaults/leader-1/deposit')
+        .send({
+          followerAddress: 'follower-addr-123',
+          token: 'LUNES',
+          amount: '100',
+          ...buildSignedBody({}),
+        });
+
+      expect(res.status).toBe(400);
+    });
+
     it('should return 201 on valid deposit', async () => {
       const res = await request(app)
         .post('/api/v1/copytrade/vaults/leader-1/deposit')
         .send({
           followerAddress: 'follower-addr-123',
-          token: 'USDT',
+          token: 'LUNES',
           amount: '100',
+          txHash: `0x${'ab'.repeat(32)}`,
+          blockHash: `0x${'cd'.repeat(32)}`,
           ...buildSignedBody({}),
         });
 
@@ -178,10 +199,46 @@ describe('Copytrade API E2E', () => {
         .send({
           followerAddress: 'follower-addr-123',
           shares: '50',
+          txHash: `0x${'ab'.repeat(32)}`,
+          blockHash: `0x${'cd'.repeat(32)}`,
           ...buildSignedBody({}),
         });
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe('POST /api/v1/copytrade/vaults/:leaderId/risk-config (BE-04)', () => {
+    it('verifies the leader wallet signature and delegates the owner check', async () => {
+      const { verifyWalletActionSignature } = jest.requireMock(
+        '../../middleware/auth',
+      ) as { verifyWalletActionSignature: jest.Mock };
+      verifyWalletActionSignature.mockClear();
+
+      const res = await request(app)
+        .post('/api/v1/copytrade/vaults/leader-1/risk-config')
+        .send({
+          leaderAddress: 'leader-addr-123',
+          copyMultiplier: 2,
+          ...buildSignedBody({}),
+        });
+
+      expect(res.status).toBe(200);
+      expect(verifyWalletActionSignature).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'copytrade.vault-risk-config',
+          address: 'leader-addr-123',
+          fields: expect.objectContaining({
+            leaderId: 'leader-1',
+            copyMultiplier: 2,
+          }),
+        }),
+      );
+      expect(mockedCopytradeService.updateVaultRiskConfig).toHaveBeenCalledWith(
+        'leader-1',
+        'leader-addr-123',
+        expect.objectContaining({ copyMultiplier: 2 }),
+      );
     });
   });
 
@@ -330,6 +387,38 @@ describe('Copytrade API E2E', () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('challengeId');
+    });
+  });
+
+  describe('POST /api/v1/copytrade/admin/vaults/:leaderId/contract', () => {
+    const VAULT = '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y';
+    const url = '/api/v1/copytrade/admin/vaults/leader-1/contract';
+
+    it('rejects callers without the admin bearer', async () => {
+      const res = await request(app).post(url).send({ contractAddress: VAULT });
+      expect(res.status).toBe(401);
+      expect(mockedCopytradeService.bindVaultContract).not.toHaveBeenCalled();
+    });
+
+    it('rejects a non-SS58 contract address', async () => {
+      const res = await request(app)
+        .post(url)
+        .set(ADMIN_AUTH_HEADER)
+        .send({ contractAddress: '0xdeadbeef' });
+      expect(res.status).toBe(400);
+      expect(mockedCopytradeService.bindVaultContract).not.toHaveBeenCalled();
+    });
+
+    it('binds the vault for an admin with a valid SS58 address', async () => {
+      const res = await request(app)
+        .post(url)
+        .set(ADMIN_AUTH_HEADER)
+        .send({ contractAddress: VAULT });
+      expect(res.status).toBe(200);
+      expect(mockedCopytradeService.bindVaultContract).toHaveBeenCalledWith(
+        'leader-1',
+        VAULT,
+      );
     });
   });
 });

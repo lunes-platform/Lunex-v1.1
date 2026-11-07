@@ -1,6 +1,7 @@
 import { NextFunction, Router, Request, Response } from 'express';
 import { tradeService } from '../services/tradeService';
 import {
+  parsePairSymbol,
   RetryTradeSettlementsSchema,
   TradeSettlementQuerySchema,
 } from '../utils/validation';
@@ -8,6 +9,10 @@ import {
   getSignedAuthInput,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 import { z } from 'zod';
 
@@ -70,7 +75,13 @@ router.get(
   '/:symbol',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const symbol = (req.query.symbol as string) ?? req.params.symbol;
+      const resolved = parsePairSymbol(req.query.symbol, req.params.symbol);
+      if (!resolved.ok) {
+        return res
+          .status(400)
+          .json({ error: 'Valid symbol required', code: 'VALIDATION_ERROR' });
+      }
+      const { symbol } = resolved;
       const limit = Math.min(
         parseInt(req.query.limit as string, 10) || 50,
         200,
@@ -86,27 +97,33 @@ router.get(
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
     // If ?symbol= is provided, return recent trades for that pair
-    if (req.query.symbol && typeof req.query.symbol === 'string') {
+    if (req.query.symbol !== undefined) {
+      const resolved = parsePairSymbol(req.query.symbol, undefined);
+      if (!resolved.ok) {
+        return res
+          .status(400)
+          .json({ error: 'Valid symbol required', code: 'VALIDATION_ERROR' });
+      }
       const limit = Math.min(
         parseInt(req.query.limit as string, 10) || 50,
         200,
       );
       const trades = await tradeService.getRecentTrades(
-        req.query.symbol,
+        resolved.symbol,
         limit,
       );
       return res.json({ trades });
     }
-    const parsed = SignedTradesReadSchema.safeParse({
-      ...req.query,
-      ...getSignedAuthInput(req),
-    });
+    const parsed = readAuthSchema(req, SignedTradesReadSchema).safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
     if (!parsed.success) {
       return res
         .status(400)
         .json({ error: 'Validation failed', details: parsed.error.issues });
     }
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'trades.list',
       address: parsed.data.address,
       nonce: parsed.data.nonce,

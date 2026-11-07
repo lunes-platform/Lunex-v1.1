@@ -6,6 +6,47 @@ const SignedWalletActionSchema = z.object({
   signature: z.string().min(8),
 });
 
+/**
+ * External link stored and later rendered as `href` by web/admin. Only
+ * https: is accepted — `z.string().url()` alone accepts `javascript:`,
+ * `data:` and `vbscript:` URLs (stored XSS, BE-14).
+ */
+export const httpsUrl = z
+  .string()
+  .trim()
+  .max(300)
+  .url()
+  .refine(
+    (value) => {
+      try {
+        const url = new URL(value);
+        return (
+          url.protocol === 'https:' &&
+          Boolean(url.hostname) &&
+          !url.username &&
+          !url.password
+        );
+      } catch {
+        return false;
+      }
+    },
+    { message: 'Only https URLs are allowed' },
+  );
+
+/** Optional https link; empty string clears the field. */
+export const optionalHttpsUrl = httpsUrl.optional().or(z.literal(''));
+
+// Avatar: an https URL or a small inline PNG/JPEG/WebP data URI. SVG and any
+// other media type are rejected (SVG can carry script).
+const MAX_AVATAR_DATA_URI_LENGTH = 90_000; // ~64 KB image (body limit 100 KB)
+const avatarDataUri = z
+  .string()
+  .trim()
+  .max(MAX_AVATAR_DATA_URI_LENGTH)
+  .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/, {
+    message: 'Avatar must be a PNG, JPEG or WebP data URI',
+  });
+
 const positiveDecimalString = z
   .string()
   .min(1)
@@ -93,6 +134,8 @@ export const TradeSettlementStatusSchema = z.enum([
   'SETTLED',
   'FAILED',
   'SKIPPED',
+  // Broadcast with unknown outcome; awaiting chain reconciliation (BE-07).
+  'RECONCILE_REQUIRED',
 ]);
 
 export const TradeSettlementQuerySchema = z.object({
@@ -103,6 +146,38 @@ export const TradeSettlementQuerySchema = z.object({
 
 export const RetryTradeSettlementsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(25),
+});
+
+/**
+ * Pair symbol taken from a path segment or `?symbol=`. Must be a plain
+ * string: qs turns `symbol[not]=x` into an object, which would otherwise
+ * reach Prisma as an operator (BE-19).
+ */
+export const PairSymbolParamSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(32)
+  .regex(/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?$/, {
+    message: 'Invalid pair symbol',
+  });
+
+/** Resolves `?symbol=` (preferred) or the `:symbol` path param, validated. */
+export function parsePairSymbol(
+  query: unknown,
+  param: unknown,
+): { ok: true; symbol: string } | { ok: false } {
+  const raw = query !== undefined ? query : param;
+  const parsed = PairSymbolParamSchema.safeParse(raw);
+  return parsed.success ? { ok: true, symbol: parsed.data } : { ok: false };
+}
+
+export const RewardWeeksQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(52).default(10),
+});
+
+export const RewardClaimSchema = SignedWalletActionSchema.extend({
+  address: z.string().min(8).max(128),
 });
 
 export const CandleQuerySchema = z.object({
@@ -153,11 +228,14 @@ export const UpsertLeaderProfileSchema = SignedWalletActionSchema.extend({
     .max(32)
     .regex(/^[a-zA-Z0-9_\-.]+$/),
   bio: z.string().trim().min(1).max(500),
-  avatar: z.string().trim().max(5_000_000).optional().or(z.literal('')),
+  avatar: z
+    .union([httpsUrl, avatarDataUri])
+    .optional()
+    .or(z.literal('')),
   fee: z.coerce.number().min(5).max(50),
-  twitterUrl: z.string().trim().url().max(300).optional().or(z.literal('')),
-  telegramUrl: z.string().trim().url().max(300).optional().or(z.literal('')),
-  discordUrl: z.string().trim().url().max(300).optional().or(z.literal('')),
+  twitterUrl: optionalHttpsUrl,
+  telegramUrl: optionalHttpsUrl,
+  discordUrl: optionalHttpsUrl,
 });
 
 export const CreateIdeaCommentSchema = SignedWalletActionSchema.extend({

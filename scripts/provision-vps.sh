@@ -43,6 +43,87 @@ DOMAIN="${DOMAIN:-lunex.lunes.io}"
 DOMAIN_SANDBOX="${DOMAIN_SANDBOX:-lunex-sandbox.lunes.io}"
 DOMAIN_TESTNET="${DOMAIN_TESTNET:-sandbox.lunes.io}"
 GITHUB_ORG="${GITHUB_ORG:-your-org}"       # Replace with your GitHub org
+# CI deploy identity (IN-08): separate from the human operator account, holds
+# the GitHub Actions key, can only run /usr/local/bin/lunex-deploy.
+CI_DEPLOY_USER="${CI_DEPLOY_USER:-lunex-ci}"
+CI_DEPLOY_SSH_PUBKEY="${CI_DEPLOY_SSH_PUBKEY:-}"
+# Image coordinates baked into /etc/lunex/deploy.env (root-owned).
+IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io}"
+IMAGE_PREFIX="${IMAGE_PREFIX:-}"            # e.g. lunes-project/lunex (lowercase)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CI deploy wrapper (IN-08). Idempotent; also runnable alone on an existing
+# VPS:  sudo IMAGE_PREFIX=org/repo CI_DEPLOY_SSH_PUBKEY='ssh-ed25519 …' \
+#         ./scripts/provision-vps.sh --ci-deploy-wrapper-only
+# ─────────────────────────────────────────────────────────────────────────────
+install_ci_deploy_wrapper() {
+    local src="${APP_DIR}/docker/deploy"
+    [[ -f "${src}/lunex-deploy" && -f "${src}/lunex-deploy-ssh" ]] \
+        || err "Wrapper sources not found in ${src} (clone the repo to ${APP_DIR} first)"
+    [[ "${IMAGE_PREFIX}" =~ ^[a-z0-9._/-]+$ ]] \
+        || err "Set IMAGE_PREFIX (lowercase registry path, e.g. lunes-project/lunex)"
+
+    # Root-owned copies: the CI user (and the repo owner) cannot modify the
+    # code that sudo runs as root.
+    install -o root -g root -m 0755 "${src}/lunex-deploy"     /usr/local/bin/lunex-deploy
+    install -o root -g root -m 0755 "${src}/lunex-deploy-ssh" /usr/local/bin/lunex-deploy-ssh
+
+    install -d -o root -g root -m 0755 /etc/lunex
+    cat > /etc/lunex/deploy.env <<EOF
+# Managed by scripts/provision-vps.sh — read by /usr/local/bin/lunex-deploy
+APP_DIR=/opt/lunex
+REGISTRY=${IMAGE_REGISTRY}
+IMAGE_PREFIX=${IMAGE_PREFIX}
+EOF
+    chown root:root /etc/lunex/deploy.env
+    chmod 0644 /etc/lunex/deploy.env
+
+    if ! id "${CI_DEPLOY_USER}" &>/dev/null; then
+        useradd -m -s /bin/bash "${CI_DEPLOY_USER}"
+        passwd -l "${CI_DEPLOY_USER}"
+    fi
+    # Never in the docker or sudo groups (both are root-equivalent).
+    gpasswd -d "${CI_DEPLOY_USER}" docker &>/dev/null || true
+    gpasswd -d "${CI_DEPLOY_USER}" sudo   &>/dev/null || true
+
+    local ci_home
+    ci_home="$(getent passwd "${CI_DEPLOY_USER}" | cut -d: -f6)"
+    install -d -o "${CI_DEPLOY_USER}" -g "${CI_DEPLOY_USER}" -m 0700 "${ci_home}/.ssh"
+    if [[ -n "${CI_DEPLOY_SSH_PUBKEY}" ]]; then
+        # Forced command + restrict: the key can do nothing but call the wrapper.
+        printf 'restrict,command="/usr/local/bin/lunex-deploy-ssh" %s\n' \
+            "${CI_DEPLOY_SSH_PUBKEY}" > "${ci_home}/.ssh/authorized_keys"
+        chown "${CI_DEPLOY_USER}:${CI_DEPLOY_USER}" "${ci_home}/.ssh/authorized_keys"
+        chmod 0600 "${ci_home}/.ssh/authorized_keys"
+    else
+        warn "No CI_DEPLOY_SSH_PUBKEY — add the GitHub Actions key as:"
+        warn "  restrict,command=\"/usr/local/bin/lunex-deploy-ssh\" ssh-ed25519 AAAA… >> ${ci_home}/.ssh/authorized_keys"
+    fi
+
+    local rule="/etc/sudoers.d/91-${CI_DEPLOY_USER}"
+    printf '%s ALL=(root) NOPASSWD: /usr/local/bin/lunex-deploy\nDefaults:%s !requiretty, env_reset\n' \
+        "${CI_DEPLOY_USER}" "${CI_DEPLOY_USER}" > "${rule}.tmp"
+    visudo -cf "${rule}.tmp" >/dev/null || { rm -f "${rule}.tmp"; err "sudoers rule failed validation"; }
+    install -o root -g root -m 0440 "${rule}.tmp" "${rule}"
+    rm -f "${rule}.tmp"
+
+    # sshd must admit the CI user (AllowUsers) — append if missing.
+    if grep -q '^AllowUsers' /etc/ssh/sshd_config && \
+       ! grep -Eq "^AllowUsers.*\b${CI_DEPLOY_USER}\b" /etc/ssh/sshd_config; then
+        sed -i "s/^AllowUsers.*/& ${CI_DEPLOY_USER}/" /etc/ssh/sshd_config
+        if sshd -t; then
+            systemctl reload ssh 2>/dev/null || systemctl reload sshd
+        else
+            err "sshd_config invalid after adding ${CI_DEPLOY_USER} to AllowUsers"
+        fi
+    fi
+    log "CI deploy wrapper installed (user ${CI_DEPLOY_USER} → sudo /usr/local/bin/lunex-deploy only)"
+}
+
+if [[ "${1:-}" == "--ci-deploy-wrapper-only" ]]; then
+    install_ci_deploy_wrapper
+    exit 0
+fi
 
 log "============================================="
 log " Lunex DEX — VPS Provisioning"
@@ -95,10 +176,11 @@ else
     warn "  echo 'ssh-ed25519 AAAA...' >> ${DEPLOY_HOME}/.ssh/authorized_keys"
 fi
 
-# Sudo without password for deploy user (needed for CI/CD SSH deploy commands)
-echo "${DEPLOY_USER} ALL=(ALL) NOPASSWD: /usr/bin/docker, /usr/local/bin/docker" \
-    > "/etc/sudoers.d/90-${DEPLOY_USER}"
-chmod 440 "/etc/sudoers.d/90-${DEPLOY_USER}"
+# IN-08: no more `NOPASSWD: /usr/bin/docker` — sudo docker is root-equivalent
+# (`docker run -v /:/host …`). CI deploys use a dedicated, key-restricted user
+# that can only run the fixed wrapper /usr/local/bin/lunex-deploy (see
+# install_ci_deploy_wrapper below). Remove the legacy rule if present.
+rm -f "/etc/sudoers.d/90-${DEPLOY_USER}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. SSH HARDENING
@@ -140,7 +222,7 @@ PermitEmptyPasswords no
 MaxAuthTries 3
 LoginGraceTime 30
 
-AllowUsers ${DEPLOY_USER}
+AllowUsers ${DEPLOY_USER} ${CI_DEPLOY_USER}
 
 # ── Hardening ────────────────────────────────────────────────────────────────
 X11Forwarding no
@@ -338,6 +420,14 @@ if [[ ! -d "${APP_DIR}/.git" ]]; then
     sudo -u "${DEPLOY_USER}" git clone \
         "https://github.com/${GITHUB_ORG}/lunex.git" \
         "${APP_DIR}" || warn "Could not clone — will need manual setup"
+fi
+
+# CI deploy wrapper (IN-08) — needs the repo checkout for its sources.
+if [[ -n "${IMAGE_PREFIX}" && -f "${APP_DIR}/docker/deploy/lunex-deploy" ]]; then
+    install_ci_deploy_wrapper
+else
+    warn "CI deploy wrapper NOT installed (set IMAGE_PREFIX and clone the repo, then run:"
+    warn "  sudo IMAGE_PREFIX=org/repo CI_DEPLOY_SSH_PUBKEY='ssh-ed25519 …' $0 --ci-deploy-wrapper-only)"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

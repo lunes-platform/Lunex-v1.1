@@ -1,6 +1,6 @@
-import { Prisma } from '@prisma/client';
 import prisma from '../db';
 import { config } from '../config';
+import { ApiError } from '../middleware/errors';
 import {
   SocialLeadersQuery,
   UpsertLeaderProfileInput,
@@ -233,6 +233,9 @@ function formatLeader(
           minDeposit: toFloat(leader.vault.minDeposit),
           twapThreshold: toFloat(leader.vault.twapThreshold),
           maxSlippageBps: leader.vault.maxSlippageBps,
+          // null until the operator deploys the ink! CopyVault; deposits are
+          // rejected until then (BE-01).
+          contractAddress: leader.vault.contractAddress ?? null,
         }
       : null,
     trades: includeRelations ? (leader.trades ?? []).map(formatTrade) : [],
@@ -442,6 +445,28 @@ export const socialService = {
   async upsertLeaderProfile(input: UpsertLeaderProfileInput) {
     const performanceFeeBps = Math.round(input.fee * 100);
 
+    // BE-15: no retroactive fee increase. While any follower holds shares in
+    // the leader's vault the fee can only go down (or stay). A higher fee only
+    // becomes possible once the vault is empty, so nobody who deposited under
+    // the old fee is ever charged the new one.
+    const existing = await prisma.leader.findUnique({
+      where: { address: input.address },
+      select: { performanceFeeBps: true, vault: { select: { id: true } } },
+    });
+    if (
+      existing?.vault &&
+      performanceFeeBps > existing.performanceFeeBps
+    ) {
+      const openPositions = await prisma.copyVaultPosition.count({
+        where: { vaultId: existing.vault.id, shareBalance: { gt: 0 } },
+      });
+      if (openPositions > 0) {
+        throw ApiError.conflict(
+          'Performance fee cannot be increased while followers hold vault positions',
+        );
+      }
+    }
+
     const leader = await prisma.leader.upsert({
       where: { address: input.address },
       update: {
@@ -502,7 +527,12 @@ export const socialService = {
   async followLeader(
     leaderId: string,
     address: string,
-    riskConfig?: {
+    // BE-04: accepted for API backwards compatibility but IGNORED. The vault
+    // is shared by every follower, so a follower's risk params are never
+    // written to it (the follow route does not even sign them). Vault risk
+    // config is leader-only: POST /copytrade/vaults/:leaderId/risk-config.
+    // Follower stop-loss is stored on the follower's own position at deposit.
+    _riskConfig?: {
       copyMultiplier?: number;
       maxPerTradeUsdt?: number;
       stopLossPct?: number;
@@ -513,36 +543,6 @@ export const socialService = {
     if (!leader) throw new Error('Leader not found');
 
     return prisma.$transaction(async (tx) => {
-      // Persist copy-engine risk limits onto the leader's vault (if one exists)
-      // so the copy-engine honours them. Vault is per-leader; risk config is
-      // applied at the vault level (RISK-BE contract).
-      if (riskConfig) {
-        const data: Record<string, unknown> = {};
-        if (riskConfig.copyMultiplier != null) {
-          data.copyMultiplier = new Prisma.Decimal(
-            riskConfig.copyMultiplier.toString(),
-          );
-        }
-        if (riskConfig.maxPerTradeUsdt != null) {
-          data.maxPerTradeUsdt = new Prisma.Decimal(
-            riskConfig.maxPerTradeUsdt.toString(),
-          );
-        }
-        if (riskConfig.stopLossPct != null) {
-          data.stopLossPct = new Prisma.Decimal(
-            riskConfig.stopLossPct.toString(),
-          );
-        }
-        if (riskConfig.maxDrawdownPct != null) {
-          data.maxDrawdownPct = new Prisma.Decimal(
-            riskConfig.maxDrawdownPct.toString(),
-          );
-        }
-        if (Object.keys(data).length > 0) {
-          await tx.copyVault.updateMany({ where: { leaderId }, data });
-        }
-      }
-
       const existing = await tx.leaderFollow.findUnique({
         where: {
           leaderId_followerAddress: {

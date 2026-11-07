@@ -129,6 +129,13 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
             return { toString: () => seedNonce.toString() };
           }),
         },
+        // Mortal-era anchor for settle_trade (BE-07).
+        chain: {
+          getFinalizedHead: jest.fn(async () => ({ toHex: () => '0xfin' })),
+          getHeader: jest.fn(async () => ({
+            number: { toNumber: () => 1 },
+          })),
+        },
       },
     };
 
@@ -149,12 +156,16 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
         _fp: unknown,
       ) => {
         const tradeId: string = makerOrder.__tradeId;
+        // BE-07: settle_trade is signed first (hash known before broadcast),
+        // then sent. The nonce is recorded at broadcast time.
+        let signedNonce: bigint | undefined;
         return {
-          signAndSend: (
-            _signer: unknown,
-            opts: { nonce: bigint },
-            cb: (r: any) => void,
-          ) => {
+          hash: { toHex: () => `0xext-${tradeId}` },
+          signAsync: async (_signer: unknown, opts: { nonce: bigint }) => {
+            signedNonce = opts.nonce;
+          },
+          send: (cb: (r: any) => void) => {
+            const opts = { nonce: signedNonce as bigint };
             submissions.push({ tradeId, nonce: opts.nonce });
             inFlight += 1;
             maxInFlight = Math.max(maxInFlight, inFlight);
@@ -164,7 +175,10 @@ describe('settlementService.settleTrades pipeline (Batching)', () => {
             setTimeout(() => {
               inFlight -= 1;
               if (failTradeIds.has(tradeId)) {
+                // Finalized dispatch error = definitive failure (BE-07: a
+                // non-finalized dispatch error is not final).
                 cb({
+                  status: { isInBlock: false, isFinalized: true },
                   dispatchError: { toString: () => 'Module(NonceAlreadyUsed)' },
                   txHash: { toHex: () => '0xdead' },
                 });

@@ -1,0 +1,2718 @@
+{
+  "source": {
+    "hash": "0xed58b3737a442a47f152134a180d8c3d124d318b7da7272b038f3092e02f80d0",
+    "language": "ink! 4.3.0",
+    "compiler": "rustc 1.85.0",
+    "build_info": {
+      "build_mode": "Release",
+      "cargo_contract_version": "5.0.3",
+      "rust_toolchain": "stable-x86_64-apple-darwin",
+      "wasm_opt_settings": {
+        "keep_debug_symbols": false,
+        "optimization_passes": "Z"
+      }
+    }
+  },
+  "contract": {
+    "name": "spot_settlement_contract",
+    "version": "0.1.0",
+    "authors": [
+      "Lunes Platform"
+    ]
+  },
+  "image": null,
+  "spec": {
+    "constructors": [
+      {
+        "args": [
+          {
+            "label": "treasury",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          "Creates a new SpotSettlement contract"
+        ],
+        "label": "new",
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink_primitives",
+            "ConstructorResult"
+          ],
+          "type": 7
+        },
+        "selector": "0x9bae9d5e"
+      }
+    ],
+    "docs": [
+      " # Lunex Spot Settlement Contract",
+      "",
+      " On-chain vault and atomic settlement engine for the Lunex DEX Spot Orderbook.",
+      "",
+      " ## Architecture",
+      " - Users deposit LUNES (native) or PSP22 tokens into this contract vault",
+      " - Off-chain matching engine pairs orders and submits matched trades",
+      " - This contract verifies signatures, validates balances, and atomically settles trades",
+      " - Users can withdraw their funds at any time",
+      "",
+      " ## Key Features",
+      " - Deposit/Withdraw for LUNES native token (payable) and PSP22 tokens",
+      " - Atomic trade settlement with signature verification",
+      " - Nonce-based replay attack prevention",
+      " - On-chain order cancellation registry",
+      " - Admin controls (pause, relayer management)",
+      "",
+      " ## Token Support",
+      " - LUNES native: identified by ZERO_ADDRESS in base/quote token fields",
+      " - PSP22 tokens: any token implementing PSP22 standard (approve + transfer_from)"
+    ],
+    "environment": {
+      "accountId": {
+        "displayName": [
+          "AccountId"
+        ],
+        "type": 0
+      },
+      "balance": {
+        "displayName": [
+          "Balance"
+        ],
+        "type": 4
+      },
+      "blockNumber": {
+        "displayName": [
+          "BlockNumber"
+        ],
+        "type": 5
+      },
+      "chainExtension": {
+        "displayName": [
+          "ChainExtension"
+        ],
+        "type": 29
+      },
+      "hash": {
+        "displayName": [
+          "Hash"
+        ],
+        "type": 28
+      },
+      "maxEventTopics": 4,
+      "timestamp": {
+        "displayName": [
+          "Timestamp"
+        ],
+        "type": 6
+      }
+    },
+    "events": [
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "docs": [],
+        "label": "DepositNative"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "docs": [],
+        "label": "DepositPSP22"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "docs": [],
+        "label": "WithdrawNative"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "docs": [],
+        "label": "WithdrawPSP22"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "maker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "taker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "base_token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "quote_token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "price",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "maker_nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "taker_nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TradeSettled"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "maker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [],
+        "label": "OrderCancelled"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "relayer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "docs": [],
+        "label": "RelayerAdded"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "relayer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "docs": [],
+        "label": "RelayerRemoved"
+      },
+      {
+        "args": [
+          {
+            "docs": [
+              " New state of the fail-closed gate."
+            ],
+            "indexed": false,
+            "label": "enforced",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          },
+          {
+            "docs": [
+              " Owner account that performed the change."
+            ],
+            "indexed": true,
+            "label": "changed_by",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "docs": [
+          "Emitted whenever the owner toggles the fail-closed signature gate.",
+          "Indexers/alerting MUST watch this event: `enforced == false` means the",
+          "contract is running in explicit testnet mode WITHOUT on-chain",
+          "cryptographic verification of order signatures."
+        ],
+        "label": "SignatureEnforcementChanged"
+      },
+      {
+        "args": [
+          {
+            "docs": [
+              " New compressed secp256k1 public key of the attestor service."
+            ],
+            "indexed": false,
+            "label": "attestor_pubkey",
+            "type": {
+              "displayName": [],
+              "type": 27
+            }
+          },
+          {
+            "docs": [
+              " Owner account that performed the change."
+            ],
+            "indexed": true,
+            "label": "changed_by",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "docs": [
+          "Emitted whenever the owner sets/rotates the ECDSA attestor public key",
+          "(ADR-001, option c). Indexers/alerting MUST watch this event: a key",
+          "rotation is a privileged, security-sensitive operation."
+        ],
+        "label": "AttestorKeyChanged"
+      }
+    ],
+    "lang_error": {
+      "displayName": [
+        "ink",
+        "LangError"
+      ],
+      "type": 9
+    },
+    "messages": [
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Deposit native LUNES into the vault"
+        ],
+        "label": "deposit_native",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x9b408047"
+      },
+      {
+        "args": [
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Deposit PSP22 tokens into the vault",
+          " Caller must have approved this contract to spend `amount` of `token` beforehand"
+        ],
+        "label": "deposit_psp22",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x439b7e02"
+      },
+      {
+        "args": [
+          {
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Withdraw native LUNES from the vault"
+        ],
+        "label": "withdraw_native",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0xc3f16695"
+      },
+      {
+        "args": [
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Withdraw PSP22 tokens from the vault"
+        ],
+        "label": "withdraw_psp22",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0xfb45542a"
+      },
+      {
+        "args": [
+          {
+            "label": "maker_order",
+            "type": {
+              "displayName": [
+                "SignedOrder"
+              ],
+              "type": 13
+            }
+          },
+          {
+            "label": "taker_order",
+            "type": {
+              "displayName": [
+                "SignedOrder"
+              ],
+              "type": 13
+            }
+          },
+          {
+            "label": "fill_amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "fill_price",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Settle a matched trade between maker and taker orders.",
+          " Can only be called by authorized relayers or the contract owner.",
+          "",
+          " The relayer provides the two matched orders and the fill amount/price.",
+          " The contract validates everything and atomically transfers balances."
+        ],
+        "label": "settle_trade",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0xc1b65772"
+      },
+      {
+        "args": [
+          {
+            "label": "nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Cancel an order on-chain. Only the order maker can cancel."
+        ],
+        "label": "cancel_order",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0xe90b7ff6"
+      },
+      {
+        "args": [
+          {
+            "label": "maker",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "default": false,
+        "docs": [],
+        "label": "cancel_order_for",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x59008689"
+      },
+      {
+        "args": [
+          {
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Get the vault balance of a user for a specific token",
+          " Use ZERO_ADDRESS for native LUNES"
+        ],
+        "label": "get_balance",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 16
+        },
+        "selector": "0xea817e65"
+      },
+      {
+        "args": [
+          {
+            "label": "maker_order",
+            "type": {
+              "displayName": [
+                "SignedOrder"
+              ],
+              "type": 13
+            }
+          },
+          {
+            "label": "taker_order",
+            "type": {
+              "displayName": [
+                "SignedOrder"
+              ],
+              "type": 13
+            }
+          },
+          {
+            "label": "fill_amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "fill_price",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " BE-07 reconciliation: `true` iff this exact fill (same orders, fill",
+          " amount and fill price passed to `settle_trade`) has already settled.",
+          " The relayer should query this after a submission timeout instead",
+          " of resubmitting blindly."
+        ],
+        "label": "is_fill_settled",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0xfbd08f57"
+      },
+      {
+        "args": [
+          {
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Check if a nonce has been fully filled"
+        ],
+        "label": "is_nonce_used",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0xc25caf26"
+      },
+      {
+        "args": [
+          {
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Check if a nonce has been cancelled"
+        ],
+        "label": "is_nonce_cancelled",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x483fbcb6"
+      },
+      {
+        "args": [
+          {
+            "label": "user",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "nonce",
+            "type": {
+              "displayName": [
+                "u64"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Get the cumulative filled amount recorded on-chain for a maker nonce."
+        ],
+        "label": "get_filled_amount",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 16
+        },
+        "selector": "0x291564b8"
+      },
+      {
+        "args": [
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Get the accumulated fees for a token"
+        ],
+        "label": "get_collected_fees",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 16
+        },
+        "selector": "0xef075a6e"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get current fee rates"
+        ],
+        "label": "get_fee_rates",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 18
+        },
+        "selector": "0x1442fa59"
+      },
+      {
+        "args": [
+          {
+            "label": "address",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Check if an address is an authorized relayer"
+        ],
+        "label": "is_relayer",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x9293bed6"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get the contract owner"
+        ],
+        "label": "get_owner",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0x07fcd0b1"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Check if the contract is paused"
+        ],
+        "label": "is_paused",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0xfa7d505b"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get the treasury address"
+        ],
+        "label": "get_treasury",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0x6899c3c5"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Pause the contract"
+        ],
+        "label": "pause",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x81e0c604"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Unpause the contract"
+        ],
+        "label": "unpause",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x67616649"
+      },
+      {
+        "args": [
+          {
+            "label": "relayer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Add a relayer"
+        ],
+        "label": "add_relayer",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x8fcd24f3"
+      },
+      {
+        "args": [
+          {
+            "label": "relayer",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Remove a relayer"
+        ],
+        "label": "remove_relayer",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x59da9302"
+      },
+      {
+        "args": [
+          {
+            "label": "maker_fee_bps",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "taker_fee_bps",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Update fee rates (in basis points)"
+        ],
+        "label": "set_fees",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x126e75bc"
+      },
+      {
+        "args": [
+          {
+            "label": "new_owner",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Initiate two-step ownership transfer.",
+          " Stores `new_owner` as pending; the new owner must call",
+          " `accept_ownership` to complete the handover. A typo can be undone",
+          " by re-calling this with the correct address (overwrites pending)."
+        ],
+        "label": "transfer_ownership",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x107e33ea"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Cancel a pending ownership transfer (current owner only)."
+        ],
+        "label": "cancel_ownership_transfer",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x07144662"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Accept a pending ownership transfer.",
+          " Must be called by the address set via `transfer_ownership`.",
+          " This two-step pattern prevents typos in `transfer_ownership` from",
+          " permanently locking out admin control of the contract."
+        ],
+        "label": "accept_ownership",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0xb55be9f0"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Returns the pending owner (if any)."
+        ],
+        "label": "pending_owner",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 21
+        },
+        "selector": "0x6e429d8d"
+      },
+      {
+        "args": [
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Withdraw collected fees to treasury"
+        ],
+        "label": "withdraw_fees",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0xf7e92e05"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Returns whether the fail-closed signature gate is active."
+        ],
+        "label": "is_signature_verification_enforced",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 17
+        },
+        "selector": "0x188deff9"
+      },
+      {
+        "args": [
+          {
+            "label": "enforced",
+            "type": {
+              "displayName": [
+                "bool"
+              ],
+              "type": 3
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Enable/disable the fail-closed signature gate. Owner only (the",
+          " owner role itself is protected by two-step ownership transfer).",
+          "",
+          " `false` is an EXPLICIT testnet-only mode: `settle_trade` will",
+          " accept orders whose signatures were only verified OFF-chain by the",
+          " relayer. Every state change emits `SignatureEnforcementChanged`",
+          " so indexers and alerting can audit the transition on-chain."
+        ],
+        "label": "set_signature_verification_enforced",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x1082abd7"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Begin the two-step disable-enforcement flow. Owner only.",
+          " Records `block_timestamp + enforcement_timelock_ms` as the execution",
+          " deadline in `pending_enforcement_off`. The proposal can be cancelled",
+          " at any time with `cancel_disable_enforcement`."
+        ],
+        "label": "propose_disable_enforcement",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x4afe3e23"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Cancel a pending disable-enforcement proposal. Owner only.",
+          " Clears `pending_enforcement_off`; a subsequent",
+          " `execute_disable_enforcement` will return `NoPendingEnforcementDisable`."
+        ],
+        "label": "cancel_disable_enforcement",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0xfab144eb"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Complete the two-step disable-enforcement flow. Owner only.",
+          " Requires an active proposal whose deadline has passed; sets",
+          " `signature_verification_enforced` to `false` and emits",
+          " `SignatureEnforcementChanged { enforced: false }`."
+        ],
+        "label": "execute_disable_enforcement",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x1895c544"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Returns the deadline timestamp (ms) for a pending",
+          " disable-enforcement proposal, or `None` if no proposal is active."
+        ],
+        "label": "pending_enforcement_off",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 23
+        },
+        "selector": "0xc51c3612"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Returns the configured attestor public key (compressed secp256k1,",
+          " 33 bytes), or `None` while no attestor has been registered."
+        ],
+        "label": "get_attestor_key",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 25
+        },
+        "selector": "0xb78f6436"
+      },
+      {
+        "args": [
+          {
+            "label": "pubkey",
+            "type": {
+              "displayName": [],
+              "type": 27
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Register/rotate the ECDSA attestor public key (ADR-001, option c).",
+          " Owner only. Every change emits `AttestorKeyChanged` so indexers",
+          " and alerting can audit key rotations on-chain.",
+          "",
+          " While `signature_verification_enforced == true`, settlement only",
+          " becomes possible AFTER this key is set — and every settled order",
+          " must carry an ECDSA attestation recoverable to this key."
+        ],
+        "label": "set_attestor_key",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 10
+        },
+        "selector": "0x30603aee"
+      }
+    ]
+  },
+  "storage": {
+    "root": {
+      "layout": {
+        "struct": {
+          "fields": [
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "owner"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "paused"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "reentrancy_lock"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x00000000",
+                              "ty": 0
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "pending_owner"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0xf6f2ba93",
+                      "ty": 4
+                    }
+                  },
+                  "root_key": "0xf6f2ba93"
+                }
+              },
+              "name": "balances"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x019abb2b",
+                      "ty": 3
+                    }
+                  },
+                  "root_key": "0x019abb2b"
+                }
+              },
+              "name": "used_nonces"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0xa4da7e53",
+                      "ty": 4
+                    }
+                  },
+                  "root_key": "0xa4da7e53"
+                }
+              },
+              "name": "filled_amounts"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "array": {
+                      "layout": {
+                        "leaf": {
+                          "key": "0x4f43b048",
+                          "ty": 2
+                        }
+                      },
+                      "len": 32,
+                      "offset": "0x4f43b048"
+                    }
+                  },
+                  "root_key": "0x4f43b048"
+                }
+              },
+              "name": "order_hashes"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0xe29313b8",
+                      "ty": 3
+                    }
+                  },
+                  "root_key": "0xe29313b8"
+                }
+              },
+              "name": "cancelled_nonces"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x538041b6",
+                      "ty": 3
+                    }
+                  },
+                  "root_key": "0x538041b6"
+                }
+              },
+              "name": "relayers"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "relayer_count"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 0
+                }
+              },
+              "name": "treasury"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "maker_fee_bps"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "taker_fee_bps"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x1d1c3bae",
+                      "ty": 4
+                    }
+                  },
+                  "root_key": "0x1d1c3bae"
+                }
+              },
+              "name": "collected_fees"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 3
+                }
+              },
+              "name": "signature_verification_enforced"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "struct": {
+                              "fields": [
+                                {
+                                  "layout": {
+                                    "leaf": {
+                                      "key": "0x00000000",
+                                      "ty": 2
+                                    }
+                                  },
+                                  "name": "0"
+                                },
+                                {
+                                  "layout": {
+                                    "array": {
+                                      "layout": {
+                                        "leaf": {
+                                          "key": "0x00000000",
+                                          "ty": 2
+                                        }
+                                      },
+                                      "len": 32,
+                                      "offset": "0x00000000"
+                                    }
+                                  },
+                                  "name": "1"
+                                }
+                              ],
+                              "name": "(A, B)"
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "attestor_pubkey"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x00000000",
+                              "ty": 6
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "pending_enforcement_off"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 6
+                }
+              },
+              "name": "enforcement_timelock_ms"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x3e4fb34c",
+                      "ty": 3
+                    }
+                  },
+                  "root_key": "0x3e4fb34c"
+                }
+              },
+              "name": "settled_trades"
+            }
+          ],
+          "name": "SpotSettlement"
+        }
+      },
+      "root_key": "0x00000000"
+    }
+  },
+  "types": [
+    {
+      "id": 0,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "AccountId"
+        ]
+      }
+    },
+    {
+      "id": 1,
+      "type": {
+        "def": {
+          "array": {
+            "len": 32,
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": {
+        "def": {
+          "primitive": "u8"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": {
+        "def": {
+          "primitive": "bool"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": {
+        "def": {
+          "primitive": "u128"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": {
+        "def": {
+          "primitive": "u32"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": {
+        "def": {
+          "primitive": "u64"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 8
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "type": {
+        "def": {
+          "tuple": []
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 1,
+                "name": "CouldNotReadInput"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "LangError"
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 11
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 8
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 12
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 8
+          },
+          {
+            "name": "E",
+            "type": 12
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "InsufficientBalance"
+              },
+              {
+                "index": 1,
+                "name": "DepositTooSmall"
+              },
+              {
+                "index": 2,
+                "name": "WithdrawExceedsBalance"
+              },
+              {
+                "index": 3,
+                "name": "ZeroAmount"
+              },
+              {
+                "index": 4,
+                "name": "OrderAlreadyFilled"
+              },
+              {
+                "index": 5,
+                "name": "OrderAlreadyCancelled"
+              },
+              {
+                "index": 6,
+                "name": "InvalidSignature"
+              },
+              {
+                "index": 7,
+                "name": "NonceAlreadyUsed"
+              },
+              {
+                "index": 8,
+                "name": "OrderExpired"
+              },
+              {
+                "index": 9,
+                "name": "PriceMismatch"
+              },
+              {
+                "index": 10,
+                "name": "TokenMismatch"
+              },
+              {
+                "index": 11,
+                "name": "SideMismatch"
+              },
+              {
+                "index": 12,
+                "name": "FillExceedsRemaining"
+              },
+              {
+                "index": 13,
+                "name": "TradeTooSmall"
+              },
+              {
+                "index": 14,
+                "name": "AccessDenied"
+              },
+              {
+                "index": 15,
+                "name": "ContractPaused"
+              },
+              {
+                "index": 16,
+                "name": "NativeTransferFailed"
+              },
+              {
+                "index": 17,
+                "name": "PSP22TransferFailed"
+              },
+              {
+                "index": 18,
+                "name": "Overflow"
+              },
+              {
+                "index": 19,
+                "name": "SelfTrade"
+              },
+              {
+                "index": 20,
+                "name": "RelayerLimitReached"
+              },
+              {
+                "index": 21,
+                "name": "NotOrderMaker"
+              },
+              {
+                "index": 22,
+                "name": "OrderMismatch"
+              },
+              {
+                "index": 23,
+                "name": "Reentrancy"
+              },
+              {
+                "index": 24,
+                "name": "SignatureVerificationUnavailable"
+              },
+              {
+                "index": 25,
+                "name": "AttestationInvalid"
+              },
+              {
+                "index": 26,
+                "name": "EnforcementTimelockNotExpired"
+              },
+              {
+                "index": 27,
+                "name": "NoPendingEnforcementDisable"
+              },
+              {
+                "index": 28,
+                "name": "TradeAlreadySettled"
+              }
+            ]
+          }
+        },
+        "path": [
+          "spot_settlement_contract",
+          "spot_settlement",
+          "SpotError"
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "name": "maker",
+                "type": 0,
+                "typeName": "AccountId"
+              },
+              {
+                "name": "base_token",
+                "type": 0,
+                "typeName": "AccountId"
+              },
+              {
+                "name": "quote_token",
+                "type": 0,
+                "typeName": "AccountId"
+              },
+              {
+                "name": "side",
+                "type": 2,
+                "typeName": "Side"
+              },
+              {
+                "name": "price",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "amount",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "filled_amount",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "nonce",
+                "type": 6,
+                "typeName": "u64"
+              },
+              {
+                "name": "expiry",
+                "type": 6,
+                "typeName": "u64"
+              },
+              {
+                "name": "signature",
+                "type": 14,
+                "typeName": "[u8; 64]"
+              },
+              {
+                "name": "attestation",
+                "type": 15,
+                "typeName": "[u8; 65]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "spot_settlement_contract",
+          "spot_settlement",
+          "SignedOrder"
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "type": {
+        "def": {
+          "array": {
+            "len": 64,
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": {
+        "def": {
+          "array": {
+            "len": 65,
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 4
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 4
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 3
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 3
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 19
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 19
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "type": {
+        "def": {
+          "tuple": [
+            4,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 21,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 22
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 22
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 22,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 23,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 24
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 24
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 6
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 6
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 26
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 26
+          },
+          {
+            "name": "E",
+            "type": 9
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 27
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 27
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 27,
+      "type": {
+        "def": {
+          "array": {
+            "len": 33,
+            "type": 2
+          }
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "type": 1,
+                "typeName": "[u8; 32]"
+              }
+            ]
+          }
+        },
+        "path": [
+          "ink_primitives",
+          "types",
+          "Hash"
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "type": {
+        "def": {
+          "variant": {}
+        },
+        "path": [
+          "ink_env",
+          "types",
+          "NoChainExtension"
+        ]
+      }
+    }
+  ],
+  "version": "4"
+}

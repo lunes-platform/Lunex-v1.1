@@ -38,6 +38,8 @@ export interface Trader {
     totalWithdrawals?: number
     twapThreshold?: number
     maxSlippageBps?: number
+    /** ink! CopyVault address; null/absent until deployed (no deposits). */
+    contractAddress?: string | null
   }
 }
 

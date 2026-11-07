@@ -1,302 +1,64 @@
-import React, { useState } from 'react'
+/**
+ * AI-agent delegation for asymmetric strategies.
+ *
+ * - `DelegationCard`: toggle + AI agent chips + guardrails (γ range, capacity).
+ * - `enforceDelegation()`: real flow — registers/looks up the wallet's agent,
+ *   creates a scoped API key (MANAGE_ASYMMETRIC), applies `set_manager`
+ *   on-chain with the guardrails and links the strategy in the backend.
+ *   Run it inside a `useTx().run` step.
+ * - `ApiKeyDialog`: shows the generated key once, with copy.
+ */
+import React, { useEffect, useState } from 'react'
 import styled from 'styled-components'
-import { useSDK } from '../../context/SDKContext'
+import { Check, Copy } from 'lucide-react'
+import { getWalletAccount } from '../../wallet/activeWallet'
 import agentService from '../../services/agentService'
+import { ensureReadSession } from '../../services/sessionService'
 import { contractService } from '../../services/contractService'
 import { asymmetricContractService } from '../../services/asymmetricContractService'
 import {
   buildAgentCreateApiKeySignMessage,
   buildAgentRegisterSignMessage,
-  buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../utils/signing'
-import { Button } from '../../components/bases'
-import { web3Accounts } from '@polkadot/extension-dapp'
-import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
+import { C, Button, Notice, grotesk } from '../ui/kit'
+import Dialog from '../ui/Dialog'
 
 // ─── Types ────────────────────────────────────────────────────────
 
-interface Guardrails {
+export interface Guardrails {
   gammaMin: number
   gammaMax: number
   canChangeCapacity: boolean
 }
 
-interface Props {
-  strategyId?: string
-  pairAddress?: string
-  onClose: () => void
+export const DEFAULT_GUARDRAILS: Guardrails = {
+  gammaMin: 1,
+  gammaMax: 3,
+  canChangeCapacity: false
 }
 
-// ─── Styled ───────────────────────────────────────────────────────
+export type AgentChip = { id: string; name: string }
 
-const Overlay = styled.div`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-`
+// PLACEHOLDER: no backend yet — shown only when the agent directory is empty
+// or unreachable. The chosen agent is informational; the on-chain manager is
+// always the Lunex relayer scoped by the API key.
+const FALLBACK_AGENTS: AgentChip[] = [
+  { id: 'orion-grid', name: 'Orion Grid' },
+  { id: 'delta-neutral', name: 'Delta Neutral' },
+  { id: 'sigma-scalper', name: 'Sigma Scalper' }
+]
 
-const Modal = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[500]};
-  border-radius: 20px;
-  padding: 28px;
-  width: 100%;
-  max-width: 480px;
-  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
-  position: relative;
-`
-
-const ModalHeader = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-`
-
-const Title = styled.h2`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 18px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  margin: 0;
-`
-
-const CloseBtn = styled.button`
-  ${({ theme }) => `
-    width: 40px;
-    height: 40px;
-    font-size: 20px;
-    cursor: pointer;
-    color: ${theme.colors.themeColors[100]};
-    border: none;
-    background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    transition: transform 0.3s ease-in-out, color 0.2s ease;
-    transform: rotate(0deg);
-    &:hover {
-      color: ${theme.colors.themeColors[800]};
-      transition: transform 0.3s ease-in-out, color 0.2s ease;
-      transform: rotate(-180deg);
-    }
-  `}
-`
-
-const Section = styled.div`
-  margin-bottom: 20px;
-`
-
-const SectionLabel = styled.span`
-  display: block;
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-`
-
-const Description = styled.p`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  line-height: 1.6;
-  margin: 0 0 20px;
-`
-
-const SliderRow = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 10px;
-`
-
-const SliderLabel = styled.span`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  min-width: 130px;
-`
-
-const Slider = styled.input`
-  flex: 1;
-  -webkit-appearance: none;
-  height: 4px;
-  border-radius: 2px;
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  outline: none;
-  &::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: ${({ theme }) => theme.colors.primary[500]};
-    cursor: pointer;
-    box-shadow: 0 0 0 3px rgba(108, 56, 255, 0.25);
-  }
-`
-
-const SliderValue = styled.span`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  min-width: 20px;
-  text-align: right;
-`
-
-const ToggleRow = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 0;
-`
-
-const ToggleLabel = styled.span`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-`
-
-const Toggle = styled.button<{ active: boolean }>`
-  width: 40px;
-  height: 22px;
-  border-radius: 11px;
-  border: none;
-  cursor: pointer;
-  background: ${({ active, theme }) =>
-    active ? theme.colors.primary[500] : theme.colors.themeColors[400]};
-  position: relative;
-  transition: background 0.2s;
-
-  &::after {
-    content: '';
-    position: absolute;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: ${({ theme }) => theme.colors.themeColors[100]};
-    top: 3px;
-    left: ${({ active }) => (active ? '21px' : '3px')};
-    transition: left 0.2s;
-  }
-`
-
-const TextInput = styled.input`
-  width: 100%;
-  border-radius: 12px;
-  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
-  background: ${({ theme }) => theme.colors.themeColors[700]};
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  padding: 12px 14px;
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
-  font-size: 12px;
-  outline: none;
-
-  &::placeholder {
-    color: ${({ theme }) => theme.colors.themeColors[300]};
-  }
-
-  &:focus {
-    border-color: ${({ theme }) => theme.colors.primary[500]};
-  }
-`
-
-const SuccessMsg = styled.div`
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: rgba(52, 211, 153, 0.1);
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  color: #34d399;
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  margin-top: 12px;
-`
-
-const ApiKeyBox = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[700]};
-  border: 1px solid rgba(52, 211, 153, 0.3);
-  border-radius: 12px;
-  padding: 14px;
-  margin-top: 16px;
-`
-
-const ApiKeyLabel = styled.div`
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  color: #34d399;
-  margin-bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-`
-
-const ApiKeyValue = styled.code`
-  display: block;
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  word-break: break-all;
-  line-height: 1.6;
-`
-
-const CopyButton = styled.button`
-  margin-top: 10px;
-  padding: 6px 14px;
-  border-radius: 8px;
-  border: 1px solid rgba(52, 211, 153, 0.4);
-  background: rgba(52, 211, 153, 0.1);
-  color: #34d399;
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  &:hover {
-    background: rgba(52, 211, 153, 0.2);
-  }
-`
-
-const ErrorMsg = styled.div`
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.3);
-  color: #f87171;
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  margin-top: 12px;
-`
-
-// ─── API ──────────────────────────────────────────────────────────
+// ─── Real delegation flow ─────────────────────────────────────────
 
 async function createApiKey(
   walletAddress: string,
   signMessage: (message: string) => Promise<string>
 ): Promise<{ key: string; agentId: string }> {
-  const signedLookup = createSignedActionMetadata()
-  const lookupSignature = await signMessage(
-    buildWalletActionMessage({
-      action: 'agents.by-wallet',
-      address: walletAddress,
-      nonce: signedLookup.nonce,
-      timestamp: signedLookup.timestamp
-    })
-  )
+  // Lookup is a private read: reuse (or create, once) the read session.
+  const sessionToken = await ensureReadSession(walletAddress, signMessage)
   let agent = await agentService.getAgentByWallet(walletAddress, {
-    nonce: signedLookup.nonce,
-    timestamp: signedLookup.timestamp,
-    signature: lookupSignature
+    sessionToken
   })
 
   if (!agent) {
@@ -349,221 +111,305 @@ async function createApiKey(
     signature: bootstrapSignature
   })
 
-  return {
-    key: apiKey.key,
-    agentId: agent.id
-  }
+  return { key: apiKey.key, agentId: agent.id }
 }
 
-// ─── Component ────────────────────────────────────────────────────
-
-const AgentDelegationPanel: React.FC<Props> = ({
-  onClose,
-  strategyId,
-  pairAddress
-}) => {
-  const { walletAddress, isConnected, signMessage } = useSDK()
-
-  const [guardrails, setGuardrails] = useState<Guardrails>({
-    gammaMin: 1,
-    gammaMax: 3,
-    canChangeCapacity: false
-  })
-
-  const [isLoading, setIsLoading] = useState(false)
-  const [apiKey, setApiKey] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
-  const [strategyIdInput, setStrategyIdInput] = useState(strategyId ?? '')
-  const [pairAddressInput, setPairAddressInput] = useState(pairAddress ?? '')
-
-  const getAccount = async (): Promise<InjectedAccountWithMeta | null> => {
-    if (!walletAddress) return null
-    const accounts = await web3Accounts()
-    return accounts.find(account => account.address === walletAddress) ?? null
+export async function enforceDelegation(opts: {
+  walletAddress: string
+  signMessage: (message: string) => Promise<string>
+  strategyId: string
+  pairAddress: string
+  guardrails: Guardrails
+}): Promise<{ apiKey: string; txHash: string }> {
+  const { walletAddress, signMessage, strategyId, pairAddress, guardrails } =
+    opts
+  if (!strategyId || !pairAddress) {
+    throw new Error('Strategy ID and pair address are required to delegate')
   }
 
-  const handleGenerate = async () => {
-    if (!isConnected || !walletAddress) {
-      setError('Connect your wallet first')
-      return
-    }
+  const { key } = await createApiKey(walletAddress, signMessage)
+  const delegationContext =
+    await agentService.getAsymmetricDelegationContext(key)
 
-    if (!pairAddressInput.trim() || !strategyIdInput.trim()) {
-      setError(
-        'Provide both the strategy ID and pair address to complete delegated on-chain enforcement'
-      )
-      return
-    }
+  const account = getWalletAccount(walletAddress)
+  if (!account) {
+    throw new Error('Could not find wallet account to sign set_manager')
+  }
 
-    setIsLoading(true)
-    setError(null)
-    setSuccess(null)
+  let api = contractService.getApi()
+  if (!api) {
+    await contractService.connect('testnet')
+    api = contractService.getApi()
+  }
+  if (!api) throw new Error('Could not connect to Lunes blockchain')
 
-    try {
-      const { key } = await createApiKey(walletAddress, signMessage)
-      setApiKey(key)
+  asymmetricContractService.setApi(api)
+  const txHash = await asymmetricContractService.setManager(
+    pairAddress,
+    delegationContext.relayerAddress,
+    guardrails,
+    account
+  )
 
-      const delegationContext =
-        await agentService.getAsymmetricDelegationContext(key)
-      const account = await getAccount()
-      if (!account) {
-        throw new Error('Could not find wallet account to sign set_manager')
-      }
+  await agentService.linkAsymmetricStrategy(key, { strategyId, pairAddress })
+  return { apiKey: key, txHash }
+}
 
-      let api = contractService.getApi()
-      if (!api) {
-        await contractService.connect('testnet')
-        api = contractService.getApi()
-      }
-      if (!api) {
-        throw new Error('Could not connect to Lunes blockchain')
-      }
-
-      asymmetricContractService.setApi(api)
-      const txHash = await asymmetricContractService.setManager(
-        pairAddressInput.trim(),
-        delegationContext.relayerAddress,
-        guardrails,
-        account
-      )
-
-      await agentService.linkAsymmetricStrategy(key, {
-        strategyId: strategyIdInput.trim(),
-        pairAddress: pairAddressInput.trim()
+/** AI agents from the agent directory (falls back to a placeholder list). */
+export function useAiAgents(): AgentChip[] {
+  const [agents, setAgents] = useState<AgentChip[]>(FALLBACK_AGENTS)
+  useEffect(() => {
+    let alive = true
+    agentService
+      .getAgents({ agentType: 'AI_AGENT', limit: 6 })
+      .then(list => {
+        if (!alive || list.length === 0) return
+        setAgents(
+          list.map(a => ({
+            id: a.id,
+            name:
+              a.leader?.name ||
+              a.framework ||
+              `${a.walletAddress.slice(0, 6)}…${a.walletAddress.slice(-4)}`
+          }))
+        )
       })
-
-      setSuccess(`Delegation enforced on-chain. Manager tx: ${txHash}`)
-    } catch (err: any) {
-      setError(err.message || 'Failed to complete delegated manager setup')
-    } finally {
-      setIsLoading(false)
+      .catch(() => undefined)
+    return () => {
+      alive = false
     }
-  }
+  }, [])
+  return agents
+}
 
-  const handleCopy = () => {
+// ─── UI ───────────────────────────────────────────────────────────
+
+const Card = styled.div`
+  border: 1px solid ${C.border};
+  border-radius: 16px;
+  background: ${C.surface};
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`
+
+const Head = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  b {
+    ${grotesk};
+    display: block;
+    font-weight: 600;
+    font-size: 15px;
+  }
+  small {
+    display: block;
+    font-size: 12px;
+    color: ${C.muted};
+    margin-top: 2px;
+    line-height: 1.5;
+  }
+`
+
+export const Toggle = styled.button<{ $on: boolean }>`
+  width: 46px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: none;
+  background: ${p => (p.$on ? C.primary : C.borderStrong)};
+  position: relative;
+  transition: background-color 150ms ease;
+  &::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: ${p => (p.$on ? '23px' : '3px')};
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    transition: left 150ms ease;
+  }
+`
+
+const ChipBtn = styled.button<{ $on: boolean }>`
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid ${p => (p.$on ? C.primary : C.borderStrong)};
+  background: ${p => (p.$on ? 'rgba(108,56,255,0.16)' : 'transparent')};
+  color: ${p => (p.$on ? C.primaryText2 : C.secondary)};
+  font-size: 13px;
+  font-weight: 600;
+`
+
+const GammaBtn = styled.button<{ $on: boolean }>`
+  flex: 1;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: ${p => (p.$on ? C.primary : C.field)};
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+`
+
+const Line = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  > span {
+    font-size: 13px;
+    color: ${C.muted};
+  }
+`
+
+type CardProps = {
+  enabled: boolean
+  onToggle: () => void
+  agents: AgentChip[]
+  agentId: string | null
+  onAgent: (id: string) => void
+  guardrails: Guardrails
+  onGuardrails: (g: Guardrails) => void
+}
+
+export const DelegationCard: React.FC<CardProps> = ({
+  enabled,
+  onToggle,
+  agents,
+  agentId,
+  onAgent,
+  guardrails,
+  onGuardrails
+}) => (
+  <Card>
+    <Head>
+      <div>
+        <b>Delegate to an AI agent</b>
+        <small>
+          The agent can shift your curve parameters within your limits. It can
+          never withdraw.
+        </small>
+      </div>
+      <Toggle
+        $on={enabled}
+        onClick={onToggle}
+        role="switch"
+        aria-checked={enabled}
+        aria-label="Toggle delegation"
+      />
+    </Head>
+    {enabled && (
+      <>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {agents.map(a => (
+            <ChipBtn
+              key={a.id}
+              $on={agentId === a.id}
+              aria-pressed={agentId === a.id}
+              onClick={() => onAgent(a.id)}
+            >
+              {a.name}
+            </ChipBtn>
+          ))}
+        </div>
+        <Line>
+          <span>
+            Allowed curvature · γ{guardrails.gammaMin} to γ{guardrails.gammaMax}
+          </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[1, 2, 3, 4, 5].map(g => {
+              const on = g >= guardrails.gammaMin && g <= guardrails.gammaMax
+              return (
+                <GammaBtn
+                  key={g}
+                  $on={on}
+                  aria-pressed={on}
+                  onClick={() => {
+                    // click below/at min → new min; above → new max
+                    if (g <= guardrails.gammaMin)
+                      onGuardrails({ ...guardrails, gammaMin: g })
+                    else if (g >= guardrails.gammaMax)
+                      onGuardrails({ ...guardrails, gammaMax: g })
+                    else onGuardrails({ ...guardrails, gammaMax: g })
+                  }}
+                >
+                  γ{g}
+                </GammaBtn>
+              )
+            })}
+          </div>
+        </Line>
+        <Head>
+          <small style={{ margin: 0, color: C.secondary, fontSize: 13 }}>
+            Allow the agent to change max capacity
+          </small>
+          <Toggle
+            $on={guardrails.canChangeCapacity}
+            role="switch"
+            aria-checked={guardrails.canChangeCapacity}
+            aria-label="Allow capacity changes"
+            onClick={() =>
+              onGuardrails({
+                ...guardrails,
+                canChangeCapacity: !guardrails.canChangeCapacity
+              })
+            }
+          />
+        </Head>
+      </>
+    )}
+  </Card>
+)
+
+const KeyBox = styled.code`
+  display: block;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: ${C.bg};
+  border: 1px solid ${C.border};
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 13px;
+  word-break: break-all;
+  color: ${C.primaryText2};
+`
+
+export const ApiKeyDialog: React.FC<{
+  apiKey: string | null
+  onClose: () => void
+}> = ({ apiKey, onClose }) => {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
     if (!apiKey) return
-    navigator.clipboard.writeText(apiKey).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
+    navigator.clipboard
+      .writeText(apiKey)
+      .then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+      .catch(() => undefined)
   }
-
   return (
-    <Overlay onClick={e => e.target === e.currentTarget && onClose()}>
-      <Modal>
-        <ModalHeader>
-          <Title>Delegate to AI Agent</Title>
-          <CloseBtn onClick={onClose}>✕</CloseBtn>
-        </ModalHeader>
-
-        <Description>
-          Generate a restricted API Key that allows an AI agent (OpenClaw,
-          Phidata, etc.) to adjust curve parameters on your behalf. The agent{' '}
-          <strong>cannot withdraw funds</strong> — only reshape the liquidity
-          curve. This flow also applies <strong>`set_manager` on-chain</strong>{' '}
-          so contract guardrails match the API scope.
-        </Description>
-
-        <Section>
-          <SectionLabel>Strategy Context</SectionLabel>
-          <Description>
-            Use the registered backend strategy ID and the deployed
-            `AsymmetricPair` contract address so the API key, backend record and
-            on-chain manager all point to the same strategy.
-          </Description>
-          <TextInput
-            value={strategyIdInput}
-            onChange={e => setStrategyIdInput(e.target.value)}
-            placeholder="Strategy ID"
-          />
-          <div style={{ height: 10 }} />
-          <TextInput
-            value={pairAddressInput}
-            onChange={e => setPairAddressInput(e.target.value)}
-            placeholder="AsymmetricPair contract address"
-          />
-        </Section>
-
-        <Section>
-          <SectionLabel>Guardrails — γ (Curvature) Limits</SectionLabel>
-
-          <SliderRow>
-            <SliderLabel>Minimum γ allowed</SliderLabel>
-            <Slider
-              type="range"
-              min={1}
-              max={5}
-              value={guardrails.gammaMin}
-              onChange={e =>
-                setGuardrails(g => ({
-                  ...g,
-                  gammaMin: Math.min(Number(e.target.value), g.gammaMax)
-                }))
-              }
-            />
-            <SliderValue>{guardrails.gammaMin}</SliderValue>
-          </SliderRow>
-
-          <SliderRow>
-            <SliderLabel>Maximum γ allowed</SliderLabel>
-            <Slider
-              type="range"
-              min={1}
-              max={5}
-              value={guardrails.gammaMax}
-              onChange={e =>
-                setGuardrails(g => ({
-                  ...g,
-                  gammaMax: Math.max(Number(e.target.value), g.gammaMin)
-                }))
-              }
-            />
-            <SliderValue>{guardrails.gammaMax}</SliderValue>
-          </SliderRow>
-
-          <ToggleRow>
-            <ToggleLabel>Allow agent to change Max Capacity</ToggleLabel>
-            <Toggle
-              active={guardrails.canChangeCapacity}
-              onClick={() =>
-                setGuardrails(g => ({
-                  ...g,
-                  canChangeCapacity: !g.canChangeCapacity
-                }))
-              }
-            />
-          </ToggleRow>
-        </Section>
-
-        {!apiKey ? (
-          <Button
-            onClick={handleGenerate}
-            disabled={isLoading || !isConnected}
-            loading={isLoading}
-          >
-            {!isConnected
-              ? 'Connect Wallet First'
-              : 'Delegate Manager & Generate API Key'}
-          </Button>
-        ) : (
-          <ApiKeyBox>
-            <ApiKeyLabel>
-              API Key Generated — Copy and store it securely
-            </ApiKeyLabel>
-            <ApiKeyValue>{apiKey}</ApiKeyValue>
-            <CopyButton onClick={handleCopy}>
-              {copied ? '✓ Copied!' : 'Copy Key'}
-            </CopyButton>
-          </ApiKeyBox>
-        )}
-
-        {success && <SuccessMsg>{success}</SuccessMsg>}
-        {error && <ErrorMsg>{error}</ErrorMsg>}
-      </Modal>
-    </Overlay>
+    <Dialog
+      open={!!apiKey}
+      onClose={onClose}
+      title="Agent API key"
+      description="Give this key to your AI agent. It can only reshape your curves within the guardrails — never withdraw."
+      width={460}
+    >
+      <Notice $tone="warning">
+        This key is shown once. Copy it and store it securely.
+      </Notice>
+      <KeyBox>{apiKey}</KeyBox>
+      <Button size="lg" block onClick={copy}>
+        {copied ? <Check size={16} /> : <Copy size={16} />}
+        {copied ? 'Copied' : 'Copy key'}
+      </Button>
+    </Dialog>
   )
 }
-
-export default AgentDelegationPanel

@@ -1,363 +1,156 @@
 import React, { useEffect, useState } from 'react'
-import styled, { keyframes } from 'styled-components'
 import { useSpot } from 'context/SpotContext'
-import { spotApi } from '../../../services/spotService'
-import { formatVolume, formatPrice } from './formatters'
+import { spotApi } from 'services/spotService'
+import { Dialog } from 'components/ui/Dialog'
+import { C, SkeletonLine, short } from 'components/ui/kit'
+import { T, fmtPx, fq, splitPair } from '../terminal'
+import { Dot, RowKV, Rows, Tile, Tiles } from './parts'
 
-const fadeIn = keyframes`
-  from { opacity: 0; }
-  to   { opacity: 1; }
-`
-
-const slideUp = keyframes`
-  from { opacity: 0; transform: translateY(16px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-`
-
-const Overlay = styled.div`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  animation: ${fadeIn} 0.15s ease;
-`
-
-const Modal = styled.div`
-  background: #1a1a1a;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  width: 420px;
-  max-width: 90vw;
-  max-height: 80vh;
-  overflow-y: auto;
-  padding: 24px;
-  animation: ${slideUp} 0.25s ease;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
-`
-
-const Header = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-`
-
-const TitleRow = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-`
-
-const TitleIcon = styled.div`
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: rgba(108, 56, 255, 0.12);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #6c38ff;
-  flex-shrink: 0;
-`
-
-const Title = styled.h3`
-  font-size: 18px;
-  font-weight: 700;
-  font-family: 'Space Grotesk', sans-serif;
-  color: #ffffff;
-  margin: 0;
-`
-
-const CloseBtn = styled.button`
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(255, 255, 255, 0.5);
-  cursor: pointer;
-  font-size: 14px;
-  transition: all 0.15s;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+type MarketInfo = {
+  pair?: {
+    baseName: string
+    quoteName: string
+    baseToken: string
+    quoteToken: string
+    pairAddress: string | null
+    makerFeeBps: number
+    takerFeeBps: number
+    listingDate: string
   }
-`
-
-const InfoGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-`
-
-const InfoRow = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-`
-
-const Label = styled.span`
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-family: 'Space Grotesk', sans-serif;
-`
-
-const Value = styled.span`
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
-`
-
-const AddressValue = styled.span`
-  font-size: 11px;
-  font-weight: 500;
-  color: rgba(108, 56, 255, 0.8);
-  word-break: break-all;
-  font-family: monospace;
-`
-
-const FullRow = styled(InfoRow)`
-  grid-column: 1 / -1;
-`
-
-const Divider = styled.div`
-  height: 1px;
-  background: rgba(255, 255, 255, 0.06);
-  margin: 4px 0;
-  grid-column: 1 / -1;
-`
-
-const StatusBadge = styled.span<{ online: boolean }>`
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  color: ${({ online }) => (online ? '#00C076' : 'rgba(255,255,255,0.4)')};
-
-  &::before {
-    content: '';
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: ${({ online }) =>
-      online ? '#00C076' : 'rgba(255,255,255,0.2)'};
-  }
-`
-
-const LoadingText = styled.div`
-  text-align: center;
-  padding: 32px;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 13px;
-`
-
-function shortenAddress(addr: string): string {
-  if (addr.length <= 12) return addr
-  return `${addr.slice(0, 8)}...${addr.slice(-6)}`
+  onChain?: {
+    swapCount: number | string
+    lastSwapAt: string | null
+  } | null
 }
 
-interface Props {
-  onClose: () => void
-}
-
-const PairInfoModal: React.FC<Props> = ({ onClose }) => {
+const PairInfoModal: React.FC<{ open: boolean; onClose: () => void }> = ({
+  open,
+  onClose
+}) => {
   const { selectedPair, ticker, isConnected } = useSpot()
-  const [marketInfo, setMarketInfo] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+  const [info, setInfo] = useState<MarketInfo | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [base] = splitPair(selectedPair)
 
   useEffect(() => {
+    if (!open) return
+    let alive = true
     setLoading(true)
     spotApi
       .getMarketInfo(selectedPair)
-      .then(data => setMarketInfo(data))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [selectedPair])
+      .then((d: MarketInfo) => alive && setInfo(d))
+      .catch(() => alive && setInfo(null))
+      .finally(() => alive && setLoading(false))
+    return () => {
+      alive = false
+    }
+  }, [open, selectedPair])
 
   const price = ticker?.lastPrice ?? 0
-  const change = ticker?.change24h ?? 0
-  const volume = ticker?.volume24h ?? 0
-  const high = ticker?.high24h ?? 0
-  const low = ticker?.low24h ?? 0
-  const pair = marketInfo?.pair
+  const chg = ticker?.change24h ?? 0
+  const pair = info?.pair
+
+  const stats: Array<[string, string, string?]> = [
+    ['Price', fmtPx(price)],
+    [
+      '24h change',
+      price > 0 ? `${chg > 0 ? '+' : ''}${chg.toFixed(2)}%` : '—',
+      price > 0 ? (chg >= 0 ? T.up : T.down) : undefined
+    ],
+    ['Trades 24h', ticker ? ticker.tradeCount.toLocaleString('en-US') : '—'],
+    ['24h high', fmtPx(ticker?.high24h)],
+    ['24h low', fmtPx(ticker?.low24h)],
+    ['24h volume', ticker?.volume24h ? `${fq(ticker.volume24h)} ${base}` : '—']
+  ]
+
+  const rows: Array<[string, React.ReactNode, boolean?]> = pair
+    ? [
+        ['Base token', pair.baseName],
+        ['Quote token', pair.quoteName],
+        ['Base address', short(pair.baseToken), true],
+        ['Quote address', short(pair.quoteToken), true],
+        ...(pair.pairAddress
+          ? [
+              ['Pair contract', short(pair.pairAddress), true] as [
+                string,
+                string,
+                boolean
+              ]
+            ]
+          : []),
+        ['Maker fee', `${(pair.makerFeeBps / 100).toFixed(2)}%`],
+        ['Taker fee', `${(pair.takerFeeBps / 100).toFixed(2)}%`],
+        [
+          'Listed',
+          new Date(pair.listingDate).toLocaleDateString('en-US', {
+            month: 'short',
+            year: 'numeric'
+          })
+        ]
+      ]
+    : []
+
+  if (info?.onChain) {
+    rows.push(
+      [
+        'On-chain swaps',
+        Number(info.onChain.swapCount).toLocaleString('en-US')
+      ],
+      [
+        'Last swap',
+        info.onChain.lastSwapAt
+          ? new Date(info.onChain.lastSwapAt).toLocaleString('en-US')
+          : '—'
+      ]
+    )
+  }
+  rows.push(
+    [
+      'SubQuery indexer',
+      <Dot key="sq" $on={!!info?.onChain}>
+        {info?.onChain ? 'Live' : 'Offline'}
+      </Dot>
+    ],
+    [
+      'API status',
+      <Dot key="api" $on={isConnected}>
+        {isConnected ? 'Connected' : 'Offline'}
+      </Dot>
+    ]
+  )
 
   return (
-    <Overlay onClick={onClose}>
-      <Modal onClick={e => e.stopPropagation()}>
-        <Header>
-          <TitleRow>
-            <TitleIcon>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
-            </TitleIcon>
-            <Title>{selectedPair} Info</Title>
-          </TitleRow>
-          <CloseBtn onClick={onClose}>✕</CloseBtn>
-        </Header>
-
-        {loading ? (
-          <LoadingText>Loading pair data...</LoadingText>
-        ) : (
-          <InfoGrid>
-            <InfoRow>
-              <Label>Current Price</Label>
-              <Value style={{ color: change >= 0 ? '#00C076' : '#FF4B55' }}>
-                {price > 0 ? `$${formatPrice(price)}` : '--'}
-              </Value>
-            </InfoRow>
-
-            <InfoRow>
-              <Label>24h Change</Label>
-              <Value style={{ color: change >= 0 ? '#00C076' : '#FF4B55' }}>
-                {change >= 0 ? '+' : ''}
-                {change.toFixed(2)}%
-              </Value>
-            </InfoRow>
-
-            <InfoRow>
-              <Label>24h High</Label>
-              <Value>{high > 0 ? `$${formatPrice(high)}` : '--'}</Value>
-            </InfoRow>
-
-            <InfoRow>
-              <Label>24h Low</Label>
-              <Value>{low > 0 ? `$${formatPrice(low)}` : '--'}</Value>
-            </InfoRow>
-
-            <InfoRow>
-              <Label>24h Volume</Label>
-              <Value>{volume > 0 ? `${formatVolume(volume)}` : '--'}</Value>
-            </InfoRow>
-
-            <InfoRow>
-              <Label>Trade Count</Label>
-              <Value>{ticker?.tradeCount ?? '--'}</Value>
-            </InfoRow>
-
-            {pair && (
-              <>
-                <Divider />
-
-                <InfoRow>
-                  <Label>Base Token</Label>
-                  <Value>{pair.baseName}</Value>
-                </InfoRow>
-                <InfoRow>
-                  <Label>Quote Token</Label>
-                  <Value>{pair.quoteName}</Value>
-                </InfoRow>
-
-                <FullRow>
-                  <Label>Base Address</Label>
-                  <AddressValue title={pair.baseToken}>
-                    {shortenAddress(pair.baseToken)}
-                  </AddressValue>
-                </FullRow>
-
-                <FullRow>
-                  <Label>Quote Address</Label>
-                  <AddressValue title={pair.quoteToken}>
-                    {shortenAddress(pair.quoteToken)}
-                  </AddressValue>
-                </FullRow>
-
-                {pair.pairAddress && (
-                  <FullRow>
-                    <Label>Pair Contract</Label>
-                    <AddressValue title={pair.pairAddress}>
-                      {shortenAddress(pair.pairAddress)}
-                    </AddressValue>
-                  </FullRow>
-                )}
-
-                <InfoRow>
-                  <Label>Maker Fee</Label>
-                  <Value>{(pair.makerFeeBps / 100).toFixed(2)}%</Value>
-                </InfoRow>
-                <InfoRow>
-                  <Label>Taker Fee</Label>
-                  <Value>{(pair.takerFeeBps / 100).toFixed(2)}%</Value>
-                </InfoRow>
-
-                <InfoRow>
-                  <Label>Listed</Label>
-                  <Value>
-                    {new Date(pair.listingDate).toLocaleDateString()}
-                  </Value>
-                </InfoRow>
-              </>
-            )}
-
-            {marketInfo?.onChain && (
-              <>
-                <Divider />
-                <FullRow>
-                  <Label>On-Chain Stats (SubQuery)</Label>
-                  <StatusBadge online={true}>Live</StatusBadge>
-                </FullRow>
-                <InfoRow>
-                  <Label>Total Swaps</Label>
-                  <Value>
-                    {Number(marketInfo.onChain.swapCount).toLocaleString()}
-                  </Value>
-                </InfoRow>
-                <InfoRow>
-                  <Label>Last Swap</Label>
-                  <Value>
-                    {marketInfo.onChain.lastSwapAt
-                      ? new Date(marketInfo.onChain.lastSwapAt).toLocaleString()
-                      : '--'}
-                  </Value>
-                </InfoRow>
-              </>
-            )}
-
-            <Divider />
-
-            {!marketInfo?.onChain && !loading && (
-              <FullRow>
-                <Label>SubQuery Indexer</Label>
-                <StatusBadge online={false}>Offline</StatusBadge>
-              </FullRow>
-            )}
-
-            <FullRow>
-              <Label>API Status</Label>
-              <StatusBadge online={isConnected}>
-                {isConnected ? 'Connected' : 'Offline'}
-              </StatusBadge>
-            </FullRow>
-          </InfoGrid>
-        )}
-      </Modal>
-    </Overlay>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`${selectedPair} info`}
+      width={460}
+      padding={22}
+    >
+      <Tiles>
+        {stats.map(([l, v, color]) => (
+          <Tile key={l}>
+            <div>{l}</div>
+            <div style={{ color: color ?? C.text }}>{v}</div>
+          </Tile>
+        ))}
+      </Tiles>
+      <Rows>
+        {loading && !pair
+          ? [0, 1, 2, 3].map(i => (
+              <RowKV key={i}>
+                <SkeletonLine $w="40%" $h={12} />
+                <SkeletonLine $w="30%" $h={12} />
+              </RowKV>
+            ))
+          : rows.map(([l, v, mono]) => (
+              <RowKV key={l} $mono={mono}>
+                <span>{l}</span>
+                <span>{v}</span>
+              </RowKV>
+            ))}
+      </Rows>
+    </Dialog>
   )
 }
 

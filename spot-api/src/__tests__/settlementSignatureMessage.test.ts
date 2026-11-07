@@ -2,6 +2,7 @@ import {
   buildSettlementOrderSignatureMessage,
   signatureToBytes,
 } from '../services/settlementService';
+import { getSigningContext } from '../middleware/auth';
 
 describe('settlement order signature message', () => {
   it('rebuilds the same timestamped spot order message that the API verifies at order intake', () => {
@@ -22,8 +23,12 @@ describe('settlement order signature message', () => {
       },
     );
 
+    // FE-03: canonical intake format is v3 (domain + chain bound). The
+    // context comes from config/.env (dev default: localhost, no genesis), so
+    // build the prefix from it instead of assuming an empty genesis.
+    const { domain, chain } = getSigningContext();
     expect(message).toBe(
-      'lunex-order-v2:LUNES/USDT:BUY:LIMIT:100:0:1:1700000000001:1700000000123:GTC:0',
+      `lunex-order-v3:${domain}:${chain}:LUNES/USDT:BUY:LIMIT:100:0:1:1700000000001:1700000000123:GTC:0`,
     );
   });
 

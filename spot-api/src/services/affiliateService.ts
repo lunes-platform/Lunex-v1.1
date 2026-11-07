@@ -481,30 +481,54 @@ export const affiliateService = {
           where: { isPaid: false, createdAt: { lte: periodEnd } },
         });
 
-        // Eligibility guard (protects legacy rows created before the
-        // post-SETTLED credit fix): a SPOT commission may only be paid if its
-        // underlying trade is SETTLED. Non-SPOT, or null sourceTradeId, pass
-        // through. Ineligible rows stay isPaid:false and roll to future batches
-        // — this is the "estorno por não-pagamento" the audit requires.
-        const spotTradeIds = unpaid
-          .filter((c) => c.sourceType === 'SPOT' && c.sourceTradeId !== null)
-          .map((c) => c.sourceTradeId as string);
+        // Eligibility gate — fail closed per source type. A commission is paid
+        // only when its source event is proven on-chain:
+        //   SPOT      → Trade.settlementStatus === 'SETTLED'
+        //   COPYTRADE → CopyVaultWithdrawal with a finalized txHash on a vault
+        //               that has an on-chain contract (db-journal withdrawals,
+        //               whose fee derives from unproven equity, never pay)
+        //   MARGIN    → never (margin has no on-chain custody)
+        //   null sourceTradeId / unknown type → never
+        // Ineligible rows stay isPaid:false and roll to future batches (they
+        // become payable if/when the source event is proven).
+        const idsOf = (type: string) =>
+          unpaid
+            .filter((c) => c.sourceType === type && c.sourceTradeId !== null)
+            .map((c) => c.sourceTradeId as string);
+        const spotTradeIds = idsOf('SPOT');
+        const copytradeWithdrawalIds = idsOf('COPYTRADE');
 
-        let settledSet = new Set<string>();
-        if (spotTradeIds.length > 0) {
-          const settled = await tx.trade.findMany({
-            where: { id: { in: spotTradeIds }, settlementStatus: 'SETTLED' },
-            select: { id: true },
-          });
-          settledSet = new Set(settled.map((t) => t.id));
-        }
+        const [settledTrades, confirmedWithdrawals] = await Promise.all([
+          spotTradeIds.length > 0
+            ? tx.trade.findMany({
+                where: {
+                  id: { in: spotTradeIds },
+                  settlementStatus: 'SETTLED',
+                },
+                select: { id: true },
+              })
+            : Promise.resolve([] as Array<{ id: string }>),
+          copytradeWithdrawalIds.length > 0
+            ? tx.copyVaultWithdrawal.findMany({
+                where: {
+                  id: { in: copytradeWithdrawalIds },
+                  txHash: { not: null },
+                  vault: { contractAddress: { not: null } },
+                },
+                select: { id: true },
+              })
+            : Promise.resolve([] as Array<{ id: string }>),
+        ]);
+        const provenBySource: Record<string, Set<string>> = {
+          SPOT: new Set(settledTrades.map((t) => t.id)),
+          COPYTRADE: new Set(confirmedWithdrawals.map((w) => w.id)),
+        };
 
-        const eligible = unpaid.filter(
-          (c) =>
-            c.sourceType !== 'SPOT' ||
-            c.sourceTradeId === null ||
-            settledSet.has(c.sourceTradeId),
-        );
+        const eligible = unpaid.filter((c) => {
+          if (c.sourceTradeId === null) return false;
+          const proven = provenBySource[c.sourceType];
+          return proven !== undefined && proven.has(c.sourceTradeId);
+        });
 
         // Create the batch INSIDE the transaction so a crash rolls it back —
         // no orphan PROCESSING batch.

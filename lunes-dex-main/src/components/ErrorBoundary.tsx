@@ -1,5 +1,6 @@
 import { Component, ErrorInfo, type ReactNode } from 'react'
 import styled from 'styled-components'
+import { reportError } from '../services/telemetry'
 
 interface Props {
   children: ReactNode
@@ -71,7 +72,18 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    // console.* is stripped from production builds: report to telemetry
+    // (self-hosted + optional Sentry), deduplicated and scrubbed of PII.
     console.error('[ErrorBoundary]', error, errorInfo)
+    try {
+      const withComponentStack = Object.assign(new Error(error.message), {
+        name: error.name,
+        stack: `${error.stack ?? ''}\n--- component stack ---${errorInfo.componentStack ?? ''}`
+      })
+      reportError(withComponentStack, 'boundary')
+    } catch {
+      /* telemetry must never break the fallback UI */
+    }
   }
 
   handleRetry = () => {

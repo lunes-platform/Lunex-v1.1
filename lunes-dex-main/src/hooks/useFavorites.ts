@@ -1,10 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { spotApi } from '../services/spotService'
 import { useSDK } from '../context/SDKContext'
 import {
   buildWalletActionMessage,
   createSignedActionMetadata
 } from '../utils/signing'
+import {
+  getReadSessionToken,
+  subscribeReadSession
+} from '../services/sessionService'
 
 const STORAGE_KEY = 'spot_favorites'
 
@@ -31,6 +35,13 @@ function writeToStorage(favorites: string[]) {
 export function useFavorites(walletAddress: string | null) {
   const { signMessage } = useSDK()
   const [favorites, setFavorites] = useState<string[]>(readFromStorage)
+  const [sessionToken, setSessionToken] = useState<string | null>(null)
+
+  useEffect(() => {
+    const sync = () => setSessionToken(getReadSessionToken(walletAddress))
+    sync()
+    return subscribeReadSession(sync)
+  }, [walletAddress])
 
   const signFavoriteAction = useCallback(
     async (action: string, fields?: Record<string, string>) => {
@@ -53,6 +64,36 @@ export function useFavorites(walletAddress: string | null) {
     },
     [signMessage, walletAddress]
   )
+
+  // Sync with backend when wallet connects (uses the read session — the
+  // list read never prompts the wallet; add/remove still sign).
+  useEffect(() => {
+    if (!walletAddress || !sessionToken) return
+
+    let cancelled = false
+
+    const sync = async () => {
+      try {
+        const remote = await spotApi.getFavorites(walletAddress, {
+          sessionToken
+        })
+        if (cancelled) return
+
+        const local = readFromStorage()
+        const merged = Array.from(new Set([...local, ...remote]))
+
+        setFavorites(merged)
+        writeToStorage(merged)
+      } catch {
+        // Backend offline — continue with localStorage only
+      }
+    }
+
+    sync()
+    return () => {
+      cancelled = true
+    }
+  }, [sessionToken, walletAddress])
 
   const isFavorite = useCallback(
     (symbol: string) => favorites.includes(symbol),

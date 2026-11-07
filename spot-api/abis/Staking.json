@@ -1,8 +1,8 @@
 {
   "source": {
-    "hash": "0xad39c07041b1a8a7ac40ac9c57e22caaefe7cd169facc96fe865377cb93e9a3e",
+    "hash": "0x38cbab29556bee196885499ead21131628dce26c966065aca08f6813edd0e889",
     "language": "ink! 4.3.0",
-    "compiler": "rustc 1.82.0",
+    "compiler": "rustc 1.85.0",
     "build_info": {
       "build_mode": "Release",
       "cargo_contract_version": "5.0.3",
@@ -94,13 +94,13 @@
         "displayName": [
           "ChainExtension"
         ],
-        "type": 42
+        "type": 44
       },
       "hash": {
         "displayName": [
           "Hash"
         ],
-        "type": 41
+        "type": 43
       },
       "maxEventTopics": 4,
       "timestamp": {
@@ -450,6 +450,47 @@
         "args": [
           {
             "docs": [],
+            "indexed": true,
+            "label": "proposal_id",
+            "type": {
+              "displayName": [
+                "u32"
+              ],
+              "type": 5
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "execution_time",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [
+          "Emitted when a proposal passes voting and enters the 48h execution timelock."
+        ],
+        "label": "ProposalQueued"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
             "indexed": false,
             "label": "amount",
             "type": {
@@ -475,6 +516,47 @@
           "=== NOVOS EVENTOS PARA PREMIAÇÃO ==="
         ],
         "label": "TradingRewardsFunded"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "funder",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [
+          "APY rewards pool funded (anyone may fund it; penalties also flow in)"
+        ],
+        "label": "ApyRewardsFunded"
       },
       {
         "args": [
@@ -916,7 +998,7 @@
               "displayName": [
                 "Option"
               ],
-              "type": 40
+              "type": 42
             }
           },
           {
@@ -1246,7 +1328,8 @@
         ],
         "default": false,
         "docs": [
-          " Stakes LUNES tokens for a specified duration"
+          " Stakes native LUNES (transferred value) for `duration` milliseconds",
+          " (MIN_DURATION..=MAX_DURATION, i.e. 7..=365 days)."
         ],
         "label": "stake",
         "mutates": true,
@@ -1264,7 +1347,13 @@
         "args": [],
         "default": false,
         "docs": [
-          " Unstakes tokens and claims rewards"
+          " Unstakes the whole position.",
+          "",
+          " Pays: principal − early penalty (always, never capped), the",
+          " trading rewards credited to the position (backed), and the APY",
+          " accrued capped by `apy_rewards_pool`. Any APY the pool cannot cover",
+          " stays in `owed_rewards` (claimable later via `claim_rewards`).",
+          " The 5% early-unstake penalty goes to `apy_rewards_pool`."
         ],
         "label": "unstake",
         "mutates": true,
@@ -1282,7 +1371,11 @@
         "args": [],
         "default": false,
         "docs": [
-          " Claims pending rewards without unstaking"
+          " Claims rewards without unstaking: credited trading rewards (backed)",
+          " + APY capped by `apy_rewards_pool`. The uncovered remainder is kept",
+          " in `owed_rewards` — never paid from principal. Also works after",
+          " unstake when `owed_rewards > 0`. Returns Ok with no transfer when",
+          " nothing is payable right now."
         ],
         "label": "claim_rewards",
         "mutates": true,
@@ -1459,7 +1552,10 @@
         ],
         "default": false,
         "docs": [
-          " Gets current rewards for a staker"
+          " Gets current rewards for a staker",
+          " Total rewards owed to `account`: APY accrued since the last claim",
+          " + previously owed APY + credited trading rewards. What is payable",
+          " right now is capped by `get_reward_pools().0` (APY part)."
         ],
         "label": "get_pending_rewards",
         "mutates": false,
@@ -1472,6 +1568,52 @@
           "type": 22
         },
         "selector": "0xe287096a"
+      },
+      {
+        "args": [
+          {
+            "label": "account",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " APY not paid yet because the pool was short (claimable later)."
+        ],
+        "label": "get_owed_rewards",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 24
+        },
+        "selector": "0x8bd9ccda"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " (apy_rewards_pool, trading_rewards_pool, total_credited_rewards)."
+        ],
+        "label": "get_reward_pools",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 25
+        },
+        "selector": "0xa141ab1e"
       },
       {
         "args": [
@@ -1525,7 +1667,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 24
+          "type": 27
         },
         "selector": "0xba4dc5ec"
       },
@@ -1553,7 +1695,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 28
+          "type": 31
         },
         "selector": "0x7c381a03"
       },
@@ -1603,7 +1745,7 @@
               "displayName": [
                 "Vec"
               ],
-              "type": 29
+              "type": 32
             }
           }
         ],
@@ -1676,7 +1818,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 31
+          "type": 34
         },
         "selector": "0xf12c1e84"
       },
@@ -1731,7 +1873,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 33
+          "type": 24
         },
         "selector": "0xc80c3189"
       },
@@ -1749,7 +1891,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 34
+          "type": 36
         },
         "selector": "0x0b58aa38"
       },
@@ -1868,6 +2010,26 @@
         "args": [],
         "default": false,
         "docs": [
+          " Funds the APY / governance-bonus pool with the transferred LUNES.",
+          " Open to anyone (treasury, team, rewards contract). This pool is the",
+          " ONLY source for APY rewards and governance bonuses."
+        ],
+        "label": "fund_apy_rewards",
+        "mutates": true,
+        "payable": true,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 12
+        },
+        "selector": "0x74f9a5a0"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
           " Distribui trading rewards para todos os stakers ativos (apenas admin)",
           " Para compatibilidade, distribui tudo em uma página"
         ],
@@ -1891,7 +2053,7 @@
               "displayName": [
                 "Option"
               ],
-              "type": 36
+              "type": 38
             }
           },
           {
@@ -1900,7 +2062,7 @@
               "displayName": [
                 "Option"
               ],
-              "type": 36
+              "type": 38
             }
           }
         ],
@@ -1926,7 +2088,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 37
+          "type": 39
         },
         "selector": "0xaa7b5315"
       },
@@ -2409,6 +2571,15 @@
                             }
                           },
                           "name": "new_fee_amount"
+                        },
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0xbe58b26c",
+                              "ty": 6
+                            }
+                          },
+                          "name": "execution_time"
                         }
                       ],
                       "name": "ProjectProposal"
@@ -2622,6 +2793,47 @@
                 }
               },
               "name": "current_proposal_fee"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "apy_rewards_pool"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "total_credited_rewards"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x758d65b5",
+                      "ty": 4
+                    }
+                  },
+                  "root_key": "0x758d65b5"
+                }
+              },
+              "name": "owed_rewards"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "distribution_amount"
             }
           ],
           "name": "StakingContract"
@@ -2965,15 +3177,23 @@
               },
               {
                 "index": 21,
-                "name": "TooManyTokens"
+                "name": "TimelockPending"
               },
               {
                 "index": 22,
-                "name": "InvalidAmount"
+                "name": "TooManyTokens"
               },
               {
                 "index": 23,
+                "name": "InvalidAmount"
+              },
+              {
+                "index": 24,
                 "name": "NoStakeFound"
+              },
+              {
+                "index": 25,
+                "name": "InsufficientRewardsPool"
               }
             ]
           }
@@ -3362,7 +3582,7 @@
               {
                 "fields": [
                   {
-                    "type": 25
+                    "type": 4
                   }
                 ],
                 "index": 0,
@@ -3383,7 +3603,7 @@
         "params": [
           {
             "name": "T",
-            "type": 25
+            "type": 4
           },
           {
             "name": "E",
@@ -3402,13 +3622,109 @@
           "variant": {
             "variants": [
               {
+                "fields": [
+                  {
+                    "type": 26
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 26
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 26,
+      "type": {
+        "def": {
+          "tuple": [
+            4,
+            4,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 27,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 28
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 28
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 28,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
                 "index": 0,
                 "name": "None"
               },
               {
                 "fields": [
                   {
-                    "type": 26
+                    "type": 29
                   }
                 ],
                 "index": 1,
@@ -3420,7 +3736,7 @@
         "params": [
           {
             "name": "T",
-            "type": 26
+            "type": 29
           }
         ],
         "path": [
@@ -3429,7 +3745,7 @@
       }
     },
     {
-      "id": 26,
+      "id": 29,
       "type": {
         "def": {
           "composite": {
@@ -3501,8 +3817,13 @@
               },
               {
                 "name": "new_fee_amount",
-                "type": 27,
+                "type": 30,
                 "typeName": "Option<Balance>"
+              },
+              {
+                "name": "execution_time",
+                "type": 6,
+                "typeName": "Timestamp"
               }
             ]
           }
@@ -3515,7 +3836,7 @@
       }
     },
     {
-      "id": 27,
+      "id": 30,
       "type": {
         "def": {
           "variant": {
@@ -3548,7 +3869,7 @@
       }
     },
     {
-      "id": 28,
+      "id": 31,
       "type": {
         "def": {
           "variant": {
@@ -3590,77 +3911,12 @@
       }
     },
     {
-      "id": 29,
-      "type": {
-        "def": {
-          "sequence": {
-            "type": 30
-          }
-        }
-      }
-    },
-    {
-      "id": 30,
-      "type": {
-        "def": {
-          "tuple": [
-            0,
-            7
-          ]
-        }
-      }
-    },
-    {
-      "id": 31,
-      "type": {
-        "def": {
-          "variant": {
-            "variants": [
-              {
-                "fields": [
-                  {
-                    "type": 32
-                  }
-                ],
-                "index": 0,
-                "name": "Ok"
-              },
-              {
-                "fields": [
-                  {
-                    "type": 11
-                  }
-                ],
-                "index": 1,
-                "name": "Err"
-              }
-            ]
-          }
-        },
-        "params": [
-          {
-            "name": "T",
-            "type": 32
-          },
-          {
-            "name": "E",
-            "type": 11
-          }
-        ],
-        "path": [
-          "Result"
-        ]
-      }
-    },
-    {
       "id": 32,
       "type": {
         "def": {
-          "tuple": [
-            5,
-            5,
-            5
-          ]
+          "sequence": {
+            "type": 33
+          }
         }
       }
     },
@@ -3668,42 +3924,11 @@
       "id": 33,
       "type": {
         "def": {
-          "variant": {
-            "variants": [
-              {
-                "fields": [
-                  {
-                    "type": 4
-                  }
-                ],
-                "index": 0,
-                "name": "Ok"
-              },
-              {
-                "fields": [
-                  {
-                    "type": 11
-                  }
-                ],
-                "index": 1,
-                "name": "Err"
-              }
-            ]
-          }
-        },
-        "params": [
-          {
-            "name": "T",
-            "type": 4
-          },
-          {
-            "name": "E",
-            "type": 11
-          }
-        ],
-        "path": [
-          "Result"
-        ]
+          "tuple": [
+            0,
+            7
+          ]
+        }
       }
     },
     {
@@ -3753,6 +3978,60 @@
       "type": {
         "def": {
           "tuple": [
+            5,
+            5,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "id": 36,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 37
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 11
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 37
+          },
+          {
+            "name": "E",
+            "type": 11
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 37,
+      "type": {
+        "def": {
+          "tuple": [
             4,
             4,
             5
@@ -3761,7 +4040,7 @@
       }
     },
     {
-      "id": 36,
+      "id": 38,
       "type": {
         "def": {
           "variant": {
@@ -3794,7 +4073,7 @@
       }
     },
     {
-      "id": 37,
+      "id": 39,
       "type": {
         "def": {
           "variant": {
@@ -3802,7 +4081,7 @@
               {
                 "fields": [
                   {
-                    "type": 38
+                    "type": 40
                   }
                 ],
                 "index": 0,
@@ -3823,7 +4102,7 @@
         "params": [
           {
             "name": "T",
-            "type": 38
+            "type": 40
           },
           {
             "name": "E",
@@ -3836,7 +4115,7 @@
       }
     },
     {
-      "id": 38,
+      "id": 40,
       "type": {
         "def": {
           "variant": {
@@ -3844,7 +4123,7 @@
               {
                 "fields": [
                   {
-                    "type": 39
+                    "type": 41
                   }
                 ],
                 "index": 0,
@@ -3865,7 +4144,7 @@
         "params": [
           {
             "name": "T",
-            "type": 39
+            "type": 41
           },
           {
             "name": "E",
@@ -3878,19 +4157,19 @@
       }
     },
     {
-      "id": 39,
+      "id": 41,
       "type": {
         "def": {
           "tuple": [
             5,
             3,
-            36
+            38
           ]
         }
       }
     },
     {
-      "id": 40,
+      "id": 42,
       "type": {
         "def": {
           "variant": {
@@ -3923,7 +4202,7 @@
       }
     },
     {
-      "id": 41,
+      "id": 43,
       "type": {
         "def": {
           "composite": {
@@ -3943,7 +4222,7 @@
       }
     },
     {
-      "id": 42,
+      "id": 44,
       "type": {
         "def": {
           "variant": {}

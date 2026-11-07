@@ -1,111 +1,197 @@
 import { createGlobalStyle, css } from 'styled-components'
 
+/**
+ * Global styles — Lunex redesign.
+ *
+ * - Inter for body copy; Space Grotesk only for headings, buttons and
+ *   numbers (it used to be applied to `*`, overriding Inter everywhere).
+ * - Motion durations follow styles/motion.ts (150 / 200 / 300ms).
+ * - Press feedback (scale .98) is scoped to primary CTAs via `data-cta`.
+ * - Borderless inputs (`data-bare`) move their focus ring to the container
+ *   (`data-field`).
+ * - Reduced motion: everything off; spinners / skeletons / glows become an
+ *   opacity pulse (`data-motion="pulse"`) instead of freezing.
+ */
 export default createGlobalStyle`
 ${({ theme }) => css`
-  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
-
-  * {
+  *,
+  *::before,
+  *::after {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
-    font-family: 'Space Grotesk', sans-serif;
-    scroll-behavior: smooth;
-  }
-
-  body {
-    height: 100%;
-    text-rendering: optimizelegibility !important;
-    -webkit-font-smoothing: antialiased !important;
-    color: ${theme.colors.themeColors[100]};
-    background: ${theme.colors.themeColors[500]};
   }
 
   html {
     font-size: 62.5%;
+    scroll-behavior: smooth;
   }
 
-  html,
-  body,
-  #__next {
-    height: 100%;
+  body {
+    min-height: 100%;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    text-rendering: optimizelegibility;
+    -webkit-font-smoothing: antialiased;
+    color: ${theme.colors.themeColors[100]};
+    background: ${theme.colors.themeColors[500]};
     overflow-x: hidden;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  button {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+  }
+
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+    color: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #6d6d6d;
+  }
+
+  .num,
+  [data-num] {
+    font-family: 'Space Grotesk', 'Inter', sans-serif;
+    font-variant-numeric: tabular-nums;
   }
 
   button {
     cursor: pointer;
     border: none;
+    background: none;
+    color: inherit;
     white-space: nowrap;
-    font-family: 'Space Grotesk', sans-serif;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    will-change: transform, box-shadow;
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease,
+      transform 120ms ease,
+      opacity 150ms ease;
+  }
 
-    :hover:not(:disabled) {
-      transform: translateY(-1px) scale(1.02);
-      box-shadow: 0 4px 16px rgba(108, 56, 255, 0.15);
-      filter: brightness(1.05);
-    }
+  button:disabled {
+    cursor: not-allowed;
+  }
 
-    :active:not(:disabled) {
-      transform: translateY(0) scale(0.98);
-      box-shadow: none;
-      transition-duration: 0.1s;
-    }
-
-    :disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      filter: none;
-      transform: none;
-    }
+  button[data-cta]:active:not(:disabled) {
+    transform: scale(0.98);
   }
 
   a {
-    color: inherit;
+    color: ${theme.colors.primary[300]};
     text-decoration: none;
-    transition: color 0.15s ease;
+    transition: color 150ms ease;
   }
 
-  /* Smooth focus ring */
-  :focus-visible {
-    outline: 2px solid #6c38ff;
-    outline-offset: 2px;
+  a:hover {
+    color: ${theme.colors.primary[200]};
   }
 
   ul {
     list-style: none;
   }
 
-  /* Reduced motion support */
-  @media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-      animation-duration: 0.01ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.01ms !important;
-    }
+  img {
+    display: block;
   }
 
-  /* Scrollbar — minimal, themed */
+  :focus-visible {
+    outline: 2px solid ${theme.colors.primary[500]};
+    outline-offset: 2px;
+  }
+
+  [role='dialog']:focus {
+    outline: none;
+  }
+
+  input,
+  textarea,
+  select {
+    transition:
+      border-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+
+  input:not([data-bare]):not([type='range']):not([type='checkbox']):focus,
+  textarea:focus,
+  select:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(108, 56, 255, 0.25);
+  }
+
+  input[data-bare]:focus,
+  input[data-bare]:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+
+  [data-field]:has(input[data-bare]:focus-visible) {
+    border-color: ${theme.colors.primary[500]} !important;
+    box-shadow: 0 0 0 3px rgba(108, 56, 255, 0.22);
+  }
+
+  input[type='range'] {
+    accent-color: ${theme.colors.primary[500]};
+  }
+
+  input[type='checkbox'] {
+    accent-color: ${theme.colors.primary[500]};
+  }
+
+  /* Scrollbars — 4px, nearly invisible at rest */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  }
+
+  *:hover {
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+
   ::-webkit-scrollbar {
-    width: 3px;
-    height: 3px;
+    width: 4px;
+    height: 4px;
   }
 
-  ::-webkit-scrollbar-track {
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
     background: transparent;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: ${theme.colors.themeColors[400]};
+    background: rgba(255, 255, 255, 0.08);
     border-radius: 999px;
   }
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: ${theme.colors.primary[500]};
+  *:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
   }
 
-  /* Hide native number input spinners */
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(108, 56, 255, 0.6);
+  }
+
+  [role='dialog'] {
+    overscroll-behavior: contain;
+  }
+
+  [role='dialog']::-webkit-scrollbar-track {
+    margin: 16px 0;
+  }
+
+  /* Hide native number spinners */
   input[type='number']::-webkit-inner-spin-button,
   input[type='number']::-webkit-outer-spin-button {
     -webkit-appearance: none;
@@ -115,6 +201,35 @@ ${({ theme }) => css`
   input[type='number'] {
     -moz-appearance: textfield;
     appearance: textfield;
+  }
+
+  @keyframes lxpulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+
+    [data-motion='pulse'] {
+      animation: lxpulse 1.6s ease-in-out infinite !important;
+    }
   }
 `}
 `

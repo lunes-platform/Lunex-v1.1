@@ -28,7 +28,12 @@ import {
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { z } from 'zod';
+import { optionalHttpsUrl } from '../utils/validation';
 
 const router = Router();
 
@@ -39,58 +44,92 @@ fs.mkdirSync(TOKENS_DIR, { recursive: true });
 const ALLOWED_MIMES = ['image/png', 'image/webp'];
 const MAX_LOGO_SIZE = 200 * 1024; // 200 KB
 
-const logoStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, TOKENS_DIR),
-  filename: (req, file, cb) => {
-    const rawAddress =
-      typeof req.body?.tokenAddress === 'string'
-        ? req.body.tokenAddress
-        : 'unknown';
-    const addr =
-      rawAddress.toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'token';
-    const ext = file.mimetype === 'image/webp' ? '.webp' : '.png';
-    const unique = crypto.randomBytes(8).toString('hex');
-    cb(null, `${addr}-${Date.now()}-${unique}${ext}`);
-  },
-});
-
+// Memory storage: nothing touches the disk until the wallet signature has
+// been verified (BE-23). Limits bound every multipart dimension — busboy's
+// defaults allow unlimited fields of up to 1 MB each.
 const logoUpload = multer({
-  storage: logoStorage,
-  limits: { fileSize: MAX_LOGO_SIZE },
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: MAX_LOGO_SIZE,
+    files: 1,
+    fields: 30,
+    fieldSize: 4 * 1024,
+    fieldNameSize: 64,
+    parts: 32,
+    headerPairs: 50,
+  },
   fileFilter: (_req, file, cb) => {
-    if (!ALLOWED_MIMES.includes(file.mimetype)) {
+    if (file.fieldname !== 'logo' || !ALLOWED_MIMES.includes(file.mimetype)) {
       return cb(new Error('Invalid file type. Accepted: PNG, WebP'));
     }
     cb(null, true);
   },
 });
 
-function isValidLogoMagic(file: Express.Multer.File) {
-  let buffer: Buffer;
-  try {
-    buffer = fs.readFileSync(file.path);
-  } catch {
-    return false;
-  }
+/** Multer wrapper: limit/type violations become 4xx instead of 500. */
+function parseLogoUpload(req: Request, res: Response, next: NextFunction) {
+  logoUpload.single('logo')(req, res, (err: unknown) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      const tooLarge =
+        err.code === 'LIMIT_FILE_SIZE' ||
+        err.code === 'LIMIT_FIELD_VALUE' ||
+        err.code === 'LIMIT_PART_COUNT' ||
+        err.code === 'LIMIT_FIELD_COUNT' ||
+        err.code === 'LIMIT_FILE_COUNT';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: 'Invalid upload',
+        code: err.code,
+      });
+    }
+    if (err instanceof Error && err.message.startsWith('Invalid file type')) {
+      return res
+        .status(400)
+        .json({ error: err.message, code: 'INVALID_FILE_TYPE' });
+    }
+    return next(err);
+  });
+}
+
+type LogoKind = 'png' | 'webp';
+
+/** Content sniffing — the client-declared mimetype is not trusted. */
+function detectLogoKind(file: Express.Multer.File): LogoKind | null {
+  const buffer = file.buffer;
+  if (!buffer) return null;
   const isPng =
     file.mimetype === 'image/png' &&
     buffer.length >= 8 &&
     buffer
       .subarray(0, 8)
       .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (isPng) return 'png';
   const isWebp =
     file.mimetype === 'image/webp' &&
     buffer.length >= 12 &&
     buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
     buffer.subarray(8, 12).toString('ascii') === 'WEBP';
-
-  return isPng || isWebp;
+  return isWebp ? 'webp' : null;
 }
 
-function removeUploadedLogo(file?: Express.Multer.File) {
-  if (!file) return;
+/**
+ * Persists a verified logo under a random name (no client-controlled path
+ * component) and returns its public URI. `wx` refuses to overwrite.
+ */
+function persistLogo(file: Express.Multer.File, kind: LogoKind): string {
+  const name = `${crypto.randomBytes(16).toString('hex')}.${kind}`;
+  const target = path.join(TOKENS_DIR, name);
+  if (path.dirname(target) !== TOKENS_DIR) {
+    throw new Error('Invalid logo path');
+  }
+  fs.writeFileSync(target, file.buffer, { flag: 'wx' });
+  return `/tokens/${name}`;
+}
+
+function removePersistedLogo(logoURI?: string) {
+  if (!logoURI) return;
   try {
-    fs.unlinkSync(file.path);
+    fs.unlinkSync(path.join(TOKENS_DIR, path.basename(logoURI)));
   } catch {
     // Best-effort cleanup only.
   }
@@ -115,7 +154,22 @@ const CreateListingSchema = z
     lunesLiquidity: z.union([z.string(), z.number()]),
     tokenLiquidity: z.union([z.string(), z.number()]),
     description: z.string().max(2000).optional(),
-    website: z.string().trim().url().max(300).optional().or(z.literal('')),
+    website: optionalHttpsUrl,
+    // On-chain list_token result (fee paid + LP lock). Optional for
+    // backwards compatibility; when present they are covered by the wallet
+    // signature. Activation still only happens from the chain event.
+    txHash: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/)
+      .optional(),
+    pairAddress: z.string().min(40).max(64).optional(),
+    lpTokenAddress: z.string().min(40).max(64).optional(),
+    lpAmount: z
+      .string()
+      .regex(/^\d+(\.\d+)?$/)
+      .max(80)
+      .optional(),
+    onChainListingId: z.coerce.number().int().min(0).optional(),
   })
   .merge(SignedActionSchema);
 
@@ -125,6 +179,13 @@ const WithdrawLockSchema = z
     txHash: z.string().min(8).max(128),
   })
   .merge(SignedActionSchema);
+
+const ListListingsQuerySchema = z.object({
+  tier: z.nativeEnum(ListingTier).optional(),
+  status: z.nativeEnum(ListingStatus).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).max(100_000).default(0),
+});
 
 const SignedOwnerReadSchema = SignedActionSchema.extend({
   address: z.string().min(8).max(128),
@@ -176,10 +237,16 @@ router.get(
 // Public: paginated listing index
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const tier = req.query.tier as ListingTier | undefined;
-    const status = req.query.status as ListingStatus | undefined;
-    const limit = Math.min(parseInt(String(req.query.limit ?? '50'), 10), 100);
-    const offset = parseInt(String(req.query.offset ?? '0'), 10);
+    // Strict query schema: qs objects (`status[not]=…`) never reach Prisma.
+    const query = ListListingsQuerySchema.safeParse(req.query);
+    if (!query.success) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        code: 'VALIDATION_ERROR',
+        details: query.error.issues,
+      });
+    }
+    const { tier, status, limit, offset } = query.data;
 
     const listings = await getListings({ tier, status, limit, offset });
     res.json({ listings, limit, offset });
@@ -207,7 +274,7 @@ router.get(
   '/owner/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedOwnerReadSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedOwnerReadSchema).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
         address: req.params.address,
@@ -217,7 +284,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'listing.owner',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -249,19 +316,19 @@ router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
 // Create a new token listing with optional logo upload
 router.post(
   '/',
-  logoUpload.single('logo'),
+  parseLogoUpload,
   async (req: Request, res: Response, next: NextFunction) => {
+    let logoURI: string | undefined;
     try {
       const parsed = CreateListingSchema.safeParse(req.body);
       if (!parsed.success) {
-        removeUploadedLogo(req.file);
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
 
-      if (req.file && !isValidLogoMagic(req.file)) {
-        removeUploadedLogo(req.file);
+      const logoKind = req.file ? detectLogoKind(req.file) : null;
+      if (req.file && !logoKind) {
         return res.status(400).json({ error: 'Invalid logo file content' });
       }
 
@@ -278,26 +345,28 @@ router.post(
           tier: parsed.data.tier,
           lunesLiquidity: parsed.data.lunesLiquidity,
           tokenLiquidity: parsed.data.tokenLiquidity,
+          txHash: parsed.data.txHash,
+          pairAddress: parsed.data.pairAddress,
+          lpTokenAddress: parsed.data.lpTokenAddress,
+          lpAmount: parsed.data.lpAmount,
+          onChainListingId: parsed.data.onChainListingId,
         },
       });
       if (!auth.ok) {
-        removeUploadedLogo(req.file);
         return res.status(401).json({ error: auth.error });
       }
 
       const { tier, ...rest } = parsed.data;
       const tierKey = tier.toUpperCase() as TierKey;
       if (!TIER_CONFIG[tierKey]) {
-        removeUploadedLogo(req.file);
         return res.status(400).json({
           error: `Invalid tier. Valid values: BASIC, VERIFIED, FEATURED`,
         });
       }
 
-      // Build logoURI from uploaded file
-      let logoURI: string | undefined;
-      if (req.file) {
-        logoURI = `/tokens/${req.file.filename}`;
+      // Signature verified — only now does the logo reach the disk.
+      if (req.file && logoKind) {
+        logoURI = persistLogo(req.file, logoKind);
       }
 
       const listing = await createListing({
@@ -312,15 +381,10 @@ router.post(
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
+      removePersistedLogo(logoURI);
       if (msg.includes('already listed') || msg.includes('Insufficient')) {
-        removeUploadedLogo(req.file);
         return res.status(400).json({ error: msg });
       }
-      if (msg.includes('Invalid file type') || msg.includes('File too large')) {
-        removeUploadedLogo(req.file);
-        return res.status(400).json({ error: msg });
-      }
-      removeUploadedLogo(req.file);
       next(err);
     }
   },

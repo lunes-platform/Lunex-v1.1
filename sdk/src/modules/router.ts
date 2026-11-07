@@ -8,6 +8,7 @@ import {
   TransactionResult,
 } from '../types';
 import { EndpointNotAvailableError } from '../errors';
+import { clampSlippagePercent } from '../utils';
 
 export class RouterModule {
   constructor(private http: HttpClient) {}
@@ -128,14 +129,14 @@ export class RouterModule {
   /**
    * Calculate slippage-adjusted minimum amount
    * @param amount - Original amount
-   * @param slippagePercent - Slippage tolerance (e.g., 1 for 1%)
+   * @param slippagePercent - Slippage tolerance (e.g., 1 for 1%); clamped to
+   *   [0, MAX_SLIPPAGE_PERCENT] so the minimum is never 0 or negative
    * @returns Minimum amount after slippage
    */
   calculateMinAmount(amount: string, slippagePercent: number): string {
     const amountBigInt = BigInt(amount);
-    const slippageMultiplier = BigInt(
-      Math.floor((100 - slippagePercent) * 100),
-    );
+    const bounded = clampSlippagePercent(slippagePercent);
+    const slippageMultiplier = BigInt(Math.floor((100 - bounded) * 100));
     return ((amountBigInt * slippageMultiplier) / BigInt(10000)).toString();
   }
 

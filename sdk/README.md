@@ -270,12 +270,24 @@ console.log('Latest staker mode:', weeks[0]?.observability.staker.claimMode);
 ### Copytrade
 
 ```typescript
-// Deposit into a leader vault with signed payload
+// 1. The FOLLOWER wallet signs CopyVault.deposit on the vault contract
+//    (vault.contractAddress) and waits for finality -> { txHash, blockHash }.
+// 2. Sign the API receipt over the same proof, then journal it.
+const message = buildCopytradeDepositSignMessage({
+  leaderId, followerAddress, token: 'LUNES', amount, txHash, blockHash,
+  stopLossPct, nonce, timestamp,
+});
+const signedDepositInput = {
+  followerAddress, token: 'LUNES', amount, txHash, blockHash, stopLossPct,
+  nonce, timestamp, signature: await walletSignMessage(message),
+};
+// The API verifies the finalized tx (signer, vault, amount, replay) before crediting.
 const deposit = await sdk.copytrade.depositToVault(leaderId, signedDepositInput);
 console.log('Execution mode:', deposit.executionMode);
 console.log('On-chain tx:', deposit.txHash);
 
-// Withdraw follower shares
+// Withdraw follower shares: same pattern (CopyVault.withdraw signed by the
+// follower on-chain, then buildCopytradeWithdrawSignMessage with txHash/blockHash)
 const withdrawal = await sdk.copytrade.withdrawFromVault(leaderId, signedWithdrawInput);
 console.log('Net amount:', withdrawal.netAmount);
 console.log('Execution mode:', withdrawal.executionMode);

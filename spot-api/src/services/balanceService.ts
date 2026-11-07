@@ -14,7 +14,10 @@
  * (lowering `available`); cancelling it releases the reservation.
  *
  *   - SELL order reserves `remainingAmount` of the pair's BASE token.
- *   - BUY  order reserves `price × remainingAmount` of the pair's QUOTE token.
+ *   - BUY  order reserves `price × remainingAmount` (+ max fee) of QUOTE.
+ *   - With on-chain settlement enabled, unsettled trades (PENDING / SETTLING / RECONCILE_REQUIRED /
+ *     FAILED) keep the seller's base and the buyer's quote + max fee locked
+ *     until the vault debit finalizes.
  *
  * @module balanceService
  */
@@ -31,6 +34,16 @@ const RESERVING_ORDER_STATUSES = [
   'OPEN',
   'PARTIAL',
   'PENDING_TRIGGER',
+] as const;
+
+/** Trades matched off-chain whose vault debit has not finalized on-chain.
+ *  FAILED is retried; RECONCILE_REQUIRED may or may not have landed — both
+ *  still owe the debit until the reconciler resolves them. */
+const UNSETTLED_TRADE_STATUSES = [
+  'PENDING',
+  'SETTLING',
+  'FAILED',
+  'RECONCILE_REQUIRED',
 ] as const;
 
 export type TokenBalance = {
@@ -83,6 +96,49 @@ async function computeLockedByToken(
     if (token && tok !== token) return;
     locked.set(tok, (locked.get(tok) ?? new Decimal(0)).plus(amount));
   };
+
+  // Matched off-chain but not yet debited on-chain: a filled order no longer
+  // reserves funds, yet the vault still holds them until `settle_trade`
+  // finalizes. Keep the fill locked so the same vault balance cannot back a
+  // second order whose settlement would then revert (InsufficientBalance).
+  // Only debits are counted; incoming credits count once they settle.
+  // Ledger mode (settlement disabled) marks trades SKIPPED — nothing to add.
+  if (settlementService.isEnabled()) {
+    const trades = await prisma.trade.findMany({
+      where: {
+        settlementStatus: { in: [...UNSETTLED_TRADE_STATUSES] },
+        OR: [{ makerAddress: address }, { takerAddress: address }],
+      },
+      include: { pair: true },
+    });
+    for (const trade of trades) {
+      // Trade.side is the TAKER side.
+      const buyer =
+        trade.side === 'BUY' ? trade.takerAddress : trade.makerAddress;
+      const seller =
+        trade.side === 'BUY' ? trade.makerAddress : trade.takerAddress;
+      if (seller === address) {
+        add(
+          spotAssetKey(trade.pair.baseToken, trade.pair.isNativeBase),
+          new Decimal(trade.amount.toString()),
+        );
+      }
+      if (buyer === address) {
+        // Same conservative bound as a resting BUY: principal + max fee.
+        add(
+          spotAssetKey(trade.pair.quoteToken, trade.pair.isNativeQuote),
+          spotUnitsToDecimal(
+            quoteReserveUnits(
+              trade.price.toString(),
+              trade.amount.toString(),
+              trade.pair,
+            ),
+            trade.pair.quoteDecimals,
+          ),
+        );
+      }
+    }
+  }
 
   for (const order of orders) {
     if (order.expiresAt && order.expiresAt.getTime() <= Date.now()) continue;

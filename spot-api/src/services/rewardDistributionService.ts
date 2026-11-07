@@ -80,9 +80,110 @@ function toFloat(value: unknown): number {
   return parseFloat(String(value));
 }
 
-// ─── Service ─────────────────────────────────────────────────────────────────
-
 const db = prisma;
+
+// ─── Tracked payouts (never auto-re-pay an UNKNOWN outcome) ─────────────────
+
+/**
+ * A SUBMITTED row older than this is treated like UNKNOWN by the reconciler
+ * (the process crashed / lost the outcome between broadcast and the final
+ * status write). Must exceed the transfer timeout + finality margin.
+ */
+export const STALE_SUBMITTED_PAYOUT_MS = 15 * 60_000;
+
+type TrackedPayout = {
+  status: 'CONFIRMED' | 'FAILED' | 'UNKNOWN' | 'SKIPPED';
+  txHash: string | null;
+  error: string | null;
+};
+
+/**
+ * Transfers native LUNES for a claimed UserReward row:
+ *  1. hash + era persisted as SUBMITTED BEFORE broadcast, via a CAS on the
+ *     row's expected status (concurrent payers cannot both broadcast);
+ *  2. final status written only over our own SUBMITTED submission;
+ *  3. ambiguous outcomes become UNKNOWN (reconciled by hash, never re-paid).
+ */
+async function payTrackedReward(
+  rewardId: string,
+  expectedStatus: 'PENDING' | 'FAILED',
+  walletAddress: string,
+  amount: number,
+): Promise<TrackedPayout> {
+  let claimed: string | null = null;
+
+  const result = await rewardPayoutService.transferNative(
+    walletAddress,
+    amount,
+    {
+      onBeforeBroadcast: async (submission) => {
+        const { count } = await db.userReward.updateMany({
+          where: { id: rewardId, payoutStatus: expectedStatus },
+          data: {
+            payoutStatus: 'SUBMITTED',
+            txHash: submission.txHash,
+            payoutBirthBlock: submission.birthBlock,
+            payoutMortality: submission.mortality,
+            payoutSubmittedAt: new Date(),
+            payoutError: null,
+          },
+        });
+        if (count !== 1) {
+          throw new Error(
+            `UserReward ${rewardId} is no longer ${expectedStatus}; not broadcasting`,
+          );
+        }
+        claimed = submission.txHash;
+      },
+    },
+  );
+
+  // Backwards-compatible with results that predate `outcome`.
+  const outcome = result.outcome ?? (result.success ? 'CONFIRMED' : 'FAILED');
+
+  if (!claimed && outcome !== 'FAILED') {
+    // Should be impossible: a broadcast always goes through the hook.
+    log.error(
+      { rewardId, txHash: result.txHash, outcome },
+      '[Rewards] Payout broadcast without a persisted claim',
+    );
+  }
+
+  const where = claimed
+    ? { id: rewardId, payoutStatus: 'SUBMITTED', txHash: claimed }
+    : { id: rewardId, payoutStatus: expectedStatus };
+
+  const { count } = await db.userReward.updateMany({
+    where,
+    data: {
+      txHash: result.txHash ?? claimed,
+      payoutStatus: outcome,
+      payoutError: outcome === 'CONFIRMED' ? null : result.error,
+    },
+  });
+  if (count !== 1) {
+    // Lost the claim before broadcasting (another payer owns the row) —
+    // nothing was sent by us, so leave the row to its owner.
+    return { status: 'SKIPPED', txHash: null, error: result.error };
+  }
+
+  if (outcome !== 'CONFIRMED') {
+    log.error(
+      { rewardId, walletAddress, amount, outcome, error: result.error },
+      outcome === 'UNKNOWN'
+        ? '[Rewards] Payout outcome UNKNOWN — awaiting reconciliation, will NOT be re-paid'
+        : '[Rewards] Payout failed',
+    );
+  }
+
+  return {
+    status: outcome,
+    txHash: result.txHash ?? claimed,
+    error: result.error,
+  };
+}
+
+// ─── Service ─────────────────────────────────────────────────────────────────
 
 export const rewardDistributionService = {
   // ─── Week Helpers ────────────────────────────────────────────────────────
@@ -185,9 +286,14 @@ export const rewardDistributionService = {
   // ─── Fee Calculation ─────────────────────────────────────────────────────
 
   async calculateWeeklyFees(weekStart: Date, weekEnd: Date): Promise<number> {
+    // Only trades proven on-chain feed the reward pool. PENDING / SETTLING /
+    // FAILED / SKIPPED trades never moved funds, so counting them would pay
+    // real LUNES on fictitious fees (BE-05). Windowed by settledAt so a trade
+    // that settles on a later retry counts in the week it actually settled.
     const result = await prisma.trade.aggregate({
       where: {
-        createdAt: { gte: weekStart, lt: weekEnd },
+        settlementStatus: 'SETTLED',
+        settledAt: { gte: weekStart, lt: weekEnd },
       },
       _sum: {
         makerFee: true,
@@ -307,8 +413,11 @@ export const rewardDistributionService = {
         where: { leaderId: { in: leaderIds } },
         _count: { id: true },
       }),
+      // Only vaults with an on-chain contract carry proven equity. Journal-only
+      // vaults (no contractAddress) accept deposits without proof of funds and
+      // must not inflate the AUM component of the paid LEADER ranking.
       prisma.copyVault.findMany({
-        where: { leaderId: { in: leaderIds } },
+        where: { leaderId: { in: leaderIds }, contractAddress: { not: null } },
         select: { leaderId: true, totalEquity: true },
       }),
       typeof db.leaderAnalyticsSnapshot?.findMany === 'function'
@@ -349,9 +458,12 @@ export const rewardDistributionService = {
       const winRate = snapshot
         ? toFloat(snapshot.winRate)
         : toFloat(leader.winRate);
+      // Never fall back to leader.totalAum: it is incremented by unproven
+      // db-journal deposits. Proven sources only: on-chain vault equity, then
+      // the chain-indexed analytics snapshot; otherwise 0.
       const aum =
         vaultEquityMap.get(leader.id) ??
-        (snapshot ? toFloat(snapshot.currentEquity) : toFloat(leader.totalAum));
+        (snapshot ? toFloat(snapshot.currentEquity) : 0);
       const followers =
         followerCountMap.get(leader.id) ?? leader.followersCount;
 
@@ -435,8 +547,13 @@ export const rewardDistributionService = {
     const MIN_UNIQUE_COUNTERPARTIES = 3; // wallet must trade with ≥3 distinct counterparties
     const BILATERAL_WASH_THRESHOLD = 0.5; // >50% volume with a single counterparty → excluded
 
+    // SETTLED-only (BE-05): unsettled trades (e.g. synthetic agent orders that
+    // can never settle) must not earn ranking volume.
     const trades = await prisma.trade.findMany({
-      where: { createdAt: { gte: weekStart, lt: weekEnd } },
+      where: {
+        settlementStatus: 'SETTLED',
+        settledAt: { gte: weekStart, lt: weekEnd },
+      },
       select: {
         makerAddress: true,
         takerAddress: true,
@@ -920,33 +1037,14 @@ export const rewardDistributionService = {
       }
 
       if (payoutEnabled) {
-        const payoutResult = await rewardPayoutService.transferNative(
+        const paid = await payTrackedReward(
+          rewardRecordId,
+          'PENDING',
           reward.address,
           reward.amount,
         );
-        reward.txHash = payoutResult.txHash;
-        reward.status = payoutResult.success ? 'CONFIRMED' : 'FAILED';
-
-        if (!payoutResult.success) {
-          log.error(
-            {
-              address: reward.address,
-              amount: reward.amount,
-              error: payoutResult.error,
-            },
-            '[Rewards] Leader payout failed',
-          );
-        }
-
-        // Record the payout outcome on the already-claimed record.
-        await db.userReward.update({
-          where: { id: rewardRecordId },
-          data: {
-            txHash: reward.txHash,
-            payoutStatus: reward.status,
-            payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
-          },
-        });
+        reward.txHash = paid.txHash;
+        reward.status = paid.status;
       }
     }
 
@@ -1063,32 +1161,14 @@ export const rewardDistributionService = {
       }
 
       if (payoutEnabled) {
-        const result = await rewardPayoutService.transferNative(
+        const paid = await payTrackedReward(
+          rewardRecordId,
+          'PENDING',
           reward.address,
           reward.amount,
         );
-        reward.txHash = result.txHash;
-        reward.status = result.success ? 'CONFIRMED' : 'FAILED';
-
-        if (!result.success) {
-          log.error(
-            {
-              address: reward.address,
-              amount: reward.amount,
-              error: result.error,
-            },
-            '[Rewards] Trader payout failed',
-          );
-        }
-
-        await db.userReward.update({
-          where: { id: rewardRecordId },
-          data: {
-            txHash: reward.txHash,
-            payoutStatus: reward.status,
-            payoutError: reward.status === 'FAILED' ? 'Transfer failed' : null,
-          },
-        });
+        reward.txHash = paid.txHash;
+        reward.status = paid.status;
       }
     }
 
@@ -1323,12 +1403,99 @@ export const rewardDistributionService = {
     });
   },
 
+  // ─── Reconcile UNKNOWN Payouts ───────────────────────────────────────────
+
+  /**
+   * Resolve UNKNOWN (and stale SUBMITTED) payouts by their persisted hash,
+   * from FINALIZED blocks only. Never broadcasts anything.
+   *  - INCLUDED_SUCCESS            -> CONFIRMED
+   *  - INCLUDED_FAILED / NOT_INCLUDED (era expired) -> FAILED (proven unpaid,
+   *    eligible for retryFailedPayouts on a later run)
+   *  - PENDING / UNAVAILABLE       -> untouched
+   */
+  async reconcileUnknownPayouts(limit = 25) {
+    const staleBefore = new Date(Date.now() - STALE_SUBMITTED_PAYOUT_MS);
+    const rows = await db.userReward.findMany({
+      where: {
+        rewardType: { in: ['LEADER', 'TRADER'] },
+        txHash: { not: null },
+        OR: [
+          { payoutStatus: 'UNKNOWN' },
+          { payoutStatus: 'SUBMITTED', payoutSubmittedAt: { lt: staleBefore } },
+        ],
+      },
+      take: limit,
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const summary = { checked: 0, confirmed: 0, failed: 0, pending: 0 };
+    for (const row of rows) {
+      summary.checked++;
+      if (
+        !row.txHash ||
+        row.payoutBirthBlock == null ||
+        row.payoutMortality == null
+      ) {
+        // No era recorded: cannot prove absence. Needs manual review.
+        log.error(
+          { rewardId: row.id, txHash: row.txHash },
+          '[Rewards] UNKNOWN payout without era data — manual reconciliation required',
+        );
+        summary.pending++;
+        continue;
+      }
+
+      const r = await rewardPayoutService.reconcileTransfer({
+        txHash: row.txHash,
+        birthBlock: row.payoutBirthBlock,
+        mortality: row.payoutMortality,
+      });
+
+      if (r.outcome === 'PENDING' || r.outcome === 'UNAVAILABLE') {
+        summary.pending++;
+        continue;
+      }
+
+      const confirmed = r.outcome === 'INCLUDED_SUCCESS';
+      const { count } = await db.userReward.updateMany({
+        where: {
+          id: row.id,
+          payoutStatus: row.payoutStatus,
+          txHash: row.txHash,
+        },
+        data: confirmed
+          ? { payoutStatus: 'CONFIRMED', payoutError: null }
+          : {
+              payoutStatus: 'FAILED',
+              payoutError:
+                r.outcome === 'INCLUDED_FAILED'
+                  ? r.error
+                  : 'Not included before mortal era expired',
+            },
+      });
+      if (count !== 1) continue;
+      if (confirmed) summary.confirmed++;
+      else summary.failed++;
+      log.warn(
+        { rewardId: row.id, txHash: row.txHash, outcome: r.outcome },
+        '[Rewards] Reconciled UNKNOWN payout',
+      );
+    }
+    return summary;
+  },
+
   // ─── Retry Failed Payouts ────────────────────────────────────────────────
 
+  /**
+   * Re-pays only FAILED rows (proven unpaid). UNKNOWN / SUBMITTED rows are
+   * never re-paid here — they are reconciled by hash first.
+   */
   async retryFailedPayouts(limit = 10) {
     if (!rewardPayoutService.isEnabled()) {
       return { retried: 0 };
     }
+
+    const reconciled = await this.reconcileUnknownPayouts(limit);
 
     const failed = await db.userReward.findMany({
       where: {
@@ -1344,27 +1511,19 @@ export const rewardDistributionService = {
       const amount = toFloat(reward.amount);
       if (amount <= 0) continue;
 
-      const result = await rewardPayoutService.transferNative(
+      const paid = await payTrackedReward(
+        reward.id,
+        'FAILED',
         reward.walletAddress,
         amount,
       );
-
-      await db.userReward.update({
-        where: { id: reward.id },
-        data: {
-          txHash: result.txHash,
-          payoutStatus: result.success ? 'CONFIRMED' : 'FAILED',
-          payoutError: result.success ? null : result.error,
-        },
-      });
-
-      if (result.success) retried++;
+      if (paid.status === 'CONFIRMED') retried++;
     }
 
     log.info(
-      { retried, total: failed.length },
+      { retried, total: failed.length, reconciled },
       '[Rewards] Retried failed payouts',
     );
-    return { retried, total: failed.length };
+    return { retried, total: failed.length, reconciled };
   },
 };

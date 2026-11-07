@@ -1,12 +1,18 @@
 import { NextFunction, Router, Request, Response } from 'express';
 import { orderbookManager } from '../utils/orderbook';
+import { parsePairSymbol } from '../utils/validation';
 
 const router = Router();
 
 function handleOrderbook(req: Request, res: Response, next: NextFunction) {
   try {
-    const symbol = (req.query.symbol as string) ?? req.params.symbol;
-    if (!symbol) return res.status(400).json({ error: 'symbol required' });
+    const resolved = parsePairSymbol(req.query.symbol, req.params.symbol);
+    if (!resolved.ok) {
+      return res
+        .status(400)
+        .json({ error: 'Valid symbol required', code: 'VALIDATION_ERROR' });
+    }
+    const { symbol } = resolved;
     const depth = Math.min(parseInt(req.query.depth as string, 10) || 25, 200);
     const book = orderbookManager.get(symbol);
 

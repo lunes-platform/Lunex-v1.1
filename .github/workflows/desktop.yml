@@ -1,0 +1,196 @@
+name: Desktop App
+
+# Builds the Lunex Electron app (lunes-dex-desktop) for macOS, Windows and Linux.
+#   - push a tag `desktop-vX.Y.Z`  -> build + publish installers to a DRAFT
+#     GitHub Release with that tag (review, then publish it manually).
+#   - workflow_dispatch            -> build only; installers are uploaded as
+#     workflow artifacts (nothing is published).
+#
+# Web build configuration comes from repository/environment VARIABLES whose
+# name starts with REACT_APP_ (they are baked into a public client bundle, so
+# never store secrets there). Signing is optional and enabled by secrets; see
+# lunes-dex-desktop/README.md.
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "20"
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: v
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/desktop-v* ]]; then
+            VERSION="${GITHUB_REF_NAME#desktop-v}"
+            if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} is not desktop-v<semver>"; exit 1
+            fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            VERSION="$(node -p "require('./lunes-dex-desktop/package.json').version")"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Desktop version: $VERSION"
+
+      # Create the draft release once, up front, so the three parallel
+      # electron-builder jobs upload into the same release instead of racing.
+      - name: Create draft release
+        if: steps.v.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists"
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "Lunex Desktop ${GITHUB_REF_NAME#desktop-v}" \
+              --notes "Lunex desktop installers for macOS, Windows and Linux. Builds are currently unsigned — see lunes-dex-desktop/README.md for first-run instructions."
+          fi
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: lunes-dex-desktop/package-lock.json
+
+      - name: Export REACT_APP_* variables
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+        run: |
+          node -e '
+            const vars = JSON.parse(process.env.VARS_JSON || "{}");
+            const fs = require("fs");
+            const keys = Object.keys(vars).filter((k) =>
+              k.startsWith("REACT_APP_") || k === "LUNEX_CSP_EXTRA_CONNECT_SRC");
+            for (const k of keys) {
+              const v = String(vars[k]);
+              if (/[\r\n]/.test(v)) { console.error(`::error::${k} contains a newline`); process.exit(1); }
+              fs.appendFileSync(process.env.GITHUB_ENV, `${k}=${v}\n`);
+            }
+            console.log("Exported:", keys.join(", ") || "(none)");
+          '
+
+      - name: Configure code signing (optional)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" && -n "$CSC_LINK" ]]; then
+            echo "macOS signing certificate present"
+          elif [[ "$RUNNER_OS" == "Windows" && -n "$WIN_CSC_LINK" ]]; then
+            echo "Windows signing certificate present"
+          else
+            echo "No signing certificate for $RUNNER_OS — building unsigned"
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install web dependencies (lunes-dex-main has no lockfile)
+        working-directory: lunes-dex-main
+        run: npm install --no-audit --no-fund
+
+      - name: Install desktop dependencies
+        working-directory: lunes-dex-desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: Set app version
+        working-directory: lunes-dex-desktop
+        run: npm version "${{ needs.prepare.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Typecheck desktop
+        working-directory: lunes-dex-desktop
+        run: npm run typecheck
+
+      - name: Build web bundle (REACT_APP_DESKTOP=true)
+        working-directory: lunes-dex-desktop
+        run: npm run build:web
+
+      - name: Build main/preload
+        working-directory: lunes-dex-desktop
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
+        run: npm run build
+
+      - name: Package installers
+        working-directory: lunes-dex-desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing + notarization (all optional)
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows signing (optional)
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          # Empty signing variables confuse electron-builder; drop them.
+          for v in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID WIN_CSC_LINK WIN_CSC_KEY_PASSWORD; do
+            [[ -z "${!v}" ]] && unset "$v"
+          done
+          if [[ "${{ needs.prepare.outputs.publish }}" == "true" ]]; then
+            npx electron-builder ${{ matrix.target }} --publish always
+          else
+            npx electron-builder ${{ matrix.target }} --publish never
+          fi
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: lunex-desktop-${{ needs.prepare.outputs.version }}-${{ runner.os }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            lunes-dex-desktop/release/*.dmg
+            lunes-dex-desktop/release/*.zip
+            lunes-dex-desktop/release/*.exe
+            lunes-dex-desktop/release/*.AppImage
+            lunes-dex-desktop/release/*.deb
+            lunes-dex-desktop/release/*.blockmap
+            lunes-dex-desktop/release/latest*.yml
