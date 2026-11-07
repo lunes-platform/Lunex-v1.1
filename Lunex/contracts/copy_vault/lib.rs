@@ -1302,7 +1302,7 @@ pub mod copy_vault {
                 };
 
                 // 3) swap_exact_tokens_for_tokens com path direto.
-                let path: Vec<AccountId> = vec![token_in, token_out];
+                let path: Vec<AccountId> = ink::prelude::vec![token_in, token_out];
 
                 let swap_result = build_call::<ink::env::DefaultEnvironment>()
                     .call(router)
