@@ -1,10 +1,11 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { socialService } from '../services/socialService';
 import { socialAnalyticsService } from '../services/socialAnalyticsService';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 import prisma from '../db';
 import { z } from 'zod';
@@ -41,14 +42,15 @@ async function getVerifiedViewerAddress(
       : undefined;
   if (!viewerAddress) return undefined;
 
-  const parsed = z
-    .object({
+  const parsed = readAuthSchema(
+    req,
+    z.object({
       viewerAddress: z.string().min(8).max(128),
       nonce: z.string().min(8),
       timestamp: z.coerce.number().int().positive(),
       signature: z.string().min(8),
-    })
-    .safeParse(req.query);
+    }),
+  ).safeParse(req.query);
 
   if (!parsed.success) {
     res
@@ -57,7 +59,7 @@ async function getVerifiedViewerAddress(
     return null;
   }
 
-  const auth = await verifyWalletReadSignature({
+  const auth = await verifyWalletReadAccess(req, {
     action,
     address: parsed.data.viewerAddress,
     nonce: parsed.data.nonce,
@@ -178,20 +180,21 @@ router.get(
   '/following',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = z
-        .object({
+      const parsed = readAuthSchema(
+        req,
+        z.object({
           address: z.string().min(8).max(128),
           nonce: z.string().min(8),
           timestamp: z.coerce.number().int().positive(),
           signature: z.string().min(8),
-        })
-        .safeParse(req.query);
+        }),
+      ).safeParse(req.query);
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'social.following',
         address: parsed.data.address,
         nonce: parsed.data.nonce,

@@ -51,6 +51,8 @@ import favoritesRouter from './routes/favorites';
 import marketInfoRouter from './routes/marketInfo';
 import rewardsRouter from './routes/rewards';
 import adminRouter from './routes/admin';
+import authRouter from './routes/auth';
+import { attachReadSession } from './middleware/readSession';
 import { rewardScheduler } from './services/rewardScheduler';
 import { copytradeWalletContinuationScheduler } from './services/copytradeWalletContinuationScheduler';
 import { settlementService } from './services/settlementService';
@@ -185,10 +187,19 @@ if (config.isProd) {
         typeof signedQuery.signature === 'string' &&
         typeof signedQuery.nonce === 'string' &&
         signedQuery.timestamp !== undefined;
+      // Read-session bearer (validated by the route; never authorizes writes)
+      const hasReadSessionBearer =
+        typeof req.headers.authorization === 'string' &&
+        /^Bearer\s+lxs1\./i.test(req.headers.authorization);
       if (!origin) {
         // Allow authenticated server-to-server traffic (MCP/agents/CLI) even
         // without browser Origin header.
-        if (hasApiKey || hasSignedQueryAuth || isTrustedMcpClient) {
+        if (
+          hasApiKey ||
+          hasSignedQueryAuth ||
+          hasReadSessionBearer ||
+          isTrustedMcpClient
+        ) {
           return next();
         }
         return res.status(403).json({
@@ -288,8 +299,20 @@ const agentLimiter = rateLimit({
 app.use('/api/v1/agents', agentLimiter);
 app.use('/api/v1/execution', agentLimiter);
 
+// Read-session issuance / revocation (30 req/min per IP)
+const sessionLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Session rate limit exceeded' },
+});
+app.use('/api/v1/auth', sessionLimiter);
+
 // ─── API Routes ──────────────────────────────────────────────────
 app.use('/api/', paginationMiddleware());
+app.use('/api/', attachReadSession());
+app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/pairs', pairsRouter);
 app.use('/api/v1/orders', ordersRouter);
 app.use('/api/v1/trades', tradesRouter);

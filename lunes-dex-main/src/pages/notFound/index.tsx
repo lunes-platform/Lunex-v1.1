@@ -1,55 +1,69 @@
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components'
+import { Button, C, H1, Page, grotesk } from 'components/ui/kit'
 
-const NotFound = () => (
-  <Container>
-    <Code>404</Code>
-    <Message>Page not found</Message>
-    <Hint>The URL you requested doesn't match any route on this app.</Hint>
-    <BackLink to="/">← Back to home</BackLink>
-  </Container>
-)
+const NotFound = () => {
+  const navigate = useNavigate()
+  return (
+    <Page $max={560}>
+      <Wrap>
+        <Code aria-hidden="true">404</Code>
+        <Title>This page is off the chain</Title>
+        <Copy>
+          The link may be broken or the page was moved. Your funds and positions
+          are safe.
+        </Copy>
+        <Actions>
+          <Button size="lg" onClick={() => navigate('/swap')}>
+            Go to swap
+          </Button>
+          <Button size="lg" variant="secondary" onClick={() => navigate('/')}>
+            Home
+          </Button>
+        </Actions>
+      </Wrap>
+    </Page>
+  )
+}
 
-const Container = styled.main`
+export default NotFound
+
+const Wrap = styled.div`
+  min-height: 60vh;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 70vh;
-  padding: 32px 16px;
+  gap: 16px;
   text-align: center;
-  gap: 12px;
 `
 
-const Code = styled.h1`
-  font-size: clamp(72px, 12vw, 128px);
-  margin: 0;
-  letter-spacing: -0.04em;
+const Code = styled.span`
+  ${grotesk};
+  font-size: 120px;
+  font-weight: 700;
   line-height: 1;
-`
-
-const Message = styled.p`
-  font-size: 22px;
-  margin: 0;
-  font-weight: 600;
-`
-
-const Hint = styled.p`
-  font-size: 14px;
-  margin: 0 0 20px 0;
-  opacity: 0.65;
-  max-width: 480px;
-`
-
-const BackLink = styled(Link)`
-  font-size: 16px;
-  text-decoration: none;
-  padding: 10px 24px;
-  border-radius: 8px;
-  border: 1px solid currentColor;
-  &:hover {
-    opacity: 0.8;
+  color: ${C.primary};
+  letter-spacing: -0.04em;
+  @media (max-width: 759px) {
+    font-size: 96px;
   }
 `
 
-export default NotFound
+const Title = styled(H1)`
+  font-size: 28px;
+`
+
+const Copy = styled.p`
+  margin: 0;
+  font-size: 15px;
+  color: ${C.muted};
+  line-height: 1.6;
+`
+
+const Actions = styled.div`
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+`

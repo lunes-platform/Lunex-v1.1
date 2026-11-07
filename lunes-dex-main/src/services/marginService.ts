@@ -1,11 +1,12 @@
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  signedReadQuery,
+  type ReadAuth
+} from './sessionService'
+
 const MARGIN_API_URL =
   process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
-
-interface SignedReadAuth {
-  nonce: string
-  timestamp: number
-  signature: string
-}
 
 export interface MarginAccountOverview {
   id: string
@@ -98,28 +99,30 @@ export interface MarginOverview {
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${MARGIN_API_URL}${path}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(options?.headers ?? {})
-    },
-    ...options
+      ...((options?.headers as Record<string, string> | undefined) ?? {})
+    }
   })
 
   const data = await response.json()
   if (!response.ok) {
-    throw new Error(data.error || 'Margin API error')
+    throw handleReadAuthError(data.error || 'Margin API error')
   }
 
   return data
 }
 
 export const marginApi = {
-  async getOverview(
-    address: string,
-    auth: SignedReadAuth
-  ): Promise<MarginOverview> {
+  /**
+   * Private read. Pass `{ sessionToken }` (from `requireReadAuth(address)`)
+   * to use the read session — no wallet prompt — or a legacy signed read.
+   */
+  async getOverview(address: string, auth: ReadAuth): Promise<MarginOverview> {
     return await fetchApi<MarginOverview>(
-      `/api/v1/margin?address=${encodeURIComponent(address)}&nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
+      `/api/v1/margin?address=${encodeURIComponent(address)}${signedReadQuery(auth)}`,
+      { headers: readAuthHeaders(auth) }
     )
   },
 

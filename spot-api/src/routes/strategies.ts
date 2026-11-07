@@ -7,10 +7,11 @@ import {
 import { z } from 'zod';
 import { strategyService } from '../services/strategyService';
 import { agentAuth, optionalAgentAuth } from '../middleware/agentAuth';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 
 const router = Router();
 
@@ -199,13 +200,15 @@ router.get(
   '/followed/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = FollowedQuerySchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, FollowedQuerySchema).safeParse(
+        req.query,
+      );
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'strategies.followed',
         address: req.params.address,
         nonce: parsed.data.nonce,

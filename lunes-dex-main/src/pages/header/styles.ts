@@ -1,214 +1,295 @@
-import device from 'components/devices/devices'
 import styled, { css } from 'styled-components'
-
-type StyledProps = {
-  isPending?: boolean
-}
+import { C, EASE_OUT, grotesk, tabular } from 'components/ui/kit'
+import { bellRing, modalEnter, pop, spin } from 'styles/motion'
 
 export const Header = styled.header`
-  ${({ theme }) => css`
-    width: 100%;
-    height: 64px;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  height: 64px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 24px;
+  background: ${C.surface};
+  border-bottom: 1px solid ${C.border};
+  @media (max-width: 759px) {
     padding: 0 16px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    background-color: ${theme.colors.themeColors[600] || '#0d0d0d'};
-    position: fixed;
-    z-index: 10;
-    box-sizing: border-box;
-    ${device.laptop} {
-      padding: 0 16px;
-    }
-    ${device.mobileL} {
-      position: initial;
-    }
-    > img {
-      max-width: 100px;
-      max-height: 22px;
-      flex-shrink: 0;
-    }
-  `}
+    gap: 12px;
+  }
+`
+
+export const LogoButton = styled.button`
+  background: none;
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-shrink: 0;
+  border-radius: 6px;
 `
 
 export const Nav = styled.nav`
-  ${css`
-    gap: 8px;
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-    ${device.laptop} {
-      div {
-        display: none;
-      }
-    }
-    img:first-of-type {
-      display: none;
-      ${device.laptop} {
-        display: flex;
-      }
-    }
-    img {
-      padding: 8px;
-      cursor: pointer;
-      :hover {
-        transition: all 0.2s;
-        transform: translateY(0.7px);
-      }
-      :active {
-        transition: none;
-        transform: translateY(0.7px);
-      }
-      ${device.laptop} {
-        display: none;
-      }
-    }
-  `}
+  display: flex;
+  gap: 2px;
+  align-items: center;
 `
 
-export const Span = styled.span<StyledProps>`
-  ${({ ...props }) => css`
-    max-width: 140px;
-    width: 100%;
-    height: 100%;
-    padding: 0 8px;
-    font-size: 16px;
-    font-weight: 400;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    white-space: nowrap;
-    display: block;
-    line-height: 40px;
-    text-align: center;
-    font-weight: ${props.theme.colors.themeColors[200]};
-    background-color: ${props.theme.colors.themeColors[400]};
-  `}
-`
-
-export const Status = styled(Span)<StyledProps>`
-  ${({ ...props }) => css`
-    cursor: pointer;
-    max-width: none;
-    font-weight: ${props.isPending ? 600 : 400};
-    color: ${props.isPending
-      ? props.theme.colors.warning[500]
-      : props.theme.colors.themeColors[100]};
-    background-color: ${props.isPending
-      ? props.theme.colors.warning[100]
-      : props.theme.colors.themeColors[800]};
-    border-radius: 0 12px 12px 0;
-  `}
-`
-
-// Navigation Links Container
-export const NavLinks = styled.div`
+export const NavButton = styled.button<{ $active?: boolean }>`
+  ${grotesk};
+  padding: 8px 14px;
+  border: none;
+  border-radius: 10px;
+  background: ${p => (p.$active ? C.field : 'transparent')};
+  color: ${p => (p.$active ? C.text : C.muted)};
+  font-weight: 600;
+  font-size: 14px;
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex: 1;
-  justify-content: center;
-
-  @media (max-width: 1280px) {
-    display: none;
+  gap: 6px;
+  white-space: nowrap;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease;
+  &:hover {
+    color: ${C.text};
+  }
+  svg {
+    transition: transform 200ms ${EASE_OUT};
+  }
+  &[aria-expanded='true'] svg {
+    transform: rotate(180deg);
   }
 `
 
-// Individual Navigation Link
-type NavLinkProps = {
-  active?: boolean
-}
-
-export const NavLink = styled.button<NavLinkProps>`
-  ${({ theme, active }) => css`
-    padding: 7px 12px;
-    border: none;
-    border-radius: 10px;
-    cursor: pointer;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 600;
-    font-size: 13px;
-    letter-spacing: 0.3px;
-    transition: all 0.2s;
-    white-space: nowrap;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-
-    background: ${active ? theme.colors.themeColors[800] : 'transparent'};
-    color: ${active
-      ? theme.colors.themeColors[100]
-      : theme.colors.themeColors[200]};
-
-    &:hover {
-      background: ${active
-        ? theme.colors.themeColors[800]
-        : theme.colors.themeColors[400]};
-      color: ${theme.colors.themeColors[100]};
-    }
-  `}
-`
-
-// Dropdown "More" menu
-export const DropdownContainer = styled.div`
+export const Anchor = styled.div`
   position: relative;
-  display: inline-flex;
+`
 
-  &:hover > div {
-    opacity: 1;
-    visibility: visible;
-    transform: translateY(0);
+export const Right = styled.div`
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  @media (max-width: 759px) {
+    gap: 6px;
   }
 `
 
-export const DropdownMenu = styled.div`
+const popoverBase = css`
+  background: ${C.surface};
+  border: 1px solid ${C.border};
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  animation: ${modalEnter} 200ms ${EASE_OUT} both;
+`
+
+/** Dropdown under a header control. `$mobileFixed` pins it under the header. */
+export const Popover = styled.div<{
+  $width: number
+  $align?: 'left' | 'right'
+  $pad?: number
+  $mobileFixed?: boolean
+}>`
+  ${popoverBase};
   position: absolute;
-  top: 100%;
-  right: 0;
-  padding-top: 8px;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateY(-4px);
-  transition: all 0.2s ease;
-  z-index: 100;
+  top: calc(100% + 8px);
+  ${p => (p.$align === 'left' ? 'left: 0;' : 'right: 0;')}
+  width: ${p => p.$width}px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+  border-radius: ${p => (p.$width <= 240 ? 12 : 16)}px;
+  padding: ${p => p.$pad ?? 0}px;
+  ${p =>
+    p.$mobileFixed &&
+    css`
+      @media (max-width: 759px) {
+        position: fixed;
+        top: 72px;
+        left: 12px;
+        right: 12px;
+        width: auto;
+        max-width: none;
+      }
+    `}
 `
 
-export const DropdownContent = styled.div`
-  ${({ theme }) => css`
-    background: ${theme.colors.themeColors[600] || '#1a1a1a'};
-    border: 1px solid ${theme.colors.themeColors[400] || '#2a2a2c'};
-    border-radius: 12px;
-    padding: 6px;
-    min-width: 160px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  `}
+export const MenuItem = styled.button`
+  ${grotesk};
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: ${C.text};
+  font-weight: 500;
+  font-size: 14px;
+  text-align: left;
+  &:hover,
+  &:focus-visible {
+    background: ${C.field};
+  }
+  &[aria-current='page'] {
+    background: rgba(108, 56, 255, 0.12);
+  }
+  span {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    color: ${C.muted};
+  }
 `
 
-type DropdownItemProps = {
-  active?: boolean
-}
+export const PendingChip = styled.button`
+  ${grotesk};
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid ${C.primaryBorder};
+  background: rgba(108, 56, 255, 0.14);
+  color: ${C.primaryText2};
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  animation: ${pop} 300ms ease both;
+  ${tabular};
+`
 
-export const DropdownItem = styled.button<DropdownItemProps>`
-  ${({ theme, active }) => css`
-    display: block;
-    width: 100%;
-    padding: 10px 14px;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 600;
+export const ChipSpinner = styled.span.attrs({
+  'data-motion': 'pulse',
+  'aria-hidden': true
+})`
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(202, 175, 255, 0.35);
+  border-top-color: ${C.primaryText2};
+  border-radius: 50%;
+  animation: ${spin} 0.7s linear infinite;
+`
+
+export const NetChip = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: ${C.bg};
+  border: 1px solid ${C.border};
+  font-size: 13px;
+  color: ${C.text};
+  font-weight: 500;
+  white-space: nowrap;
+  i {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: ${C.success};
+  }
+`
+
+export const HeaderIconButton = styled.button<{ $active?: boolean }>`
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid ${p => (p.$active ? C.primary : C.borderStrong)};
+  background: transparent;
+  color: ${C.text};
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 150ms ease;
+  &:hover {
+    border-color: ${C.primary};
+  }
+`
+
+export const Bell = styled.span<{ $ring: number }>`
+  display: flex;
+  transform-origin: top center;
+  ${p =>
+    p.$ring > 0 &&
+    css`
+      animation: ${bellRing} 700ms ease;
+    `}
+`
+
+export const CountBadge = styled.span`
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: ${C.primary};
+  border: 2px solid ${C.surface};
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: ${pop} 350ms ease both;
+  ${tabular};
+`
+
+export const ConnectButton = styled.button`
+  ${grotesk};
+  height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 12px;
+  background: ${C.primary};
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  transition: background-color 150ms ease;
+  &:hover {
+    background: ${C.primaryHover};
+  }
+  @media (max-width: 759px) {
+    padding: 0 12px;
     font-size: 13px;
-    text-align: left;
-    transition: all 0.15s;
+  }
+`
 
-    background: ${active ? theme.colors.themeColors[800] : 'transparent'};
-    color: ${active
-      ? theme.colors.themeColors[100]
-      : theme.colors.themeColors[200]};
-
-    &:hover {
-      background: ${theme.colors.themeColors[400] || 'rgba(255,255,255,0.06)'};
-      color: ${theme.colors.themeColors[100]};
-    }
-  `}
+export const AccountButton = styled.button<{ $active?: boolean }>`
+  ${grotesk};
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 10px 0 6px;
+  border-radius: 12px;
+  background: ${C.field};
+  border: 1px solid ${p => (p.$active ? C.primary : C.borderStrong)};
+  color: ${C.text};
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  transition: border-color 150ms ease;
+  &:hover {
+    border-color: ${C.primary};
+  }
+  img {
+    width: 26px;
+    height: 26px;
+  }
+  @media (max-width: 759px) {
+    padding: 0 6px;
+  }
 `

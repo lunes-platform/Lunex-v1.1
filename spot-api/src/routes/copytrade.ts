@@ -1,10 +1,11 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { copytradeService } from '../services/copytradeService';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import {
   CopyTradeApiKeyChallengeSchema,
   CopyTradeApiKeySchema,
@@ -81,13 +82,13 @@ router.get(
   '/positions',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse(req.query);
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'copytrade.positions',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -109,13 +110,13 @@ router.get(
   '/activity',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse(req.query);
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'copytrade.activity',
         address: parsed.data.address,
         nonce: parsed.data.nonce,

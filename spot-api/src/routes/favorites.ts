@@ -18,6 +18,10 @@ import {
   verifyWalletReadSignature,
   verifyWalletActionSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 
 const prisma = new PrismaClient();
 const router = Router({ mergeParams: true });
@@ -32,15 +36,22 @@ const AddFavoriteSchema = SignedActionSchema.extend({
   pairSymbol: z.string().min(1),
 });
 
+/**
+ * Authorizes a favorites request. Only the LIST read accepts a read session
+ * (`allowReadSession`); removal is state-changing and always requires a fresh
+ * wallet signature.
+ */
 async function authorizeFavoriteAction(
   req: Request,
   res: Response,
   action: string,
   fields?: Record<string, string>,
+  allowReadSession = false,
 ) {
-  const parsed = SignedActionSchema.safeParse(
-    req.method === 'GET' ? req.query : req.body,
-  );
+  const schema = allowReadSession
+    ? readAuthSchema(req, SignedActionSchema)
+    : SignedActionSchema;
+  const parsed = schema.safeParse(req.method === 'GET' ? req.query : req.body);
   if (!parsed.success) {
     res
       .status(400)
@@ -48,14 +59,23 @@ async function authorizeFavoriteAction(
     return null;
   }
 
-  const auth = await verifyWalletReadSignature({
-    action,
-    address: req.params.address,
-    nonce: parsed.data.nonce,
-    timestamp: parsed.data.timestamp,
-    signature: parsed.data.signature,
-    fields,
-  });
+  const auth = allowReadSession
+    ? await verifyWalletReadAccess(req, {
+        action,
+        address: req.params.address,
+        nonce: parsed.data.nonce,
+        timestamp: parsed.data.timestamp,
+        signature: parsed.data.signature,
+        fields,
+      })
+    : await verifyWalletReadSignature({
+        action,
+        address: req.params.address,
+        nonce: parsed.data.nonce as string,
+        timestamp: parsed.data.timestamp as number,
+        signature: parsed.data.signature as string,
+        fields,
+      });
 
   if (!auth.ok) {
     res.status(401).json({ error: auth.error });
@@ -71,7 +91,13 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { address } = req.params;
-      const auth = await authorizeFavoriteAction(req, res, 'favorites.list');
+      const auth = await authorizeFavoriteAction(
+        req,
+        res,
+        'favorites.list',
+        undefined,
+        true,
+      );
       if (!auth) return;
       const favorites = await prisma.favorite.findMany({
         where: { walletAddress: address },

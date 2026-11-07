@@ -4,6 +4,9 @@ const validProductionConfig = {
   isProd: true,
   nodeEnv: 'production',
   adminSecret: 'a'.repeat(32),
+  session: {
+    secret: 's'.repeat(32),
+  },
   cors: {
     allowedOrigins: ['https://app.lunex.io'],
   },
@@ -37,6 +40,27 @@ const validProductionConfig = {
 describe('production startup guards', () => {
   it('returns no errors with a fully-valid production config', () => {
     expect(collectProductionConfigErrors(validProductionConfig)).toEqual([]);
+  });
+
+  it('requires a strong SESSION_SECRET distinct from ADMIN_SECRET', () => {
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        session: { secret: '' },
+      }),
+    ).toContain('SESSION_SECRET is required in production');
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        session: { secret: 'short' },
+      }),
+    ).toContain('SESSION_SECRET must be at least 32 characters in production');
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        session: { secret: validProductionConfig.adminSecret },
+      }),
+    ).toContain('SESSION_SECRET must differ from ADMIN_SECRET');
   });
 
   it('does not require settlement config outside production', () => {
@@ -103,12 +127,15 @@ describe('production startup guards', () => {
       ...validProductionConfig,
       blockchain: {
         ...validProductionConfig.blockchain,
-        relayerSeed: 'REPLACE_WITH_PRODUCTION_RELAYER_SEED_FROM_SECRETS_MANAGER',
+        relayerSeed:
+          'REPLACE_WITH_PRODUCTION_RELAYER_SEED_FROM_SECRETS_MANAGER',
       },
     });
 
     expect(
-      errors.some((e) => e.includes('RELAYER_SEED still contains a placeholder')),
+      errors.some((e) =>
+        e.includes('RELAYER_SEED still contains a placeholder'),
+      ),
     ).toBe(true);
   });
 
@@ -172,7 +199,9 @@ describe('production startup guards', () => {
       },
     });
     expect(
-      errors.some((e) => e.includes('REWARD split percentages must sum to 100')),
+      errors.some((e) =>
+        e.includes('REWARD split percentages must sum to 100'),
+      ),
     ).toBe(true);
   });
 

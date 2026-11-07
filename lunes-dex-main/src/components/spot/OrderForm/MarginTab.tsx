@@ -1,5 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import styled from 'styled-components'
+import React, { useCallback, useEffect, useState } from 'react'
+import styled, { css } from 'styled-components'
+import { Check } from 'lucide-react'
+import { useSpot } from 'context/SpotContext'
+import { useSDK } from 'context/SDKContext'
+import { useTx } from 'context/TxContext'
 import {
   marginApi,
   MarginOverview,
@@ -10,657 +14,721 @@ import {
   buildMarginCollateralSignMessage,
   buildMarginLiquidatePositionSignMessage,
   buildMarginOpenPositionSignMessage,
-  buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../../utils/signing'
+import { Button, C, EASE_OUT, grotesk, tabular } from 'components/ui/kit'
+import AnimatedNumber from 'components/ui/AnimatedNumber'
+import { drawStroke, riseIn } from '../../../styles/motion'
+import {
+  SideBtn,
+  SideSwitch,
+  T,
+  TField,
+  TInput,
+  TLabel,
+  cleanNum,
+  fmtAmt,
+  fmtPx
+} from '../terminal'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
+import { useReadSession } from 'hooks/useReadSession'
+import { requireReadAuth } from 'services/sessionService'
+import { ReadSessionPrompt } from 'components/session/ReadSessionPrompt'
 
-interface MarginTabProps {
-  side: 'buy' | 'sell'
-  selectedPair: string
-  walletAddress: string | null
-  signMessage: (message: string) => Promise<string>
-  connectWallet: () => Promise<void>
-}
+const LEVERAGES = [2, 3, 5, 10] as const
+const RISK_ACK_FROM = 5
+// UI guard mirroring spot-api MAX_SAFE_INITIAL_LEVERAGE (10× with a 5%
+// maintenance margin). The risk engine stays authoritative — it rejects
+// anything above its own limit and computes the real liquidation price.
+const RISK_ENGINE_MAX_LEVERAGE = 10
+// Mirrors spot-api MAINTENANCE_MARGIN_RATIO — used only for the estimate.
+const MAINTENANCE_MARGIN_RATIO = 0.05
+// Collateral token label used by the margin API
+const COLLATERAL = 'USDT'
 
-const Panel = styled.div`
+const Wrap = styled.div`
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 `
 
-const Grid = styled.div`
+const Stats = styled.div`
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 `
 
-const Card = styled.div`
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+const StatTile = styled.div`
   padding: 10px;
+  border-radius: 10px;
+  background: ${T.input};
+  min-width: 0;
+  > div:first-child {
+    font-size: 10px;
+    color: ${C.muted};
+    margin-bottom: 3px;
+  }
+  > div:last-child {
+    ${grotesk};
+    ${tabular};
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+`
+
+const Section = styled.div<{ $gap?: number }>`
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: ${p => p.$gap ?? 8}px;
 `
 
-const Label = styled.span`
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.45);
-  text-transform: uppercase;
-`
-
-const Value = styled.span`
-  font-size: 14px;
-  font-weight: 700;
-  color: #ffffff;
-`
-
-const Box = styled.div<{ tone?: 'info' | 'warn' }>`
-  background: ${({ tone }) =>
-    tone === 'warn' ? 'rgba(255, 75, 85, 0.08)' : 'rgba(0, 192, 118, 0.06)'};
-  border: 1px solid
-    ${({ tone }) =>
-      tone === 'warn' ? 'rgba(255, 75, 85, 0.2)' : 'rgba(0, 192, 118, 0.15)'};
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 11px;
-  color: ${({ tone }) =>
-    tone === 'warn'
-      ? 'rgba(255, 150, 155, 0.88)'
-      : 'rgba(255, 255, 255, 0.68)'};
-  line-height: 1.5;
-`
-
-const Section = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-`
-
-const SectionTitle = styled.div`
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.82);
-`
-
-const Row = styled.div`
-  display: flex;
-  gap: 8px;
-`
-
-const Field = styled.div`
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-`
-
-const FieldLabel = styled.label`
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
-`
-
-const Input = styled.input`
-  width: 100%;
-  box-sizing: border-box;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  padding: 8px 12px;
+const Title = styled.span`
+  ${grotesk};
+  font-weight: 600;
   font-size: 13px;
-  color: #ffffff;
-  outline: none;
+`
 
-  &:focus {
-    border-color: #00c076;
-  }
-
-  &::placeholder {
-    color: rgba(255, 255, 255, 0.2);
+const Inline = styled.div`
+  display: flex;
+  gap: 6px;
+  > [data-field] {
+    flex: 1;
+    height: 40px;
+    padding: 0 10px;
   }
 `
 
-const ActionButton = styled.button<{ tone?: 'buy' | 'sell' | 'neutral' }>`
-  flex: 1;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  color: #ffffff;
-  background: ${({ tone }) =>
-    tone === 'sell'
-      ? '#FF4B55'
-      : tone === 'neutral'
-        ? 'rgba(255,255,255,0.12)'
-        : '#00C076'};
-  opacity: ${({ disabled }) => (disabled ? 0.5 : 1)};
+const Levs = styled.div`
+  display: flex;
+  gap: 6px;
+`
 
+const Lev = styled.button<{ $on: boolean }>`
+  flex: 1;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: ${p => (p.$on ? C.primary : T.line)};
+  color: ${C.text};
+  font-weight: 600;
+  font-size: 12px;
+  ${tabular};
+  transition: background-color 150ms ease;
   &:disabled {
+    color: ${C.muted};
     cursor: not-allowed;
   }
 `
 
-const PositionCard = styled.div`
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-`
-
-const PositionHeader = styled.div`
+const KV = styled.div`
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  align-items: center;
+  font-size: 12px;
+  span:first-child {
+    color: ${C.muted};
+  }
+  span:last-child {
+    ${tabular};
+    font-weight: 500;
+  }
 `
 
-const PositionTitle = styled.div`
+const Ack = styled.button<{ $on: boolean }>`
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+  width: 100%;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 93, 105, 0.45);
+  background: rgba(255, 40, 76, 0.08);
+  color: ${C.text};
   font-size: 13px;
-  font-weight: 700;
-  color: #ffffff;
+  line-height: 1.45;
+  animation: ${riseIn} 200ms ${EASE_OUT};
+  > i {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    border-radius: 5px;
+    border: 1.5px solid ${p => (p.$on ? C.primary : C.muted)};
+    background: ${p => (p.$on ? C.primary : 'transparent')};
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease;
+  }
+  path {
+    stroke-dasharray: 24;
+    animation: ${drawStroke} 250ms ease both;
+  }
 `
 
-const Badge = styled.span<{ tone?: 'good' | 'bad' | 'neutral' }>`
-  padding: 3px 6px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  color: ${({ tone }) =>
-    tone === 'bad'
-      ? '#FFB7BB'
-      : tone === 'good'
-        ? '#8EF0BF'
-        : 'rgba(255,255,255,0.7)'};
-  background: ${({ tone }) =>
-    tone === 'bad'
-      ? 'rgba(255,75,85,0.18)'
-      : tone === 'good'
-        ? 'rgba(0,192,118,0.18)'
-        : 'rgba(255,255,255,0.1)'};
+const Cta = styled(Button)<{ $tone: 'buy' | 'sell' | 'primary' }>`
+  ${p =>
+    p.$tone === 'buy'
+      ? css`
+          background: ${T.up};
+          color: ${T.bg};
+          &:hover:not(:disabled) {
+            background: #1bb277;
+          }
+        `
+      : p.$tone === 'sell'
+        ? css`
+            background: ${T.sell};
+            &:hover:not(:disabled) {
+              background: #db1d4e;
+            }
+          `
+        : ''}
 `
 
-const PositionGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+const NoPos = styled.div`
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px dashed ${C.borderStrong};
+  text-align: center;
+  font-size: 12px;
+  color: ${C.muted};
 `
 
-const PositionMetric = styled.div`
+const Pos = styled.div`
+  padding: 12px;
+  border-radius: 12px;
+  background: ${T.input};
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 8px;
+  font-size: 12px;
+  animation: ${riseIn} 200ms ${EASE_OUT};
 `
 
-function formatNumber(value: number, digits = 4) {
-  return Number.isFinite(value)
-    ? value.toLocaleString(undefined, { maximumFractionDigits: digits })
-    : '0'
-}
+const PosHead = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  > span {
+    font-weight: 600;
+    font-size: 13px;
+  }
+  > div {
+    display: flex;
+    gap: 6px;
+  }
+`
 
-function formatPnl(value: number) {
-  const formatted = formatNumber(Math.abs(value), 4)
-  return value >= 0 ? `+${formatted}` : `-${formatted}`
-}
+const SmallBtn = styled.button<{ $danger?: boolean }>`
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid ${C.borderStrong};
+  background: transparent;
+  color: ${p => (p.$danger ? T.downText : C.text)};
+  font-size: 11px;
+  font-weight: 600;
+  &:hover:not(:disabled) {
+    border-color: ${p => (p.$danger ? T.down : C.primary)};
+  }
+  &:disabled {
+    color: ${C.muted};
+    cursor: not-allowed;
+  }
+`
 
-export const MarginTab: React.FC<MarginTabProps> = ({
-  side,
-  selectedPair,
-  walletAddress,
-  signMessage,
-  connectWallet
-}) => {
+const PosGrid = styled.div`
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  color: ${C.muted};
+  b {
+    ${tabular};
+    font-weight: 500;
+    color: ${C.text};
+  }
+`
+
+const ErrorLine = styled.div`
+  font-size: 12px;
+  color: ${T.downText};
+`
+
+/**
+ * Isolated margin (spot-api risk engine). Every fund-moving action is
+ * signed in the wallet and run through the shared tx flow.
+ */
+const MarginTab: React.FC = () => {
+  const { selectedPair, ticker } = useSpot()
+  const { walletAddress, signMessage } = useSDK()
+  const tx = useTx()
   const [overview, setOverview] = useState<MarginOverview | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
-  const [depositAmount, setDepositAmount] = useState('100')
-  const [withdrawAmount, setWithdrawAmount] = useState('50')
-  const [collateralAmount, setCollateralAmount] = useState('100')
-  const [leverage, setLeverage] = useState('3')
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [dep, setDep] = useState('')
+  const [coll, setColl] = useState('')
+  const [dir, setDir] = useState<'long' | 'short'>('long')
+  const [lev, setLev] = useState<number>(3)
+  const [ack, setAck] = useState(false)
 
-  const loadOverview = useCallback(async () => {
-    if (!walletAddress) {
+  const mark = ticker?.symbol === selectedPair ? ticker.lastPrice : 0
+
+  // Reading the account uses the 8h read session (one signature on connect).
+  // Without a session we show the sign-in prompt instead of prompting here.
+  const { hasSession } = useReadSession()
+  const load = useCallback(async () => {
+    if (!walletAddress || !hasSession) {
       setOverview(null)
       return
     }
-
-    const signedAction = createSignedActionMetadata()
-    const signature = await signMessage(
-      buildWalletActionMessage({
-        action: 'margin.overview',
-        address: walletAddress,
-        nonce: signedAction.nonce,
-        timestamp: signedAction.timestamp
-      })
+    setOverview(
+      await marginApi.getOverview(walletAddress, requireReadAuth(walletAddress))
     )
-    const nextOverview = await marginApi.getOverview(walletAddress, {
-      nonce: signedAction.nonce,
-      timestamp: signedAction.timestamp,
-      signature
-    })
-    setOverview(nextOverview)
-  }, [walletAddress, signMessage])
+    setLoadError(null)
+  }, [walletAddress, hasSession])
 
   useEffect(() => {
-    loadOverview().catch((err: Error) => {
-      setError(err.message)
+    load().catch((err: unknown) =>
+      setLoadError(
+        err instanceof Error ? err.message : 'Could not load margin account'
+      )
+    )
+  }, [load])
+
+  useEffect(() => setAck(false), [lev, dir])
+
+  const connected = !!walletAddress
+  const acct = overview?.account
+  const available = acct?.collateralAvailable ?? 0
+  const mc = parseFloat(coll) || 0
+  const liqEst =
+    mark > 0
+      ? dir === 'long'
+        ? mark * (1 - (1 / lev - MAINTENANCE_MARGIN_RATIO))
+        : mark * (1 + (1 / lev - MAINTENANCE_MARGIN_RATIO))
+      : 0
+  const needsAck = lev >= RISK_ACK_FROM
+  const positions = (overview?.positions || []).filter(p => p.status === 'OPEN')
+
+  const deposit = (action: 'deposit' | 'withdraw') => {
+    const amount = parseFloat(dep) || 0
+    if (!walletAddress || amount <= 0) return
+    const amountStr = String(amount)
+    const meta = createSignedActionMetadata()
+    let signature = ''
+    tx.run({
+      type: 'spot',
+      title:
+        action === 'deposit'
+          ? 'Depositing collateral'
+          : 'Withdrawing collateral',
+      summary: `${fmtAmt(amount)} ${COLLATERAL}`,
+      actTitle: `Margin ${action} ${fmtAmt(amount)} ${COLLATERAL}`,
+      successTitle:
+        action === 'deposit' ? 'Collateral deposited' : 'Collateral withdrawn',
+      steps: [
+        {
+          label: `Sign ${action} in your wallet`,
+          wallet: true,
+          run: async () => {
+            signature = await signMessage(
+              buildMarginCollateralSignMessage({
+                address: walletAddress,
+                action,
+                token: COLLATERAL,
+                amount: amountStr,
+                nonce: meta.nonce,
+                timestamp: meta.timestamp
+              })
+            )
+          }
+        },
+        {
+          label: 'Updating margin account',
+          run: async () => {
+            const input = {
+              address: walletAddress,
+              token: COLLATERAL,
+              amount: amountStr,
+              nonce: meta.nonce,
+              timestamp: meta.timestamp,
+              signature
+            }
+            const res =
+              action === 'deposit'
+                ? await marginApi.depositCollateral(input)
+                : await marginApi.withdrawCollateral(input)
+            setOverview(o => (o ? { ...o, account: res.account } : o))
+          }
+        }
+      ],
+      onSuccess: () => setDep('')
     })
-  }, [loadOverview])
+  }
 
-  const withWallet = useCallback(async () => {
-    if (walletAddress) return walletAddress
-    await connectWallet()
-    return null
-  }, [walletAddress, connectWallet])
+  const open = () => {
+    if (!walletAddress) return
+    const side = dir === 'long' ? 'BUY' : 'SELL'
+    const collateralAmount = String(mc)
+    const leverage = String(lev)
+    const meta = createSignedActionMetadata()
+    let signature = ''
+    const label = `${dir === 'long' ? 'Long' : 'Short'} ${selectedPair} · ${lev}×`
+    tx.run({
+      type: 'spot',
+      title: 'Opening position',
+      summary: `${label} · ${fmtAmt(mc)} ${COLLATERAL}`,
+      actTitle: `Margin ${dir} ${selectedPair} ${lev}×`,
+      successTitle: 'Position opened',
+      steps: [
+        {
+          label: 'Sign position in your wallet',
+          wallet: true,
+          run: async () => {
+            signature = await signMessage(
+              buildMarginOpenPositionSignMessage({
+                address: walletAddress,
+                pairSymbol: selectedPair,
+                side,
+                collateralAmount,
+                leverage,
+                nonce: meta.nonce,
+                timestamp: meta.timestamp
+              })
+            )
+          }
+        },
+        {
+          label: 'Opening on the risk engine',
+          run: async () => {
+            const res = await marginApi.openPosition({
+              address: walletAddress,
+              pairSymbol: selectedPair,
+              side,
+              collateralAmount,
+              leverage,
+              nonce: meta.nonce,
+              timestamp: meta.timestamp,
+              signature
+            })
+            setOverview(res.overview)
+          }
+        }
+      ],
+      onSuccess: () => {
+        setColl('')
+        setAck(false)
+      }
+    })
+  }
 
-  const submitAction = useCallback(async (action: () => Promise<void>) => {
-    setIsLoading(true)
-    setError(null)
-    setSuccess(null)
-    try {
-      await action()
-    } catch (err: any) {
-      setError(err.message || 'Margin action failed')
-    } finally {
-      setIsLoading(false)
+  const settle = (p: MarginPositionOverview, kind: 'close' | 'liquidate') => {
+    if (!walletAddress) return
+    const meta = createSignedActionMetadata()
+    let signature = ''
+    const what = `${p.side === 'BUY' ? 'Long' : 'Short'} ${p.pairSymbol}`
+    tx.run({
+      type: 'spot',
+      title: kind === 'close' ? 'Closing position' : 'Liquidating position',
+      summary: `${what} · ${p.leverage}×`,
+      actTitle: `${kind === 'close' ? 'Close' : 'Liquidate'} ${what}`,
+      successTitle:
+        kind === 'close' ? 'Position closed' : 'Position liquidated',
+      steps: [
+        {
+          label: `Sign ${kind} in your wallet`,
+          wallet: true,
+          run: async () => {
+            const build =
+              kind === 'close'
+                ? buildMarginClosePositionSignMessage
+                : buildMarginLiquidatePositionSignMessage
+            signature = await signMessage(
+              build({
+                address: walletAddress,
+                positionId: p.id,
+                nonce: meta.nonce,
+                timestamp: meta.timestamp
+              })
+            )
+          }
+        },
+        {
+          label: 'Settling on the risk engine',
+          run: async () => {
+            const next =
+              kind === 'close'
+                ? await marginApi.closePosition({
+                    positionId: p.id,
+                    address: walletAddress,
+                    nonce: meta.nonce,
+                    timestamp: meta.timestamp,
+                    signature
+                  })
+                : await marginApi.liquidatePosition({
+                    positionId: p.id,
+                    liquidatorAddress: walletAddress,
+                    nonce: meta.nonce,
+                    timestamp: meta.timestamp,
+                    signature
+                  })
+            setOverview(next)
+          }
+        }
+      ]
+    })
+  }
+
+  let cta: { label: string; ok: boolean; on?: () => void }
+  if (!connected)
+    cta = {
+      label: 'Connect wallet',
+      ok: true,
+      on: () => void requestWalletConnect()
     }
-  }, [])
+  else if (mc <= 0) cta = { label: 'Enter collateral', ok: false }
+  else if (overview && mc > available)
+    cta = { label: 'Not enough collateral', ok: false }
+  else if (needsAck && !ack)
+    cta = { label: 'Confirm the liquidation risk', ok: false }
+  else cta = { label: `Open ${dir} ${lev}×`, ok: true, on: open }
 
-  const handleDeposit = useCallback(async () => {
-    await submitAction(async () => {
-      const address = await withWallet()
-      if (!address) return
-      const signedAction = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildMarginCollateralSignMessage({
-          address,
-          action: 'deposit',
-          token: 'USDT',
-          amount: depositAmount,
-          nonce: signedAction.nonce,
-          timestamp: signedAction.timestamp
-        })
-      )
-      await marginApi.depositCollateral({
-        address,
-        token: 'USDT',
-        amount: depositAmount,
-        nonce: signedAction.nonce,
-        timestamp: signedAction.timestamp,
-        signature
-      })
-      await loadOverview()
-      setSuccess('Collateral deposited successfully.')
-    })
-  }, [depositAmount, loadOverview, signMessage, submitAction, withWallet])
-
-  const handleWithdraw = useCallback(async () => {
-    await submitAction(async () => {
-      const address = await withWallet()
-      if (!address) return
-      const signedAction = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildMarginCollateralSignMessage({
-          address,
-          action: 'withdraw',
-          token: 'USDT',
-          amount: withdrawAmount,
-          nonce: signedAction.nonce,
-          timestamp: signedAction.timestamp
-        })
-      )
-      await marginApi.withdrawCollateral({
-        address,
-        token: 'USDT',
-        amount: withdrawAmount,
-        nonce: signedAction.nonce,
-        timestamp: signedAction.timestamp,
-        signature
-      })
-      await loadOverview()
-      setSuccess('Collateral withdrawn successfully.')
-    })
-  }, [loadOverview, signMessage, submitAction, withdrawAmount, withWallet])
-
-  const handleOpenPosition = useCallback(async () => {
-    await submitAction(async () => {
-      const address = await withWallet()
-      if (!address) return
-      const orderSide = side === 'buy' ? 'BUY' : 'SELL'
-      const signedAction = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildMarginOpenPositionSignMessage({
-          address,
-          pairSymbol: selectedPair,
-          side: orderSide,
-          collateralAmount,
-          leverage,
-          nonce: signedAction.nonce,
-          timestamp: signedAction.timestamp
-        })
-      )
-      await marginApi.openPosition({
-        address,
-        pairSymbol: selectedPair,
-        side: orderSide,
-        collateralAmount,
-        leverage,
-        nonce: signedAction.nonce,
-        timestamp: signedAction.timestamp,
-        signature
-      })
-      await loadOverview()
-      setSuccess('Margin position opened successfully.')
-    })
-  }, [
-    collateralAmount,
-    leverage,
-    loadOverview,
-    selectedPair,
-    side,
-    signMessage,
-    submitAction,
-    withWallet
-  ])
-
-  const handleClose = useCallback(
-    async (position: MarginPositionOverview) => {
-      await submitAction(async () => {
-        const address = await withWallet()
-        if (!address) return
-        const signedAction = createSignedActionMetadata()
-        const signature = await signMessage(
-          buildMarginClosePositionSignMessage({
-            address,
-            positionId: position.id,
-            nonce: signedAction.nonce,
-            timestamp: signedAction.timestamp
-          })
-        )
-        await marginApi.closePosition({
-          positionId: position.id,
-          address,
-          nonce: signedAction.nonce,
-          timestamp: signedAction.timestamp,
-          signature
-        })
-        await loadOverview()
-        setSuccess('Position closed successfully.')
-      })
-    },
-    [loadOverview, signMessage, submitAction, withWallet]
-  )
-
-  const handleLiquidate = useCallback(
-    async (position: MarginPositionOverview) => {
-      await submitAction(async () => {
-        const address = await withWallet()
-        if (!address) return
-        const signedAction = createSignedActionMetadata()
-        const signature = await signMessage(
-          buildMarginLiquidatePositionSignMessage({
-            address,
-            positionId: position.id,
-            nonce: signedAction.nonce,
-            timestamp: signedAction.timestamp
-          })
-        )
-        await marginApi.liquidatePosition({
-          positionId: position.id,
-          liquidatorAddress: address,
-          nonce: signedAction.nonce,
-          timestamp: signedAction.timestamp,
-          signature
-        })
-        await loadOverview()
-        setSuccess('Position liquidated successfully.')
-      })
-    },
-    [loadOverview, signMessage, submitAction, withWallet]
-  )
-
-  const liquidatableCount = useMemo(
-    () => overview?.risk.liquidatablePositions || 0,
-    [overview]
-  )
+  const fmtU = (v?: number) =>
+    connected && overview ? `${fmtAmt(v ?? 0)} ${COLLATERAL}` : '—'
 
   return (
-    <Panel>
-      <Box>
-        Margin now uses a real backend flow for collateral, positions and
-        liquidation. The current implementation is isolated margin backed by the
-        spot-api risk engine.
-      </Box>
-
-      {error ? <Box tone="warn">{error}</Box> : null}
-      {success ? <Box>{success}</Box> : null}
-      {!walletAddress ? (
-        <Box tone="warn">
-          Connect your wallet to manage margin collateral and positions.
-        </Box>
-      ) : null}
-
-      <Grid>
-        <Card>
-          <Label>Available Collateral</Label>
-          <Value>
-            {formatNumber(overview?.account.collateralAvailable || 0, 2)} USDT
-          </Value>
-        </Card>
-        <Card>
-          <Label>Locked Collateral</Label>
-          <Value>
-            {formatNumber(overview?.account.collateralLocked || 0, 2)} USDT
-          </Value>
-        </Card>
-        <Card>
-          <Label>Total Equity</Label>
-          <Value>
-            {formatNumber(overview?.account.totalEquity || 0, 2)} USDT
-          </Value>
-        </Card>
-        <Card>
-          <Label>Liquidatable Positions</Label>
-          <Value>{liquidatableCount}</Value>
-        </Card>
-        <Card>
-          <Label>Mark Price Source</Label>
-          <Value>
-            {overview?.risk.markPriceHealth?.sources?.join(' / ') || 'N/A'}
-          </Value>
-        </Card>
-        <Card>
-          <Label>Max Mark Age</Label>
-          <Value>
-            {overview?.risk.markPriceHealth
-              ? `${Math.round(overview.risk.markPriceHealth.maxAgeMs / 1000)}s`
-              : 'N/A'}
-          </Value>
-        </Card>
-      </Grid>
+    <Wrap>
+      <Stats>
+        <StatTile>
+          <div>Available</div>
+          <div>
+            <AnimatedNumber text={fmtU(acct?.collateralAvailable)} />
+          </div>
+        </StatTile>
+        <StatTile>
+          <div>Locked</div>
+          <div>
+            <AnimatedNumber text={fmtU(acct?.collateralLocked)} />
+          </div>
+        </StatTile>
+        <StatTile>
+          <div>Equity</div>
+          <div>
+            <AnimatedNumber text={fmtU(acct?.totalEquity)} />
+          </div>
+        </StatTile>
+      </Stats>
+      {connected && !hasSession && (
+        <ReadSessionPrompt
+          compact
+          message="Sign in to view your margin account."
+        />
+      )}
+      {loadError && connected && (
+        <ErrorLine role="alert">{loadError}</ErrorLine>
+      )}
 
       <Section>
-        <SectionTitle>Collateral</SectionTitle>
-        <Row>
-          <Field>
-            <FieldLabel>Deposit</FieldLabel>
-            <Input
-              value={depositAmount}
-              onChange={event => setDepositAmount(event.target.value)}
-              placeholder="100"
-              type="number"
+        <Title>Collateral</Title>
+        <Inline>
+          <TField>
+            <TInput
+              value={dep}
+              onChange={e => setDep(cleanNum(e.target.value))}
+              placeholder="0"
+              aria-label="Collateral amount"
             />
-          </Field>
-          <Field>
-            <FieldLabel>Withdraw</FieldLabel>
-            <Input
-              value={withdrawAmount}
-              onChange={event => setWithdrawAmount(event.target.value)}
-              placeholder="50"
-              type="number"
-            />
-          </Field>
-        </Row>
-        <Row>
-          <ActionButton onClick={handleDeposit} disabled={isLoading} tone="buy">
-            Deposit USDT
-          </ActionButton>
-          <ActionButton
-            onClick={handleWithdraw}
-            disabled={isLoading}
-            tone="neutral"
+            <span>{COLLATERAL}</span>
+          </TField>
+          <Button
+            variant="secondary"
+            size="md"
+            disabled={!connected || !(parseFloat(dep) > 0)}
+            onClick={() => deposit('deposit')}
           >
-            Withdraw USDT
-          </ActionButton>
-        </Row>
+            Deposit
+          </Button>
+          <Button
+            variant="ghost"
+            size="md"
+            disabled={!connected || !(parseFloat(dep) > 0)}
+            onClick={() => deposit('withdraw')}
+          >
+            Withdraw
+          </Button>
+        </Inline>
       </Section>
 
-      <Section>
-        <SectionTitle>Open Margin Position</SectionTitle>
-        <Row>
-          <Field>
-            <FieldLabel>Pair</FieldLabel>
-            <Input value={selectedPair} readOnly />
-          </Field>
-          <Field>
-            <FieldLabel>Direction</FieldLabel>
-            <Input value={side === 'buy' ? 'Long' : 'Short'} readOnly />
-          </Field>
-        </Row>
-        <Row>
-          <Field>
-            <FieldLabel>Collateral (USDT)</FieldLabel>
-            <Input
-              value={collateralAmount}
-              onChange={event => setCollateralAmount(event.target.value)}
-              type="number"
-              placeholder="100"
+      <Section $gap={10}>
+        <Title>Open position · {selectedPair}</Title>
+        <SideSwitch role="tablist" aria-label="Direction">
+          <SideBtn
+            role="tab"
+            aria-selected={dir === 'long'}
+            $on={dir === 'long'}
+            $side="buy"
+            onClick={() => setDir('long')}
+          >
+            Long
+          </SideBtn>
+          <SideBtn
+            role="tab"
+            aria-selected={dir === 'short'}
+            $on={dir === 'short'}
+            $side="sell"
+            onClick={() => setDir('short')}
+          >
+            Short
+          </SideBtn>
+        </SideSwitch>
+        <Section $gap={6}>
+          <TLabel>Collateral</TLabel>
+          <TField>
+            <TInput
+              value={coll}
+              onChange={e => setColl(cleanNum(e.target.value))}
+              placeholder="0"
+              aria-label="Position collateral"
             />
-          </Field>
-          <Field>
-            <FieldLabel>Leverage</FieldLabel>
-            <Input
-              value={leverage}
-              onChange={event => setLeverage(event.target.value)}
-              type="number"
-              min="1"
-              max="7.9"
-              step="0.1"
-              placeholder="3"
-            />
-          </Field>
-        </Row>
-        <ActionButton
-          onClick={handleOpenPosition}
-          disabled={isLoading}
-          tone={side === 'buy' ? 'buy' : 'sell'}
+            <span>{COLLATERAL}</span>
+          </TField>
+        </Section>
+        <Section $gap={6}>
+          <TLabel>Leverage</TLabel>
+          <Levs role="radiogroup" aria-label="Leverage">
+            {LEVERAGES.map(v => (
+              <Lev
+                key={v}
+                role="radio"
+                aria-checked={lev === v}
+                $on={lev === v}
+                disabled={v > RISK_ENGINE_MAX_LEVERAGE}
+                title={
+                  v > RISK_ENGINE_MAX_LEVERAGE
+                    ? `The risk engine currently caps initial leverage at ${RISK_ENGINE_MAX_LEVERAGE}×`
+                    : undefined
+                }
+                onClick={() => setLev(v)}
+              >
+                {v}×
+              </Lev>
+            ))}
+          </Levs>
+        </Section>
+        <Section $gap={7}>
+          <KV>
+            <span>Position size</span>
+            <span>{mc > 0 ? `${fmtAmt(mc * lev)} ${COLLATERAL}` : '—'}</span>
+          </KV>
+          <KV>
+            <span>Entry (mark)</span>
+            <span>{fmtPx(mark)}</span>
+          </KV>
+          <KV>
+            <span>Est. liquidation</span>
+            <span style={{ color: C.warning }}>
+              {mc > 0 && liqEst > 0 ? fmtPx(liqEst) : '—'}
+            </span>
+          </KV>
+        </Section>
+        {needsAck && (
+          <Ack
+            $on={ack}
+            role="checkbox"
+            aria-checked={ack}
+            onClick={() => setAck(a => !a)}
+          >
+            <i>{ack && <Check size={12} strokeWidth={3.5} color="#fff" />}</i>
+            <span>
+              At {lev}× a {(90 / lev).toFixed(0)}% move against you liquidates
+              this position. I understand the risk.
+            </span>
+          </Ack>
+        )}
+        <Cta
+          size="lg"
+          block
+          $tone={
+            cta.ok && connected ? (dir === 'long' ? 'buy' : 'sell') : 'primary'
+          }
+          disabled={!cta.ok}
+          onClick={cta.on}
         >
-          {side === 'buy' ? 'Open Long' : 'Open Short'}
-        </ActionButton>
+          {cta.label}
+        </Cta>
       </Section>
 
       <Section>
-        <SectionTitle>Open Positions</SectionTitle>
-        {overview?.positions.length ? (
-          overview.positions.map(position => (
-            <PositionCard key={position.id}>
-              <PositionHeader>
-                <PositionTitle>
-                  {position.pairSymbol}{' '}
-                  {position.side === 'BUY' ? 'Long' : 'Short'}
-                </PositionTitle>
-                <Badge
-                  tone={
-                    position.isLiquidatable
-                      ? 'bad'
-                      : position.unrealizedPnl >= 0
-                        ? 'good'
-                        : 'neutral'
-                  }
-                >
-                  {position.status}
-                </Badge>
-              </PositionHeader>
-              <PositionGrid>
-                <PositionMetric>
-                  <Label>Entry / Mark</Label>
-                  <Value>
-                    {formatNumber(position.entryPrice, 5)} /{' '}
-                    {formatNumber(position.markPrice, 5)}
-                  </Value>
-                </PositionMetric>
-                <PositionMetric>
-                  <Label>Collateral / Leverage</Label>
-                  <Value>
-                    {formatNumber(position.collateralAmount, 2)} /{' '}
-                    {formatNumber(position.leverage, 2)}x
-                  </Value>
-                </PositionMetric>
-                <PositionMetric>
-                  <Label>Equity / Health</Label>
-                  <Value>
-                    {formatNumber(position.equity, 2)} /{' '}
-                    {position.healthFactor
-                      ? formatNumber(position.healthFactor, 2)
-                      : '∞'}
-                  </Value>
-                </PositionMetric>
-                <PositionMetric>
-                  <Label>PnL / Liquidation</Label>
-                  <Value>
-                    {formatPnl(position.unrealizedPnl)} /{' '}
-                    {formatNumber(position.liquidationPrice, 5)}
-                  </Value>
-                </PositionMetric>
-                <PositionMetric>
-                  <Label>Mark Source / Age</Label>
-                  <Value>
-                    {position.markPriceMeta
-                      ? `${position.markPriceMeta.source} / ${Math.round(position.markPriceMeta.ageMs / 1000)}s`
-                      : 'N/A'}
-                  </Value>
-                </PositionMetric>
-              </PositionGrid>
-              <Row>
-                <ActionButton
-                  onClick={async () => {
-                    await handleClose(position)
-                  }}
-                  disabled={isLoading || position.status !== 'OPEN'}
-                  tone="neutral"
-                >
-                  Close
-                </ActionButton>
-                <ActionButton
-                  onClick={async () => {
-                    await handleLiquidate(position)
-                  }}
-                  disabled={
-                    isLoading ||
-                    !position.isLiquidatable ||
-                    position.status !== 'OPEN'
-                  }
-                  tone="sell"
-                >
-                  Liquidate
-                </ActionButton>
-              </Row>
-            </PositionCard>
-          ))
+        <Title>Open positions</Title>
+        {positions.length === 0 ? (
+          <NoPos>
+            {connected
+              ? 'No open margin positions.'
+              : 'Connect your wallet to see your positions.'}
+          </NoPos>
         ) : (
-          <Box>
-            No margin positions yet. Deposit collateral and open your first
-            isolated position.
-          </Box>
+          positions.map(p => {
+            const long = p.side === 'BUY'
+            const pnlUp = p.unrealizedPnl >= 0
+            return (
+              <Pos key={p.id}>
+                <PosHead>
+                  <span>
+                    <span style={{ color: long ? T.up : T.down }}>
+                      {long ? 'Long' : 'Short'}
+                    </span>{' '}
+                    {p.pairSymbol} · {p.leverage}×
+                  </span>
+                  <div>
+                    {p.isLiquidatable && (
+                      <SmallBtn $danger onClick={() => settle(p, 'liquidate')}>
+                        Liquidate
+                      </SmallBtn>
+                    )}
+                    <SmallBtn onClick={() => settle(p, 'close')}>
+                      Close
+                    </SmallBtn>
+                  </div>
+                </PosHead>
+                <PosGrid>
+                  <span>
+                    Entry / Mark{' '}
+                    <b>
+                      {fmtPx(p.entryPrice)} / {fmtPx(p.markPrice)}
+                    </b>
+                  </span>
+                  <span>
+                    PnL{' '}
+                    <b
+                      style={{ color: pnlUp ? T.up : T.down, fontWeight: 600 }}
+                    >
+                      {pnlUp ? '+' : ''}
+                      {fmtAmt(p.unrealizedPnl)} {COLLATERAL}
+                    </b>
+                  </span>
+                  <span>
+                    Collateral <b>{fmtAmt(p.collateralAmount)}</b>
+                  </span>
+                  <span>
+                    Liq.{' '}
+                    <b style={{ color: C.warning }}>
+                      {fmtPx(p.liquidationPrice)}
+                    </b>
+                  </span>
+                </PosGrid>
+              </Pos>
+            )
+          })
         )}
       </Section>
-    </Panel>
+    </Wrap>
   )
 }
 

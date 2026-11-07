@@ -4,11 +4,14 @@ import { CreateOrderSchema, CancelOrderSchema } from '../utils/validation';
 import {
   buildSpotOrderMessage,
   verifyWalletActionSignature,
-  verifyWalletReadSignature,
   verifyAddressSignature,
   consumeNonce,
   isNonceUsed,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { checkRedisRateLimit } from '../utils/redisRateLimit';
 import { z } from 'zod';
 
@@ -137,14 +140,14 @@ router.delete(
 
 router.get('/', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = SignedReadSchema.safeParse(req.query);
+    const parsed = readAuthSchema(req, SignedReadSchema).safeParse(req.query);
     if (!parsed.success) {
       return res
         .status(400)
         .json({ error: 'Validation failed', details: parsed.error.issues });
     }
 
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'orders.list',
       address: parsed.data.makerAddress,
       nonce: parsed.data.nonce,

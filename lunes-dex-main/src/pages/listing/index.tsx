@@ -1,71 +1,115 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
-import styled from 'styled-components'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import styled, { css } from 'styled-components'
+import { useNavigate } from 'react-router-dom'
+import { AlertTriangle, Check, ImagePlus, X } from 'lucide-react'
+import { decodeAddress } from '@polkadot/util-crypto'
+import { u8aEq } from '@polkadot/util'
 import { useSDK } from '../../context/SDKContext'
+import { useTx, shortHash } from '../../context/TxContext'
+import type { TxStep } from '../../context/TxContext'
+import { AnimatedNumber } from '../../components/ui/AnimatedNumber'
+import {
+  Button,
+  C,
+  Card,
+  Col,
+  EASE_OUT,
+  H1,
+  Input,
+  Label,
+  Muted,
+  Notice,
+  Page,
+  Row,
+  StatCard,
+  StatLabel,
+  StatValue,
+  Sub,
+  TabPanel,
+  Textarea,
+  grotesk,
+  tabular
+} from '../../components/ui/kit'
+import { drawStroke, pop, successRing } from '../../styles/motion'
 import {
   buildWalletActionMessage,
   createSignedActionMetadata
 } from '../../utils/signing'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
+import contractService from '../../services/contractService'
+import {
+  LISTING_FEE_TOKEN,
+  LISTING_MANAGER_ADDRESS,
+  type ListingTierNumber,
+  type OnChainTierConfig,
+  approveForListing,
+  isListingContractConfigured,
+  listToken,
+  readAllowance,
+  readFeeToken,
+  readIsPaused,
+  readTierConfig,
+  readTokenListing
+} from '../../services/listingContractService'
 
 const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
-// ── Tier config (mirrors backend TIER_CONFIG) ─────────────────────
-
-const TIERS = [
-  {
-    key: 'BASIC',
-    tierNumber: 1,
-    label: 'Basic',
-    listingFee: 1_000,
-    minLunesLiq: 10_000,
-    lockDays: 90,
-    badge: null as string | null,
-    description: 'Entry-level listing. Token visible in search.',
-    color: '#6c38fe',
-    staking: 200,
-    treasury: 500,
-    rewards: 300
-  },
-  {
-    key: 'VERIFIED',
-    tierNumber: 2,
-    label: 'Verified',
-    listingFee: 5_000,
-    minLunesLiq: 25_000,
-    lockDays: 120,
-    badge: 'verified',
-    description: 'Verified badge, trending section, DEX highlight.',
-    color: '#00bfff',
-    staking: 1_000,
-    treasury: 2_500,
-    rewards: 1_500
-  },
-  {
-    key: 'FEATURED',
-    tierNumber: 3,
-    label: 'Featured',
-    listingFee: 20_000,
-    minLunesLiq: 50_000,
-    lockDays: 180,
-    badge: 'featured',
-    description: 'Home highlight, reward campaigns, maximum exposure.',
-    color: '#ffd700',
-    staking: 4_000,
-    treasury: 10_000,
-    rewards: 6_000
-  }
-] as const
+// ── Tiers ────────────────────────────────────────────────────────
+// Labels only. Fee, minimum liquidity and lock period come from the
+// ListingManager `tier_config` (source of truth), falling back to the
+// spot-api tier config for display when the contract is not reachable.
 
 type TierKey = 'BASIC' | 'VERIFIED' | 'FEATURED'
 
-// ── Form type ─────────────────────────────────────────────────────
+const TIERS: {
+  key: TierKey
+  n: ListingTierNumber
+  label: string
+  desc: string
+}[] = [
+  {
+    key: 'BASIC',
+    n: 1,
+    label: 'Basic',
+    desc: 'Entry-level listing. Token visible in search.'
+  },
+  {
+    key: 'VERIFIED',
+    n: 2,
+    label: 'Verified',
+    desc: 'Verified badge, trending section, DEX highlight.'
+  },
+  {
+    key: 'FEATURED',
+    n: 3,
+    label: 'Featured',
+    desc: 'Home highlight, reward campaigns, maximum exposure.'
+  }
+]
 
-interface ListingForm {
+// Fee split applied on-chain by list_token (basis points, display only)
+const SPLIT = { staking: 2_000, treasury: 5_000, rewards: 3_000 }
+
+/** Display numbers for a tier (whole LUNES / days). */
+type TierView = { fee: number; min: number; lock: number }
+
+type ApiTier = {
+  tierNumber: number
+  listingFee: number
+  minLunesLiq: number
+  lockDays: number
+}
+
+const STEPS = ['Select tier', 'Liquidity', 'Details', 'Review']
+
+const CONTRACT_MISSING =
+  'On-chain listing opens soon — the listing contract is not deployed on this network yet.'
+
+type ListingForm = {
   tokenName: string
   tokenSymbol: string
   tokenAddress: string
   tokenDecimals: string
-  lunesLiquidity: string
-  tokenLiquidity: string
   website: string
   twitter: string
   telegram: string
@@ -76,728 +120,581 @@ const initialForm: ListingForm = {
   tokenName: '',
   tokenSymbol: '',
   tokenAddress: '',
-  tokenDecimals: '18',
-  lunesLiquidity: '',
-  tokenLiquidity: '',
+  tokenDecimals: '',
   website: '',
   twitter: '',
   telegram: '',
   description: ''
 }
 
-// ── Styled components ─────────────────────────────────────────────
+/** The connected wallet's LP position in the TOKEN/WLUNES pool. */
+type LpHolding = {
+  pair: string
+  lp: bigint
+  lunesRaw: bigint
+  tokenRaw: bigint
+}
+type LpPosition =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'nopair' }
+  | { status: 'error' }
+  | ({ status: 'nolp' } & LpHolding)
+  | ({ status: 'ok' } & LpHolding)
 
-const Page = styled.div`
-  min-height: 100vh;
-  background: #1a1a1a;
-  padding: 80px 24px 48px;
-`
+const MAX_LOGO_SIZE = 200 * 1024
+const ACCEPTED_TYPES = ['image/svg+xml', 'image/png', 'image/webp']
 
-const PageContainer = styled.div`
-  max-width: 1100px;
-  margin: 0 auto;
-`
+const fmt = (n: number) =>
+  n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+const fmtDate = (d: Date) =>
+  d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  })
 
-const ContentBox = styled.div`
-  max-width: 700px;
-  margin: 0 auto;
-`
+/** Raw base units → exact decimal string (no float rounding). */
+const toDecimalString = (raw: bigint, decimals: number) => {
+  const base = BigInt(10) ** BigInt(decimals)
+  const whole = raw / base
+  const frac = (raw % base).toString().padStart(decimals, '0')
+  const trimmed = frac.replace(/0+$/, '')
+  return trimmed ? `${whole}.${trimmed}` : whole.toString()
+}
+const toNum = (raw: bigint, decimals: number) =>
+  Number(toDecimalString(raw, decimals))
 
-const HeroBanner = styled.div`
-  text-align: center;
-  margin-bottom: 40px;
-  padding: 32px 0;
-`
-
-const Title = styled.h1`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 42px;
-  font-weight: 800;
-  color: #ffffff;
-  margin: 0 0 12px 0;
-  letter-spacing: -1px;
-
-  span {
-    background: linear-gradient(135deg, #6c38ff, #ad87ff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+const looksLikeAddress = (a: string) => {
+  try {
+    return decodeAddress(a.trim()).length === 32
+  } catch {
+    return false
   }
-`
+}
+const sameAddress = (a: string, b: string) => {
+  try {
+    return u8aEq(decodeAddress(a), decodeAddress(b))
+  } catch {
+    return false
+  }
+}
 
-const Subtitle = styled.p`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 16px;
-  color: #8a8a8e;
-  margin: 0;
-  max-width: 560px;
-  margin: 0 auto;
-  line-height: 1.6;
-`
+type Done = {
+  sym: string
+  tier: string
+  lunes: number
+  lock: number
+  id: string | null
+  onChainId: number
+  txHash: string | null
+  /** ms timestamp from the on-chain listing record */
+  unlockAt: number | null
+}
 
-const StepsIndicator = styled.div`
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 24px;
-`
+// ── Styles ───────────────────────────────────────────────────────
 
-const Step = styled.div<{ $active: boolean; $completed: boolean }>`
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  font-size: 14px;
-  background: ${props =>
-    props.$completed
-      ? '#00ff88'
-      : props.$active
-        ? 'linear-gradient(135deg, #6c38fe, #9d4edd)'
-        : props.theme.colors.themeColors[400]};
-  color: ${props => (props.$completed ? '#000' : '#fff')};
-  transition: all 0.3s;
-`
-
-const StepLine = styled.div<{ $completed: boolean }>`
-  width: 40px;
-  height: 2px;
-  background: ${props =>
-    props.$completed ? '#00ff88' : props.theme.colors.themeColors[400]};
-`
-
-const StepLabel = styled.div`
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  margin-top: 4px;
-  text-align: center;
-`
-
-const StepWrapper = styled.div`
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-`
-
-const FormSection = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-`
-
-const SectionTitle = styled.h3`
-  color: #fff;
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0 0 4px 0;
-`
-
-const SectionSubtitle = styled.p`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 13px;
-  margin: 0 0 16px 0;
-`
-
-const FormGrid = styled.div`
+const StepBar = styled.div`
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 14px;
-
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
-  }
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
 `
 
-const FormGroup = styled.div<{ $fullWidth?: boolean }>`
+const StepItem = styled.div<{ $on: boolean }>`
   display: flex;
   flex-direction: column;
   gap: 6px;
-  grid-column: ${props => (props.$fullWidth ? 'span 2' : 'span 1')};
-
-  @media (max-width: 600px) {
-    grid-column: span 1;
+  min-width: 0;
+  > div {
+    height: 4px;
+    border-radius: 999px;
+    background: ${p => (p.$on ? C.primary : C.border)};
+    transition: background 300ms ${EASE_OUT};
+  }
+  > span {
+    font-size: 12px;
+    font-weight: 600;
+    color: ${p => (p.$on ? '#fff' : C.muted)};
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (max-width: 479px) {
+    > span b {
+      display: none;
+    }
   }
 `
 
-const Label = styled.label`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 12px;
-  font-weight: 500;
-`
-
-const Input = styled.input`
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 12px 14px;
-  color: #fff;
-  font-size: 14px;
-  transition: border 0.2s;
-  width: 100%;
-  box-sizing: border-box;
-
-  &:focus {
-    outline: none;
-    border-color: #6c38fe;
-  }
-
-  &::placeholder {
-    color: ${({ theme }) => theme.colors.themeColors[200]};
-  }
-`
-
-const TextArea = styled.textarea`
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 12px 14px;
-  color: #fff;
-  font-size: 14px;
-  min-height: 90px;
-  resize: vertical;
-  transition: border 0.2s;
-  width: 100%;
-  box-sizing: border-box;
-
-  &:focus {
-    outline: none;
-    border-color: #6c38fe;
-  }
-
-  &::placeholder {
-    color: ${({ theme }) => theme.colors.themeColors[200]};
-  }
-`
-
-// ── Tier cards ────────────────────────────────────────────────────
-
-const TiersGrid = styled.div`
+const TierGrid = styled.div`
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-
-  @media (max-width: 700px) {
-    grid-template-columns: 1fr;
-  }
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 10px;
 `
 
-const TierCard = styled.div<{ $selected: boolean; $color: string }>`
-  border: 2px solid ${props => (props.$selected ? props.$color : 'transparent')};
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  border-radius: 14px;
+const TierBtn = styled.button<{ $on: boolean }>`
+  text-align: left;
   padding: 16px;
-  cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
-  overflow: hidden;
-
+  border-radius: 16px;
+  border: 1px solid ${p => (p.$on ? C.primary : C.border)};
+  background: ${p => (p.$on ? 'rgba(108,56,255,0.12)' : C.surface)};
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease;
   &:hover {
-    border-color: ${props => props.$color}80;
-    transform: translateY(-2px);
-  }
-
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: ${props => props.$color};
-    opacity: ${props => (props.$selected ? 1 : 0.4)};
+    border-color: ${p => (p.$on ? C.primary : C.borderStrong)};
   }
 `
 
-const TierBadge = styled.div<{ $color: string }>`
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 20px;
-  background: ${props => props.$color}20;
-  color: ${props => props.$color};
+const TierKicker = styled.span`
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.5px;
-  margin-bottom: 8px;
-  text-transform: uppercase;
+  color: ${C.primaryText};
 `
 
-const TierName = styled.div`
-  color: #fff;
-  font-size: 16px;
-  font-weight: 700;
-  margin-bottom: 4px;
+const TierName = styled.span`
+  ${grotesk};
+  font-size: 20px;
+  font-weight: 600;
 `
 
-const TierDesc = styled.div`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 12px;
-  line-height: 1.4;
-  margin-bottom: 12px;
+const TierDesc = styled.span`
+  font-size: 13px;
+  color: ${C.secondary};
+  line-height: 1.5;
+  min-height: 40px;
 `
 
-const TierStats = styled.div`
+const TierFacts = styled.div`
   display: flex;
   flex-direction: column;
   gap: 4px;
-`
-
-const TierStat = styled.div`
-  display: flex;
-  justify-content: space-between;
   font-size: 12px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-
-  span:last-child {
-    color: #fff;
-    font-weight: 500;
+  padding-top: 6px;
+  border-top: 1px solid ${C.border};
+  ${tabular};
+  > span {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  > span > span:first-child {
+    color: ${C.muted};
+  }
+  > span > span:last-child {
+    font-weight: 600;
   }
 `
 
-const SelectedCheck = styled.div<{ $color: string }>`
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: ${props => props.$color};
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  color: #000;
-  font-weight: 700;
-`
-
-// ── Fee distribution ──────────────────────────────────────────────
-
-const FeeBox = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  border-radius: 12px;
+const RowsCard = styled(Card)`
   padding: 16px;
+  gap: 2px;
 `
 
-const FeeTitle = styled.div`
-  color: #fff;
-  font-size: 14px;
+const RowsTitle = styled.span`
+  ${grotesk};
   font-weight: 600;
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  font-size: 15px;
+  margin-bottom: 6px;
 `
 
-const FeeRow = styled.div`
+const KvRow = styled.div`
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 6px 0;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  border-bottom: 1px solid ${({ theme }) => theme.colors.themeColors[300]};
-
-  &:last-child {
-    border-bottom: none;
-  }
-`
-
-const FeeValue = styled.span<{ $color?: string }>`
-  color: ${props => props.$color || '#fff'};
-  font-weight: 500;
-`
-
-// ── Lock info ─────────────────────────────────────────────────────
-
-const LockBox = styled.div`
-  background: linear-gradient(135deg, #6c38fe15, #9d4edd15);
-  border: 1px solid #6c38fe40;
-  border-radius: 12px;
-  padding: 16px;
-`
-
-const LockTitle = styled.div`
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-`
-
-const LockRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  padding: 5px 0;
-
-  span:last-child {
-    color: #fff;
-    font-weight: 500;
-  }
-`
-
-// ── Summary + misc ────────────────────────────────────────────────
-
-const Summary = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  border-radius: 12px;
-  padding: 20px;
-`
-
-const SummaryRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  padding: 9px 0;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  border-bottom: 1px solid ${({ theme }) => theme.colors.themeColors[300]};
-
-  &:last-child {
-    border-bottom: none;
-  }
-`
-
-const SummaryValue = styled.span`
-  color: #fff;
-  font-weight: 500;
-`
-
-const TotalCost = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[300]};
-  border-radius: 10px;
-  padding: 14px 16px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 12px;
-`
-
-const TotalLabel = styled.span`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 14px;
-`
-
-const TotalValue = styled.span`
-  color: #00ff88;
-  font-weight: 700;
-  font-size: 18px;
-`
-
-const ButtonGroup = styled.div`
-  display: flex;
   gap: 12px;
-  margin-top: 16px;
-
-  & > button {
-    flex: 1;
+  padding: 7px 0;
+  font-size: 13px;
+  ${tabular};
+  & + & {
+    border-top: 1px solid ${C.border};
+  }
+  > span:first-child {
+    color: ${C.muted};
+  }
+  > span:last-child {
+    font-weight: 500;
+    text-align: right;
+    overflow-wrap: anywhere;
   }
 `
 
-const PrimaryBtn = styled.button<{ disabled?: boolean }>`
-  height: 48px;
-  padding: 0 32px;
-  border: none;
-  border-radius: 12px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: #fff;
-  background: ${props => (props.disabled ? '#2a2a2c' : '#6c38fe')};
-  opacity: ${props => (props.disabled ? 0.5 : 1)};
-  pointer-events: ${props => (props.disabled ? 'none' : 'auto')};
-
-  &:hover:not(:disabled) {
-    transform: translateY(-1px);
-    opacity: 0.9;
-  }
-
-  &:active:not(:disabled) {
-    transform: translateY(0);
-  }
+const FormGrid = styled(Card)`
+  padding: 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 12px;
 `
 
-const SecondaryBtn = styled.button`
-  height: 48px;
-  padding: 0 32px;
-  border: 1px solid #333;
-  border-radius: 12px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: #ccc;
-  background: transparent;
-
-  &:hover {
-    border-color: #6c38fe;
-    color: #fff;
-    background: rgba(108, 56, 254, 0.1);
-  }
-`
-
-const ConnectPrompt = styled.div`
-  text-align: center;
-  padding: 60px 20px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
+const FieldWrap = styled.div`
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 20px;
+  gap: 6px;
+  min-width: 0;
 `
 
-const LogoUploadSection = styled.div`
-  margin-top: 20px;
+const FieldInput = styled(Input)<{ $error?: boolean }>`
+  ${p =>
+    p.$error &&
+    css`
+      border-color: rgba(255, 93, 105, 0.6);
+    `}
 `
 
-const DropZone = styled.div<{ $hasFile?: boolean }>`
-  border: 2px dashed ${p => (p.$hasFile ? '#6c38fe' : '#333')};
-  border-radius: 12px;
-  padding: ${p => (p.$hasFile ? '12px' : '28px')};
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.2s;
-  background: ${p => (p.$hasFile ? 'rgba(108, 56, 254, 0.05)' : 'transparent')};
-
-  &:hover {
-    border-color: #6c38fe;
-    background: rgba(108, 56, 254, 0.05);
-  }
-`
-
-const DropZoneIcon = styled.div`
-  font-size: 28px;
-  margin-bottom: 8px;
-`
-
-const DropZoneText = styled.div`
-  color: #ccc;
-  font-size: 14px;
-  font-weight: 500;
-`
-
-const DropZoneHint = styled.div`
-  color: #666;
+const Hint = styled.span<{ $error?: boolean }>`
   font-size: 12px;
-  margin-top: 4px;
+  color: ${p => (p.$error ? C.criticalText : C.muted)};
 `
 
-const LogoPreviewBox = styled.div`
+const DropZone = styled.div<{ $has: boolean }>`
   display: flex;
   align-items: center;
-  gap: 14px;
-`
-
-const LogoPreviewImg = styled.img`
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: #2a2a2c;
-  border: 2px solid #6c38fe;
-`
-
-const LogoFileName = styled.div`
-  color: #eee;
-  font-size: 13px;
-  font-weight: 500;
-`
-
-const LogoFileSize = styled.div`
-  color: #888;
-  font-size: 11px;
-`
-
-const RemoveBtn = styled.button`
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: #888;
-  font-size: 18px;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px dashed ${p => (p.$has ? C.primary : C.borderStrong)};
+  background: ${C.bg};
   cursor: pointer;
-  padding: 4px;
-  &:hover {
-    color: #ff4444;
+  &:hover,
+  &:focus-visible {
+    border-color: ${C.primary};
   }
-`
-
-const SuccessBox = styled.div`
-  text-align: center;
-  padding: 40px 20px;
+  img {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+  }
 `
 
 const SuccessIcon = styled.div`
-  width: 80px;
-  height: 80px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
-  background: #00ff8820;
+  background: ${C.success};
+  color: #0d0d0d;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto 20px;
-  font-size: 40px;
-`
-
-const SuccessTitle = styled.h2`
-  color: #00ff88;
-  font-size: 22px;
-  margin: 0 0 12px 0;
-`
-
-const SuccessText = styled.p`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 13px;
-  line-height: 1.6;
-  margin: 0 0 20px 0;
-`
-
-const ListingIdBox = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  border-radius: 8px;
-  padding: 10px 18px;
-  display: inline-block;
-  color: #fff;
-  font-family: monospace;
-  font-size: 13px;
-  margin-bottom: 20px;
-`
-
-const LockSummaryGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-top: 16px;
-
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
+  animation:
+    ${pop} 450ms cubic-bezier(0.2, 0.8, 0.2, 1) both,
+    ${successRing} 1.2s ease-out 300ms 2;
+  path {
+    stroke-dasharray: 24;
+    animation: ${drawStroke} 400ms ease 250ms both;
   }
 `
 
-const LockSummaryCard = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  border-radius: 10px;
-  padding: 12px;
-  text-align: center;
+const DoneGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  width: 100%;
 `
 
-const LockSummaryLabel = styled.div`
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  font-size: 11px;
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+const Nav = styled.div`
+  display: flex;
+  gap: 8px;
+  > button:first-child:not(:last-child) {
+    flex: 1;
+  }
+  > button:last-child {
+    flex: 2;
+  }
 `
 
-const LockSummaryValue = styled.div`
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
-`
+// ── Field helper ─────────────────────────────────────────────────
 
-const ErrorMsg = styled.div`
-  background: #ff4d4d20;
-  border: 1px solid #ff4d4d40;
-  border-radius: 8px;
-  padding: 10px 14px;
-  color: #ff6b6b;
-  font-size: 13px;
-`
+const Field: React.FC<{
+  label: string
+  name: keyof ListingForm
+  value: string
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  placeholder?: string
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode']
+  error?: boolean
+  hint?: React.ReactNode
+}> = ({
+  label,
+  name,
+  value,
+  onChange,
+  placeholder,
+  inputMode,
+  error,
+  hint
+}) => (
+  <FieldWrap>
+    <Label htmlFor={`lst-${name}`}>{label}</Label>
+    <FieldInput
+      id={`lst-${name}`}
+      name={name}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      inputMode={inputMode}
+      autoComplete="off"
+      aria-invalid={error || undefined}
+      $error={error}
+    />
+    {hint && <Hint $error={error}>{hint}</Hint>}
+  </FieldWrap>
+)
 
-// ── Component ─────────────────────────────────────────────────────
+// ── Component ────────────────────────────────────────────────────
 
 export const Listing: React.FC = () => {
   const sdk = useSDK()
-  const [currentStep, setCurrentStep] = useState(1)
-  const [selectedTier, setSelectedTier] = useState<TierKey>('BASIC')
+  const tx = useTx()
+  const navigate = useNavigate()
+  const sdkRef = useRef(sdk)
+  sdkRef.current = sdk
+
+  const [step, setStep] = useState(1)
+  const [tierKey, setTierKey] = useState<TierKey>('BASIC')
   const [form, setForm] = useState<ListingForm>(initialForm)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isSuccess, setIsSuccess] = useState(false)
-  const [listingId, setListingId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [logoPreview, setLogoPreview] = useState<string | null>(null)
+  const [logoError, setLogoError] = useState<string | null>(null)
+  const [done, setDone] = useState<Done | null>(null)
   const [stats, setStats] = useState<{
     totalActiveLocks: number
     totalLockedLunes: string
   } | null>(null)
-  const [logoFile, setLogoFile] = useState<File | null>(null)
-  const [logoPreview, setLogoPreview] = useState<string | null>(null)
-  const [logoError, setLogoError] = useState<string | null>(null)
   const logoInputRef = useRef<HTMLInputElement>(null)
 
-  const tier = TIERS.find(t => t.key === selectedTier)!
-  const unlockDate = new Date(Date.now() + tier.lockDays * 24 * 60 * 60 * 1000)
-  const totalCost = tier.listingFee + tier.minLunesLiq
+  // On-chain state (ListingManager is the source of truth)
+  const configured = isListingContractConfigured()
+  const [chainTiers, setChainTiers] = useState<Record<
+    number,
+    OnChainTierConfig
+  > | null>(null)
+  const [apiTiers, setApiTiers] = useState<Record<number, ApiTier> | null>(null)
+  const [paused, setPaused] = useState(false)
+  const [feeDecimals, setFeeDecimals] = useState<number | null>(null)
+  /** Fee token = pool base token (WLUNES); read from the contract */
+  const [feeToken, setFeeToken] = useState(LISTING_FEE_TOKEN)
+  const [feeSymbol, setFeeSymbol] = useState('LUNES')
+  const [wlunesDecimals, setWlunesDecimals] = useState<number | null>(null)
+  const [feeBalance, setFeeBalance] = useState<bigint | null>(null)
+  const [pos, setPos] = useState<LpPosition>({ status: 'idle' })
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [preflight, setPreflight] = useState(false)
+  /** list_token finalized for this token in this session → never pay twice */
+  const paidRef = useRef<{
+    token: string
+    txHash: string
+    onChainId: number
+    unlockAt: number | null
+    /** amounts recorded on-chain (derived from reserves at list time) */
+    lunesRaw: bigint
+    tokenRaw: bigint
+    pair: string
+    lp: bigint
+  } | null>(null)
 
-  const signListingCreate = useCallback(async () => {
-    if (!sdk.walletAddress) {
-      throw new Error('Connect your wallet first')
-    }
+  const tier = TIERS.find(t => t.key === tierKey)!
+  const chainCfg = chainTiers?.[tier.n] ?? null
 
-    const metadata = createSignedActionMetadata()
-    const signature = await sdk.signMessage(
-      buildWalletActionMessage({
-        action: 'listing.create',
-        address: sdk.walletAddress,
-        nonce: metadata.nonce,
-        timestamp: metadata.timestamp,
-        fields: {
-          tokenAddress: form.tokenAddress,
-          tokenName: form.tokenName,
-          tokenSymbol: form.tokenSymbol,
-          tier: selectedTier,
-          lunesLiquidity: form.lunesLiquidity,
-          tokenLiquidity: form.tokenLiquidity
-        }
-      })
-    )
+  const viewOf = (n: number): TierView | null => {
+    const c = chainTiers?.[n]
+    if (c && feeDecimals !== null)
+      return {
+        fee: toNum(c.listingFee, feeDecimals),
+        min: toNum(c.minLunesLiq, wlunesDecimals ?? feeDecimals),
+        lock: Math.round(c.lockDurationMs / 86_400_000)
+      }
+    const a = apiTiers?.[n]
+    if (a) return { fee: a.listingFee, min: a.minLunesLiq, lock: a.lockDays }
+    return null
+  }
+  const view = viewOf(tier.n)
+  const unlock = view
+    ? fmtDate(new Date(Date.now() + view.lock * 86_400_000))
+    : '—'
+  const feeLabel = (v: TierView | null) =>
+    v ? `${fmt(v.fee)} ${feeSymbol}` : '—'
 
-    return { ...metadata, signature }
-  }, [form, sdk, selectedTier])
+  // ── Loads ──
 
   useEffect(() => {
     fetch(`${API_BASE}/api/v1/listing/stats`)
       .then(r => r.json())
       .then(setStats)
       .catch(() => null)
+    fetch(`${API_BASE}/api/v1/listing/tiers`)
+      .then(r => r.json())
+      .then((d: { tiers?: ApiTier[] }) => {
+        const m: Record<number, ApiTier> = {}
+        for (const t of d.tiers ?? []) m[t.tierNumber] = t
+        setApiTiers(m)
+      })
+      .catch(() => null)
   }, [])
 
-  const handleInputChange = (
+  // Pool base token decimals + symbol (WLUNES)
+  useEffect(() => {
+    let alive = true
+    sdkRef.current
+      .getTokenInfo(feeToken)
+      .then(i => {
+        if (!alive || !i) return
+        setWlunesDecimals(i.decimals)
+        if (configured && i.symbol && i.symbol !== '???') setFeeSymbol(i.symbol)
+      })
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [feeToken, configured])
+
+  useEffect(() => {
+    let alive = true
+    if (!configured) return
+    readFeeToken()
+      .then(t => {
+        if (!alive) return
+        setFeeToken(t.address)
+        // tiers are scaled on-chain by these decimals
+        setFeeDecimals(t.decimals)
+      })
+      .catch(() => null)
+    Promise.all(TIERS.map(t => readTierConfig(t.n)))
+      .then(cfgs => {
+        if (!alive) return
+        const m: Record<number, OnChainTierConfig> = {}
+        TIERS.forEach((t, i) => (m[t.n] = cfgs[i]))
+        setChainTiers(m)
+      })
+      .catch(() => null)
+    readIsPaused()
+      .then(p => alive && setPaused(p))
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [configured])
+
+  // Fee token balance of the connected wallet
+  const wallet = sdk.walletAddress
+  useEffect(() => {
+    setFeeBalance(null)
+    if (!wallet || !configured) return
+    let alive = true
+    sdkRef.current
+      .getTokenBalance(feeToken, wallet)
+      .then(b => alive && setFeeBalance(BigInt(b || '0')))
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [wallet, configured, done, feeToken])
+
+  // LP position for TOKEN/WLUNES (the amount to lock = full LP balance)
+  const tokenAddr = form.tokenAddress.trim()
+  const [posTick, setPosTick] = useState(0)
+  useEffect(() => {
+    if (!wallet || !looksLikeAddress(tokenAddr)) {
+      setPos({ status: 'idle' })
+      return
+    }
+    let alive = true
+    setPos({ status: 'loading' })
+    const t = setTimeout(async () => {
+      try {
+        const s = sdkRef.current
+        const info = await s.getPairInfo(tokenAddr, feeToken)
+        if (!alive) return
+        if (!info) return setPos({ status: 'nopair' })
+        const [lpStr, token0] = await Promise.all([
+          s.getTokenBalance(info.address, wallet),
+          contractService.getPairToken0(info.address)
+        ])
+        if (!alive) return
+        const lp = BigInt(lpStr || '0')
+        const supply = BigInt(info.totalSupply || '0')
+        const r0 = BigInt(info.reserve0 || '0')
+        const r1 = BigInt(info.reserve1 || '0')
+        const wIs0 = !!token0 && sameAddress(token0, feeToken)
+        const [rw, rt] = wIs0 ? [r0, r1] : [r1, r0]
+        const share = (r: bigint) =>
+          supply > BigInt(0) ? (r * lp) / supply : BigInt(0)
+        const holding: LpHolding = {
+          pair: info.address,
+          lp,
+          lunesRaw: share(rw),
+          tokenRaw: share(rt)
+        }
+        setPos(
+          lp > BigInt(0)
+            ? { status: 'ok', ...holding }
+            : { status: 'nolp', ...holding }
+        )
+      } catch {
+        if (alive) setPos({ status: 'error' })
+      }
+    }, 400)
+    return () => {
+      alive = false
+      clearTimeout(t)
+    }
+  }, [wallet, tokenAddr, posTick])
+
+  // Prefill token metadata from chain
+  useEffect(() => {
+    if (!looksLikeAddress(tokenAddr)) return
+    let alive = true
+    sdkRef.current
+      .getTokenInfo(tokenAddr)
+      .then(i => {
+        if (!alive || !i) return
+        setForm(prev =>
+          prev.tokenAddress.trim() !== tokenAddr
+            ? prev
+            : {
+                ...prev,
+                tokenName:
+                  prev.tokenName ||
+                  (i.name !== 'Unknown' ? i.name : prev.tokenName),
+                tokenSymbol:
+                  prev.tokenSymbol ||
+                  (i.symbol !== '???' ? i.symbol : prev.tokenSymbol),
+                tokenDecimals: prev.tokenDecimals || String(i.decimals)
+              }
+        )
+      })
+      .catch(() => null)
+    return () => {
+      alive = false
+    }
+  }, [tokenAddr])
+
+  useEffect(
+    () => () => {
+      if (logoPreview) URL.revokeObjectURL(logoPreview)
+    },
+    [logoPreview]
+  )
+
+  const onChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target
     setForm(prev => ({ ...prev, [name]: value }))
   }
 
-  const validateStep = (step: number): boolean => {
-    if (step === 1) return true // tier selection always valid
-    if (step === 2)
-      return !!(
-        form.tokenName &&
-        form.tokenSymbol &&
-        form.tokenAddress &&
-        form.lunesLiquidity &&
-        form.tokenLiquidity
-      )
-    if (step === 3) return !!form.description
-    return true
-  }
-
-  const MAX_LOGO_SIZE = 200 * 1024 // 200 KB
-  const ACCEPTED_TYPES = ['image/svg+xml', 'image/png', 'image/webp']
-
-  const validateAndSetLogo = useCallback((file: File) => {
+  const pickLogo = useCallback((file: File) => {
     setLogoError(null)
     if (!ACCEPTED_TYPES.includes(file.type)) {
-      setLogoError('Only SVG, PNG and WebP files accepted.')
+      setLogoError('Only SVG, PNG and WebP files are accepted.')
       return
     }
     if (file.size > MAX_LOGO_SIZE) {
       setLogoError(
-        `File too large (${(file.size / 1024).toFixed(0)}KB). Max 200KB.`
+        `File too large (${(file.size / 1024).toFixed(0)} KB). Max 200 KB.`
       )
       return
     }
@@ -805,687 +702,899 @@ export const Listing: React.FC = () => {
     setLogoPreview(URL.createObjectURL(file))
   }, [])
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      const file = e.dataTransfer.files?.[0]
-      if (file) validateAndSetLogo(file)
-    },
-    [validateAndSetLogo]
-  )
+  // ── Derived liquidity numbers ──
 
-  const handleLogoSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
-      if (file) validateAndSetLogo(file)
-    },
-    [validateAndSetLogo]
-  )
+  const tokenDecimals = parseInt(form.tokenDecimals, 10)
+  const decOk = Number.isInteger(tokenDecimals) && tokenDecimals >= 0
+  const lpOk = pos.status === 'ok'
+  const lunesRaw = lpOk ? pos.lunesRaw : BigInt(0)
+  const tokenRaw = lpOk ? pos.tokenRaw : BigInt(0)
+  const lunes = wlunesDecimals !== null ? toNum(lunesRaw, wlunesDecimals) : 0
+  const tokens = decOk ? toNum(tokenRaw, tokenDecimals) : 0
+  // Minimum check: on-chain raw units when available, API config otherwise
+  const meetsMin = chainCfg
+    ? lunesRaw >= chainCfg.minLunesLiq
+    : view
+      ? lunes >= view.min
+      : false
+  const lowLiq = lpOk && !meetsMin
+  const feeShort =
+    !!chainCfg && feeBalance !== null && feeBalance < chainCfg.listingFee
+  const poolLink = `/pool?a=${encodeURIComponent(tokenAddr)}&b=WLUNES`
 
-  const handleSubmit = async () => {
-    setIsSubmitting(true)
-    setError(null)
-    if (!sdk.walletAddress) {
-      setError('Connect your wallet first')
-      setIsSubmitting(false)
-      return
-    }
-    if (!logoFile) {
-      setLogoError('Token logo is required')
-      setIsSubmitting(false)
-      return
-    }
+  const stepOk =
+    step === 1
+      ? true
+      : step === 2
+        ? !!(
+            form.tokenName.trim() &&
+            form.tokenSymbol.trim() &&
+            looksLikeAddress(tokenAddr) &&
+            decOk &&
+            lpOk &&
+            wlunesDecimals !== null &&
+            meetsMin
+          )
+        : step === 3
+          ? !!(form.description.trim() && logoFile)
+          : true
+
+  // ── Submit: approve fee → approve LP → list_token → register ──
+
+  const submit = async () => {
+    const s = sdkRef.current
+    const owner = s.walletAddress
+    const cfg = chainCfg
+    if (!owner || !cfg || pos.status !== 'ok' || wlunesDecimals === null) return
+    const t = tier
+    const v = view
+    const f = { ...form, tokenAddress: tokenAddr }
+    const p = pos
+    const logo = logoFile
+    const baseDecimals = wlunesDecimals
+    const token = feeToken
+    setSubmitError(null)
+
+    // Preflight: allowances + whether this token is already listed on-chain
+    setPreflight(true)
+    let feeAllow: bigint
+    let lpAllow: bigint
     try {
-      const auth = await signListingCreate()
-      const fd = new FormData()
-      fd.append('ownerAddress', sdk.walletAddress)
-      fd.append('tokenAddress', form.tokenAddress)
-      fd.append('tokenName', form.tokenName)
-      fd.append('tokenSymbol', form.tokenSymbol)
-      fd.append('tokenDecimals', String(parseInt(form.tokenDecimals) || 18))
-      fd.append('tier', selectedTier)
-      fd.append('lunesLiquidity', form.lunesLiquidity)
-      fd.append('tokenLiquidity', form.tokenLiquidity)
-      fd.append('nonce', auth.nonce)
-      fd.append('timestamp', String(auth.timestamp))
-      fd.append('signature', auth.signature)
-      if (form.description) fd.append('description', form.description)
-      if (form.website) fd.append('website', form.website)
-      if (logoFile) fd.append('logo', logoFile)
-
-      const res = await fetch(`${API_BASE}/api/v1/listing`, {
-        method: 'POST',
-        body: fd
-      })
-
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Listing failed')
-
-      setListingId(data.listing.id)
-      setIsSuccess(true)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      const [fa, la, existing] = await Promise.all([
+        readAllowance(token, owner),
+        readAllowance(p.pair, owner),
+        readTokenListing(f.tokenAddress)
+      ])
+      feeAllow = fa
+      lpAllow = la
+      if (existing) {
+        if (!sameAddress(existing.owner, owner))
+          throw new Error('This token is already listed on-chain.')
+        // Already paid by this wallet (e.g. registration failed earlier)
+        if (!paidRef.current || paidRef.current.token !== f.tokenAddress)
+          paidRef.current = {
+            token: f.tokenAddress,
+            txHash: '',
+            onChainId: existing.id,
+            unlockAt: existing.unlockAt || null,
+            lunesRaw: existing.lunesLiquidity,
+            tokenRaw: existing.tokenLiquidity,
+            pair: existing.pairAddress,
+            lp: existing.lpAmount
+          }
+      }
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : String(e))
+      return
     } finally {
-      setIsSubmitting(false)
+      setPreflight(false)
     }
+
+    const paid = () =>
+      paidRef.current?.token === f.tokenAddress ? paidRef.current : null
+    let listingId: string | null = null
+
+    const steps: TxStep[] = []
+    if (!paid() && feeAllow < cfg.listingFee)
+      steps.push({
+        label: `Approve ${feeLabel(v)} listing fee`,
+        wallet: true,
+        run: async () => {
+          if (paid()) return true
+          const now = await readAllowance(token, owner)
+          if (now >= cfg.listingFee) return true
+          return approveForListing(token, cfg.listingFee, owner)
+        }
+      })
+    if (!paid() && lpAllow < p.lp)
+      steps.push({
+        label: 'Approve LP tokens',
+        wallet: true,
+        run: async () => {
+          if (paid()) return true
+          const now = await readAllowance(p.pair, owner)
+          if (now >= p.lp) return true
+          return approveForListing(p.pair, p.lp, owner)
+        }
+      })
+    if (!paid())
+      steps.push(
+        {
+          // One tx: fee collected + split, LP moved into LiquidityLock and
+          // the lock created (owner = you). Any failure reverts everything.
+          label: 'Pay fee and lock liquidity',
+          wallet: true,
+          run: async ({ advance }) => {
+            const prev = paid()
+            if (prev) return prev.txHash || true
+            const res = await listToken(
+              {
+                tier: t.n,
+                tokenAddress: f.tokenAddress,
+                pairAddress: p.pair, // also the LP token on Lunex
+                lpAmount: p.lp
+              },
+              owner,
+              advance
+            )
+            paidRef.current = {
+              token: f.tokenAddress,
+              txHash: res.txHash,
+              onChainId: res.listing.id,
+              unlockAt: res.listing.unlockAt || null,
+              lunesRaw: res.listing.lunesLiquidity,
+              tokenRaw: res.listing.tokenLiquidity,
+              pair: res.listing.pairAddress,
+              lp: res.listing.lpAmount
+            }
+            return res.txHash
+          }
+        },
+        { label: 'Waiting for block confirmation' }
+      )
+    steps.push({
+      label: 'Sign listing registration in your wallet',
+      wallet: true,
+      run: async () => {
+        const chain = paid()
+        if (!chain) throw new Error('The on-chain listing was not confirmed.')
+        const lunesStr = toDecimalString(chain.lunesRaw, baseDecimals)
+        const tokenStr = toDecimalString(chain.tokenRaw, tokenDecimals)
+        // On-chain facts, signed AND posted with identical string values
+        // (spot-api verifies them as part of `listing.create`).
+        const onChain = {
+          ...(chain.txHash ? { txHash: chain.txHash } : {}),
+          pairAddress: chain.pair,
+          lpTokenAddress: chain.pair, // the pair is the LP token on Lunex
+          lpAmount: chain.lp.toString(), // LP base units, as locked on-chain
+          onChainListingId: String(chain.onChainId)
+        }
+        const fail = (msg: string) =>
+          new Error(
+            `Fee paid on-chain (listing #${chain.onChainId}), but registering it with Lunex failed: ${msg}. Try again — you will not be charged twice.`
+          )
+        if (!logo) throw fail('token logo is missing')
+        const meta = createSignedActionMetadata()
+        const signature = await s.signMessage(
+          buildWalletActionMessage({
+            action: 'listing.create',
+            address: owner,
+            nonce: meta.nonce,
+            timestamp: meta.timestamp,
+            fields: {
+              tokenAddress: f.tokenAddress,
+              tokenName: f.tokenName,
+              tokenSymbol: f.tokenSymbol,
+              tier: t.key,
+              lunesLiquidity: lunesStr,
+              tokenLiquidity: tokenStr,
+              ...onChain
+            }
+          })
+        )
+        const fd = new FormData()
+        fd.append('ownerAddress', owner)
+        fd.append('tokenAddress', f.tokenAddress)
+        fd.append('tokenName', f.tokenName)
+        fd.append('tokenSymbol', f.tokenSymbol)
+        fd.append('tokenDecimals', String(tokenDecimals))
+        fd.append('tier', t.key)
+        fd.append('lunesLiquidity', lunesStr)
+        fd.append('tokenLiquidity', tokenStr)
+        for (const [k, val] of Object.entries(onChain)) fd.append(k, val)
+        fd.append('nonce', meta.nonce)
+        fd.append('timestamp', String(meta.timestamp))
+        fd.append('signature', signature)
+        if (f.description) fd.append('description', f.description)
+        if (f.website) fd.append('website', f.website)
+        fd.append('logo', logo)
+        let res: Response
+        try {
+          res = await fetch(`${API_BASE}/api/v1/listing`, {
+            method: 'POST',
+            body: fd
+          })
+        } catch {
+          throw fail('network error')
+        }
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) throw fail(data.error || `HTTP ${res.status}`)
+        listingId = data.listing?.id ?? null
+        return true
+      }
+    })
+
+    tx.run({
+      type: 'other',
+      title: 'Listing token',
+      summary: `${f.tokenSymbol} · ${t.label} tier · ${feeLabel(v)} fee`,
+      actTitle: `List ${f.tokenSymbol} (${t.label})`,
+      successTitle: 'Fee paid and liquidity locked',
+      steps,
+      onSuccess: () => {
+        const chain = paid()
+        setDone({
+          sym: f.tokenSymbol,
+          tier: t.label,
+          lunes: toNum(chain?.lunesRaw ?? p.lunesRaw, baseDecimals),
+          lock: Math.round(cfg.lockDurationMs / 86_400_000),
+          id: listingId,
+          onChainId: chain?.onChainId ?? -1,
+          txHash: chain?.txHash || null,
+          unlockAt: chain?.unlockAt ?? null
+        })
+      }
+    })
   }
 
-  const handleReset = () => {
-    setIsSuccess(false)
-    setCurrentStep(1)
+  const reset = () => {
+    setDone(null)
+    setStep(1)
     setForm(initialForm)
-    setSelectedTier('BASIC')
-    setListingId(null)
-    setError(null)
+    setTierKey('BASIC')
     setLogoFile(null)
     setLogoPreview(null)
     setLogoError(null)
+    setSubmitError(null)
+    paidRef.current = null
   }
 
-  // ── Step 1: Select Tier ───────────────────────────────────────
+  // ── CTA ──
+  let cta: { label: string; ok: boolean; on?: () => void }
+  if (step < 4)
+    cta = { label: 'Continue', ok: stepOk, on: () => setStep(step + 1) }
+  else if (!configured) cta = { label: CONTRACT_MISSING, ok: false }
+  else if (!sdk.isConnected)
+    cta = {
+      label: 'Connect wallet',
+      ok: true,
+      on: () => requestWalletConnect()
+    }
+  else if (paused) cta = { label: 'Listings are paused on-chain', ok: false }
+  else if (!chainCfg) cta = { label: 'Reading listing contract…', ok: false }
+  else if (!lpOk || !meetsMin)
+    cta = { label: 'Go back and fix liquidity', ok: false }
+  else if (feeShort)
+    cta = { label: `Insufficient ${feeSymbol} for the fee`, ok: false }
+  else
+    cta = {
+      label: preflight
+        ? 'Checking approvals…'
+        : `Pay ${feeLabel(view)} and lock liquidity`,
+      ok: !preflight,
+      on: () => void submit()
+    }
+  if (step === 2 && !stepOk)
+    cta.label = lowLiq
+      ? `Minimum ${view ? fmt(view.min) : '—'} LUNES in your LP`
+      : !wallet
+        ? 'Connect wallet to read your LP'
+        : pos.status === 'nopair' || pos.status === 'nolp'
+          ? 'Add liquidity first'
+          : 'Fill in token details'
+  if (step === 3 && !stepOk)
+    cta.label = !form.description.trim() ? 'Add a description' : 'Upload a logo'
+  if (step === 2 && !wallet)
+    cta = {
+      label: 'Connect wallet to read your LP',
+      ok: true,
+      on: () => requestWalletConnect()
+    }
 
-  const renderStep1 = () => (
-    <FormSection>
+  const splitOf = (fee: number, bps: number) => (fee * bps) / 10_000
+
+  // ── Render ──
+
+  const header = (
+    <>
       <div>
-        <SectionTitle>Select Listing Tier</SectionTitle>
-        <SectionSubtitle>
-          Each tier requires locked LUNES liquidity. Higher tiers give more
-          visibility.
-        </SectionSubtitle>
+        <H1>List a token</H1>
+        <Sub>
+          Secure listing with locked liquidity. Prevents rug pulls and builds
+          trust from day one.
+        </Sub>
       </div>
-
-      <TiersGrid>
-        {TIERS.map(t => (
-          <TierCard
-            key={t.key}
-            $selected={selectedTier === t.key}
-            $color={t.color}
-            onClick={() => setSelectedTier(t.key as TierKey)}
+      <StepBar aria-label={`Step ${done ? 4 : step} of 4`}>
+        {STEPS.map((l, i) => (
+          <StepItem
+            key={l}
+            $on={!!done || i + 1 <= step}
+            aria-current={i + 1 === step ? 'step' : undefined}
           >
-            {selectedTier === t.key && (
-              <SelectedCheck $color={t.color}>✓</SelectedCheck>
-            )}
-            <TierBadge $color={t.color}>Tier {t.tierNumber}</TierBadge>
-            <TierName>{t.label}</TierName>
-            <TierDesc>{t.description}</TierDesc>
-            <TierStats>
-              <TierStat>
-                <span>Listing Fee</span>
-                <span>{t.listingFee.toLocaleString()} LUNES</span>
-              </TierStat>
-              <TierStat>
-                <span>Min Liquidity</span>
-                <span>{t.minLunesLiq.toLocaleString()} LUNES</span>
-              </TierStat>
-              <TierStat>
-                <span>Lock Period</span>
-                <span>{t.lockDays} days</span>
-              </TierStat>
-            </TierStats>
-          </TierCard>
+            <div />
+            <span>
+              {i + 1}
+              <b> · {l}</b>
+            </span>
+          </StepItem>
         ))}
-      </TiersGrid>
-
-      <FeeBox>
-        <FeeTitle>Fee Distribution — {tier.label} Tier</FeeTitle>
-        <FeeRow>
-          <span>Listing Fee</span>
-          <FeeValue>{tier.listingFee.toLocaleString()} LUNES</FeeValue>
-        </FeeRow>
-        <FeeRow>
-          <span>Staking Pool (20%)</span>
-          <FeeValue $color="#00bfff">
-            {tier.staking.toLocaleString()} LUNES
-          </FeeValue>
-        </FeeRow>
-        <FeeRow>
-          <span>Team Revenue (50%)</span>
-          <FeeValue $color="#ffd700">
-            {tier.treasury.toLocaleString()} LUNES
-          </FeeValue>
-        </FeeRow>
-        <FeeRow>
-          <span>Rewards Pool (30%)</span>
-          <FeeValue $color="#00ff88">
-            {tier.rewards.toLocaleString()} LUNES
-          </FeeValue>
-        </FeeRow>
-      </FeeBox>
-
-      <LockBox>
-        <LockTitle>Liquidity Lock</LockTitle>
-        <LockRow>
-          <span>Minimum LUNES to lock</span>
-          <span>{tier.minLunesLiq.toLocaleString()} LUNES</span>
-        </LockRow>
-        <LockRow>
-          <span>Lock duration</span>
-          <span>{tier.lockDays} days</span>
-        </LockRow>
-        <LockRow>
-          <span>Estimated unlock date</span>
-          <span>{unlockDate.toLocaleDateString()}</span>
-        </LockRow>
-        <LockRow>
-          <span>Pool type</span>
-          <span>TOKEN / LUNES</span>
-        </LockRow>
-      </LockBox>
-
-      {stats && (
-        <FeeBox>
-          <FeeTitle>Protocol Listing Stats</FeeTitle>
-          <FeeRow>
-            <span>Active Locked Liquidity Pools</span>
-            <FeeValue $color="#00ff88">{stats.totalActiveLocks}</FeeValue>
-          </FeeRow>
-          <FeeRow>
-            <span>Total LUNES Locked</span>
-            <FeeValue $color="#00bfff">
-              {parseFloat(stats.totalLockedLunes).toLocaleString()} LUNES
-            </FeeValue>
-          </FeeRow>
-        </FeeBox>
-      )}
-    </FormSection>
+      </StepBar>
+    </>
   )
 
-  // ── Step 2: Token & Liquidity ─────────────────────────────────
-
-  const renderStep2 = () => (
-    <FormSection>
-      <div>
-        <SectionTitle>Token & Liquidity Information</SectionTitle>
-        <SectionSubtitle>
-          Provide your token details and the liquidity you will lock.
-        </SectionSubtitle>
-      </div>
-
-      <FormGrid>
-        <FormGroup>
-          <Label>Token Name *</Label>
-          <Input
-            name="tokenName"
-            value={form.tokenName}
-            onChange={handleInputChange}
-            placeholder="e.g. GameCoin"
-          />
-        </FormGroup>
-        <FormGroup>
-          <Label>Token Symbol *</Label>
-          <Input
-            name="tokenSymbol"
-            value={form.tokenSymbol}
-            onChange={handleInputChange}
-            placeholder="e.g. GMC"
-          />
-        </FormGroup>
-        <FormGroup $fullWidth>
-          <Label>Token Contract Address *</Label>
-          <Input
-            name="tokenAddress"
-            value={form.tokenAddress}
-            onChange={handleInputChange}
-            placeholder="5H1MJ5..."
-          />
-        </FormGroup>
-        <FormGroup>
-          <Label>Token Decimals</Label>
-          <Input
-            name="tokenDecimals"
-            value={form.tokenDecimals}
-            onChange={handleInputChange}
-            type="number"
-            placeholder="18"
-          />
-        </FormGroup>
-      </FormGrid>
-
-      <FeeBox>
-        <FeeTitle>Liquidity to Deposit</FeeTitle>
-        <SectionSubtitle style={{ marginTop: 0, marginBottom: 14 }}>
-          The system will automatically create the TOKEN/LUNES pool and lock
-          liquidity for {tier.lockDays} days.
-        </SectionSubtitle>
-        <FormGrid>
-          <FormGroup>
-            <Label>
-              LUNES Amount * (min {tier.minLunesLiq.toLocaleString()})
-            </Label>
-            <Input
-              name="lunesLiquidity"
-              value={form.lunesLiquidity}
-              onChange={handleInputChange}
-              type="number"
-              placeholder={`${tier.minLunesLiq}`}
-            />
-          </FormGroup>
-          <FormGroup>
-            <Label>Token Amount *</Label>
-            <Input
-              name="tokenLiquidity"
-              value={form.tokenLiquidity}
-              onChange={handleInputChange}
-              type="number"
-              placeholder="e.g. 1000000"
-            />
-          </FormGroup>
-        </FormGrid>
-
-        {form.lunesLiquidity &&
-          parseFloat(form.lunesLiquidity) < tier.minLunesLiq && (
-            <ErrorMsg style={{ marginTop: 10 }}>
-              ⚠ Minimum {tier.minLunesLiq.toLocaleString()} LUNES required for{' '}
-              {tier.label} tier. You entered{' '}
-              {parseFloat(form.lunesLiquidity).toLocaleString()} LUNES.
-            </ErrorMsg>
-          )}
-      </FeeBox>
-
-      <LogoUploadSection>
-        <Label>
-          Token Logo <span style={{ color: '#ff4b55' }}>*</span>
-        </Label>
-        <DropZone
-          onDrop={handleDrop}
-          onDragOver={e => e.preventDefault()}
-          onClick={() => logoInputRef.current?.click()}
-          $hasFile={!!logoFile}
-        >
-          {logoPreview ? (
-            <LogoPreviewBox>
-              <LogoPreviewImg src={logoPreview} alt="Token logo" />
-              <div>
-                <LogoFileName>{logoFile?.name}</LogoFileName>
-                <LogoFileSize>
-                  {((logoFile?.size ?? 0) / 1024).toFixed(1)} KB
-                </LogoFileSize>
-              </div>
-              <RemoveBtn
-                onClick={e => {
-                  e.stopPropagation()
-                  setLogoFile(null)
-                  setLogoPreview(null)
-                }}
-              >
-                ✕
-              </RemoveBtn>
-            </LogoPreviewBox>
-          ) : (
-            <>
-              <DropZoneIcon>
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
-              </DropZoneIcon>
-              <DropZoneText>Drag & drop or click to upload</DropZoneText>
-              <DropZoneHint>
-                SVG, PNG or WebP — max 200KB — 256×256 recommended
-              </DropZoneHint>
-            </>
-          )}
-          <input
-            ref={logoInputRef}
-            type="file"
-            accept=".svg,.png,.webp,image/svg+xml,image/png,image/webp"
-            style={{ display: 'none' }}
-            onChange={handleLogoSelect}
-          />
-        </DropZone>
-        {logoError && <ErrorMsg>{logoError}</ErrorMsg>}
-      </LogoUploadSection>
-    </FormSection>
-  )
-
-  // ── Step 3: Project Details ───────────────────────────────────
-
-  const renderStep3 = () => (
-    <FormSection>
-      <div>
-        <SectionTitle>Project Details</SectionTitle>
-        <SectionSubtitle>
-          Help the community understand your project.
-        </SectionSubtitle>
-      </div>
-      <FormGrid>
-        <FormGroup $fullWidth>
-          <Label>Description *</Label>
-          <TextArea
-            name="description"
-            value={form.description}
-            onChange={handleInputChange}
-            placeholder="Describe your project, its use case, and why it should be listed on Lunex..."
-          />
-        </FormGroup>
-        <FormGroup>
-          <Label>Website</Label>
-          <Input
-            name="website"
-            value={form.website}
-            onChange={handleInputChange}
-            placeholder="https://mytoken.io"
-          />
-        </FormGroup>
-        <FormGroup>
-          <Label>Twitter</Label>
-          <Input
-            name="twitter"
-            value={form.twitter}
-            onChange={handleInputChange}
-            placeholder="@mytoken"
-          />
-        </FormGroup>
-        <FormGroup>
-          <Label>Telegram</Label>
-          <Input
-            name="telegram"
-            value={form.telegram}
-            onChange={handleInputChange}
-            placeholder="t.me/mytoken"
-          />
-        </FormGroup>
-      </FormGrid>
-    </FormSection>
-  )
-
-  // ── Step 4: Review ────────────────────────────────────────────
-
-  const renderStep4 = () => (
-    <FormSection>
-      <div>
-        <SectionTitle>Review & Submit</SectionTitle>
-        <SectionSubtitle>
-          Confirm your listing details before submitting.
-        </SectionSubtitle>
-      </div>
-
-      <Summary>
-        <SummaryRow>
-          <span>Token</span>
-          <SummaryValue>
-            {form.tokenName} ({form.tokenSymbol})
-          </SummaryValue>
-        </SummaryRow>
-        <SummaryRow>
-          <span>Contract</span>
-          <SummaryValue>
-            {form.tokenAddress
-              ? `${form.tokenAddress.slice(0, 8)}…${form.tokenAddress.slice(-6)}`
-              : '-'}
-          </SummaryValue>
-        </SummaryRow>
-        <SummaryRow>
-          <span>Tier</span>
-          <SummaryValue style={{ color: tier.color }}>
-            {tier.label} (Tier {tier.tierNumber})
-          </SummaryValue>
-        </SummaryRow>
-        <SummaryRow>
-          <span>Lock Duration</span>
-          <SummaryValue>{tier.lockDays} days</SummaryValue>
-        </SummaryRow>
-        <SummaryRow>
-          <span>Unlock Date</span>
-          <SummaryValue>{unlockDate.toLocaleDateString()}</SummaryValue>
-        </SummaryRow>
-        <SummaryRow>
-          <span>LUNES to Lock</span>
-          <SummaryValue>
-            {parseFloat(form.lunesLiquidity || '0').toLocaleString()} LUNES
-          </SummaryValue>
-        </SummaryRow>
-        <SummaryRow>
-          <span>Token to Lock</span>
-          <SummaryValue>
-            {parseFloat(form.tokenLiquidity || '0').toLocaleString()}{' '}
-            {form.tokenSymbol}
-          </SummaryValue>
-        </SummaryRow>
-      </Summary>
-
-      <TotalCost>
-        <TotalLabel>Total LUNES Required</TotalLabel>
-        <TotalValue>{totalCost.toLocaleString()} LUNES</TotalValue>
-      </TotalCost>
-
-      <FeeBox>
-        <FeeTitle>Fee Distribution</FeeTitle>
-        <FeeRow>
-          <span>Listing Fee</span>
-          <FeeValue>{tier.listingFee.toLocaleString()} LUNES</FeeValue>
-        </FeeRow>
-        <FeeRow>
-          <span>Staking Pool (20%)</span>
-          <FeeValue $color="#00bfff">
-            {tier.staking.toLocaleString()} LUNES
-          </FeeValue>
-        </FeeRow>
-        <FeeRow>
-          <span>Team Revenue (50%)</span>
-          <FeeValue $color="#ffd700">
-            {tier.treasury.toLocaleString()} LUNES
-          </FeeValue>
-        </FeeRow>
-        <FeeRow>
-          <span>Rewards (30%)</span>
-          <FeeValue $color="#00ff88">
-            {tier.rewards.toLocaleString()} LUNES
-          </FeeValue>
-        </FeeRow>
-      </FeeBox>
-
-      <LockBox>
-        <LockTitle>What Happens After Submit</LockTitle>
-        <LockRow>
-          <span>1. Listing fee deducted</span>
-          <span>{tier.listingFee.toLocaleString()} LUNES</span>
-        </LockRow>
-        <LockRow>
-          <span>2. Pool created automatically</span>
-          <span>{form.tokenSymbol || 'TOKEN'} / LUNES</span>
-        </LockRow>
-        <LockRow>
-          <span>3. Liquidity deposited</span>
-          <span>
-            {parseFloat(form.lunesLiquidity || '0').toLocaleString()} LUNES
-          </span>
-        </LockRow>
-        <LockRow>
-          <span>4. LP tokens locked until</span>
-          <span>{unlockDate.toLocaleDateString()}</span>
-        </LockRow>
-        <LockRow>
-          <span>5. Token visible on DEX</span>
-          <span>✓</span>
-        </LockRow>
-      </LockBox>
-
-      {error && <ErrorMsg>{error}</ErrorMsg>}
-    </FormSection>
-  )
-
-  const STEPS = ['Select Tier', 'Liquidity', 'Details', 'Review']
-
-  // ── Success screen ────────────────────────────────────────────
-
-  if (isSuccess) {
+  if (done) {
     return (
-      <Page>
-        <PageContainer>
-          <HeroBanner>
-            <Title>
-              <span>List Your Token</span>
-            </Title>
-            <Subtitle>
-              Secure listing with locked liquidity. Prevent rug pulls and build
-              trust with LUNES holders.
-            </Subtitle>
-          </HeroBanner>
-          <ContentBox>
-            <SuccessBox>
-              <SuccessIcon>
-                <svg
-                  width="40"
-                  height="40"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#00ff88"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                  <polyline points="9 12 12 15 16 10" stroke="#00ff88" />
-                </svg>
-              </SuccessIcon>
-              <SuccessTitle>Token Listed!</SuccessTitle>
-              <SuccessText>
-                <strong>
-                  {form.tokenName} ({form.tokenSymbol})
-                </strong>{' '}
-                has been submitted for listing on Lunex DEX.
-                <br />
-                <br />
-                Your liquidity of{' '}
-                <strong>
-                  {parseFloat(form.lunesLiquidity).toLocaleString()} LUNES
-                </strong>{' '}
-                is now locked until{' '}
-                <strong>{unlockDate.toLocaleDateString()}</strong> (
-                {tier.lockDays} days). This protects users from rug pulls.
-              </SuccessText>
-
-              {listingId && (
-                <ListingIdBox>Listing ID: {listingId}</ListingIdBox>
-              )}
-
-              <LockSummaryGrid>
-                <LockSummaryCard>
-                  <LockSummaryLabel>Tier</LockSummaryLabel>
-                  <LockSummaryValue style={{ color: tier.color }}>
-                    {tier.label}
-                  </LockSummaryValue>
-                </LockSummaryCard>
-                <LockSummaryCard>
-                  <LockSummaryLabel>Locked Until</LockSummaryLabel>
-                  <LockSummaryValue>
-                    {unlockDate.toLocaleDateString()}
-                  </LockSummaryValue>
-                </LockSummaryCard>
-                <LockSummaryCard>
-                  <LockSummaryLabel>LUNES Locked</LockSummaryLabel>
-                  <LockSummaryValue>
-                    {parseFloat(form.lunesLiquidity).toLocaleString()}
-                  </LockSummaryValue>
-                </LockSummaryCard>
-              </LockSummaryGrid>
-
-              <ButtonGroup
-                style={{
-                  justifyContent: 'center',
-                  marginTop: 24,
-                  maxWidth: 300,
-                  margin: '24px auto 0'
-                }}
-              >
-                <SecondaryBtn onClick={handleReset}>
-                  List Another Token
-                </SecondaryBtn>
-              </ButtonGroup>
-            </SuccessBox>
-          </ContentBox>
-        </PageContainer>
+      <Page $max={760}>
+        {header}
+        <Card
+          style={{
+            padding: 24,
+            alignItems: 'center',
+            textAlign: 'center',
+            gap: 14
+          }}
+        >
+          <SuccessIcon>
+            <svg
+              width="28"
+              height="28"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </SuccessIcon>
+          <span
+            style={{
+              fontFamily: 'Space Grotesk',
+              fontSize: 22,
+              fontWeight: 600
+            }}
+          >
+            Fee paid and liquidity locked
+          </span>
+          <span
+            style={{
+              fontSize: 14,
+              color: C.secondary,
+              maxWidth: 440,
+              lineHeight: 1.55
+            }}
+          >
+            Your {done.sym}/WLUNES LP tokens are held by the LiquidityLock
+            contract until{' '}
+            {done.unlockAt
+              ? fmtDate(new Date(done.unlockAt))
+              : `${done.lock} days from now`}
+            ; only your wallet can withdraw them after that. {done.sym} becomes
+            tradable on Lunex once the listing is activated.
+          </span>
+          <DoneGrid>
+            <StatCard style={{ padding: '14px 16px' }}>
+              <StatLabel>Tier</StatLabel>
+              <StatValue style={{ fontSize: 20, color: C.primaryText2 }}>
+                {done.tier}
+              </StatValue>
+            </StatCard>
+            <StatCard style={{ padding: '14px 16px' }}>
+              <StatLabel>Status</StatLabel>
+              <StatValue style={{ fontSize: 20, color: C.warning }}>
+                Pending activation
+              </StatValue>
+            </StatCard>
+            <StatCard style={{ padding: '14px 16px' }}>
+              <StatLabel>LUNES in locked LP</StatLabel>
+              <StatValue style={{ fontSize: 20 }}>
+                <AnimatedNumber value={done.lunes} format={fmt} />
+              </StatValue>
+            </StatCard>
+          </DoneGrid>
+          {done.onChainId >= 0 && (
+            <Muted $size={12}>
+              On-chain listing #{done.onChainId}
+              {done.txHash ? ` · tx ${shortHash(done.txHash)}` : ''}
+              {done.id ? ` · ID ${done.id}` : ''}
+            </Muted>
+          )}
+          <Row $gap={8} $wrap $justify="center">
+            <Button variant="secondary" size="lg" onClick={reset}>
+              Submit another token
+            </Button>
+            <Button
+              variant="ghost"
+              size="lg"
+              onClick={() => navigate('/governance')}
+            >
+              Go to governance
+            </Button>
+          </Row>
+        </Card>
       </Page>
     )
   }
 
   return (
-    <Page>
-      <PageContainer>
-        <HeroBanner>
-          <Title>
-            <span>List Your Token</span>
-          </Title>
-          <Subtitle>
-            Secure listing with locked liquidity. Prevent rug pulls and build
-            trust with LUNES holders.
-          </Subtitle>
-        </HeroBanner>
-        <ContentBox>
-          {!sdk.isConnected ? (
-            <ConnectPrompt>
-              <p>Connect your wallet to list a token on Lunex DEX</p>
-              <PrimaryBtn onClick={() => sdk.connectWallet()}>
-                Connect Wallet
-              </PrimaryBtn>
-            </ConnectPrompt>
-          ) : (
-            <>
-              <StepsIndicator>
-                {STEPS.map((label, i) => {
-                  const stepNum = i + 1
-                  const isActive = currentStep === stepNum
-                  const isCompleted = currentStep > stepNum
-                  return (
-                    <React.Fragment key={stepNum}>
-                      <StepWrapper>
-                        <Step $active={isActive} $completed={isCompleted}>
-                          {isCompleted ? '✓' : stepNum}
-                        </Step>
-                        <StepLabel>{label}</StepLabel>
-                      </StepWrapper>
-                      {i < STEPS.length - 1 && (
-                        <StepLine $completed={isCompleted} />
+    <Page $max={760}>
+      {header}
+
+      {!configured && (
+        <Notice $tone="warning" role="status">
+          <AlertTriangle size={16} />
+          {CONTRACT_MISSING}
+        </Notice>
+      )}
+      {configured && paused && (
+        <Notice $tone="warning" role="status">
+          <AlertTriangle size={16} />
+          Listings are paused on-chain. You can prepare your application, but
+          payment is disabled until the contract is unpaused.
+        </Notice>
+      )}
+
+      <TabPanel key={step}>
+        {step === 1 && (
+          <>
+            <TierGrid role="radiogroup" aria-label="Listing tier">
+              {TIERS.map(t => {
+                const v = viewOf(t.n)
+                return (
+                  <TierBtn
+                    key={t.key}
+                    role="radio"
+                    aria-checked={t.key === tierKey}
+                    $on={t.key === tierKey}
+                    onClick={() => setTierKey(t.key)}
+                  >
+                    <Row $justify="space-between">
+                      <TierKicker>TIER {t.n}</TierKicker>
+                      {t.key === tierKey && (
+                        <Check size={16} color={C.primaryText} />
                       )}
-                    </React.Fragment>
-                  )
-                })}
-              </StepsIndicator>
+                    </Row>
+                    <TierName>{t.label}</TierName>
+                    <TierDesc>{t.desc}</TierDesc>
+                    <TierFacts>
+                      <span>
+                        <span>Listing fee</span>
+                        <span>{feeLabel(v)}</span>
+                      </span>
+                      <span>
+                        <span>Min. LUNES locked</span>
+                        <span>{v ? `${fmt(v.min)} LUNES` : '—'}</span>
+                      </span>
+                      <span>
+                        <span>Lock period</span>
+                        <span>{v ? `${v.lock} days` : '—'}</span>
+                      </span>
+                    </TierFacts>
+                  </TierBtn>
+                )
+              })}
+            </TierGrid>
+            <RowsCard>
+              <RowsTitle>Fee distribution</RowsTitle>
+              <KvRow>
+                <span>Listing fee</span>
+                <span>{feeLabel(view)}</span>
+              </KvRow>
+              <KvRow>
+                <span>→ Staking rewards (20%)</span>
+                <span>
+                  {view
+                    ? `${fmt(splitOf(view.fee, SPLIT.staking))} ${feeSymbol}`
+                    : '—'}
+                </span>
+              </KvRow>
+              <KvRow>
+                <span>→ Treasury (50%)</span>
+                <span>
+                  {view
+                    ? `${fmt(splitOf(view.fee, SPLIT.treasury))} ${feeSymbol}`
+                    : '—'}
+                </span>
+              </KvRow>
+              <KvRow>
+                <span>→ Rewards pool (30%)</span>
+                <span>
+                  {view
+                    ? `${fmt(splitOf(view.fee, SPLIT.rewards))} ${feeSymbol}`
+                    : '—'}
+                </span>
+              </KvRow>
+              <KvRow>
+                <span>Minimum LUNES in locked LP</span>
+                <span>{view ? `${fmt(view.min)} LUNES` : '—'}</span>
+              </KvRow>
+              <KvRow>
+                <span>Lock duration</span>
+                <span>{view ? `${view.lock} days` : '—'}</span>
+              </KvRow>
+              <KvRow>
+                <span>Estimated unlock</span>
+                <span>{unlock}</span>
+              </KvRow>
+            </RowsCard>
+            {!chainTiers && view && (
+              <Muted $size={12}>
+                Showing the Lunex API tier config. The listing contract sets the
+                final amounts at payment.
+              </Muted>
+            )}
+            {stats && (
+              <Muted $size={12}>
+                {fmt(stats.totalActiveLocks)} pools with locked liquidity ·{' '}
+                {fmt(parseFloat(stats.totalLockedLunes) || 0)} LUNES locked
+              </Muted>
+            )}
+          </>
+        )}
 
-              {currentStep === 1 && renderStep1()}
-              {currentStep === 2 && renderStep2()}
-              {currentStep === 3 && renderStep3()}
-              {currentStep === 4 && renderStep4()}
+        {step === 2 && (
+          <>
+            <FormGrid>
+              <Field
+                label="Contract address"
+                name="tokenAddress"
+                value={form.tokenAddress}
+                onChange={onChange}
+                placeholder="5F…"
+                error={!!tokenAddr && !looksLikeAddress(tokenAddr)}
+                hint={
+                  tokenAddr && !looksLikeAddress(tokenAddr)
+                    ? 'Not a valid address'
+                    : undefined
+                }
+              />
+              <Field
+                label="Token name"
+                name="tokenName"
+                value={form.tokenName}
+                onChange={onChange}
+                placeholder="Lunes Gold"
+              />
+              <Field
+                label="Symbol"
+                name="tokenSymbol"
+                value={form.tokenSymbol}
+                onChange={onChange}
+                placeholder="LGLD"
+              />
+              <Field
+                label="Token decimals"
+                name="tokenDecimals"
+                value={form.tokenDecimals}
+                onChange={onChange}
+                placeholder="Read from chain"
+                inputMode="numeric"
+                error={!!form.tokenDecimals && !decOk}
+              />
+            </FormGrid>
 
-              <ButtonGroup>
-                {currentStep > 1 && (
-                  <SecondaryBtn onClick={() => setCurrentStep(s => s - 1)}>
-                    Back
-                  </SecondaryBtn>
-                )}
-                {currentStep < 4 ? (
-                  <PrimaryBtn
-                    onClick={() => setCurrentStep(s => s + 1)}
-                    disabled={!validateStep(currentStep)}
+            <RowsCard>
+              <RowsTitle>Liquidity to lock</RowsTitle>
+              {!wallet ? (
+                <Muted $size={13}>
+                  Connect your wallet to read your {form.tokenSymbol || 'TOKEN'}
+                  /WLUNES LP position.
+                </Muted>
+              ) : !looksLikeAddress(tokenAddr) ? (
+                <Muted $size={13}>
+                  Enter the token contract address to find its WLUNES pool.
+                </Muted>
+              ) : pos.status === 'loading' || pos.status === 'idle' ? (
+                <Muted $size={13}>Reading your LP position…</Muted>
+              ) : pos.status === 'error' ? (
+                <Row $gap={8} $wrap>
+                  <Muted $size={13}>Could not read the pool.</Muted>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPosTick(n => n + 1)}
                   >
-                    Continue
-                  </PrimaryBtn>
+                    Retry
+                  </Button>
+                </Row>
+              ) : pos.status === 'nopair' || pos.status === 'nolp' ? (
+                <Col $gap={8}>
+                  <Muted $size={13}>
+                    {pos.status === 'nopair'
+                      ? `There is no ${form.tokenSymbol || 'TOKEN'}/WLUNES pool yet.`
+                      : `You have no LP tokens in the ${form.tokenSymbol || 'TOKEN'}/WLUNES pool.`}{' '}
+                    Listing locks your pool liquidity, so add liquidity first.
+                  </Muted>
+                  <Row $gap={8} $wrap>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => navigate(poolLink)}
+                    >
+                      Add liquidity
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setPosTick(n => n + 1)}
+                    >
+                      Refresh
+                    </Button>
+                  </Row>
+                </Col>
+              ) : (
+                <>
+                  <KvRow>
+                    <span>Pool</span>
+                    <span style={{ fontFamily: 'ui-monospace, monospace' }}>
+                      {pos.pair}
+                    </span>
+                  </KvRow>
+                  <KvRow>
+                    <span>LP tokens to lock (your full balance)</span>
+                    <span>{pos.lp.toString()}</span>
+                  </KvRow>
+                  <KvRow>
+                    <span>LUNES in your share</span>
+                    <span>{fmt(lunes)} LUNES</span>
+                  </KvRow>
+                  <KvRow>
+                    <span>{form.tokenSymbol || 'Tokens'} in your share</span>
+                    <span>{decOk ? fmt(tokens) : '—'}</span>
+                  </KvRow>
+                </>
+              )}
+            </RowsCard>
+            {lowLiq && view && (
+              <Notice $tone="warning" role="alert">
+                <AlertTriangle size={16} />
+                Minimum {fmt(view.min)} LUNES required for the {tier.label}{' '}
+                tier. Your LP holds {fmt(lunes)}.{' '}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate(poolLink)}
+                >
+                  Add liquidity
+                </Button>
+              </Notice>
+            )}
+          </>
+        )}
+
+        {step === 3 && (
+          <Card style={{ padding: 18 }}>
+            <FieldWrap>
+              <Label>Token logo</Label>
+              <DropZone
+                $has={!!logoFile}
+                role="button"
+                tabIndex={0}
+                onClick={() => logoInputRef.current?.click()}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    logoInputRef.current?.click()
+                  }
+                }}
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => {
+                  e.preventDefault()
+                  const file = e.dataTransfer.files?.[0]
+                  if (file) pickLogo(file)
+                }}
+              >
+                {logoPreview ? (
+                  <img src={logoPreview} alt="Token logo preview" />
                 ) : (
-                  <PrimaryBtn
-                    onClick={handleSubmit}
-                    disabled={isSubmitting || !validateStep(2)}
-                  >
-                    {isSubmitting
-                      ? 'Submitting...'
-                      : `Submit Listing (${tier.listingFee.toLocaleString()} LUNES Fee)`}
-                  </PrimaryBtn>
+                  <ImagePlus size={22} color={C.muted} />
                 )}
-              </ButtonGroup>
-            </>
-          )}
-        </ContentBox>
-      </PageContainer>
+                <Col $gap={2} style={{ flex: 1 }}>
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>
+                    {logoFile
+                      ? logoFile.name
+                      : 'Drag & drop or click to upload'}
+                  </span>
+                  <Muted $size={12}>
+                    {logoFile
+                      ? `${(logoFile.size / 1024).toFixed(1)} KB`
+                      : 'SVG, PNG or WebP · max 200 KB · 256×256 recommended'}
+                  </Muted>
+                </Col>
+                {logoFile && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Remove logo"
+                    onClick={e => {
+                      e.stopPropagation()
+                      setLogoFile(null)
+                      setLogoPreview(null)
+                    }}
+                  >
+                    <X size={16} />
+                  </Button>
+                )}
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept=".svg,.png,.webp,image/svg+xml,image/png,image/webp"
+                  style={{ display: 'none' }}
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (file) pickLogo(file)
+                    e.target.value = ''
+                  }}
+                />
+              </DropZone>
+              {logoError && <Hint $error>{logoError}</Hint>}
+            </FieldWrap>
+            <Field
+              label="Website"
+              name="website"
+              value={form.website}
+              onChange={onChange}
+              placeholder="https://"
+            />
+            <Field
+              label="X / Twitter"
+              name="twitter"
+              value={form.twitter}
+              onChange={onChange}
+              placeholder="@project"
+            />
+            <Field
+              label="Telegram"
+              name="telegram"
+              value={form.telegram}
+              onChange={onChange}
+              placeholder="t.me/project"
+            />
+            <FieldWrap>
+              <Label htmlFor="lst-description">Project description</Label>
+              <Textarea
+                id="lst-description"
+                name="description"
+                rows={3}
+                value={form.description}
+                onChange={onChange}
+                placeholder="What the token does and who it is for"
+              />
+            </FieldWrap>
+          </Card>
+        )}
+
+        {step === 4 && (
+          <>
+            <RowsCard>
+              <RowsTitle>Review</RowsTitle>
+              <KvRow>
+                <span>Token</span>
+                <span>
+                  {form.tokenName || '—'} ({form.tokenSymbol || '—'})
+                </span>
+              </KvRow>
+              <KvRow>
+                <span>Contract</span>
+                <span style={{ fontFamily: 'ui-monospace, monospace' }}>
+                  {tokenAddr || '—'}
+                </span>
+              </KvRow>
+              <KvRow>
+                <span>Tier</span>
+                <span style={{ color: C.primaryText2 }}>
+                  {tier.label} (Tier {tier.n})
+                </span>
+              </KvRow>
+              <KvRow>
+                <span>LP tokens to lock</span>
+                <span>{lpOk ? pos.lp.toString() : '—'}</span>
+              </KvRow>
+              <KvRow>
+                <span>LUNES in locked LP</span>
+                <span>{fmt(lunes)} LUNES</span>
+              </KvRow>
+              <KvRow>
+                <span>Tokens in locked LP</span>
+                <span>
+                  {fmt(tokens)} {form.tokenSymbol}
+                </span>
+              </KvRow>
+              <KvRow>
+                <span>Lock duration</span>
+                <span>{view ? `${view.lock} days` : '—'}</span>
+              </KvRow>
+              <KvRow>
+                <span>Estimated unlock</span>
+                <span>{unlock}</span>
+              </KvRow>
+              <KvRow>
+                <span>Listing fee (paid now)</span>
+                <span style={{ fontWeight: 600 }}>{feeLabel(view)}</span>
+              </KvRow>
+              {feeBalance !== null && feeDecimals !== null && (
+                <KvRow>
+                  <span>Your {feeSymbol} balance</span>
+                  <span
+                    style={feeShort ? { color: C.criticalText } : undefined}
+                  >
+                    {fmt(toNum(feeBalance, feeDecimals))} {feeSymbol}
+                  </span>
+                </KvRow>
+              )}
+              {configured && (
+                <KvRow>
+                  <span>Listing contract</span>
+                  <span style={{ fontFamily: 'ui-monospace, monospace' }}>
+                    {LISTING_MANAGER_ADDRESS}
+                  </span>
+                </KvRow>
+              )}
+            </RowsCard>
+            <RowsCard>
+              <RowsTitle>What happens on submit</RowsTitle>
+              <KvRow>
+                <span>1. Approve the listing fee and LP tokens</span>
+                <span>Wallet, if needed</span>
+              </KvRow>
+              <KvRow>
+                <span>
+                  2. One tx: fee paid (20/50/30 split), LP moved into the lock
+                </span>
+                <span>On finalization</span>
+              </KvRow>
+              <KvRow>
+                <span>3. Listing registered with Lunex</span>
+                <span>Signed message</span>
+              </KvRow>
+              <KvRow>
+                <span>4. Lock period after activation</span>
+                <span>{view ? `${view.lock} days` : '—'}</span>
+              </KvRow>
+            </RowsCard>
+            {feeShort && (
+              <Notice $tone="warning" role="alert">
+                <AlertTriangle size={16} />
+                The listing fee is paid in {feeSymbol}. Wrap or acquire enough{' '}
+                {feeSymbol} before submitting.
+              </Notice>
+            )}
+            {submitError && (
+              <Notice $tone="critical" role="alert">
+                <AlertTriangle size={16} />
+                {submitError}
+              </Notice>
+            )}
+          </>
+        )}
+      </TabPanel>
+
+      <Nav>
+        {step > 1 && (
+          <Button
+            variant="secondary"
+            size="xl"
+            onClick={() => setStep(step - 1)}
+          >
+            Back
+          </Button>
+        )}
+        <Button size="xl" block disabled={!cta.ok} onClick={cta.on}>
+          {cta.label}
+        </Button>
+      </Nav>
     </Page>
   )
 }

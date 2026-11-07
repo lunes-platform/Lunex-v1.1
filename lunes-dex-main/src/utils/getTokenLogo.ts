@@ -13,9 +13,9 @@ const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 const logoCache = new Map<string, string>()
 
 const KNOWN_LOGOS: Record<string, string> = {
-  LUNES: '/img/lunes-logo.svg',
-  WLUNES: '/img/lunes-logo.svg',
-  LUSDT: '/img/lusdt.svg',
+  LUNES: '/img/lunes-green.svg',
+  WLUNES: '/img/lunes-green.svg',
+  LUSDT: '/img/lusdt.png',
   GMC: '/img/gmc.svg',
   LETH: '/img/leth.svg',
   LBTC: '/img/lbtc.svg'

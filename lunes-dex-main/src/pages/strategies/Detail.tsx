@@ -1,389 +1,221 @@
-import React, { useEffect, useState, useCallback } from 'react'
+/**
+ * Strategy detail (prototype STRATEGY DETAIL): performance, risk metrics,
+ * manager and on-chain vault.
+ *
+ * Real data: `strategyService.getStrategy`, `getPerformanceHistory`,
+ * `getFollowedStrategies`, `followStrategy` / `unfollowStrategy`.
+ */
+import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import styled from 'styled-components'
+import { Copy, ExternalLink } from 'lucide-react'
 import {
-  AreaChart,
   Area,
-  XAxis,
-  YAxis,
+  AreaChart,
   CartesianGrid,
+  ResponsiveContainer,
   Tooltip,
-  ResponsiveContainer
+  XAxis,
+  YAxis
 } from 'recharts'
+import {
+  Badge,
+  Button,
+  C,
+  Card,
+  Col,
+  Empty,
+  H1,
+  LinkButton,
+  Page,
+  Row,
+  SkeletonLine,
+  Spinner,
+  StatCard,
+  StatLabel,
+  StatValue,
+  Tabs,
+  grotesk,
+  short,
+  tabular
+} from 'components/ui/kit'
+import { AnimatedNumber } from 'components/ui/AnimatedNumber'
+import { useToast } from 'components/feedback/ToastProvider'
 import strategyService, {
   Strategy,
   StrategyPerformancePoint
 } from '../../services/strategyService'
 import { useSDK } from '../../context/SDKContext'
+import { useReadSession } from '../../hooks/useReadSession'
+import {
+  BackLink,
+  RISK_STYLE,
+  RiskTag,
+  TYPE_LABEL,
+  TypeLabel,
+  errMsg,
+  fmtCount,
+  fmtPct,
+  fmtUsd,
+  roiColor
+} from './shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
+
+type DayRange = '7' | '30' | '90'
+type Metric = 'equity' | 'roi'
+
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
 // ─── Styled ──────────────────────────────────────────────────────
 
-const Page = styled.div`
-  min-height: 100vh;
-  background: #1a1a1a;
-  padding: 84px 24px 64px;
-`
-
-const Container = styled.div`
-  max-width: 1100px;
-  margin: 0 auto;
-`
-
-const BackBtn = styled.button`
-  background: none;
-  border: none;
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  cursor: pointer;
-  padding: 0;
-  margin-bottom: 20px;
+const Head = styled.div`
   display: flex;
-  align-items: center;
-  gap: 6px;
-  &:hover {
-    color: #ffffff;
-  }
-`
-
-const TopGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 24px;
-  align-items: flex-start;
-  margin-bottom: 28px;
-  @media (max-width: 700px) {
-    grid-template-columns: 1fr;
-  }
-`
-
-const Name = styled.h1`
-  margin: 0 0 8px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 34px;
-  font-weight: 700;
-  color: #ffffff;
-  line-height: 1.2;
-`
-
-const ChipRow = styled.div`
-  display: flex;
-  gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  @media (max-width: 759px) {
+    > button {
+      width: 100%;
+    }
+  }
 `
 
-const Chip = styled.span<{ color?: string; bg?: string }>`
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: ${({ color }) => color ?? '#8A8A8E'};
-  background: ${({ bg }) => bg ?? 'rgba(255,255,255,0.06)'};
-  border: 1px solid ${({ color }) => (color ? color + '33' : '#2A2A2C')};
-`
-
-const Description = styled.p`
+const Lead = styled.p`
   margin: 0;
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
-  max-width: 600px;
+  color: ${C.body};
+  max-width: 720px;
 `
 
-const ROIPanel = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 20px;
-  padding: 24px 28px;
-  min-width: 220px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: center;
-`
-
-const ROILabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  color: #8a8a8e;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-`
-
-const ROIValue = styled.div<{ positive: boolean }>`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 42px;
-  font-weight: 700;
-  color: ${({ positive }) => (positive ? '#26D07C' : '#FF4D4D')};
-  line-height: 1;
-`
-
-const ROISub = styled.div`
+const Stats = styled.div`
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0;
-  width: 100%;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  overflow: hidden;
-  margin-top: 4px;
-`
-
-const ROISubItem = styled.div`
-  padding: 8px 10px;
-  border-right: 1px solid #2a2a2c;
-  text-align: center;
-  &:last-child {
-    border-right: none;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  @media (max-width: 759px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 `
 
-const ROISubValue = styled.div<{ positive?: boolean }>`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  font-weight: 600;
-  color: ${({ positive }) =>
-    positive === undefined ? '#FFFFFF' : positive ? '#26D07C' : '#FF4D4D'};
-`
-
-const ROISubLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 10px;
-  color: #8a8a8e;
-  margin-top: 2px;
-`
-
-const FollowBtn = styled.button<{ following?: boolean }>`
-  width: 100%;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid ${({ following }) => (following ? '#2A2A2C' : '#7461FF')};
-  background: ${({ following }) =>
-    following ? 'transparent' : 'rgba(116,97,255,0.12)'};
-  color: ${({ following }) => (following ? '#8A8A8E' : '#7461FF')};
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  margin-top: 8px;
-  &:hover:not(:disabled) {
-    background: ${({ following }) =>
-      following ? 'rgba(255,77,77,0.08)' : 'rgba(116,97,255,0.22)'};
-    border-color: ${({ following }) => (following ? '#FF4D4D' : '#7461FF')};
-    color: ${({ following }) => (following ? '#FF4D4D' : '#9983FF')};
-  }
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+const Stat = styled(StatCard)`
+  padding: 14px 16px;
+  border-radius: 14px;
+  ${StatValue} {
+    font-size: clamp(17px, 2.2vw, 22px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 `
 
-const Section = styled.div`
-  margin-bottom: 28px;
-`
-
-const SectionTitle = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
+const CardTitle = styled.span`
+  ${grotesk};
   font-weight: 600;
-  color: #8a8a8e;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 14px;
+  font-size: 15px;
 `
 
-const StatsGrid = styled.div`
+const Panels = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 12px;
 `
 
-const StatCard = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 14px;
+const ListCard = styled(Card)`
   padding: 16px;
-`
-
-const StatValue = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 20px;
-  font-weight: 700;
-  color: #ffffff;
-  margin-bottom: 4px;
-`
-
-const StatLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  color: #8a8a8e;
-`
-
-const ChartWrap = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 18px;
-  padding: 20px 20px 8px;
-`
-
-const ChartTabRow = styled.div`
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-`
-
-const ChartTab = styled.button<{ active?: boolean }>`
-  background: ${({ active }) =>
-    active ? 'rgba(116,97,255,0.14)' : 'transparent'};
-  border: 1px solid ${({ active }) => (active ? '#7461FF' : '#2A2A2C')};
-  border-radius: 8px;
-  color: ${({ active }) => (active ? '#7461FF' : '#8A8A8E')};
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 12px;
-  cursor: pointer;
-  transition: all 0.15s;
-  &:hover:not([disabled]) {
-    border-color: #7461ff;
-    color: #9983ff;
+  gap: 2px;
+  ${CardTitle} {
+    margin-bottom: 6px;
   }
 `
 
-const AgentCard = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 18px;
-  padding: 20px 24px;
+const Line = styled.div`
   display: flex;
-  gap: 16px;
+  justify-content: space-between;
   align-items: center;
-`
-
-const Avatar = styled.div<{ url?: string }>`
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: ${({ url }) =>
-    url
-      ? `url(${url}) center/cover`
-      : 'linear-gradient(135deg, #7461FF, #26D07C)'};
-  flex-shrink: 0;
-`
-
-const AgentInfo = styled.div`
-  flex: 1;
-`
-
-const AgentName = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 16px;
-  font-weight: 600;
-  color: #ffffff;
-  margin-bottom: 4px;
-`
-
-const AgentMeta = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  color: #8a8a8e;
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-`
-
-const Skeleton = styled.div`
-  background: linear-gradient(90deg, #232323 25%, #2a2a2a 50%, #232323 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-  border-radius: 18px;
-  @keyframes shimmer {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
+  gap: 12px;
+  padding: 7px 0;
+  font-size: 13px;
+  & + & {
+    border-top: 1px solid ${C.border};
+  }
+  > span:first-child {
+    color: ${C.muted};
+  }
+  > span:last-child {
+    font-weight: 500;
+    text-align: right;
+    ${tabular};
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 `
 
-const ErrorMsg = styled.div`
-  text-align: center;
-  color: #ff4d4d;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 15px;
-  padding: 64px 24px;
-`
-
-// ─── Helpers ─────────────────────────────────────────────────────
-
-const RISK_COLORS: Record<string, { color: string; bg: string }> = {
-  LOW: { color: '#26D07C', bg: 'rgba(38,208,124,0.1)' },
-  MEDIUM: { color: '#FE923F', bg: 'rgba(254,146,63,0.1)' },
-  HIGH: { color: '#FF6B6B', bg: 'rgba(255,107,107,0.1)' },
-  AGGRESSIVE: { color: '#FF4D4D', bg: 'rgba(255,77,77,0.1)' }
-}
-
-const TYPE_COLORS: Record<string, string> = {
-  COPYTRADE: '#26D07C',
-  MARKET_MAKER: '#FE923F',
-  ARBITRAGE: '#7461FF',
-  MOMENTUM: '#4DACFF',
-  HEDGE: '#B0B0B0',
-  CUSTOM: '#8A8A8E'
-}
-
-function fmtRoi(v: number, pct = true): string {
-  const sign = v >= 0 ? '+' : ''
-  return pct ? `${sign}${(v * 100).toFixed(2)}%` : `${sign}${v.toFixed(4)}`
-}
-
-function fmtUSD(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`
-  return `$${n.toFixed(0)}`
-}
-
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric'
-  })
-}
-
-type DayRange = 7 | 30 | 90
-
-// ─── Custom Tooltip ──────────────────────────────────────────────
-
-const TooltipBox = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-family: 'Space Grotesk', sans-serif;
+const Mono = styled.span`
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 `
 
-function CustomTooltip({ active, payload }: any) {
+const CopyBtn = styled.button`
+  border: none;
+  background: none;
+  padding: 2px;
+  color: ${C.muted};
+  display: inline-flex;
+  &:hover {
+    color: ${C.text};
+  }
+`
+
+const ChartHead = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+`
+
+const ChartEmpty = styled.div`
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: ${C.muted};
+  font-size: 14px;
+`
+
+const TipBox = styled.div`
+  background: ${C.surface};
+  border: 1px solid ${C.borderStrong};
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  ${tabular};
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+`
+
+type TipProps = {
+  active?: boolean
+  payload?: Array<{ payload: StrategyPerformancePoint }>
+}
+
+const ChartTip: React.FC<TipProps> = ({ active, payload }) => {
   if (!active || !payload?.length) return null
-  const p = payload[0].payload as StrategyPerformancePoint
+  const p = payload[0].payload
   return (
-    <TooltipBox>
-      <div style={{ color: '#8A8A8E', marginBottom: 4 }}>{fmtDate(p.date)}</div>
-      <div style={{ color: p.roi >= 0 ? '#26D07C' : '#FF4D4D' }}>
-        ROI {fmtRoi(p.roi)}
-      </div>
-      <div style={{ color: '#CCCCCC' }}>Equity {fmtUSD(p.equity)}</div>
-      <div style={{ color: '#8A8A8E' }}>Trades {p.trades}</div>
-    </TooltipBox>
+    <TipBox>
+      <span style={{ color: C.muted }}>{fmtDate(p.date)}</span>
+      <span style={{ color: roiColor(p.roi) }}>ROI {fmtPct(p.roi, 2)}</span>
+      <span>Equity {fmtUsd(p.equity)}</span>
+      <span style={{ color: C.muted }}>Trades {p.trades}</span>
+    </TipBox>
   )
 }
 
@@ -393,15 +225,17 @@ const StrategyDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { walletAddress, signMessage } = useSDK()
+  const { hasSession } = useReadSession()
+  const { toast } = useToast()
 
   const [strategy, setStrategy] = useState<Strategy | null>(null)
   const [history, setHistory] = useState<StrategyPerformancePoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [dayRange, setDayRange] = useState<DayRange>(30)
+  const [range, setRange] = useState<DayRange>('30')
+  const [metric, setMetric] = useState<Metric>('equity')
   const [following, setFollowing] = useState(false)
-  const [followLoading, setFollowLoading] = useState(false)
-  const [chartMetric, setChartMetric] = useState<'roi' | 'equity'>('equity')
+  const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     if (!id) return
@@ -410,60 +244,60 @@ const StrategyDetail: React.FC = () => {
     try {
       const [s, h] = await Promise.all([
         strategyService.getStrategy(id),
-        strategyService.getPerformanceHistory(id, dayRange)
+        strategyService.getPerformanceHistory(id, 30)
       ])
       setStrategy(s)
       setHistory(h)
-    } catch (e: any) {
-      setError(e.message ?? 'Failed to load strategy')
+      setRange('30')
+    } catch (e: unknown) {
+      setError(errMsg(e, 'Failed to load strategy'))
     } finally {
       setLoading(false)
     }
-  }, [id, dayRange])
+  }, [id])
 
   useEffect(() => {
     load()
   }, [load])
 
   useEffect(() => {
-    if (!id || !walletAddress) return
-    strategyService
-      .getFollowedStrategies(walletAddress, signMessage)
-      .then(followed => setFollowing(followed.some(s => s.id === id)))
-      .catch(() => {})
-  }, [id, walletAddress, signMessage])
-
-  const reloadHistory = useCallback(
-    async (days: DayRange) => {
-      if (!id) return
-      setDayRange(days)
-      try {
-        const h = await strategyService.getPerformanceHistory(id, days)
-        setHistory(h)
-      } catch {
-        // Ignore transient history reload failures; keep previous chart data.
-      }
-    },
-    [id]
-  )
-
-  const handleFollow = async () => {
-    if (!strategy) return
-    if (!walletAddress) {
-      alert('Connect your wallet to follow strategies.')
+    if (!id || !walletAddress) {
+      setFollowing(false)
       return
     }
-    setFollowLoading(true)
+    // Private read via the read session — never prompts the wallet.
+    strategyService
+      .getFollowedStrategies(walletAddress)
+      .then(list => setFollowing(list.some(s => s.id === id)))
+      .catch(() => {})
+  }, [id, walletAddress, hasSession])
+
+  const changeRange = async (d: DayRange) => {
+    if (!id) return
+    setRange(d)
     try {
-      if (following) {
+      setHistory(await strategyService.getPerformanceHistory(id, Number(d)))
+    } catch {
+      // keep the previous chart data on a transient failure
+    }
+  }
+
+  const toggleFollow = async () => {
+    if (!strategy) return
+    if (!walletAddress) {
+      requestWalletConnect().catch((e: unknown) =>
+        toast('error', 'Could not connect wallet', errMsg(e, ''))
+      )
+      return
+    }
+    const was = following
+    setBusy(true)
+    try {
+      if (was) {
         await strategyService.unfollowStrategy(
           strategy.id,
           walletAddress,
           signMessage
-        )
-        setFollowing(false)
-        setStrategy(s =>
-          s ? { ...s, followersCount: Math.max(0, s.followersCount - 1) } : s
         )
       } else {
         await strategyService.followStrategy(
@@ -471,365 +305,372 @@ const StrategyDetail: React.FC = () => {
           walletAddress,
           signMessage
         )
-        setFollowing(true)
-        setStrategy(s =>
-          s ? { ...s, followersCount: s.followersCount + 1 } : s
-        )
       }
-    } catch (e: any) {
-      alert(e.message)
+      setFollowing(!was)
+      setStrategy(s =>
+        s
+          ? {
+              ...s,
+              followersCount: Math.max(0, s.followersCount + (was ? -1 : 1))
+            }
+          : s
+      )
+      toast(
+        was ? 'info' : 'success',
+        was ? 'Unfollowed' : 'Following strategy',
+        strategy.name
+      )
+    } catch (e: unknown) {
+      const msg = errMsg(e, 'Please try again.')
+      if (/cancel|reject|denied/i.test(msg)) {
+        toast('warning', 'Request rejected', 'Nothing was signed.')
+      } else {
+        toast('error', was ? 'Could not unfollow' : 'Could not follow', msg)
+      }
     } finally {
-      setFollowLoading(false)
+      setBusy(false)
     }
   }
 
+  const copy = (text: string) => {
+    navigator.clipboard
+      ?.writeText(text)
+      .then(() =>
+        toast('success', 'Copied to clipboard', undefined, { silent: true })
+      )
+      .catch(() =>
+        toast('error', 'Could not copy', undefined, { silent: true })
+      )
+  }
+
+  const back = (
+    <BackLink
+      label="Strategy marketplace"
+      onClick={() => navigate('/strategies')}
+    />
+  )
+
   if (loading) {
     return (
-      <Page>
-        <Container>
-          <Skeleton style={{ height: 48, width: 200, marginBottom: 24 }} />
-          <Skeleton style={{ height: 320, marginBottom: 20 }} />
-          <Skeleton style={{ height: 200 }} />
-        </Container>
+      <Page $max={1000} aria-busy="true">
+        {back}
+        <Col $gap={10}>
+          <SkeletonLine $w="160px" $h={14} />
+          <SkeletonLine $w="320px" $h={34} />
+          <SkeletonLine $w="140px" $h={14} />
+        </Col>
+        <SkeletonLine $h={18} $w="70%" />
+        <Stats>
+          {[0, 1, 2, 3].map(i => (
+            <SkeletonLine key={i} $h={72} />
+          ))}
+        </Stats>
+        <SkeletonLine $h={260} />
       </Page>
     )
   }
 
   if (error || !strategy) {
     return (
-      <Page>
-        <Container>
-          <BackBtn onClick={() => navigate('/strategies')}>
-            ← Back to Marketplace
-          </BackBtn>
-          <ErrorMsg>{error ?? 'Strategy not found'}</ErrorMsg>
-        </Container>
+      <Page $max={1000}>
+        {back}
+        <Empty role="alert">
+          <h3>Strategy not available</h3>
+          <span>{error ?? 'This strategy could not be found.'}</span>
+          <Row $gap={8} $justify="center">
+            <Button variant="secondary" size="sm" onClick={load}>
+              Try again
+            </Button>
+            <Button size="sm" onClick={() => navigate('/strategies')}>
+              Browse strategies
+            </Button>
+          </Row>
+        </Empty>
       </Page>
     )
   }
 
-  const risk = RISK_COLORS[strategy.riskLevel] ?? RISK_COLORS.MEDIUM
-  const typeColor = TYPE_COLORS[strategy.strategyType] ?? '#8A8A8E'
-
+  const s = strategy
+  const risk = RISK_STYLE[s.riskLevel] ?? RISK_STYLE.MEDIUM
+  const latest = history.length ? history[history.length - 1].roi : s.roi30d
+  const lineColor = latest >= 0 ? C.success : C.criticalText
   const chartData = history.map(p => ({
     ...p,
-    displayValue: chartMetric === 'roi' ? p.roi * 100 : p.equity,
-    positive: p.roi >= 0
+    v: metric === 'roi' ? p.roi * 100 : p.equity
   }))
-
-  const latestRoi =
-    history.length > 0 ? history[history.length - 1].roi : strategy.roi30d
-  const chartColor = latestRoi >= 0 ? '#26D07C' : '#FF4D4D'
+  const isAi =
+    s.leader?.isAi || (!!s.agent?.agentType && s.agent.agentType !== 'HUMAN')
+  const managerName = s.leader
+    ? s.leader.name || `@${s.leader.username}`
+    : s.agent
+      ? short(s.agent.walletAddress)
+      : '—'
 
   return (
-    <Page>
-      <Container>
-        <BackBtn onClick={() => navigate('/strategies')}>
-          ← Back to Marketplace
-        </BackBtn>
+    <Page $max={1000}>
+      {back}
 
-        {/* ─── Hero ─────────────────────────────────────── */}
-        <TopGrid>
-          <div>
-            <ChipRow>
-              <Chip color={typeColor} bg={typeColor + '18'}>
-                {strategy.strategyType.replace('_', ' ')}
-              </Chip>
-              <Chip color={risk.color} bg={risk.bg}>
-                {strategy.riskLevel}
-              </Chip>
-              <Chip
-                color={strategy.status === 'ACTIVE' ? '#26D07C' : '#FE923F'}
-                bg={
-                  strategy.status === 'ACTIVE'
-                    ? 'rgba(38,208,124,0.1)'
-                    : 'rgba(254,146,63,0.1)'
-                }
-              >
-                {strategy.status}
-              </Chip>
-              {strategy.leader?.isAi && (
-                <Chip color="#7461FF" bg="rgba(116,97,255,0.12)">
-                  AI Agent
-                </Chip>
-              )}
-              {strategy.leader?.isVerified && (
-                <Chip color="#26D07C" bg="rgba(38,208,124,0.08)">
-                  ✓ Verified
-                </Chip>
-              )}
-            </ChipRow>
-            <Name>{strategy.name}</Name>
-            {strategy.description && (
-              <Description>{strategy.description}</Description>
+      <Head>
+        <Col $gap={6}>
+          <Row $gap={8} $wrap>
+            <TypeLabel>
+              {TYPE_LABEL[s.strategyType] ?? s.strategyType}
+            </TypeLabel>
+            <RiskTag $risk={s.riskLevel}>{risk.label}</RiskTag>
+            {s.status !== 'ACTIVE' && (
+              <Badge $tone={s.status === 'PAUSED' ? 'warning' : 'neutral'}>
+                {s.status === 'PAUSED' ? 'Paused' : 'Archived'}
+              </Badge>
             )}
-          </div>
+            {s.leader?.isVerified && <Badge $tone="success">Verified</Badge>}
+          </Row>
+          <H1>{s.name}</H1>
+          <span style={{ fontSize: 14, color: C.muted }}>
+            by {managerName}
+            {isAi ? ' · AI agent' : ''}
+          </span>
+        </Col>
+        <Button
+          size="lg"
+          variant={following ? 'secondary' : 'primary'}
+          style={{ height: 46, fontSize: 15 }}
+          disabled={busy}
+          aria-pressed={following}
+          onClick={toggleFollow}
+        >
+          {busy ? (
+            <Spinner $size={16} />
+          ) : following ? (
+            'Following — unfollow'
+          ) : (
+            'Follow strategy'
+          )}
+        </Button>
+      </Head>
 
-          <ROIPanel>
-            <ROILabel>30d ROI</ROILabel>
-            <ROIValue positive={strategy.roi30d >= 0}>
-              {fmtRoi(strategy.roi30d)}
-            </ROIValue>
-            <ROISub>
-              <ROISubItem>
-                <ROISubValue positive={strategy.roi7d >= 0}>
-                  {fmtRoi(strategy.roi7d)}
-                </ROISubValue>
-                <ROISubLabel>7d</ROISubLabel>
-              </ROISubItem>
-              <ROISubItem>
-                <ROISubValue positive={strategy.roi1d >= 0}>
-                  {fmtRoi(strategy.roi1d)}
-                </ROISubValue>
-                <ROISubLabel>1d</ROISubLabel>
-              </ROISubItem>
-              <ROISubItem>
-                <ROISubValue>
-                  {strategy.followersCount.toLocaleString()}
-                </ROISubValue>
-                <ROISubLabel>Followers</ROISubLabel>
-              </ROISubItem>
-            </ROISub>
-            <FollowBtn
-              following={following}
-              disabled={followLoading}
-              onClick={handleFollow}
-            >
-              {followLoading
-                ? '…'
-                : following
-                  ? 'Following · Unfollow'
-                  : 'Follow Strategy'}
-            </FollowBtn>
-          </ROIPanel>
-        </TopGrid>
+      {s.description && <Lead>{s.description}</Lead>}
 
-        {/* ─── Performance Chart ────────────────────────── */}
-        <Section>
-          <SectionTitle>Performance</SectionTitle>
-          <ChartWrap>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 12
-              }}
-            >
-              <ChartTabRow>
-                <ChartTab
-                  active={chartMetric === 'equity'}
-                  onClick={() => setChartMetric('equity')}
-                >
-                  Equity Curve
-                </ChartTab>
-                <ChartTab
-                  active={chartMetric === 'roi'}
-                  onClick={() => setChartMetric('roi')}
-                >
-                  Daily ROI
-                </ChartTab>
-              </ChartTabRow>
-              <ChartTabRow>
-                {([7, 30, 90] as DayRange[]).map(d => (
-                  <ChartTab
-                    key={d}
-                    active={dayRange === d}
-                    onClick={() => reloadHistory(d)}
-                  >
-                    {d}D
-                  </ChartTab>
-                ))}
-              </ChartTabRow>
-            </div>
+      <Stats>
+        <Stat>
+          <StatLabel>ROI 30d</StatLabel>
+          <StatValue style={{ color: roiColor(s.roi30d) }}>
+            <AnimatedNumber text={fmtPct(s.roi30d)} />
+          </StatValue>
+        </Stat>
+        <Stat>
+          <StatLabel>Win rate</StatLabel>
+          <StatValue>
+            <AnimatedNumber text={fmtPct(s.winRate, 0, false)} />
+          </StatValue>
+        </Stat>
+        <Stat>
+          <StatLabel>Followers</StatLabel>
+          <StatValue>
+            <AnimatedNumber text={fmtCount(s.followersCount)} />
+          </StatValue>
+        </Stat>
+        <Stat>
+          <StatLabel>Vault AUM</StatLabel>
+          <StatValue>
+            <AnimatedNumber text={fmtUsd(s.vaultEquity)} />
+          </StatValue>
+        </Stat>
+      </Stats>
 
-            {chartData.length === 0 ? (
-              <div
-                style={{
-                  height: 200,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#8A8A8E',
-                  fontFamily: 'Space Grotesk',
-                  fontSize: '14px'
-                }}
+      <Card $pad={16} style={{ gap: 12 }}>
+        <ChartHead>
+          <CardTitle>Performance</CardTitle>
+          <Row $gap={8} $wrap>
+            <Tabs
+              items={[
+                { value: 'equity', label: 'Equity' },
+                { value: 'roi', label: 'Daily ROI' }
+              ]}
+              value={metric}
+              onChange={setMetric}
+              ariaLabel="Chart metric"
+            />
+            <Tabs
+              items={[
+                { value: '7', label: '7D' },
+                { value: '30', label: '30D' },
+                { value: '90', label: '90D' }
+              ]}
+              value={range}
+              onChange={changeRange}
+              ariaLabel="Chart range"
+            />
+          </Row>
+        </ChartHead>
+        {chartData.length === 0 ? (
+          <ChartEmpty>No performance data yet</ChartEmpty>
+        ) : (
+          <div style={{ width: '100%', height: 200 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart
+                data={chartData}
+                margin={{ top: 6, right: 4, bottom: 0, left: 0 }}
               >
-                No performance data yet
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <AreaChart
-                  data={chartData}
-                  margin={{ top: 4, right: 4, left: -10, bottom: 0 }}
-                >
-                  <defs>
-                    <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop
-                        offset="5%"
-                        stopColor={chartColor}
-                        stopOpacity={0.25}
-                      />
-                      <stop
-                        offset="95%"
-                        stopColor={chartColor}
-                        stopOpacity={0}
-                      />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2A2A2C" />
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={fmtDate}
-                    tick={{
-                      fill: '#8A8A8E',
-                      fontSize: 11,
-                      fontFamily: 'Space Grotesk'
-                    }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{
-                      fill: '#8A8A8E',
-                      fontSize: 11,
-                      fontFamily: 'Space Grotesk'
-                    }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v: number) =>
-                      chartMetric === 'roi' ? `${v.toFixed(1)}%` : fmtUSD(v)
-                    }
-                  />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Area
-                    type="monotone"
-                    dataKey="displayValue"
-                    stroke={chartColor}
-                    strokeWidth={2}
-                    fill="url(#chartGrad)"
-                    dot={false}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </ChartWrap>
-        </Section>
-
-        {/* ─── Risk Metrics ─────────────────────────────── */}
-        <Section>
-          <SectionTitle>Risk Metrics</SectionTitle>
-          <StatsGrid>
-            <StatCard>
-              <StatValue>{strategy.sharpeRatio.toFixed(2)}</StatValue>
-              <StatLabel>Sharpe Ratio</StatLabel>
-            </StatCard>
-            <StatCard>
-              <StatValue style={{ color: '#FF6B6B' }}>
-                -{(strategy.maxDrawdown * 100).toFixed(1)}%
-              </StatValue>
-              <StatLabel>Max Drawdown</StatLabel>
-            </StatCard>
-            <StatCard>
-              <StatValue style={{ color: '#26D07C' }}>
-                {(strategy.winRate * 100).toFixed(0)}%
-              </StatValue>
-              <StatLabel>Win Rate</StatLabel>
-            </StatCard>
-            <StatCard>
-              <StatValue>{strategy.totalTrades.toLocaleString()}</StatValue>
-              <StatLabel>Total Trades</StatLabel>
-            </StatCard>
-            <StatCard>
-              <StatValue>{fmtUSD(strategy.vaultEquity)}</StatValue>
-              <StatLabel>Vault AUM</StatLabel>
-            </StatCard>
-            <StatCard>
-              <StatValue>{fmtUSD(strategy.totalVolume)}</StatValue>
-              <StatLabel>Total Volume</StatLabel>
-            </StatCard>
-          </StatsGrid>
-        </Section>
-
-        {/* ─── Agent / Leader ───────────────────────────── */}
-        {(strategy.agent || strategy.leader) && (
-          <Section>
-            <SectionTitle>Strategy Manager</SectionTitle>
-            <AgentCard>
-              <Avatar url={strategy.leader?.avatar} />
-              <AgentInfo>
-                <AgentName>
-                  {strategy.leader
-                    ? `@${strategy.leader.username}`
-                    : strategy.agent?.walletAddress.slice(0, 12) + '…'}
-                </AgentName>
-                <AgentMeta>
-                  {strategy.agent?.agentType && (
-                    <span>{strategy.agent.agentType.replace('_', ' ')}</span>
-                  )}
-                  {strategy.agent?.framework && (
-                    <span>Framework: {strategy.agent.framework}</span>
-                  )}
-                  {strategy.agent && (
-                    <span style={{ color: '#7461FF' }}>
-                      Reputation{' '}
-                      {Number(strategy.agent.reputationScore).toFixed(0)}/100
-                    </span>
-                  )}
-                  {strategy.leader?.followersCount !== undefined && (
-                    <span>
-                      {strategy.leader.followersCount.toLocaleString()}{' '}
-                      followers
-                    </span>
-                  )}
-                  {strategy.vaultAddress && (
-                    <span title={strategy.vaultAddress}>
-                      Vault {strategy.vaultAddress.slice(0, 10)}…
-                    </span>
-                  )}
-                </AgentMeta>
-              </AgentInfo>
-              {strategy.leader && (
-                <div
-                  style={{
-                    color: '#7461FF',
-                    fontFamily: 'Space Grotesk',
-                    fontSize: '13px',
-                    cursor: 'pointer'
-                  }}
-                  onClick={() =>
-                    navigate(`/social/profile/${strategy.leader!.id}`)
+                <defs>
+                  <linearGradient id="stratPerf" x1="0" y1="0" x2="0" y2="1">
+                    <stop
+                      offset="0%"
+                      stopColor={lineColor}
+                      stopOpacity={0.22}
+                    />
+                    <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke={C.border} vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={fmtDate}
+                  tick={{ fill: C.muted, fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  minTickGap={24}
+                />
+                <YAxis
+                  width={52}
+                  tick={{ fill: C.muted, fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v: number) =>
+                    metric === 'roi' ? `${v.toFixed(1)}%` : fmtUsd(v)
                   }
-                >
-                  View Profile →
-                </div>
-              )}
-            </AgentCard>
-          </Section>
+                />
+                <Tooltip
+                  content={<ChartTip />}
+                  cursor={{ stroke: C.borderStrong }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="v"
+                  stroke={lineColor}
+                  strokeWidth={2}
+                  fill="url(#stratPerf)"
+                  dot={false}
+                  isAnimationActive
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         )}
+      </Card>
 
-        {/* ─── Vault info ───────────────────────────────── */}
-        {strategy.vaultAddress && (
-          <Section>
-            <SectionTitle>On-chain Vault</SectionTitle>
-            <div
-              style={{
-                background: '#232323',
-                border: '1px solid #2A2A2C',
-                borderRadius: 14,
-                padding: '16px 20px',
-                fontFamily: 'Space Grotesk',
-                fontSize: '13px',
-                color: '#8A8A8E',
-                wordBreak: 'break-all'
-              }}
+      <Panels>
+        <ListCard>
+          <CardTitle>Risk metrics</CardTitle>
+          <Line>
+            <span>Max drawdown</span>
+            <span style={{ color: C.warning }}>
+              −{(s.maxDrawdown * 100).toFixed(1)}%
+            </span>
+          </Line>
+          <Line>
+            <span>Sharpe ratio</span>
+            <span>{s.sharpeRatio.toFixed(2)}</span>
+          </Line>
+          <Line>
+            <span>ROI 7d</span>
+            <span style={{ color: roiColor(s.roi7d) }}>
+              {fmtPct(s.roi7d, 2)}
+            </span>
+          </Line>
+          <Line>
+            <span>ROI 24h</span>
+            <span style={{ color: roiColor(s.roi1d) }}>
+              {fmtPct(s.roi1d, 2)}
+            </span>
+          </Line>
+          <Line>
+            <span>Total trades</span>
+            <span>{s.totalTrades.toLocaleString('en-US')}</span>
+          </Line>
+        </ListCard>
+
+        <ListCard>
+          <CardTitle>Strategy manager</CardTitle>
+          <Line>
+            <span>Manager</span>
+            <span>{managerName}</span>
+          </Line>
+          <Line>
+            <span>Type</span>
+            <span>{isAi ? 'AI agent' : 'Human trader'}</span>
+          </Line>
+          {s.agent?.framework && (
+            <Line>
+              <span>Framework</span>
+              <span>{s.agent.framework}</span>
+            </Line>
+          )}
+          {s.agent && (
+            <Line>
+              <span>Reputation</span>
+              <span>{Number(s.agent.reputationScore).toFixed(0)}/100</span>
+            </Line>
+          )}
+          <Line>
+            <span>Live since</span>
+            <span>
+              {new Date(s.createdAt).toLocaleDateString('en-US', {
+                month: 'short',
+                year: 'numeric'
+              })}
+            </span>
+          </Line>
+          {s.leader && (
+            <LinkButton
+              style={{ marginTop: 8, alignSelf: 'flex-start' }}
+              onClick={() => navigate(`/social/profile/${s.leader!.id}`)}
             >
-              <span style={{ color: '#CCCCCC' }}>CopyVault Address: </span>
-              {strategy.vaultAddress}
-            </div>
-          </Section>
-        )}
-      </Container>
+              View profile <ExternalLink size={13} />
+            </LinkButton>
+          )}
+        </ListCard>
+
+        <ListCard>
+          <CardTitle>On-chain vault</CardTitle>
+          <Line>
+            <span>Vault contract</span>
+            {s.vaultAddress ? (
+              <Mono title={s.vaultAddress}>
+                {short(s.vaultAddress)}
+                <CopyBtn
+                  aria-label="Copy vault address"
+                  onClick={() => copy(s.vaultAddress!)}
+                >
+                  <Copy size={13} />
+                </CopyBtn>
+              </Mono>
+            ) : (
+              <span style={{ color: C.muted }}>Not linked yet</span>
+            )}
+          </Line>
+          <Line>
+            <span>TVL</span>
+            <span>{fmtUsd(s.vaultEquity)}</span>
+          </Line>
+          <Line>
+            <span>Total volume</span>
+            <span>{fmtUsd(s.totalVolume)}</span>
+          </Line>
+          <Line>
+            <span>Performance synced</span>
+            <span>
+              {s.performanceSyncedAt
+                ? new Date(s.performanceSyncedAt).toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })
+                : '—'}
+            </span>
+          </Line>
+        </ListCard>
+      </Panels>
     </Page>
   )
 }

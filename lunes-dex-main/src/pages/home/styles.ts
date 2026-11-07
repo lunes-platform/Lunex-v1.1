@@ -1,205 +1,307 @@
-import styled, { css } from 'styled-components'
-import { Wrapper } from 'components/bases'
-import device from 'components/devices/devices'
+import styled from 'styled-components'
+import { C, MainCard, grotesk, tabular } from 'components/ui/kit'
+import { fadeIn, spin } from 'styles/motion'
 
-type StyledProps = {
-  active?: boolean
-  isToken?: boolean
-  inset?: string
-  size?: string
-}
-
-export const PillNav = styled(Wrapper)`
-  width: fit-content;
-  background: #1a1a1a;
-  border-radius: 12px;
-  padding: 4px;
-  margin-bottom: 24px;
+/** Swap card: page-coloured body with the static purple glow (prototype). */
+export const SwapCard = styled(MainCard)`
+  background: ${C.bg};
   gap: 4px;
+  position: relative;
 `
 
-export const PillOption = styled.button<{ active?: boolean }>`
-  ${({ theme, active }) => css`
-    padding: 8px 16px;
-    border: none;
-    background: ${active ? theme.colors.themeColors[800] : 'transparent'};
-    border-radius: 8px;
-    color: ${active ? '#FFFFFF' : '#8A8A8E'};
+export const CardHead = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  h1 {
+    ${grotesk};
+    font-size: 22px;
     font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    transition: all 0.2s;
-
-    &:hover {
-      color: #ffffff;
-      background: ${active ? theme.colors.themeColors[800] : '#2A2A2C'};
-    }
-  `}
+  }
 `
 
-export const Box = styled(Wrapper)`
-  ${css`
-    position: relative;
-    z-index: 2;
-
-    ${device.laptop} {
-      min-height: auto;
-    }
-    ${device.mobileL} {
-      min-height: auto;
-      padding: 0 16px 24px;
-    }
-  `}
+export const SettingsBtn = styled.button<{ $open: boolean }>`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid ${p => (p.$open ? C.primary : C.borderStrong)};
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  ${tabular};
+  &:hover {
+    border-color: ${C.primary};
+  }
 `
 
-export const Content = styled(Wrapper)`
-  ${({ ...props }) => css`
-    margin: 24px 0 16px;
-    background-color: transparent;
-    img {
-      margin: -16px 0;
-      z-index: 10;
-    }
-    input {
-      :disabled {
-        cursor: default;
-        color: ${props.theme.colors.themeColors[200]};
-      }
-      ${device.tablet} {
-        font-size: 20px;
-      }
-      ${device.mobileL} {
-        height: 162px;
-        font-size: 18px;
-      }
-    }
-  `}
+export const AmountPanel = styled.div<{ $error?: boolean }>`
+  background: ${C.surface};
+  border: 1px solid ${p => (p.$error ? 'rgba(255,93,105,0.6)' : C.border)};
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition:
+    border-color 200ms ease,
+    box-shadow 150ms ease;
+  &:focus-within {
+    border-color: ${p => (p.$error ? 'rgba(255,93,105,0.6)' : C.borderStrong)};
+  }
 `
 
-export const Span = styled.span<StyledProps>`
-  ${({ ...props }) => css`
-    width: 100%;
-    height: 56px;
-    font-size: 16px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: ${props.active
-      ? 'pointer'
-      : 'not-allowed'}; //deixar apenas pointer após criado component "Liquidity pool"
-    border-bottom: 1px solid
-      ${props.active ? props.theme.colors.themeColors[800] : 'transparent'};
-    color: ${props.active
-      ? props.theme.colors.themeColors[100]
-      : props.theme.colors.themeColors[400]};
-  `}
+export const PanelTop = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: ${C.muted};
+  min-height: 24px;
+  ${tabular};
 `
 
-export const Details = styled.span<StyledProps>`
-  ${({ ...props }) => css`
-    font-size: ${props.size || '16px'};
-    font-weight: ${props.active ? 400 : 600};
-    z-index: 10;
-    position: absolute;
-    inset: ${props.inset};
-    color: ${props.active
-      ? props.theme.colors.themeColors[200]
-      : props.theme.colors.themeColors[100]};
-    strong {
-      color: ${props.theme.colors.success[500]};
-    }
-    ${device.mobileL} {
-      font-size: 14px;
-    }
-    ${device.mobileS} {
-      font-size: 12px;
-    }
-  `}
+export const Label = styled.span<{ $error?: boolean }>`
+  color: ${p => (p.$error ? C.criticalText2 : C.muted)};
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: color 200ms ease;
 `
 
-export const Token = styled.button<StyledProps>`
-  ${({ ...props }) => css`
-    min-width: ${props.isToken ? '169px' : '136px'};
-    height: 40px;
-    padding: 8px;
-    font-size: 16px;
-    font-weight: 600;
+export const BalRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+`
+
+export const MiniBtn = styled.button<{ $solid?: boolean }>`
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid ${p => (p.$solid ? 'transparent' : C.borderStrong)};
+  background: ${p => (p.$solid ? C.primary : 'transparent')};
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  &:hover {
+    border-color: ${p => (p.$solid ? 'transparent' : C.primary)};
+    background: ${p => (p.$solid ? C.primaryHover : 'transparent')};
+  }
+`
+
+export const AmountRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`
+
+const amountText = `
+  flex: 1;
+  min-width: 0;
+  font-family: 'Space Grotesk', 'Inter', sans-serif;
+  font-size: 32px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  @media (max-width: 759px) {
+    font-size: 26px;
+  }
+`
+
+export const AmountInput = styled.input<{ $error?: boolean }>`
+  ${amountText};
+  background: transparent;
+  border: none;
+  outline: none;
+  color: ${p => (p.$error ? C.criticalText : '#fff')};
+  transition: color 200ms ease;
+  &::placeholder {
+    color: #6d6d6d;
+  }
+`
+
+export const AmountOut = styled.div<{ $empty: boolean; $dim: boolean }>`
+  ${amountText};
+  color: ${p => (p.$empty ? '#6D6D6D' : '#fff')};
+  opacity: ${p => (p.$dim ? 0.45 : 1)};
+  transition: opacity 200ms ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`
+
+export const TokenPill = styled.button<{ $empty?: boolean }>`
+  ${grotesk};
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: ${p => (p.$empty ? '0 10px 0 14px' : '0 10px 0 6px')};
+  border-radius: 999px;
+  background: ${p => (p.$empty ? C.primary : C.field)};
+  border: 1px solid ${p => (p.$empty ? 'transparent' : C.borderStrong)};
+  color: #fff;
+  font-weight: 600;
+  font-size: 16px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+  &:hover {
+    border-color: ${C.primary};
+    background: ${p => (p.$empty ? C.primaryHover : C.field)};
+  }
+`
+
+export const PanelBottom = styled.div`
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: ${C.muted};
+  ${tabular};
+`
+
+export const PayError = styled.span`
+  color: ${C.criticalText2};
+  font-weight: 500;
+  animation: ${fadeIn} 200ms ease;
+`
+
+export const FlipWrap = styled.div`
+  display: flex;
+  justify-content: center;
+  height: 0;
+  position: relative;
+  z-index: 2;
+`
+
+export const FlipBtn = styled.button<{ $deg: number }>`
+  position: absolute;
+  top: -20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 4px solid ${C.bg};
+  background: ${C.field};
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(${p => p.$deg}deg);
+  transition:
+    transform 400ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 150ms ease;
+  &:hover:not(:disabled) {
+    background: ${C.primary};
+  }
+  &:disabled {
+    color: ${C.muted};
+    cursor: not-allowed;
+  }
+`
+
+export const ReceivePanel = styled(AmountPanel)`
+  margin-top: 4px;
+`
+
+export const QuoteSpinner = styled.span`
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(173, 135, 255, 0.3);
+  border-top-color: ${C.primaryText};
+  border-radius: 50%;
+  display: inline-block;
+  animation: ${spin} 0.7s linear infinite;
+`
+
+export const Details = styled.div<{ $dim: boolean }>`
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 4px 4px;
+  opacity: ${p => (p.$dim ? 0.45 : 1)};
+  transition: opacity 200ms ease;
+  animation: ${fadeIn} 200ms ease both;
+`
+
+export const RateBtn = styled.button`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 6px 0;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  ${tabular};
+`
+
+export const DetailLine = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  > span:first-child {
+    color: ${C.muted};
+    cursor: default;
+  }
+  > span:last-child {
+    font-weight: 500;
+    text-align: right;
+    ${tabular};
+  }
+`
+
+export const ImpactWarn = styled.div`
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 40, 76, 0.1);
+  border: 1px solid rgba(255, 93, 105, 0.35);
+  color: ${C.criticalText2};
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 4px;
+  animation: ${fadeIn} 200ms ease both;
+  svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+`
+
+export const QuoteError = styled.div`
+  font-size: 13px;
+  color: ${C.warning};
+  padding: 10px 4px 0;
+`
+
+export const Cta = styled.div`
+  margin-top: 12px;
+  button {
     border-radius: 16px;
-    position: absolute;
-    z-index: 10;
-    right: 16px;
-    bottom: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-around;
-    color: ${props.theme.colors.themeColors[100]};
-    background-color: ${props.isToken
-      ? props.theme.colors.themeColors[800]
-      : props.theme.colors.themeColors[400]};
-    img {
-      max-width: 24px;
-      max-height: 24px;
-    }
-    ${device.mobileL} {
-      min-width: ${props.isToken ? '116px' : '105px'};
-      padding: 4px;
-      font-size: 13px;
-      right: 12px;
-      bottom: 12px;
-    }
-    ${device.mobileS} {
-      min-width: ${props.isToken ? '110px' : '105px'};
-      font-size: 12.5px;
-      right: 8px;
-      bottom: 8px;
-    }
-  `}
+  }
 `
 
-export const Descriptions = styled(Wrapper)`
-  ${({ ...props }) => css`
-    margin-bottom: 14px;
-    padding: 8px;
-    line-height: 2;
-    flex-direction: row;
-    justify-content: space-between;
-    background-color: transparent;
-    transition: opacity 0.5s linear;
-    p {
-      font-size: 16px;
-      font-weight: 600;
-      color: ${props.theme.colors.themeColors[100]};
-    }
-    span {
-      font-size: 14px;
-      font-weight: 500;
-      color: ${props.theme.colors.themeColors[200]};
-    }
-    ${device.mobileL} {
-      padding: 10px 0;
-      p,
-      span {
-        font-size: 13px;
-      }
-    }
-    ${device.mobileS} {
-      p,
-      span {
-        font-size: 12px;
-      }
-    }
-  `}
-`
-
-export const Paragraph = styled.span<StyledProps>`
-  ${({ ...props }) => css`
-    margin-top: 20px;
-    font-size: 14px;
-    font-weight: normal;
-    color: ${props.theme.colors.themeColors[100]};
-    strong {
-      color: ${props.theme.colors.themeColors[800]};
-    }
-  `}
+export const Footer = styled.p`
+  text-align: center;
+  font-size: 12px;
+  color: ${C.muted};
+  line-height: 1.5;
 `

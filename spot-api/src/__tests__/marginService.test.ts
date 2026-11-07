@@ -206,10 +206,10 @@ describe('marginService hardening', () => {
         pairSymbol: 'LUNES/USDT',
         side: 'BUY',
         collateralAmount: '100',
-        leverage: '7.95',
+        leverage: '10.5',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Leverage must be between 1x and 7.90x');
+    ).rejects.toThrow('Leverage must be between 1x and 10.00x');
 
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });

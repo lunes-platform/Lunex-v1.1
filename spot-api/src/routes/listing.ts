@@ -22,10 +22,11 @@ import {
   TierKey,
 } from '../services/listingService';
 import { requireAdmin } from '../middleware/adminGuard';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { z } from 'zod';
 
 const router = Router();
@@ -114,6 +115,21 @@ const CreateListingSchema = z
     tokenLiquidity: z.union([z.string(), z.number()]),
     description: z.string().max(2000).optional(),
     website: z.string().trim().url().max(300).optional().or(z.literal('')),
+    // On-chain list_token result (fee paid + LP lock). Optional for
+    // backwards compatibility; when present they are covered by the wallet
+    // signature. Activation still only happens from the chain event.
+    txHash: z
+      .string()
+      .regex(/^0x[0-9a-fA-F]{64}$/)
+      .optional(),
+    pairAddress: z.string().min(40).max(64).optional(),
+    lpTokenAddress: z.string().min(40).max(64).optional(),
+    lpAmount: z
+      .string()
+      .regex(/^\d+(\.\d+)?$/)
+      .max(80)
+      .optional(),
+    onChainListingId: z.coerce.number().int().min(0).optional(),
   })
   .merge(SignedActionSchema);
 
@@ -191,7 +207,7 @@ router.get(
   '/owner/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedOwnerReadSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedOwnerReadSchema).safeParse({
         ...req.query,
         address: req.params.address,
       });
@@ -200,7 +216,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'listing.owner',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -261,6 +277,11 @@ router.post(
           tier: parsed.data.tier,
           lunesLiquidity: parsed.data.lunesLiquidity,
           tokenLiquidity: parsed.data.tokenLiquidity,
+          txHash: parsed.data.txHash,
+          pairAddress: parsed.data.pairAddress,
+          lpTokenAddress: parsed.data.lpTokenAddress,
+          lpAmount: parsed.data.lpAmount,
+          onChainListingId: parsed.data.onChainListingId,
         },
       });
       if (!auth.ok) {

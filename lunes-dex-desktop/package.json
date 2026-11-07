@@ -1,0 +1,37 @@
+{
+  "name": "lunex-desktop",
+  "productName": "Lunex",
+  "version": "0.1.0",
+  "description": "Lunex DEX desktop application (Electron shell around lunes-dex-main)",
+  "author": {
+    "name": "Lunes Platform",
+    "email": "dev@lunes.io"
+  },
+  "homepage": "https://github.com/lunes-platform/lunex-v1.1",
+  "license": "SEE LICENSE IN ../LICENSE.md",
+  "private": true,
+  "main": "dist/main/main.js",
+  "desktopName": "lunex.desktop",
+  "scripts": {
+    "dev": "npm run build:main && cross-env LUNEX_DEV_SERVER_URL=http://localhost:3000 electron .",
+    "build:web": "node scripts/build-web.mjs",
+    "build:main": "tsc -p tsconfig.json && node scripts/gen-runtime-config.mjs",
+    "build": "npm run build:main && node scripts/check-web.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dist": "npm run build && electron-builder --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "release": "npm run build && electron-builder --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "cross-env": "^7.0.3",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0",
+    "typescript": "~5.7.3"
+  }
+}

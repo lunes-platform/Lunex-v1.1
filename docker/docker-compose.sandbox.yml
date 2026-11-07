@@ -67,6 +67,7 @@ services:
       NATIVE_TOKEN_ADDRESS: ${SANDBOX_NATIVE_TOKEN_ADDRESS:-}
       SOCIAL_ANALYTICS_ENABLED: "true"
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4010/health || exit 1"]
       interval: 15s

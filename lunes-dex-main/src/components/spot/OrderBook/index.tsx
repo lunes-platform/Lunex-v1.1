@@ -1,440 +1,451 @@
-import React, { useState, useMemo } from 'react'
-import styled, { keyframes } from 'styled-components'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import styled, { css } from 'styled-components'
 import { useSpot } from 'context/SpotContext'
+import { C, grotesk, tabular } from 'components/ui/kit'
+import AnimatedNumber from 'components/ui/AnimatedNumber'
+import { flashGreen, flashRed } from '../../../styles/motion'
+import {
+  Fade,
+  Segmented,
+  T,
+  TEmpty,
+  fmtAmt,
+  fmtPx,
+  fmtTime,
+  nf,
+  pxDec,
+  splitPair,
+  useTerminal
+} from '../terminal'
 
-// ──────────── Animations ────────────
+type Level = { price: number; amount: number; total: number }
+type View = 'book' | 'trades'
+type Flash = 'up' | 'down'
 
-const flashGreen = keyframes`
-  0% { background: rgba(0,192,118,0.3); }
-  100% { background: transparent; }
-`
+const FLASH_MS = 900
+const ROWS = 24
+const GRID = '1.1fr 1fr 1fr'
 
-const flashRed = keyframes`
-  0% { background: rgba(255,75,85,0.3); }
-  100% { background: transparent; }
-`
+const flashCss = (f?: Flash) =>
+  f
+    ? css`
+        animation: ${f === 'up' ? flashGreen : flashRed} ${FLASH_MS}ms ease;
+      `
+    : ''
 
-// ──────────── Styled Components ────────────
-
-const Wrapper = styled.div`
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-`
-
-const Header = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-`
-
-const TabRow = styled.div`
-  display: flex;
-  gap: 2px;
-`
-
-const MiniTab = styled.button<{ active?: boolean }>`
-  padding: 3px 8px;
-  font-size: 10px;
-  font-weight: 600;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-  background: ${({ active }) =>
-    active ? 'rgba(0,192,118,0.15)' : 'transparent'};
-  color: ${({ active }) => (active ? '#00C076' : 'rgba(255,255,255,0.4)')};
-
-  &:hover {
-    color: rgba(255, 255, 255, 0.7);
-  }
-`
-
-const PrecisionSelect = styled.select`
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  padding: 2px 4px;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.6);
-  cursor: pointer;
-  outline: none;
-
-  option {
-    background: #1a1a1a;
-    color: #ffffff;
-  }
-`
-
-const ColHeaders = styled.div`
-  display: flex;
-  justify-content: space-between;
-  padding: 6px 12px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-`
-
-const OrderSection = styled.div`
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-`
-
-const AskSection = styled(OrderSection)`
-  justify-content: flex-end;
-  display: flex;
-  flex-direction: column;
-`
-
-const BidSection = styled(OrderSection)`
-  justify-content: flex-start;
-`
-
-const OrderRow = styled.div<{ side: 'ask' | 'bid'; depth: number }>`
+const Head = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 2px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  height: 20px;
-  min-height: 20px;
-  position: relative;
-  cursor: pointer;
-
-  &::before {
-    content: '';
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: ${({ depth }) => depth}%;
-    background: ${({ side }) =>
-      side === 'ask' ? 'rgba(255,75,85,0.1)' : 'rgba(0,192,118,0.1)'};
-    transition: width 0.3s ease;
-  }
-
-  &:hover::before {
-    background: ${({ side }) =>
-      side === 'ask' ? 'rgba(255,75,85,0.2)' : 'rgba(0,192,118,0.2)'};
-  }
-`
-
-const PriceText = styled.span<{ side: 'ask' | 'bid' }>`
-  color: ${({ side }) => (side === 'ask' ? '#FF4B55' : '#00C076')};
-  font-weight: 600;
-  position: relative;
-  z-index: 1;
-`
-
-const NumText = styled.span`
-  color: rgba(255, 255, 255, 0.7);
-  position: relative;
-  z-index: 1;
-  font-size: 11px;
-`
-
-const SpreadBar = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 12px;
-  background: rgba(0, 192, 118, 0.05);
-  border-top: 1px solid rgba(0, 192, 118, 0.1);
-  border-bottom: 1px solid rgba(0, 192, 118, 0.1);
+  padding: 8px 12px;
+  border-bottom: 1px solid ${T.line};
   flex-shrink: 0;
 `
 
-const SpreadLabel = styled.span`
+const Prec = styled.select`
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid ${C.borderStrong};
+  background: ${T.input};
+  color: ${C.body};
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
+  ${tabular};
+  outline: none;
+  option {
+    background: ${C.surface};
+  }
 `
 
-const SpreadValue = styled.span`
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
+const Cols = styled.div`
+  display: grid;
+  grid-template-columns: ${GRID};
+  padding: 6px 12px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: ${C.muted};
+  flex-shrink: 0;
+  span:nth-child(n + 2) {
+    text-align: right;
+  }
 `
 
-const CurrentPrice = styled.span`
-  font-size: 14px;
-  font-weight: 700;
-  color: #00c076;
-`
-
-// ──────────── Recent Trades ────────────
-
-const TradesList = styled.div`
+const Side = styled.div<{ $asks?: boolean }>`
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  justify-content: ${p => (p.$asks ? 'flex-end' : 'flex-start')};
 `
 
-const TradeRow = styled.div<{ side: 'buy' | 'sell'; isNew?: boolean }>`
-  display: flex;
-  justify-content: space-between;
+const LevelRow = styled.button<{ $flash?: Flash }>`
+  position: relative;
+  display: grid;
+  grid-template-columns: ${GRID};
   align-items: center;
-  padding: 2px 12px;
+  height: 21px;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: ${C.text};
   font-size: 12px;
-  height: 20px;
-  min-height: 20px;
-  animation: ${({ side, isNew }) =>
-      isNew ? (side === 'buy' ? flashGreen : flashRed) : 'none'}
-    0.6s ease;
+  text-align: left;
+  width: 100%;
+  flex-shrink: 0;
+  ${tabular};
+  ${p => flashCss(p.$flash)};
+  &:hover {
+    background: ${T.rowHover};
+  }
+  > span {
+    position: relative;
+  }
+  > span:nth-child(3) {
+    text-align: right;
+    color: ${C.body};
+  }
+  > span:nth-child(4) {
+    text-align: right;
+    color: ${C.muted};
+  }
 `
 
-const TradePrice = styled.span<{ side: 'buy' | 'sell' }>`
-  color: ${({ side }) => (side === 'buy' ? '#00C076' : '#FF4B55')};
+const Depth = styled.i<{ $ask: boolean }>`
+  position: absolute !important;
+  right: 0;
+  top: 1px;
+  bottom: 1px;
+  background: ${p =>
+    p.$ask ? 'rgba(255,40,76,0.12)' : 'rgba(38,208,124,0.12)'};
+  transition: width 300ms ease;
+  pointer-events: none;
+`
+
+const Px = styled.span<{ $ask: boolean }>`
+  color: ${p => (p.$ask ? T.down : T.up)};
   font-weight: 600;
 `
 
-const TradeAmount = styled.span`
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 11px;
+const Mid = styled.div<{ $up: boolean }>`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 12px;
+  border-top: 1px solid ${T.line};
+  border-bottom: 1px solid ${T.line};
+  flex-shrink: 0;
+  b {
+    ${grotesk};
+    ${tabular};
+    font-size: 16px;
+    font-weight: 600;
+    color: ${p => (p.$up ? T.up : T.down)};
+  }
+  span {
+    font-size: 11px;
+    color: ${C.muted};
+    ${tabular};
+  }
 `
 
-const TradeTime = styled.span`
-  color: rgba(255, 255, 255, 0.3);
-  font-size: 10px;
+const TradesList = styled.div`
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 `
 
-// ──────────── Types ────────────
+const TradeRow = styled.div<{ $flash?: Flash }>`
+  display: grid;
+  grid-template-columns: ${GRID};
+  height: 21px;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 12px;
+  ${tabular};
+  ${p => flashCss(p.$flash)};
+  span:nth-child(2) {
+    text-align: right;
+    color: ${C.body};
+  }
+  span:nth-child(3) {
+    text-align: right;
+    color: ${C.muted};
+  }
+`
 
-interface Order {
-  price: number
-  amount: number
-  total: number
+/** Group levels into price buckets: bids round down, asks round up. */
+function group(levels: Level[], step: number, ask: boolean): Level[] {
+  const map = new Map<string, Level>()
+  const dec = Math.max(0, Math.round(-Math.log10(step)))
+  for (const l of levels) {
+    const k = ask
+      ? Math.ceil(l.price / step - 1e-9) * step
+      : Math.floor(l.price / step + 1e-9) * step
+    const key = k.toFixed(dec)
+    const cur = map.get(key)
+    if (cur) cur.amount += l.amount
+    else map.set(key, { price: Number(key), amount: l.amount, total: 0 })
+  }
+  const out = Array.from(map.values()).sort((a, b) =>
+    ask ? a.price - b.price : b.price - a.price
+  )
+  // cumulative depth from the spread outwards
+  let cum = 0
+  for (const l of out) {
+    cum += l.amount
+    l.total = cum
+  }
+  return out
 }
 
-interface Trade {
-  id: number
-  price: number
-  amount: number
-  side: 'buy' | 'sell'
-  time: string
-}
+const clean = (l?: Level[]): Level[] =>
+  (l || [])
+    .filter(Boolean)
+    .map(x => ({
+      price: Number(x.price),
+      amount: Number(x.amount),
+      total: 0
+    }))
+    .filter(x => x.price > 0 && x.amount > 0)
 
-type ViewMode = 'book' | 'trades'
-type PrecisionLevel = 5 | 4 | 3
+/**
+ * Order book + recent trades. Clicking a level sends its price to the
+ * order form. Changed levels and new trades flash green / red for 900ms.
+ */
+const OrderBook: React.FC = () => {
+  const { orderbook, recentTrades, ticker, selectedPair } = useSpot()
+  const { pickPrice } = useTerminal()
+  const [view, setView] = useState<View>('book')
+  const [prec, setPrec] = useState(0)
+  const [, quote] = splitPair(selectedPair)
 
-// ──────────── Helpers ────────────
+  useEffect(() => setPrec(0), [selectedPair])
 
-function groupOrders(orders: Order[], precision: PrecisionLevel): Order[] {
-  const factor = Math.pow(10, precision)
-  const grouped = new Map<number, Order>()
+  const ref =
+    ticker?.lastPrice ||
+    orderbook?.bestBid ||
+    orderbook?.bestAsk ||
+    orderbook?.bids?.[0]?.price ||
+    0
+  const dp = pxDec(Number(ref))
+  const step = Math.pow(10, -(dp - prec))
+  const shownDec = Math.max(0, dp - prec)
 
-  for (const order of orders) {
-    const key = Math.round(order.price * factor) / factor
-    const existing = grouped.get(key)
-    if (existing) {
-      existing.amount += order.amount
-      existing.total += order.total
-    } else {
-      grouped.set(key, { price: key, amount: order.amount, total: order.total })
+  const asks = useMemo(
+    () => group(clean(orderbook?.asks), step, true).slice(0, ROWS),
+    [orderbook, step]
+  )
+  const bids = useMemo(
+    () => group(clean(orderbook?.bids), step, false).slice(0, ROWS),
+    [orderbook, step]
+  )
+  const maxTotal = Math.max(
+    asks[asks.length - 1]?.total || 0,
+    bids[bids.length - 1]?.total || 0,
+    1e-12
+  )
+
+  // ── live ticks: diff levels against the previous snapshot ──
+  const prevRef = useRef<Map<string, number>>(new Map())
+  const [flashes, setFlashes] = useState<
+    Record<string, { f: Flash; n: number }>
+  >({})
+  useEffect(() => {
+    const next = new Map<string, number>()
+    const changed: Record<string, Flash> = {}
+    const prev = prevRef.current
+    const scan = (side: 'a' | 'b', list: Level[]) =>
+      list.forEach(l => {
+        const key = `${side}:${l.price}`
+        next.set(key, l.amount)
+        const before = prev.get(key)
+        if (prev.size && before !== l.amount) {
+          changed[key] =
+            before === undefined || l.amount > before
+              ? side === 'b'
+                ? 'up'
+                : 'down'
+              : side === 'b'
+                ? 'down'
+                : 'up'
+        }
+      })
+    scan('a', asks)
+    scan('b', bids)
+    prevRef.current = next
+    const keys = Object.keys(changed)
+    if (!keys.length) return
+    setFlashes(f => {
+      const out = { ...f }
+      keys.forEach(k => (out[k] = { f: changed[k], n: (f[k]?.n ?? 0) + 1 }))
+      return out
+    })
+    const t = setTimeout(
+      () =>
+        setFlashes(f => {
+          const out = { ...f }
+          keys.forEach(k => delete out[k])
+          return out
+        }),
+      FLASH_MS
+    )
+    return () => clearTimeout(t)
+  }, [asks, bids])
+
+  useEffect(() => {
+    prevRef.current = new Map()
+    setFlashes({})
+  }, [selectedPair, prec])
+
+  // new trades flash (only ids that appear after the first snapshot)
+  const seenTrades = useRef<Set<string> | null>(null)
+  const [freshTrades, setFreshTrades] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    const ids = recentTrades.map(t => t.id)
+    if (!seenTrades.current || ids.length === 0) {
+      seenTrades.current = new Set(ids)
+      return
     }
+    const fresh = ids.filter(id => !seenTrades.current?.has(id))
+    ids.forEach(id => seenTrades.current?.add(id))
+    // a burst means a snapshot (REST reload), not live ticks
+    if (!fresh.length || fresh.length > 5) return
+    setFreshTrades(new Set(fresh))
+    const t = setTimeout(() => setFreshTrades(new Set()), FLASH_MS)
+    return () => clearTimeout(t)
+  }, [recentTrades])
+  useEffect(() => {
+    seenTrades.current = null
+  }, [selectedPair])
+
+  const price = ticker?.lastPrice ?? 0
+  const up = (ticker?.change24h ?? 0) >= 0
+  const bestAsk = asks[0]?.price ?? 0
+  const bestBid = bids[0]?.price ?? 0
+  const spread = bestAsk && bestBid ? bestAsk - bestBid : 0
+  const spreadRef = price || (bestAsk + bestBid) / 2
+
+  const renderLevel = (l: Level, ask: boolean) => {
+    const key = `${ask ? 'a' : 'b'}:${l.price}`
+    const fl = flashes[key]
+    return (
+      <LevelRow
+        key={`${key}:${fl?.n ?? 0}`}
+        $flash={fl?.f}
+        title="Use this price"
+        onClick={() => pickPrice(l.price)}
+      >
+        <Depth $ask={ask} style={{ width: `${(l.total / maxTotal) * 100}%` }} />
+        <Px $ask={ask}>{nf(l.price, shownDec)}</Px>
+        <span>{fmtAmt(l.amount)}</span>
+        <span>{fmtAmt(l.total)}</span>
+      </LevelRow>
+    )
   }
 
-  return Array.from(grouped.values())
-}
-
-// ──────────── Component ────────────
-
-const EmptyState = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
-  color: rgba(255, 255, 255, 0.25);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.3px;
-  padding: 20px;
-  text-align: center;
-`
-
-const OrderBook: React.FC = () => {
-  const { orderbook, recentTrades: spotTrades, isConnected } = useSpot()
-  const [viewMode, setViewMode] = useState<ViewMode>('book')
-  const [precision, setPrecision] = useState<PrecisionLevel>(5)
-
-  // Map API data to local Order type
-  const asks: Order[] = useMemo(() => {
-    if (isConnected && orderbook?.asks && orderbook.asks.length > 0) {
-      return orderbook.asks
-        .filter((a): a is NonNullable<typeof a> => a != null)
-        .map(a => ({
-          price: Number(a.price),
-          amount: Number(a.amount),
-          total: Number(a.total)
-        }))
-    }
-    return []
-  }, [isConnected, orderbook])
-
-  const bids: Order[] = useMemo(() => {
-    if (isConnected && orderbook?.bids && orderbook.bids.length > 0) {
-      return orderbook.bids
-        .filter((b): b is NonNullable<typeof b> => b != null)
-        .map(b => ({
-          price: Number(b.price),
-          amount: Number(b.amount),
-          total: Number(b.total)
-        }))
-    }
-    return []
-  }, [isConnected, orderbook])
-
-  const trades: Trade[] = useMemo(() => {
-    if (isConnected && spotTrades.length > 0) {
-      return spotTrades
-        .filter((t): t is NonNullable<typeof t> => t != null)
-        .map((t, i) => ({
-          id: i,
-          price: parseFloat(t.price),
-          amount: parseFloat(t.amount),
-          side: t.side.toLowerCase() as 'buy' | 'sell',
-          time: new Date(t.createdAt).toLocaleTimeString('en-US', {
-            hour12: false
-          })
-        }))
-    }
-    return []
-  }, [isConnected, spotTrades])
-
-  const groupedAsks = useMemo(
-    () => groupOrders(asks, precision).sort((a, b) => a.price - b.price),
-    [asks, precision]
-  )
-  const groupedBids = useMemo(
-    () => groupOrders(bids, precision).sort((a, b) => b.price - a.price),
-    [bids, precision]
-  )
-
-  const maxAsk = Math.max(...groupedAsks.map(o => o.total), 1)
-  const maxBid = Math.max(...groupedBids.map(o => o.total), 1)
-  const spread =
-    groupedAsks[0] && groupedBids[0]
-      ? groupedAsks[0].price - groupedBids[0].price
-      : 0
+  const precOpts = [0, 1, 2].map(k => ({
+    v: k,
+    label: Math.pow(10, -(dp - k)).toFixed(Math.max(0, dp - k))
+  }))
 
   return (
-    <Wrapper>
-      <Header>
-        <TabRow>
-          <MiniTab
-            active={viewMode === 'book'}
-            onClick={() => setViewMode('book')}
+    <>
+      <Head>
+        <Segmented
+          ariaLabel="Book view"
+          items={[
+            ['book', 'Book'],
+            ['trades', 'Trades']
+          ]}
+          value={view}
+          onChange={setView}
+        />
+        {view === 'book' && (
+          <Prec
+            value={prec}
+            onChange={e => setPrec(Number(e.target.value))}
+            aria-label="Price grouping"
           >
-            Book
-          </MiniTab>
-          <MiniTab
-            active={viewMode === 'trades'}
-            onClick={() => setViewMode('trades')}
-          >
-            Trades
-          </MiniTab>
-        </TabRow>
-        {viewMode === 'book' && (
-          <PrecisionSelect
-            value={precision}
-            onChange={e =>
-              setPrecision(Number(e.target.value) as PrecisionLevel)
-            }
-          >
-            <option value={5}>0.00001</option>
-            <option value={4}>0.0001</option>
-            <option value={3}>0.001</option>
-          </PrecisionSelect>
+            {precOpts.map(o => (
+              <option key={o.v} value={o.v}>
+                {o.label}
+              </option>
+            ))}
+          </Prec>
         )}
-      </Header>
+      </Head>
 
-      {viewMode === 'book' ? (
-        <>
-          <ColHeaders>
-            <span>Price (USDT)</span>
+      {view === 'book' ? (
+        <Fade key="book" style={{ flex: 1 }}>
+          <Cols>
+            <span>Price ({quote})</span>
             <span>Size</span>
             <span>Total</span>
-          </ColHeaders>
-
-          {groupedAsks.length === 0 && groupedBids.length === 0 ? (
-            <EmptyState>No orders yet</EmptyState>
+          </Cols>
+          {asks.length === 0 && bids.length === 0 ? (
+            <TEmpty style={{ flex: 1 }}>No orders in the book yet</TEmpty>
           ) : (
             <>
-              {/* ASKS */}
-              <AskSection>
-                {groupedAsks
-                  .slice(0, 22)
-                  .reverse()
-                  .map((o, i) => (
-                    <OrderRow
-                      key={i}
-                      side="ask"
-                      depth={(o.total / maxAsk) * 100}
-                    >
-                      <PriceText side="ask">
-                        {o.price.toFixed(precision)}
-                      </PriceText>
-                      <NumText>{o.amount.toFixed(0)}</NumText>
-                      <NumText>{o.total.toFixed(2)}</NumText>
-                    </OrderRow>
-                  ))}
-              </AskSection>
-
-              {/* SPREAD */}
-              <SpreadBar>
-                <CurrentPrice>
-                  {groupedBids[0]?.price.toFixed(precision) ?? '—'}
-                </CurrentPrice>
-                <SpreadLabel>Spread</SpreadLabel>
-                <SpreadValue>{spread.toFixed(precision + 1)}</SpreadValue>
-              </SpreadBar>
-
-              {/* BIDS */}
-              <BidSection>
-                {groupedBids.slice(0, 22).map((o, i) => (
-                  <OrderRow key={i} side="bid" depth={(o.total / maxBid) * 100}>
-                    <PriceText side="bid">
-                      {o.price.toFixed(precision)}
-                    </PriceText>
-                    <NumText>{o.amount.toFixed(0)}</NumText>
-                    <NumText>{o.total.toFixed(2)}</NumText>
-                  </OrderRow>
-                ))}
-              </BidSection>
+              <Side $asks>
+                {[...asks].reverse().map(l => renderLevel(l, true))}
+              </Side>
+              <Mid $up={up}>
+                <b>
+                  {price > 0 ? (
+                    <AnimatedNumber text={fmtPx(price)} noFlash />
+                  ) : (
+                    '—'
+                  )}
+                </b>
+                <span>
+                  Spread{' '}
+                  {spread > 0
+                    ? `${nf(spread, shownDec)} (${((spread / spreadRef) * 100).toFixed(2)}%)`
+                    : '—'}
+                </span>
+              </Mid>
+              <Side>{bids.map(l => renderLevel(l, false))}</Side>
             </>
           )}
-        </>
+        </Fade>
       ) : (
-        <>
-          <ColHeaders>
+        <Fade key="trades" style={{ flex: 1 }}>
+          <Cols>
             <span>Price</span>
             <span>Amount</span>
             <span>Time</span>
-          </ColHeaders>
+          </Cols>
           <TradesList>
-            {trades.length === 0 ? (
-              <EmptyState>No trades executed</EmptyState>
+            {recentTrades.length === 0 ? (
+              <TEmpty>No trades yet</TEmpty>
             ) : (
-              trades.slice(0, 28).map((t, i) => (
-                <TradeRow key={t.id} side={t.side} isNew={i === 0}>
-                  <TradePrice side={t.side}>{t.price.toFixed(5)}</TradePrice>
-                  <TradeAmount>{t.amount.toFixed(0)}</TradeAmount>
-                  <TradeTime>{t.time}</TradeTime>
-                </TradeRow>
-              ))
+              recentTrades.slice(0, 50).map(t => {
+                const buy = t.side.toUpperCase() === 'BUY'
+                const p = parseFloat(t.price)
+                return (
+                  <TradeRow
+                    key={t.id}
+                    $flash={
+                      freshTrades.has(t.id) ? (buy ? 'up' : 'down') : undefined
+                    }
+                  >
+                    <span
+                      style={{ color: buy ? T.up : T.down, fontWeight: 600 }}
+                    >
+                      {fmtPx(p, pxDec(p))}
+                    </span>
+                    <span>{fmtAmt(parseFloat(t.amount))}</span>
+                    <span>{fmtTime(t.createdAt)}</span>
+                  </TradeRow>
+                )
+              })
             )}
           </TradesList>
-        </>
+        </Fade>
       )}
-    </Wrapper>
+    </>
   )
 }
 

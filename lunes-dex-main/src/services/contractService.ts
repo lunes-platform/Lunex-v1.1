@@ -12,7 +12,7 @@
 import { ApiPromise, WsProvider } from '@polkadot/api'
 import { ContractPromise } from '@polkadot/api-contract'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
-import { web3FromAddress } from '@polkadot/extension-dapp'
+import { getSignerFor } from '../wallet/activeWallet'
 
 import RouterABI from '../abis/Router.json'
 import FactoryABI from '../abis/Factory.json'
@@ -352,7 +352,7 @@ class ContractService {
     if (!contract) return false
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       const { gasRequired } = await contract.query.approve(
         account.address,
@@ -368,17 +368,13 @@ class ContractService {
             spenderAddress,
             amount
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve()
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isInBlock || result.status.isFinalized) {
+              resolve()
             }
-          )
+          })
           .catch(reject)
       })
 
@@ -685,7 +681,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -728,17 +724,13 @@ class ContractService {
             to,
             deadlineMs
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -767,7 +759,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -846,19 +838,13 @@ class ContractService {
             to,
             deadlineMs
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(
-                  new Error(this.decodeDispatchError(result.dispatchError))
-                )
-              } else if (result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(this.decodeDispatchError(result.dispatchError)))
+            } else if (result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -886,7 +872,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
       const contracts = this.contracts
       if (!contracts) throw new Error('Contracts not initialized')
 
@@ -930,17 +916,13 @@ class ContractService {
             to,
             deadlineMs
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -1021,7 +1003,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       // Get gas required
       const { gasRequired } = await this.stakingContract.query.stake(
@@ -1037,17 +1019,13 @@ class ContractService {
         }
         this.stakingContract.tx
           .stake({ gasLimit: gasRequired, storageDepositLimit: null }, amount)
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isInBlock || result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -1068,7 +1046,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       const { gasRequired } = await this.stakingContract.query.unstake(
         account.address,
@@ -1083,17 +1061,13 @@ class ContractService {
         }
         this.stakingContract.tx
           .unstake({ gasLimit: gasRequired, storageDepositLimit: null }, amount)
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isInBlock || result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -1111,7 +1085,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       const { gasRequired } = await this.stakingContract.query.claimRewards(
         account.address,
@@ -1125,17 +1099,13 @@ class ContractService {
         }
         this.stakingContract.tx
           .claimRewards({ gasLimit: gasRequired, storageDepositLimit: null })
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isInBlock || result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -1230,7 +1200,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       const { gasRequired } = await this.stakingContract.query.vote(
         account.address,
@@ -1250,17 +1220,13 @@ class ContractService {
             proposalId,
             approve
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isInBlock || result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {
@@ -1284,7 +1250,7 @@ class ContractService {
     }
 
     try {
-      const injector = await web3FromAddress(account.address)
+      const signer = getSignerFor(account.address)
 
       // Get the current proposal fee from contract
       const { output: feeOutput } =
@@ -1320,17 +1286,13 @@ class ContractService {
             description,
             tokenAddress
           )
-          .signAndSend(
-            account.address,
-            { signer: injector.signer },
-            (result: any) => {
-              if (result.dispatchError) {
-                reject(new Error(result.dispatchError.toString()))
-              } else if (result.status.isInBlock || result.status.isFinalized) {
-                resolve(result.txHash.toHex())
-              }
+          .signAndSend(account.address, { signer }, (result: any) => {
+            if (result.dispatchError) {
+              reject(new Error(result.dispatchError.toString()))
+            } else if (result.status.isInBlock || result.status.isFinalized) {
+              resolve(result.txHash.toHex())
             }
-          )
+          })
           .catch(reject)
       })
     } catch (error) {

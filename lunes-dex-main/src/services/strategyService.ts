@@ -2,16 +2,12 @@ import {
   buildWalletActionMessage,
   createSignedActionMetadata
 } from '../utils/signing'
+import { readSessionFetch } from './sessionService'
 
 const API_BASE = process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
 export type StrategyType =
-  | 'COPYTRADE'
-  | 'MARKET_MAKER'
-  | 'ARBITRAGE'
-  | 'MOMENTUM'
-  | 'HEDGE'
-  | 'CUSTOM'
+  'COPYTRADE' | 'MARKET_MAKER' | 'ARBITRAGE' | 'MOMENTUM' | 'HEDGE' | 'CUSTOM'
 export type StrategyRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'AGGRESSIVE'
 export type StrategyStatus = 'ACTIVE' | 'PAUSED' | 'ARCHIVED'
 
@@ -250,18 +246,14 @@ const strategyService = {
     )
   },
 
-  async getFollowedStrategies(
-    address: string,
-    signMessage: (message: string) => Promise<string>
-  ): Promise<Strategy[]> {
-    const auth = await this.signStrategyAction(
-      'strategies.followed',
-      address,
-      signMessage
-    )
-    const data = await apiRequest<{ followed: Array<{ strategy: any }> }>(
-      `/api/v1/strategies/followed/${address}?nonce=${encodeURIComponent(auth.nonce)}&timestamp=${auth.timestamp}&signature=${encodeURIComponent(auth.signature)}`
-    )
+  /**
+   * Strategies followed by `address` — private read via the read session
+   * (never prompts). Throws `ReadSessionRequiredError` without a session.
+   */
+  async getFollowedStrategies(address: string): Promise<Strategy[]> {
+    const data = await readSessionFetch<{
+      followed: Array<{ strategy: any }>
+    }>(address, `/api/v1/strategies/followed/${encodeURIComponent(address)}`)
     return data.followed.map(f => normalize(f.strategy))
   },
 

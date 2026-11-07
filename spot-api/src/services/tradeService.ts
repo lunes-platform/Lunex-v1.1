@@ -9,6 +9,8 @@ import {
 } from './tradeSettlementService';
 import { affiliateService } from './affiliateService';
 import { log } from '../utils/logger';
+import { broadcast } from '../websocket/server';
+import { orderbookManager } from '../utils/orderbook';
 
 const prismaAny = prisma as any;
 
@@ -220,6 +222,15 @@ export const tradeService = {
       );
     }
 
+    // 7. Real-time push (best effort — never affects persisted state).
+    //    Public channels carry no wallet addresses; each side of a fill gets
+    //    a private `user:<address>` event (session-authenticated channel).
+    try {
+      publishTrades(pairId, trades);
+    } catch (err) {
+      log.error({ err, pairId }, 'Trade broadcast failed');
+    }
+
     // Distribute affiliate commissions for each trade
     for (const trade of trades) {
       try {
@@ -315,3 +326,78 @@ export const tradeService = {
     return tradeSettlementService.retryPendingSettlements(limit);
   },
 };
+
+type BroadcastTrade = {
+  id: string;
+  pairId: string;
+  makerOrderId: string;
+  takerOrderId: string;
+  makerAddress: string;
+  takerAddress: string;
+  side: string;
+  price: { toString(): string };
+  amount: { toString(): string };
+  quoteAmount: { toString(): string };
+  createdAt?: Date;
+};
+
+const pairSymbolCache = new Map<string, string>();
+
+async function resolvePairSymbol(pairId: string) {
+  const cached = pairSymbolCache.get(pairId);
+  if (cached) return cached;
+  const pair = await prisma.pair.findUnique({ where: { id: pairId } });
+  if (pair?.symbol) pairSymbolCache.set(pairId, pair.symbol);
+  return pair?.symbol ?? null;
+}
+
+function publishTrades(pairId: string, trades: BroadcastTrade[]) {
+  if (!trades.length) return;
+  void resolvePairSymbol(pairId)
+    .then((symbol) => {
+      if (!symbol) return;
+      for (const t of trades) {
+        const createdAt = (t.createdAt ?? new Date()).toISOString();
+        const base = {
+          id: t.id,
+          pairId: t.pairId,
+          side: t.side,
+          price: t.price.toString(),
+          amount: t.amount.toString(),
+          quoteAmount: t.quoteAmount.toString(),
+          createdAt,
+        };
+        broadcast(`trades:${symbol}`, base);
+        const makerSide = t.side === 'BUY' ? 'SELL' : 'BUY';
+        broadcast(`user:${t.makerAddress}`, {
+          type: 'fill',
+          role: 'maker',
+          pairSymbol: symbol,
+          orderId: t.makerOrderId,
+          tradeId: t.id,
+          side: makerSide,
+          price: base.price,
+          amount: base.amount,
+          createdAt,
+        });
+        if (t.takerAddress !== t.makerAddress) {
+          broadcast(`user:${t.takerAddress}`, {
+            type: 'fill',
+            role: 'taker',
+            pairSymbol: symbol,
+            orderId: t.takerOrderId,
+            tradeId: t.id,
+            side: t.side,
+            price: base.price,
+            amount: base.amount,
+            createdAt,
+          });
+        }
+      }
+      const book = orderbookManager.get(symbol);
+      if (book) broadcast(`orderbook:${symbol}`, book.getSnapshot(10));
+    })
+    .catch((err: unknown) => {
+      log.error({ err, pairId }, 'Trade broadcast: pair lookup failed');
+    });
+}

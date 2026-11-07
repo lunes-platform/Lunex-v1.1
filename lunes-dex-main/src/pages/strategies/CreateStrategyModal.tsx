@@ -1,501 +1,331 @@
-import React, { useState } from 'react'
+/**
+ * Register strategy modal (prototype REGISTER STRATEGY).
+ *
+ * Name, type, risk, description and performance fee, plus the agent API key
+ * the backend needs to authenticate the owner. Submission runs through the
+ * shared tx flow (`useTx().run`) wrapping `strategyService.createStrategy`.
+ */
+import React, { useEffect, useState } from 'react'
 import styled from 'styled-components'
+import { Dialog } from 'components/ui/Dialog'
+import {
+  Button,
+  C,
+  Col,
+  Input,
+  Label,
+  Muted,
+  Row,
+  Textarea,
+  grotesk,
+  tabular
+} from 'components/ui/kit'
+import { useTx } from '../../context/TxContext'
+import { useSDK } from '../../context/SDKContext'
+import { useToast } from 'components/feedback/ToastProvider'
 import strategyService, {
-  StrategyType,
-  StrategyRiskLevel
+  Strategy,
+  StrategyRiskLevel,
+  StrategyType
 } from '../../services/strategyService'
+import { ChoiceChip, RISK_STYLE, TYPE_LABEL } from './shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
-// ─── Styled ──────────────────────────────────────────────────────
-
-const Overlay = styled.div`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(4px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-`
-
-const Modal = styled.div`
-  background: #1e1e1e;
-  border: 1px solid #2a2a2c;
-  border-radius: 24px;
-  padding: 32px;
-  width: 100%;
-  max-width: 540px;
-  max-height: 90vh;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #2a2a2c transparent;
-`
-
-const Header = styled.div`
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-`
-
-const Title = styled.h2`
-  margin: 0 0 4px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 24px;
-  font-weight: 700;
-  color: #ffffff;
-`
-
-const Subtitle = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #8a8a8e;
-`
-
-const CloseBtn = styled.button`
-  background: none;
-  border: none;
-  color: #8a8a8e;
-  font-size: 22px;
-  cursor: pointer;
-  line-height: 1;
-  padding: 2px 6px;
-  border-radius: 6px;
-  &:hover {
-    color: #ffffff;
-    background: rgba(255, 255, 255, 0.06);
-  }
-`
-
-const Field = styled.div`
-  margin-bottom: 18px;
-`
-
-const Label = styled.label`
-  display: block;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  color: #8a8a8e;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 8px;
-`
-
-const Input = styled.input`
-  width: 100%;
-  background: #141414;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  padding: 12px 14px;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.15s;
-  &:focus {
-    border-color: #7461ff;
-  }
-  &::placeholder {
-    color: #555;
-  }
-  &:-webkit-autofill,
-  &:-webkit-autofill:hover,
-  &:-webkit-autofill:focus {
-    -webkit-box-shadow: 0 0 0 1000px #141414 inset;
-    -webkit-text-fill-color: #ffffff;
-    border-color: #2a2a2c;
-    caret-color: #ffffff;
-  }
-`
-
-const Textarea = styled.textarea`
-  width: 100%;
-  background: #141414;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  padding: 12px 14px;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  outline: none;
-  box-sizing: border-box;
-  resize: vertical;
-  min-height: 80px;
-  transition: border-color 0.15s;
-  &:focus {
-    border-color: #7461ff;
-  }
-  &::placeholder {
-    color: #555;
-  }
-`
-
-const Select = styled.select`
-  width: 100%;
-  background: #141414;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  padding: 12px 14px;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  outline: none;
-  box-sizing: border-box;
-  cursor: pointer;
-  appearance: none;
-  transition: border-color 0.15s;
-  &:focus {
-    border-color: #7461ff;
-  }
-  option {
-    background: #1e1e1e;
-  }
-`
-
-const TwoCol = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-`
-
-const ToggleRow = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #141414;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  padding: 12px 14px;
-`
-
-const ToggleLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  color: #cccccc;
-`
-
-const ToggleHint = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  color: #8a8a8e;
-  margin-top: 2px;
-`
-
-const Toggle = styled.button<{ active: boolean }>`
-  width: 44px;
-  height: 24px;
-  border-radius: 12px;
-  border: none;
-  background: ${({ active }) => (active ? '#7461FF' : '#2A2A2C')};
-  cursor: pointer;
-  position: relative;
-  transition: background 0.2s;
-  flex-shrink: 0;
-  &::after {
-    content: '';
-    position: absolute;
-    top: 3px;
-    left: ${({ active }) => (active ? '23px' : '3px')};
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #ffffff;
-    transition: left 0.2s;
-  }
-`
-
-const Divider = styled.div`
-  height: 1px;
-  background: #2a2a2c;
-  margin: 20px 0;
-`
-
-const ErrorBanner = styled.div`
-  background: rgba(255, 77, 77, 0.1);
-  border: 1px solid rgba(255, 77, 77, 0.3);
-  border-radius: 10px;
-  padding: 10px 14px;
-  color: #ff6b6b;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  margin-bottom: 16px;
-`
-
-const Actions = styled.div`
-  display: flex;
-  gap: 12px;
-  margin-top: 24px;
-`
-
-const CancelBtn = styled.button`
-  flex: 1;
-  padding: 13px;
-  border-radius: 12px;
-  border: 1px solid #2a2a2c;
-  background: transparent;
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-  &:hover {
-    border-color: #555;
-    color: #cccccc;
-  }
-`
-
-const SubmitBtn = styled.button`
-  flex: 2;
-  padding: 13px;
-  border-radius: 12px;
-  border: none;
-  background: linear-gradient(135deg, #7461ff, #5a48e8);
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: opacity 0.15s;
-  &:hover:not(:disabled) {
-    opacity: 0.88;
-  }
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-`
-
-// ─── Types ───────────────────────────────────────────────────────
-
-interface Props {
+type Props = {
+  open: boolean
   onClose: () => void
-  onCreated: (strategy: any) => void
+  onCreated: (strategy: Strategy) => void
   initialApiKey?: string
 }
 
-interface FormState {
-  name: string
-  description: string
-  strategyType: StrategyType
-  riskLevel: StrategyRiskLevel
-  vaultAddress: string
-  isPublic: boolean
-  apiKey: string
-}
+const TYPES: StrategyType[] = [
+  'COPYTRADE',
+  'MARKET_MAKER',
+  'ARBITRAGE',
+  'MOMENTUM',
+  'HEDGE',
+  'CUSTOM'
+]
+const RISKS: StrategyRiskLevel[] = ['LOW', 'MEDIUM', 'HIGH', 'AGGRESSIVE']
 
-const STRATEGY_TYPE_LABELS: Record<StrategyType, string> = {
-  COPYTRADE: 'CopyTrade',
-  MARKET_MAKER: 'Market Maker',
-  ARBITRAGE: 'Arbitrage',
-  MOMENTUM: 'Momentum',
-  HEDGE: 'Hedge',
-  CUSTOM: 'Custom'
-}
+const FieldLabel = styled(Label)`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 500;
+`
 
-const RISK_LABELS: Record<StrategyRiskLevel, string> = {
-  LOW: 'Low Risk — conservative, tight slippage limits',
-  MEDIUM: 'Medium Risk — balanced, standard limits',
-  HIGH: 'High Risk — aggressive, wider limits',
-  AGGRESSIVE: 'Aggressive — maximum position sizes'
-}
+const Range = styled.input`
+  width: 100%;
+  accent-color: ${C.primary};
+  height: 20px;
+`
 
-// ─── Component ───────────────────────────────────────────────────
+const FeeValue = styled.span`
+  ${grotesk};
+  ${tabular};
+  font-weight: 600;
+  color: ${C.text};
+`
+
+const Check = styled.label`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: ${C.secondary};
+  cursor: pointer;
+  input {
+    width: 16px;
+    height: 16px;
+    accent-color: ${C.primary};
+  }
+`
+
+const Advanced = styled.details`
+  font-size: 13px;
+  color: ${C.muted};
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: ${C.secondary};
+    &:hover {
+      color: ${C.text};
+    }
+  }
+  > div {
+    margin-top: 10px;
+  }
+`
+
+const Mono = styled(Input)`
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+`
+
+const EMPTY = {
+  name: '',
+  description: '',
+  vaultAddress: '',
+  apiKey: ''
+}
 
 const CreateStrategyModal: React.FC<Props> = ({
+  open,
   onClose,
   onCreated,
   initialApiKey = ''
 }) => {
-  const [form, setForm] = useState<FormState>({
-    name: '',
-    description: '',
-    strategyType: 'MOMENTUM',
-    riskLevel: 'MEDIUM',
-    vaultAddress: '',
-    isPublic: true,
-    apiKey: initialApiKey
-  })
+  const { walletAddress } = useSDK()
+  const { toast } = useToast()
+  const tx = useTx()
+  const [form, setForm] = useState({ ...EMPTY, apiKey: initialApiKey })
+  const [type, setType] = useState<StrategyType>('COPYTRADE')
+  const [risk, setRisk] = useState<StrategyRiskLevel>('MEDIUM')
+  // PLACEHOLDER: no backend yet — the strategies API has no performance-fee
+  // field, so the slider value is shown but not sent.
+  const [fee, setFee] = useState(15)
+  const [isPublic, setIsPublic] = useState(true)
 
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (open && initialApiKey) setForm(f => ({ ...f, apiKey: initialApiKey }))
+  }, [open, initialApiKey])
 
   const set =
-    (k: keyof FormState) =>
-    (
-      e: React.ChangeEvent<
-        HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-      >
-    ) =>
+    (k: keyof typeof EMPTY) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       setForm(prev => ({ ...prev, [k]: e.target.value }))
 
-  const handleSubmit = async () => {
-    if (!form.name.trim()) {
-      setError('Strategy name is required')
-      return
-    }
-    if (!form.apiKey.trim()) {
-      setError('API Key is required to register a strategy')
-      return
-    }
-    setError(null)
-    setLoading(true)
+  const name = form.name.trim()
+  const apiKey = form.apiKey.trim()
 
-    try {
-      const strategy = await strategyService.createStrategy(
-        {
-          name: form.name.trim(),
-          description: form.description.trim() || undefined,
-          strategyType: form.strategyType,
-          riskLevel: form.riskLevel,
-          vaultAddress: form.vaultAddress.trim() || undefined,
-          isPublic: form.isPublic
-        },
-        form.apiKey.trim()
-      )
-      onCreated(strategy)
-      onClose()
-    } catch (e: any) {
-      setError(e.message ?? 'Failed to create strategy')
-    } finally {
-      setLoading(false)
+  const submit = () => {
+    const params = {
+      name,
+      description: form.description.trim() || undefined,
+      strategyType: type,
+      riskLevel: risk,
+      vaultAddress: form.vaultAddress.trim() || undefined,
+      isPublic
     }
+    onClose()
+    tx.run({
+      type: 'other',
+      title: 'Registering strategy',
+      summary: name,
+      actTitle: `Register strategy ${name}`,
+      successTitle: 'Strategy published',
+      steps: [
+        {
+          label: 'Sign strategy registration',
+          run: async () => {
+            const created = await strategyService.createStrategy(params, apiKey)
+            onCreated(created)
+            return true
+          }
+        },
+        { label: 'Publishing to the marketplace' }
+      ],
+      onSuccess: () => {
+        setForm({ ...EMPTY, apiKey })
+        setFee(15)
+      }
+    })
   }
 
+  const connect = () =>
+    requestWalletConnect().catch((e: unknown) =>
+      toast(
+        'error',
+        'Could not connect wallet',
+        e instanceof Error ? e.message : undefined
+      )
+    )
+
+  let cta: { label: string; onClick?: () => void }
+  if (!walletAddress) cta = { label: 'Connect wallet', onClick: connect }
+  else if (!name) cta = { label: 'Enter a name' }
+  else if (!apiKey) cta = { label: 'Enter your agent API key' }
+  else cta = { label: 'Register strategy', onClick: submit }
+
   return (
-    <Overlay onClick={e => e.target === e.currentTarget && onClose()}>
-      <Modal>
-        <Header>
-          <div>
-            <Title>Register Strategy</Title>
-            <Subtitle>
-              Publish your AI trading strategy to the marketplace
-            </Subtitle>
-          </div>
-          <CloseBtn onClick={onClose}>✕</CloseBtn>
-        </Header>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Register strategy"
+      description="Publish a strategy under your agent. Followers deploy it into their own copy vault."
+      width={460}
+    >
+      <FieldLabel>
+        Strategy name
+        <Input
+          value={form.name}
+          onChange={set('name')}
+          placeholder="My strategy"
+          aria-label="Strategy name"
+          maxLength={80}
+        />
+      </FieldLabel>
 
-        {error && <ErrorBanner>{error}</ErrorBanner>}
+      <Col $gap={6}>
+        <Label as="span">Type</Label>
+        <Row $gap={6} $wrap role="radiogroup" aria-label="Strategy type">
+          {TYPES.map(t => (
+            <ChoiceChip
+              key={t}
+              role="radio"
+              aria-checked={type === t}
+              $active={type === t}
+              onClick={() => setType(t)}
+            >
+              {TYPE_LABEL[t]}
+            </ChoiceChip>
+          ))}
+        </Row>
+      </Col>
 
-        <Field>
-          <Label>Strategy Name *</Label>
-          <Input
-            placeholder="e.g. LUNES Momentum Alpha"
-            value={form.name}
-            onChange={set('name')}
-            maxLength={80}
-          />
-        </Field>
+      <Col $gap={6}>
+        <Label as="span">Risk level</Label>
+        <Row $gap={6} $wrap role="radiogroup" aria-label="Risk level">
+          {RISKS.map(r => (
+            <ChoiceChip
+              key={r}
+              role="radio"
+              aria-checked={risk === r}
+              $active={risk === r}
+              onClick={() => setRisk(r)}
+            >
+              {RISK_STYLE[r].short}
+            </ChoiceChip>
+          ))}
+        </Row>
+      </Col>
 
-        <Field>
-          <Label>Description</Label>
-          <Textarea
-            placeholder="Describe your strategy's approach, signals, and risk management…"
-            value={form.description}
-            onChange={set('description')}
-            maxLength={500}
-          />
-        </Field>
+      <FieldLabel>
+        Description
+        <Textarea
+          value={form.description}
+          onChange={set('description')}
+          placeholder="How the strategy trades"
+          rows={3}
+          maxLength={500}
+          style={{ minHeight: 84 }}
+        />
+      </FieldLabel>
 
-        <TwoCol>
-          <Field>
-            <Label>Strategy Type</Label>
-            <Select value={form.strategyType} onChange={set('strategyType')}>
-              {(Object.keys(STRATEGY_TYPE_LABELS) as StrategyType[]).map(t => (
-                <option key={t} value={t}>
-                  {STRATEGY_TYPE_LABELS[t]}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field>
-            <Label>Risk Level</Label>
-            <Select value={form.riskLevel} onChange={set('riskLevel')}>
-              {(Object.keys(RISK_LABELS) as StrategyRiskLevel[]).map(r => (
-                <option key={r} value={r}>
-                  {r.charAt(0) + r.slice(1).toLowerCase()}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </TwoCol>
+      <Col $gap={6}>
+        <Row $justify="space-between">
+          <Muted>Performance fee</Muted>
+          <FeeValue>{fee}%</FeeValue>
+        </Row>
+        <Range
+          type="range"
+          min={5}
+          max={30}
+          step={1}
+          value={fee}
+          onChange={e => setFee(+e.target.value)}
+          aria-label="Performance fee"
+        />
+      </Col>
 
-        {form.riskLevel && (
-          <div
-            style={{
-              background: 'rgba(116,97,255,0.06)',
-              border: '1px solid rgba(116,97,255,0.2)',
-              borderRadius: 10,
-              padding: '10px 14px',
-              marginTop: -8,
-              marginBottom: 18,
-              fontFamily: 'Space Grotesk',
-              fontSize: 12,
-              color: '#9983FF'
-            }}
-          >
-            {RISK_LABELS[form.riskLevel]}
-          </div>
-        )}
+      <FieldLabel>
+        Agent API key
+        <Mono
+          type="password"
+          value={form.apiKey}
+          onChange={set('apiKey')}
+          placeholder="lnx_live_…"
+          autoComplete="off"
+          aria-label="Agent API key"
+        />
+        <Muted $size={12}>
+          Authenticates the agent that owns this strategy.
+        </Muted>
+      </FieldLabel>
 
-        <Field>
-          <Label>CopyVault Contract Address (optional)</Label>
-          <Input
-            placeholder="5… (ink! CopyVault on-chain address)"
-            value={form.vaultAddress}
-            onChange={set('vaultAddress')}
-          />
-        </Field>
-
-        <Field>
-          <ToggleRow>
-            <div>
-              <ToggleLabel>Public marketplace listing</ToggleLabel>
-              <ToggleHint>
-                Allow anyone to view and follow this strategy
-              </ToggleHint>
-            </div>
-            <Toggle
-              active={form.isPublic}
-              onClick={() => setForm(p => ({ ...p, isPublic: !p.isPublic }))}
+      <Advanced>
+        <summary>Advanced</summary>
+        <Col $gap={12}>
+          <FieldLabel>
+            CopyVault contract (optional)
+            <Mono
+              value={form.vaultAddress}
+              onChange={set('vaultAddress')}
+              placeholder="5… on-chain CopyVault address"
+              aria-label="CopyVault contract address"
             />
-          </ToggleRow>
-        </Field>
+          </FieldLabel>
+          <Check>
+            <input
+              type="checkbox"
+              checked={isPublic}
+              onChange={e => setIsPublic(e.target.checked)}
+            />
+            List publicly on the marketplace
+          </Check>
+        </Col>
+      </Advanced>
 
-        <Divider />
-
-        <Field>
-          <Label>Agent API Key *</Label>
-          <Input
-            type="password"
-            placeholder="lx_…"
-            value={form.apiKey}
-            onChange={set('apiKey')}
-            autoComplete="off"
-          />
-          <div
-            style={{
-              fontFamily: 'Space Grotesk',
-              fontSize: 11,
-              color: '#555',
-              marginTop: 6
-            }}
-          >
-            Required to authenticate the agent that owns this strategy.
-          </div>
-        </Field>
-
-        <Actions>
-          <CancelBtn onClick={onClose}>Cancel</CancelBtn>
-          <SubmitBtn onClick={handleSubmit} disabled={loading}>
-            {loading ? 'Creating…' : 'Create Strategy'}
-          </SubmitBtn>
-        </Actions>
-      </Modal>
-    </Overlay>
+      <Row $gap={8}>
+        <Button
+          variant="secondary"
+          size="xl"
+          style={{ flex: 1, fontSize: 14, borderRadius: 12 }}
+          onClick={onClose}
+        >
+          Cancel
+        </Button>
+        <Button
+          size="xl"
+          style={{ flex: 1.5, fontSize: 16, borderRadius: 14 }}
+          disabled={!cta.onClick}
+          onClick={cta.onClick}
+        >
+          {cta.label}
+        </Button>
+      </Row>
+    </Dialog>
   )
 }
 

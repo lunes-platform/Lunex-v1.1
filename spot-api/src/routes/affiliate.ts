@@ -2,10 +2,11 @@ import { NextFunction, Router, Request, Response } from 'express';
 import { affiliateService } from '../services/affiliateService';
 import prisma from '../db';
 import { z } from 'zod';
+import { verifyWalletActionSignature } from '../middleware/auth';
 import {
-  verifyWalletActionSignature,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 
 const router = Router();
@@ -57,10 +58,10 @@ router.post(
 
 router.get('/code', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = AddressQuerySchema.safeParse(req.query);
+    const parsed = readAuthSchema(req, AddressQuerySchema).safeParse(req.query);
     if (!parsed.success)
       return res.status(400).json({ error: 'address required' });
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'affiliate.code',
       address: parsed.data.address,
       nonce: parsed.data.nonce,
@@ -81,10 +82,12 @@ router.get(
   '/dashboard',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = AddressQuerySchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, AddressQuerySchema).safeParse(
+        req.query,
+      );
       if (!parsed.success)
         return res.status(400).json({ error: 'address required' });
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'affiliate.dashboard',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -104,11 +107,11 @@ router.get(
 
 router.get('/tree', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const parsed = AddressQuerySchema.safeParse(req.query);
+    const parsed = readAuthSchema(req, AddressQuerySchema).safeParse(req.query);
     if (!parsed.success)
       return res.status(400).json({ error: 'address required' });
     const depth = Math.min(parseInt(req.query.depth as string) || 3, 5);
-    const auth = await verifyWalletReadSignature({
+    const auth = await verifyWalletReadAccess(req, {
       action: 'affiliate.tree',
       address: parsed.data.address,
       nonce: parsed.data.nonce,
@@ -131,13 +134,15 @@ router.get(
   '/payouts',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = AddressQuerySchema.safeParse(req.query);
+      const parsed = readAuthSchema(req, AddressQuerySchema).safeParse(
+        req.query,
+      );
       if (!parsed.success)
         return res.status(400).json({ error: 'address required' });
       const limit =
         req.pagination?.limit ??
         Math.min(parseInt(req.query.limit as string) || 20, 100);
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'affiliate.payouts',
         address: parsed.data.address,
         nonce: parsed.data.nonce,

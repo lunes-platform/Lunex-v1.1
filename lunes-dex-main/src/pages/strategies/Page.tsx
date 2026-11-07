@@ -1,1012 +1,598 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+/**
+ * Strategy marketplace (prototype STRATEGIES).
+ *
+ * Real data: `strategyService.getMarketplace` (filters, search, sort, paging),
+ * `getFollowedStrategies`, `followStrategy` / `unfollowStrategy` (wallet-signed
+ * off-chain actions) and `createStrategy` via the register modal.
+ */
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components'
+import { Search } from 'lucide-react'
+import {
+  BareInput,
+  Button,
+  C,
+  Card,
+  Col,
+  Empty,
+  Field,
+  H1,
+  Page,
+  Row,
+  SkeletonLine,
+  Spinner,
+  StatCard,
+  StatLabel,
+  StatValue,
+  Sub,
+  Tabs,
+  grotesk
+} from 'components/ui/kit'
+import { AnimatedNumber } from 'components/ui/AnimatedNumber'
+import { useToast } from 'components/feedback/ToastProvider'
 import strategyService, {
   Strategy,
-  StrategyType,
-  StrategyRiskLevel
+  StrategyRiskLevel,
+  StrategyType
 } from '../../services/strategyService'
-import CreateStrategyModal from './CreateStrategyModal'
 import { useSDK } from '../../context/SDKContext'
+import { useReadSession } from '../../hooks/useReadSession'
+import CreateStrategyModal from './CreateStrategyModal'
+import {
+  FilterPill,
+  MiniStat,
+  RISK_STYLE,
+  RiskTag,
+  TYPE_LABEL,
+  TypeLabel,
+  errMsg,
+  fmtCount,
+  fmtPct,
+  fmtUsd,
+  roiColor
+} from './shared'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
-// ─── Styled Components ───────────────────────────────────────────
+type TypeKey = 'all' | 'COPYTRADE' | 'MARKET_MAKER' | 'ARBITRAGE'
+type RiskKey = 'all' | 'LOW' | 'MEDIUM' | 'HIGH'
+type SortKey = 'roi30d' | 'followersCount' | 'sharpeRatio' | 'totalVolume'
 
-const Page = styled.div`
-  min-height: 100vh;
-  background: #1a1a1a;
-  padding: 84px 24px 64px;
+const TYPE_TABS: { value: TypeKey; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'COPYTRADE', label: 'Copy trading' },
+  { value: 'MARKET_MAKER', label: 'Market making' },
+  { value: 'ARBITRAGE', label: 'Arbitrage' }
+]
+
+const RISK_PILLS: { value: RiskKey; label: string }[] = [
+  { value: 'all', label: 'Any risk' },
+  { value: 'LOW', label: 'Low' },
+  { value: 'MEDIUM', label: 'Medium' },
+  { value: 'HIGH', label: 'High' }
+]
+
+const SORTS: { value: SortKey; label: string }[] = [
+  { value: 'roi30d', label: '30d ROI' },
+  { value: 'followersCount', label: 'Followers' },
+  { value: 'sharpeRatio', label: 'Sharpe' },
+  { value: 'totalVolume', label: 'Volume' }
+]
+
+const PAGE_SIZE = 24
+
+// ─── Styled ──────────────────────────────────────────────────────
+
+const Head = styled(Col)`
+  gap: 6px;
 `
 
-const Container = styled.div`
-  max-width: 1280px;
-  margin: 0 auto;
-`
-
-const Hero = styled.div`
-  text-align: center;
-  margin-bottom: 40px;
-  padding: 32px 0;
-`
-
-const Title = styled.h1`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 42px;
-  font-weight: 800;
-  color: #ffffff;
-  margin: 0 0 12px 0;
-  letter-spacing: -1px;
-
-  span {
-    background: linear-gradient(135deg, #6c38ff, #ad87ff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-`
-
-const Subtitle = styled.p`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 16px;
-  color: #8a8a8e;
+const Lead = styled(Sub)`
+  font-size: 15px;
   margin: 0;
-  max-width: 560px;
-  margin: 0 auto;
-  line-height: 1.6;
+  text-wrap: pretty;
 `
 
-const Badge = styled.span`
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 20px;
-  background: rgba(116, 97, 255, 0.18);
-  border: 1px solid rgba(116, 97, 255, 0.3);
-  color: #7461ff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-left: 12px;
-  vertical-align: middle;
-`
-
-const FiltersRow = styled.div`
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 28px;
-  align-items: center;
-`
-
-const FilterSelect = styled.select`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  padding: 8px 14px;
-  cursor: pointer;
-  outline: none;
-  &:focus {
-    border-color: #7461ff;
-  }
-`
-
-const TabRow = styled.div`
-  display: flex;
-  gap: 8px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid #2a2a2c;
-  padding-bottom: 0;
-`
-
-const Tab = styled.button<{ active?: boolean }>`
-  background: none;
-  border: none;
-  border-bottom: 2px solid
-    ${({ active }) => (active ? '#7461FF' : 'transparent')};
-  color: ${({ active }) => (active ? '#FFFFFF' : '#8A8A8E')};
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: ${({ active }) => (active ? '600' : '400')};
-  padding: 10px 16px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  &:hover {
-    color: #ffffff;
-  }
-`
-
-const Grid = styled.div`
+const Stats = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 20px;
-`
-
-const Card = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 20px;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  transition:
-    border-color 0.2s ease,
-    transform 0.2s ease;
-  cursor: pointer;
-  &:hover {
-    border-color: rgba(116, 97, 255, 0.4);
-    transform: translateY(-2px);
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  @media (max-width: 759px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 `
 
-const CardHeader = styled.div`
+const Stat = styled(StatCard)`
+  padding: 14px 16px;
+  ${StatValue} {
+    font-size: clamp(18px, 2.4vw, 24px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+`
+
+const FilterBar = styled.div`
   display: flex;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
   justify-content: space-between;
+  align-items: center;
+`
+
+const Scroller = styled.div`
+  display: flex;
+  gap: 6px;
+  @media (max-width: 759px) {
+    overflow-x: auto;
+    max-width: 100%;
+    padding-bottom: 2px;
+  }
+`
+
+const SearchField = styled(Field)`
+  flex: 1 1 260px;
+  max-width: 420px;
+  color: ${C.muted};
+  @media (max-width: 759px) {
+    max-width: none;
+  }
+`
+
+const Cards = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
   gap: 12px;
 `
 
-const CardTitle = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 17px;
+const SCard = styled(Card)`
+  padding: 16px;
+  gap: 12px;
+  cursor: pointer;
+  &:hover {
+    border-color: ${C.borderStrong};
+  }
+  &:focus-visible {
+    outline: 2px solid ${C.primary};
+    outline-offset: 2px;
+  }
+`
+
+const SName = styled.span`
+  ${grotesk};
   font-weight: 600;
-  color: #ffffff;
-  line-height: 1.3;
-`
-
-const CardMeta = styled.div`
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 4px;
-`
-
-const Chip = styled.span<{ color?: string; bg?: string }>`
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 9px;
-  border-radius: 20px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: ${({ color }) => color ?? '#8A8A8E'};
-  background: ${({ bg }) => bg ?? 'rgba(255,255,255,0.06)'};
-  border: 1px solid ${({ color }) => (color ? color + '33' : '#2A2A2C')};
-`
-
-const ROIBadge = styled.div<{ positive: boolean }>`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 22px;
-  font-weight: 700;
-  color: ${({ positive }) => (positive ? '#26D07C' : '#FF4D4D')};
+  font-size: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 `
 
-const StatsRow = styled.div`
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0;
-  border: 1px solid #2a2a2c;
-  border-radius: 14px;
+const Desc = styled.p`
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: ${C.secondary};
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
 `
 
-const Stat = styled.div`
-  padding: 12px 14px;
-  border-right: 1px solid #2a2a2c;
-  &:last-child {
-    border-right: none;
-  }
-`
-
-const StatValue = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 15px;
-  font-weight: 600;
-  color: #ffffff;
-`
-
-const StatLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  color: #8a8a8e;
-  margin-top: 2px;
-`
-
-const AgentRow = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 10px;
-`
-
-const Avatar = styled.div<{ url?: string }>`
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: ${({ url }) =>
-    url
-      ? `url(${url}) center/cover`
-      : 'linear-gradient(135deg, #7461FF, #26D07C)'};
-  flex-shrink: 0;
-`
-
-const AgentName = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #cccccc;
-`
-
-const FollowBtn = styled.button<{ following?: boolean }>`
-  margin-top: auto;
-  width: 100%;
-  padding: 11px;
-  border-radius: 12px;
-  border: 1px solid ${({ following }) => (following ? '#2A2A2C' : '#7461FF')};
-  background: ${({ following }) =>
-    following ? 'transparent' : 'rgba(116,97,255,0.12)'};
-  color: ${({ following }) => (following ? '#8A8A8E' : '#7461FF')};
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  &:hover:not(:disabled) {
-    background: ${({ following }) =>
-      following ? 'rgba(255,77,77,0.08)' : 'rgba(116,97,255,0.22)'};
-    border-color: ${({ following }) => (following ? '#FF4D4D' : '#7461FF')};
-    color: ${({ following }) => (following ? '#FF4D4D' : '#9983FF')};
-  }
-  &:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-`
-
-const LoadingGrid = styled.div`
+const Metrics = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
 `
 
-const Skeleton = styled.div`
-  background: linear-gradient(90deg, #232323 25%, #2a2a2a 50%, #232323 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.4s infinite;
-  border-radius: 20px;
-  height: 260px;
-  @keyframes shimmer {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
-  }
-`
-
-const LoadMoreBtn = styled.button`
-  display: block;
-  margin: 32px auto 0;
-  padding: 12px 40px;
-  background: transparent;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-  &:hover:not(:disabled) {
-    border-color: #7461ff;
-    color: #7461ff;
-  }
-  &:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-`
-
-// ─── Onboarding Banner ────────────────────────────────────────────
-const OnboardBanner = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  background: linear-gradient(
-    135deg,
-    rgba(108, 56, 255, 0.1) 0%,
-    rgba(77, 172, 255, 0.06) 100%
-  );
-  border: 1px solid rgba(108, 56, 255, 0.25);
+const EmptyBox = styled(Empty)`
+  border: 1px dashed ${C.borderStrong};
   border-radius: 16px;
-  padding: 16px 20px;
-  margin-bottom: 28px;
+  padding: 48px 24px;
 `
-const OnboardSteps = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  flex-wrap: wrap;
-`
-const OnboardStep = styled.span`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  color: #ad87ff;
-  font-weight: 600;
-`
-const OnboardDivider = styled.span`
-  color: #4a4a4c;
-  font-size: 12px;
-`
-const OnboardCTA = styled.button`
-  padding: 8px 18px;
-  border-radius: 10px;
-  border: 1px solid rgba(108, 56, 255, 0.5);
-  background: rgba(108, 56, 255, 0.15);
-  color: #ad87ff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all 0.15s;
-  &:hover {
-    background: rgba(108, 56, 255, 0.3);
-    color: #fff;
+
+const authorOf = (s: Strategy) => {
+  if (s.leader) {
+    const who = s.leader.name || `@${s.leader.username}`
+    return s.leader.isAi ? `${who} · AI agent` : who
   }
-`
-const OnboardClose = styled.button`
-  background: none;
-  border: none;
-  color: #4a4a4c;
-  font-size: 18px;
-  cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
-  &:hover {
-    color: #8a8a8e;
+  if (s.agent) {
+    const w = s.agent.walletAddress
+    const who = `${w.slice(0, 6)}…${w.slice(-4)}`
+    return s.agent.agentType && s.agent.agentType !== 'HUMAN'
+      ? `${who} · ${s.agent.framework ?? 'AI agent'}`
+      : who
   }
-`
-
-// ─── Rich Empty State ─────────────────────────────────────────────
-const RichEmptyState = styled.div`
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 72px 32px;
-  text-align: center;
-`
-const EmptyIcon = styled.div`
-  width: 72px;
-  height: 72px;
-  border-radius: 20px;
-  background: rgba(108, 56, 255, 0.1);
-  border: 1px solid rgba(108, 56, 255, 0.2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 32px;
-  margin-bottom: 20px;
-`
-const EmptyTitle = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 20px;
-  font-weight: 700;
-  color: #ffffff;
-  margin-bottom: 8px;
-`
-const EmptyDesc = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  color: #8a8a8e;
-  max-width: 400px;
-  line-height: 1.6;
-  margin-bottom: 24px;
-`
-const EmptyCTA = styled.button`
-  padding: 12px 28px;
-  border-radius: 12px;
-  border: none;
-  background: #6c38ff;
-  color: #fff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-  &:hover {
-    opacity: 0.88;
-    transform: translateY(-1px);
-  }
-`
-
-const StatsBar = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 14px;
-  margin-bottom: 32px;
-`
-
-const StatCard = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 16px;
-  padding: 16px 20px;
-`
-
-const StatCardValue = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 26px;
-  font-weight: 700;
-  color: #ffffff;
-`
-
-const StatCardLabel = styled.div`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  color: #8a8a8e;
-  margin-top: 4px;
-`
-
-// ─── Helpers ─────────────────────────────────────────────────────
-
-const RISK_COLORS: Record<string, { color: string; bg: string }> = {
-  LOW: { color: '#26D07C', bg: 'rgba(38,208,124,0.1)' },
-  MEDIUM: { color: '#FE923F', bg: 'rgba(254,146,63,0.1)' },
-  HIGH: { color: '#FF6B6B', bg: 'rgba(255,107,107,0.1)' },
-  AGGRESSIVE: { color: '#FF4D4D', bg: 'rgba(255,77,77,0.1)' }
-}
-
-const TYPE_COLORS: Record<string, string> = {
-  COPYTRADE: '#26D07C',
-  MARKET_MAKER: '#FE923F',
-  ARBITRAGE: '#7461FF',
-  MOMENTUM: '#4DACFF',
-  HEDGE: '#B0B0B0',
-  CUSTOM: '#8A8A8E'
-}
-
-function fmtRoi(v: number): string {
-  const sign = v >= 0 ? '+' : ''
-  return `${sign}${(v * 100).toFixed(2)}%`
-}
-
-function fmtNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
-}
-
-function fmtUSD(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`
-  return `$${n.toFixed(0)}`
+  return 'Unknown manager'
 }
 
 // ─── Component ───────────────────────────────────────────────────
 
-type TabKey = 'marketplace' | 'copytrade' | 'market_maker' | 'arbitrage'
-
-const TABS: { key: TabKey; label: string; type?: StrategyType }[] = [
-  { key: 'marketplace', label: 'All Strategies' },
-  { key: 'copytrade', label: 'Copy Trading', type: 'COPYTRADE' },
-  { key: 'market_maker', label: 'Market Making', type: 'MARKET_MAKER' },
-  { key: 'arbitrage', label: 'Arbitrage', type: 'ARBITRAGE' }
-]
-
-const SearchInput = styled.input`
-  flex: 1;
-  min-width: 200px;
-  background: #141414;
-  border: 1px solid #2a2a2c;
-  border-radius: 10px;
-  padding: 9px 14px;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.15s;
-  &:focus {
-    border-color: #7461ff;
-  }
-  &::placeholder {
-    color: #555;
-  }
-`
-
-const PAGE_SIZE = 24
-
 const StrategyMarketplacePage: React.FC = () => {
   const { walletAddress, signMessage } = useSDK()
+  const { hasSession } = useReadSession()
+  const { toast } = useToast()
   const navigate = useNavigate()
-  const [tab, setTab] = useState<TabKey>('marketplace')
+
+  const [type, setType] = useState<TypeKey>('all')
+  const [risk, setRisk] = useState<RiskKey>('all')
+  const [sortBy, setSortBy] = useState<SortKey>('roi30d')
+  const [search, setSearch] = useState('')
+  const [debounced, setDebounced] = useState('')
   const [strategies, setStrategies] = useState<Strategy[]>([])
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [riskFilter, setRiskFilter] = useState<StrategyRiskLevel | ''>('')
-  const [sortBy, setSortBy] = useState<
-    'roi30d' | 'followersCount' | 'sharpeRatio' | 'totalVolume'
-  >('roi30d')
-  const [searchQuery, setSearchQuery] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [following, setFollowing] = useState<Set<string>>(new Set())
-  const [followLoading, setFollowLoading] = useState<Set<string>>(new Set())
-  const [bannerDismissed, setBannerDismissed] = useState(
-    () => sessionStorage.getItem('lunex_strat_banner') === '1'
-  )
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [busy, setBusy] = useState<Set<string>>(new Set())
+  const [showCreate, setShowCreate] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
 
-  const activeType = TABS.find(t => t.key === tab)?.type
+  useEffect(() => () => clearTimeout(debounceRef.current), [])
 
-  useEffect(
-    () => () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    },
-    []
-  )
-
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value
-    setSearchQuery(v)
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => setDebouncedSearch(v), 350)
+  const onSearch = (v: string) => {
+    setSearch(v)
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => setDebounced(v), 350)
   }
 
   const buildParams = useCallback(
     (off: number) => ({
-      strategyType: activeType,
-      riskLevel: riskFilter || undefined,
-      search: debouncedSearch.trim() || undefined,
+      strategyType: type === 'all' ? undefined : (type as StrategyType),
+      riskLevel: risk === 'all' ? undefined : (risk as StrategyRiskLevel),
+      search: debounced.trim() || undefined,
       sortBy,
       limit: PAGE_SIZE,
       offset: off
     }),
-    [activeType, riskFilter, debouncedSearch, sortBy]
+    [type, risk, debounced, sortBy]
   )
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     setOffset(0)
     try {
-      const result = await strategyService.getMarketplace(buildParams(0))
-      setStrategies(result.strategies)
-      setTotal(result.total)
-    } catch (e) {
-      console.error('Failed to load strategies:', e)
+      const res = await strategyService.getMarketplace(buildParams(0))
+      setStrategies(res.strategies)
+      setTotal(res.total)
+    } catch (e: unknown) {
+      setStrategies([])
+      setTotal(0)
+      setLoadError(errMsg(e, 'Could not load strategies'))
     } finally {
       setLoading(false)
     }
   }, [buildParams])
 
+  useEffect(() => {
+    load()
+  }, [load])
+
   const loadMore = async () => {
-    const nextOffset = offset + PAGE_SIZE
+    const next = offset + PAGE_SIZE
     setLoadingMore(true)
     try {
-      const result = await strategyService.getMarketplace(
-        buildParams(nextOffset)
-      )
-      setStrategies(prev => [...prev, ...result.strategies])
-      setOffset(nextOffset)
-    } catch (e) {
-      console.error('Failed to load more strategies:', e)
+      const res = await strategyService.getMarketplace(buildParams(next))
+      setStrategies(prev => [...prev, ...res.strategies])
+      setOffset(next)
+    } catch (e: unknown) {
+      toast('error', 'Could not load more strategies', errMsg(e, ''))
     } finally {
       setLoadingMore(false)
     }
   }
 
   useEffect(() => {
-    load()
-  }, [load])
-
-  useEffect(() => {
-    if (!walletAddress) return
-    strategyService
-      .getFollowedStrategies(walletAddress, signMessage)
-      .then(followed => setFollowing(new Set(followed.map(s => s.id))))
-      .catch(() => {})
-  }, [walletAddress, signMessage])
-
-  const handleFollow = async (strategyId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
     if (!walletAddress) {
-      alert('Connect your wallet to follow strategies.')
+      setFollowing(new Set())
       return
     }
-    setFollowLoading(prev => new Set(prev).add(strategyId))
+    // Private read via the read session — never prompts the wallet.
+    strategyService
+      .getFollowedStrategies(walletAddress)
+      .then(list => setFollowing(new Set(list.map(s => s.id))))
+      .catch(() => {})
+  }, [walletAddress, hasSession])
+
+  const connect = () =>
+    requestWalletConnect().catch((e: unknown) =>
+      toast('error', 'Could not connect wallet', errMsg(e, ''))
+    )
+
+  const toggleFollow = async (s: Strategy) => {
+    if (!walletAddress) {
+      connect()
+      return
+    }
+    const isF = following.has(s.id)
+    setBusy(prev => new Set(prev).add(s.id))
     try {
-      if (following.has(strategyId)) {
-        await strategyService.unfollowStrategy(
-          strategyId,
-          walletAddress,
-          signMessage
-        )
-        setFollowing(prev => {
-          const s = new Set(prev)
-          s.delete(strategyId)
-          return s
-        })
-        setStrategies(prev =>
-          prev.map(s =>
-            s.id === strategyId
-              ? { ...s, followersCount: Math.max(0, s.followersCount - 1) }
-              : s
-          )
-        )
+      if (isF) {
+        await strategyService.unfollowStrategy(s.id, walletAddress, signMessage)
       } else {
-        await strategyService.followStrategy(
-          strategyId,
-          walletAddress,
-          signMessage
-        )
-        setFollowing(prev => new Set(prev).add(strategyId))
-        setStrategies(prev =>
-          prev.map(s =>
-            s.id === strategyId
-              ? { ...s, followersCount: s.followersCount + 1 }
-              : s
-          )
-        )
+        await strategyService.followStrategy(s.id, walletAddress, signMessage)
       }
-    } catch (err: any) {
-      console.error(err)
+      setFollowing(prev => {
+        const n = new Set(prev)
+        if (isF) n.delete(s.id)
+        else n.add(s.id)
+        return n
+      })
+      setStrategies(prev =>
+        prev.map(x =>
+          x.id === s.id
+            ? {
+                ...x,
+                followersCount: Math.max(0, x.followersCount + (isF ? -1 : 1))
+              }
+            : x
+        )
+      )
+      toast(
+        isF ? 'info' : 'success',
+        isF ? 'Unfollowed' : 'Following strategy',
+        s.name
+      )
+    } catch (e: unknown) {
+      const msg = errMsg(e, 'Please try again.')
+      if (/cancel|reject|denied/i.test(msg)) {
+        toast('warning', 'Request rejected', 'Nothing was signed.')
+      } else {
+        toast('error', isF ? 'Could not unfollow' : 'Could not follow', msg)
+      }
     } finally {
-      setFollowLoading(prev => {
-        const s = new Set(prev)
-        s.delete(strategyId)
-        return s
+      setBusy(prev => {
+        const n = new Set(prev)
+        n.delete(s.id)
+        return n
       })
     }
   }
 
-  const [showCreate, setShowCreate] = useState(false)
-
   const totalVolume = strategies.reduce((a, s) => a + s.totalVolume, 0)
-  const avgRoi30d = strategies.length
+  const totalAum = strategies.reduce((a, s) => a + s.vaultEquity, 0)
+  const avgRoi = strategies.length
     ? strategies.reduce((a, s) => a + s.roi30d, 0) / strategies.length
     : 0
-  const totalAum = strategies.reduce((a, s) => a + s.vaultEquity, 0)
+  const filtered = type !== 'all' || risk !== 'all' || !!debounced.trim()
 
   return (
-    <Page>
-      {showCreate && (
-        <CreateStrategyModal
-          onClose={() => setShowCreate(false)}
-          onCreated={s => setStrategies(prev => [s, ...prev])}
-        />
-      )}
-      <Container>
-        <Hero>
-          <Title>
-            <span>Strategy Marketplace</span>
-            <Badge>AI Trading Network</Badge>
-          </Title>
-          <Subtitle>
-            Discover, follow, and allocate capital to algorithmic &amp;
-            AI-powered trading strategies. Built on Lunex Protocol — copy
-            vaults, spot settlement, and AMM pools.
-          </Subtitle>
-          <button
-            onClick={() => setShowCreate(true)}
-            style={{
-              marginTop: 20,
-              padding: '12px 24px',
-              borderRadius: 8,
-              border: 'none',
-              background: '#6C38FF',
-              color: '#FFFFFF',
-              fontFamily: "'Space Grotesk', sans-serif",
-              fontSize: 14,
-              fontWeight: 700,
-              cursor: 'pointer',
-              transition: 'all 0.15s'
-            }}
-          >
-            + Register Strategy
-          </button>
-        </Hero>
+    <Page $max={1080}>
+      <CreateStrategyModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={s => {
+          setStrategies(prev => [s, ...prev])
+          setTotal(t => t + 1)
+        }}
+      />
 
-        {/* Onboarding Banner */}
-        {!bannerDismissed && (
-          <OnboardBanner>
-            <OnboardSteps>
-              <OnboardStep>1. Create an Agent</OnboardStep>
-              <OnboardDivider>&#8594;</OnboardDivider>
-              <OnboardStep>2. Generate API Key</OnboardStep>
-              <OnboardDivider>&#8594;</OnboardDivider>
-              <OnboardStep>3. Register Strategy</OnboardStep>
-            </OnboardSteps>
-            <OnboardCTA onClick={() => navigate('/agents/get-started')}>
-              Learn how &#8594;
-            </OnboardCTA>
-            <OnboardCTA onClick={() => navigate('/agent')}>
-              Create Agent
-            </OnboardCTA>
-            <OnboardClose
-              onClick={() => {
-                setBannerDismissed(true)
-                sessionStorage.setItem('lunex_strat_banner', '1')
-              }}
-            >
-              &#10005;
-            </OnboardClose>
-          </OnboardBanner>
-        )}
+      <Head>
+        <H1>Strategy marketplace</H1>
+        <Lead>
+          Strategies published by AI agents and human traders. Follow one to
+          deploy it into your own copy vault.
+        </Lead>
+      </Head>
 
-        <StatsBar>
-          <StatCard>
-            <StatCardValue>{fmtNumber(total)}</StatCardValue>
-            <StatCardLabel>Active Strategies</StatCardLabel>
-          </StatCard>
-          <StatCard>
-            <StatCardValue>{fmtUSD(totalAum)}</StatCardValue>
-            <StatCardLabel>Total AUM</StatCardLabel>
-          </StatCard>
-          <StatCard>
-            <StatCardValue
-              style={{ color: avgRoi30d >= 0 ? '#26D07C' : '#FF4D4D' }}
-            >
-              {fmtRoi(avgRoi30d)}
-            </StatCardValue>
-            <StatCardLabel>Avg 30d ROI</StatCardLabel>
-          </StatCard>
-          <StatCard>
-            <StatCardValue>{fmtUSD(totalVolume)}</StatCardValue>
-            <StatCardLabel>Total Volume</StatCardLabel>
-          </StatCard>
-        </StatsBar>
+      <Row $gap={8} $wrap>
+        <Button onClick={() => setShowCreate(true)}>Register strategy</Button>
+        <Button
+          variant="secondary"
+          onClick={() => navigate('/agents/get-started')}
+        >
+          Get started guide
+        </Button>
+      </Row>
 
-        <TabRow>
-          {TABS.map(t => (
-            <Tab
-              key={t.key}
-              active={tab === t.key}
-              onClick={() => setTab(t.key)}
-            >
-              {t.label}
-            </Tab>
-          ))}
-        </TabRow>
+      <Stats>
+        <Stat>
+          <StatLabel>Active strategies</StatLabel>
+          <StatValue>
+            <AnimatedNumber
+              value={total}
+              format={v => fmtCount(Math.round(v))}
+            />
+          </StatValue>
+        </Stat>
+        <Stat>
+          <StatLabel>Total AUM</StatLabel>
+          <StatValue>
+            <AnimatedNumber text={fmtUsd(totalAum)} />
+          </StatValue>
+        </Stat>
+        <Stat>
+          <StatLabel>Avg 30d ROI</StatLabel>
+          <StatValue style={{ color: roiColor(avgRoi) }}>
+            <AnimatedNumber text={fmtPct(avgRoi)} />
+          </StatValue>
+        </Stat>
+        <Stat>
+          <StatLabel>Total volume</StatLabel>
+          <StatValue>
+            <AnimatedNumber text={fmtUsd(totalVolume)} />
+          </StatValue>
+        </Stat>
+      </Stats>
 
-        <FiltersRow>
-          <SearchInput
-            placeholder="Search strategies by name or description…"
-            value={searchQuery}
-            onChange={handleSearchChange}
+      <Col $gap={12}>
+        <FilterBar>
+          <Tabs
+            items={TYPE_TABS}
+            value={type}
+            onChange={setType}
+            ariaLabel="Strategy type"
           />
-          <FilterSelect
-            value={riskFilter}
-            onChange={e => setRiskFilter(e.target.value as any)}
-          >
-            <option value="">All Risk Levels</option>
-            <option value="LOW">Low Risk</option>
-            <option value="MEDIUM">Medium Risk</option>
-            <option value="HIGH">High Risk</option>
-            <option value="AGGRESSIVE">Aggressive</option>
-          </FilterSelect>
-          <FilterSelect
-            value={sortBy}
-            onChange={e => setSortBy(e.target.value as any)}
-          >
-            <option value="roi30d">Sort: 30d ROI</option>
-            <option value="followersCount">Sort: Followers</option>
-            <option value="sharpeRatio">Sort: Sharpe Ratio</option>
-            <option value="totalVolume">Sort: Volume</option>
-          </FilterSelect>
-        </FiltersRow>
-
-        {loading ? (
-          <LoadingGrid>
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} />
+          <Scroller role="group" aria-label="Risk level">
+            {RISK_PILLS.map(r => (
+              <FilterPill
+                key={r.value}
+                $active={risk === r.value}
+                aria-pressed={risk === r.value}
+                onClick={() => setRisk(r.value)}
+              >
+                {r.label}
+              </FilterPill>
             ))}
-          </LoadingGrid>
+          </Scroller>
+        </FilterBar>
+        <FilterBar>
+          <SearchField>
+            <Search size={16} strokeWidth={1.75} />
+            <BareInput
+              value={search}
+              onChange={e => onSearch(e.target.value)}
+              placeholder="Search strategies"
+              aria-label="Search strategies"
+            />
+          </SearchField>
+          <Scroller role="group" aria-label="Sort by">
+            {SORTS.map(s => (
+              <FilterPill
+                key={s.value}
+                $active={sortBy === s.value}
+                aria-pressed={sortBy === s.value}
+                onClick={() => setSortBy(s.value)}
+              >
+                {s.label}
+              </FilterPill>
+            ))}
+          </Scroller>
+        </FilterBar>
+      </Col>
+
+      {loading ? (
+        <Cards aria-busy="true">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <SCard key={i} as="div" style={{ cursor: 'default' }}>
+              <SkeletonLine $w="40%" $h={12} />
+              <SkeletonLine $w="70%" $h={20} />
+              <SkeletonLine $h={12} />
+              <SkeletonLine $w="85%" $h={12} />
+              <SkeletonLine $h={36} />
+              <SkeletonLine $h={42} />
+            </SCard>
+          ))}
+        </Cards>
+      ) : loadError ? (
+        <EmptyBox role="alert">
+          <h3>Could not load strategies</h3>
+          <span>{loadError}</span>
+          <Button variant="secondary" size="sm" onClick={load}>
+            Try again
+          </Button>
+        </EmptyBox>
+      ) : strategies.length === 0 ? (
+        filtered ? (
+          <EmptyBox>No strategies match these filters.</EmptyBox>
         ) : (
-          <Grid>
-            {strategies.length === 0 ? (
-              <RichEmptyState>
-                <EmptyIcon>
-                  <svg
-                    width="28"
-                    height="28"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#6C38FF"
-                    strokeWidth="2"
+          <EmptyBox>
+            <h3>No strategies published yet</h3>
+            <span style={{ maxWidth: 420 }}>
+              Register an agent, generate an API key and publish the first
+              strategy on Lunex.
+            </span>
+            <Row $gap={8} $wrap $justify="center">
+              <Button size="sm" onClick={() => navigate('/agents/get-started')}>
+                Get started guide
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => navigate('/agent')}
+              >
+                Open agent dashboard
+              </Button>
+            </Row>
+          </EmptyBox>
+        )
+      ) : (
+        <Cards>
+          {strategies.map(s => {
+            const isF = following.has(s.id)
+            const isBusy = busy.has(s.id)
+            const open = () => navigate(`/strategies/${s.id}`)
+            return (
+              <SCard key={s.id} onClick={open}>
+                <Row $justify="space-between">
+                  <TypeLabel>
+                    {TYPE_LABEL[s.strategyType] ?? s.strategyType}
+                  </TypeLabel>
+                  <RiskTag $risk={s.riskLevel}>
+                    {(RISK_STYLE[s.riskLevel] ?? RISK_STYLE.MEDIUM).label}
+                  </RiskTag>
+                </Row>
+                <Col $gap={4}>
+                  <SName>{s.name}</SName>
+                  <span style={{ fontSize: 12, color: C.muted }}>
+                    by {authorOf(s)}
+                  </span>
+                </Col>
+                <Desc>{s.description || 'No description yet.'}</Desc>
+                <Metrics>
+                  <MiniStat>
+                    <span>ROI 30d</span>
+                    <span style={{ color: roiColor(s.roi30d) }}>
+                      {fmtPct(s.roi30d)}
+                    </span>
+                  </MiniStat>
+                  <MiniStat>
+                    <span>Win rate</span>
+                    <span>{fmtPct(s.winRate, 0, false)}</span>
+                  </MiniStat>
+                  <MiniStat>
+                    <span>Followers</span>
+                    <span>{fmtCount(s.followersCount)}</span>
+                  </MiniStat>
+                  <MiniStat>
+                    <span>Vault</span>
+                    <span>{fmtUsd(s.vaultEquity)}</span>
+                  </MiniStat>
+                </Metrics>
+                <Row $gap={8} onClick={e => e.stopPropagation()}>
+                  <Button
+                    variant="secondary"
+                    style={{ height: 42, borderRadius: 12 }}
+                    onClick={open}
                   >
-                    <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
-                    <polyline points="16 7 22 7 22 13" />
-                  </svg>
-                </EmptyIcon>
-                <EmptyTitle>No strategies published yet</EmptyTitle>
-                <EmptyDesc>
-                  Be the first to publish a trading strategy on Lunex. Create an
-                  Agent, generate an API Key, and register your strategy to the
-                  marketplace.
-                </EmptyDesc>
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: 12,
-                    flexWrap: 'wrap',
-                    justifyContent: 'center'
-                  }}
-                >
-                  <EmptyCTA onClick={() => navigate('/agents/get-started')}>
-                    Get Started Guide
-                  </EmptyCTA>
-                  <button
-                    onClick={() => navigate('/agent')}
-                    style={{
-                      padding: '12px 24px',
-                      borderRadius: 12,
-                      border: '1px solid #2A2A2C',
-                      background: 'transparent',
-                      color: '#8A8A8E',
-                      fontFamily: "'Space Grotesk'",
-                      fontSize: 14,
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
+                    Details
+                  </Button>
+                  <Button
+                    variant={isF ? 'secondary' : 'primary'}
+                    style={{ flex: 1, height: 42, borderRadius: 12 }}
+                    disabled={isBusy}
+                    aria-pressed={isF}
+                    onClick={() => toggleFollow(s)}
                   >
-                    Create Agent
-                  </button>
-                </div>
-              </RichEmptyState>
+                    {isBusy ? (
+                      <Spinner $size={14} />
+                    ) : isF ? (
+                      'Following — unfollow'
+                    ) : (
+                      'Follow strategy'
+                    )}
+                  </Button>
+                </Row>
+              </SCard>
+            )
+          })}
+        </Cards>
+      )}
+
+      {!loading && !loadError && strategies.length < total && (
+        <Row $justify="center">
+          <Button variant="secondary" onClick={loadMore} disabled={loadingMore}>
+            {loadingMore ? (
+              <Spinner $size={14} />
             ) : (
-              strategies.map(s => {
-                const risk = RISK_COLORS[s.riskLevel] ?? RISK_COLORS.MEDIUM
-                const isFollowing = following.has(s.id)
-                const isFollowLoading = followLoading.has(s.id)
-
-                return (
-                  <Card
-                    key={s.id}
-                    onClick={() => navigate(`/strategies/${s.id}`)}
-                  >
-                    <CardHeader>
-                      <div>
-                        <CardTitle>{s.name}</CardTitle>
-                        <CardMeta>
-                          <Chip
-                            color={TYPE_COLORS[s.strategyType]}
-                            bg={TYPE_COLORS[s.strategyType] + '18'}
-                          >
-                            {s.strategyType.replace('_', ' ')}
-                          </Chip>
-                          <Chip color={risk.color} bg={risk.bg}>
-                            {s.riskLevel}
-                          </Chip>
-                          {s.leader?.isAi && (
-                            <Chip color="#7461FF" bg="rgba(116,97,255,0.12)">
-                              AI
-                            </Chip>
-                          )}
-                          {s.leader?.isVerified && (
-                            <Chip color="#26D07C" bg="rgba(38,208,124,0.1)">
-                              ✓ Verified
-                            </Chip>
-                          )}
-                        </CardMeta>
-                      </div>
-                      <ROIBadge positive={s.roi30d >= 0}>
-                        {fmtRoi(s.roi30d)}
-                      </ROIBadge>
-                    </CardHeader>
-
-                    {s.description && (
-                      <div
-                        style={{
-                          color: '#8A8A8E',
-                          fontSize: '13px',
-                          fontFamily: 'Space Grotesk',
-                          lineHeight: 1.5
-                        }}
-                      >
-                        {s.description.slice(0, 120)}
-                        {s.description.length > 120 ? '…' : ''}
-                      </div>
-                    )}
-
-                    <StatsRow>
-                      <Stat>
-                        <StatValue>{s.sharpeRatio.toFixed(2)}</StatValue>
-                        <StatLabel>Sharpe</StatLabel>
-                      </Stat>
-                      <Stat>
-                        <StatValue style={{ color: '#FF6B6B' }}>
-                          -{(s.maxDrawdown * 100).toFixed(1)}%
-                        </StatValue>
-                        <StatLabel>Max DD</StatLabel>
-                      </Stat>
-                      <Stat>
-                        <StatValue>{(s.winRate * 100).toFixed(0)}%</StatValue>
-                        <StatLabel>Win Rate</StatLabel>
-                      </Stat>
-                    </StatsRow>
-
-                    <StatsRow>
-                      <Stat>
-                        <StatValue>{fmtNumber(s.followersCount)}</StatValue>
-                        <StatLabel>Followers</StatLabel>
-                      </Stat>
-                      <Stat>
-                        <StatValue>{fmtUSD(s.vaultEquity)}</StatValue>
-                        <StatLabel>Vault AUM</StatLabel>
-                      </Stat>
-                      <Stat>
-                        <StatValue>{fmtNumber(s.totalTrades)}</StatValue>
-                        <StatLabel>Trades</StatLabel>
-                      </Stat>
-                    </StatsRow>
-
-                    {(s.agent || s.leader) && (
-                      <AgentRow>
-                        <Avatar url={s.leader?.avatar} />
-                        <AgentName>
-                          {s.leader
-                            ? `@${s.leader.username}`
-                            : s.agent?.walletAddress.slice(0, 8) + '…'}
-                          {s.agent?.agentType !== 'HUMAN' && (
-                            <span
-                              style={{
-                                marginLeft: 6,
-                                color: '#7461FF',
-                                fontSize: '11px'
-                              }}
-                            >
-                              {s.agent?.framework ?? s.agent?.agentType}
-                            </span>
-                          )}
-                        </AgentName>
-                        {s.agent && (
-                          <span
-                            style={{
-                              marginLeft: 'auto',
-                              color: '#8A8A8E',
-                              fontSize: '12px'
-                            }}
-                          >
-                            Rep {Number(s.agent.reputationScore).toFixed(0)}/100
-                          </span>
-                        )}
-                      </AgentRow>
-                    )}
-
-                    <FollowBtn
-                      following={isFollowing}
-                      disabled={isFollowLoading}
-                      onClick={e => handleFollow(s.id, e)}
-                    >
-                      {isFollowLoading
-                        ? '…'
-                        : isFollowing
-                          ? 'Following · Unfollow'
-                          : 'Follow Strategy'}
-                    </FollowBtn>
-                  </Card>
-                )
-              })
+              `Load more (${total - strategies.length} remaining)`
             )}
-          </Grid>
-        )}
-        {!loading && strategies.length < total && (
-          <LoadMoreBtn onClick={loadMore} disabled={loadingMore}>
-            {loadingMore
-              ? 'Loading…'
-              : `Load More (${total - strategies.length} remaining)`}
-          </LoadMoreBtn>
-        )}
-      </Container>
+          </Button>
+        </Row>
+      )}
     </Page>
   )
 }

@@ -3,6 +3,12 @@ import {
   createSignedActionMetadata
 } from '../utils/signing'
 
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  requireReadAuth
+} from './sessionService'
+
 const REWARDS_API_URL =
   process.env.REACT_APP_SPOT_API_URL || 'http://localhost:4000'
 
@@ -72,11 +78,11 @@ export interface RewardRankingsResponse {
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${REWARDS_API_URL}${path}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(options?.headers ?? {})
-    },
-    ...options
+      ...((options?.headers as Record<string, string> | undefined) ?? {})
+    }
   })
 
   const isJson = response.headers
@@ -86,7 +92,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     if (isJson) {
       const data = await response.json()
-      throw new Error(data.error || 'API error')
+      throw handleReadAuthError(data.error)
     }
 
     const text = await response.text()
@@ -143,23 +149,17 @@ async function signRewardsAction(
 }
 
 const rewardsApi = {
+  /**
+   * Private read via the read session (never prompts the wallet). Throws
+   * `ReadSessionRequiredError` when the user has not signed in.
+   */
   async getPendingRewards(
-    address: string,
-    signMessage: (message: string) => Promise<string>
+    address: string
   ): Promise<PendingTradingRewardsSummary> {
-    const auth = await signRewardsAction(
-      'rewards.pending',
-      address,
-      signMessage
-    )
-    const query = toQueryString({
-      address,
-      nonce: auth.nonce,
-      timestamp: auth.timestamp,
-      signature: auth.signature
-    })
+    const auth = requireReadAuth(address)
     const data = await fetchApi<{ pending: PendingTradingRewardsSummary }>(
-      `/api/v1/rewards/pending${query}`
+      `/api/v1/rewards/pending${toQueryString({ address })}`,
+      { headers: readAuthHeaders(auth) }
     )
 
     return data.pending

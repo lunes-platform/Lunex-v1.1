@@ -4,6 +4,7 @@ import { orderbookManager } from '../utils/orderbook';
 import { wsConnections as wsConnectionsGauge } from '../utils/metrics';
 import { log } from '../utils/logger';
 import { config } from '../config';
+import { validateReadSessionToken } from '../middleware/readSession';
 
 // ─── Security Constants ──────────────────────────────────────────
 
@@ -35,7 +36,28 @@ function isOriginAllowed(origin: string | undefined): boolean {
   return getAllowedOrigins().includes(origin);
 }
 
-function isChannelAllowed(channel: string): boolean {
+/**
+ * Private per-wallet channel (`user:<address>`): fill / order updates.
+ * Only a client that authenticated with a valid read session for that exact
+ * address may subscribe — prevents `user:VICTIM_ADDRESS` espionage.
+ */
+const USER_CHANNEL_PREFIX = 'user:';
+
+function hasValidUserSession(client: Client, nowSec = Date.now() / 1000) {
+  return (
+    client.authenticated &&
+    !!client.address &&
+    (client.sessionExp ?? 0) > nowSec
+  );
+}
+
+function isChannelAllowed(channel: string, client: Client): boolean {
+  if (channel.startsWith(USER_CHANNEL_PREFIX)) {
+    return (
+      hasValidUserSession(client) &&
+      channel === `${USER_CHANNEL_PREFIX}${client.address}`
+    );
+  }
   return ALLOWED_CHANNEL_PREFIXES.some((p) => channel.startsWith(p));
 }
 
@@ -47,9 +69,36 @@ interface Client {
   ip: string;
   lastSeen: number;
   authenticated: boolean;
+  /** Wallet bound by a read-session token (action `auth`). */
+  address?: string;
+  /** Session expiry (unix seconds); private channels stop after it. */
+  sessionExp?: number;
 }
 
 const clients: Client[] = [];
+
+/**
+ * Push an update to every client subscribed to `channel`. Private user
+ * channels are re-checked against the session expiry on every send.
+ */
+export function broadcast(channel: string, data: unknown) {
+  const isUser = channel.startsWith(USER_CHANNEL_PREFIX);
+  const payload = JSON.stringify({ type: 'update', channel, data });
+  const nowSec = Date.now() / 1000;
+  for (const client of clients) {
+    if (!client.subscriptions.has(channel)) continue;
+    if (client.ws.readyState !== WebSocket.OPEN) continue;
+    if (isUser && !hasValidUserSession(client, nowSec)) {
+      client.subscriptions.delete(channel);
+      continue;
+    }
+    try {
+      client.ws.send(payload);
+    } catch (err) {
+      log.warn({ err, channel }, '[WS] Broadcast send failed');
+    }
+  }
+}
 
 function getIp(req: IncomingMessage): string {
   const forwarded = req.headers['x-forwarded-for'];
@@ -144,10 +193,49 @@ export function createWebSocketServer(port: number) {
       try {
         const msg = JSON.parse(data.toString());
 
+        // ── Auth (read session) ───────────────────────────────
+        // Binds this connection to a wallet so it may subscribe to its own
+        // `user:<address>` channel. Read-only: no action is authorized.
+        if (msg.action === 'auth' && typeof msg.token === 'string') {
+          validateReadSessionToken(msg.token)
+            .then((claims) => {
+              if (!claims) {
+                ws.send(
+                  JSON.stringify({
+                    type: 'error',
+                    message: 'Invalid or expired session',
+                  }),
+                );
+                log.warn({ ip }, '[SECURITY] WS session auth rejected');
+                return;
+              }
+              // Switching wallets drops the previous wallet's channel.
+              if (client.address && client.address !== claims.sub) {
+                client.subscriptions.delete(
+                  `${USER_CHANNEL_PREFIX}${client.address}`,
+                );
+              }
+              client.authenticated = true;
+              client.address = claims.sub;
+              client.sessionExp = claims.exp;
+              ws.send(
+                JSON.stringify({ type: 'authenticated', address: claims.sub }),
+              );
+              log.info({ ip }, '[WS] Client authenticated with read session');
+            })
+            .catch((err: unknown) => {
+              log.error({ err, ip }, '[WS] Session auth failed');
+              ws.send(
+                JSON.stringify({ type: 'error', message: 'Auth unavailable' }),
+              );
+            });
+          return;
+        }
+
         // ── Subscribe ─────────────────────────────────────────
         if (msg.action === 'subscribe' && typeof msg.channel === 'string') {
           // OWASP MCP7 — Channel whitelist
-          if (!isChannelAllowed(msg.channel)) {
+          if (!isChannelAllowed(msg.channel, client)) {
             ws.send(
               JSON.stringify({ type: 'error', message: 'Channel not allowed' }),
             );

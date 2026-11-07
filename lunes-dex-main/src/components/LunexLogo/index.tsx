@@ -29,10 +29,15 @@ const kendonAnim = keyframes`
   }
 `
 
-const SvgContainer = styled.svg<{ $width?: string }>`
-  width: ${p => p.$width || '100px'};
-  height: auto;
-  cursor: pointer;
+const SvgContainer = styled.svg<{
+  $width?: string
+  $height?: string
+  $clickable: boolean
+}>`
+  width: ${p => p.$width || (p.$height ? 'auto' : '100px')};
+  height: ${p => p.$height || 'auto'};
+  display: block;
+  cursor: ${p => (p.$clickable ? 'pointer' : 'inherit')};
   overflow: visible;
 
   .kendon {
@@ -47,16 +52,25 @@ const SvgContainer = styled.svg<{ $width?: string }>`
     fill: #26d07c;
     animation: ${kendonAnim} 1.2s cubic-bezier(0.25, 0.8, 0.25, 1) infinite;
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    &:hover .kendon {
+      animation: none;
+    }
+  }
 `
 
 interface LunexLogoProps {
   width?: string
+  /** Fixed height (e.g. '20px' in the app header); width follows. */
+  height?: string
   onClick?: () => void
   navHome?: boolean
 }
 
 export const LunexLogo: React.FC<LunexLogoProps> = ({
   width,
+  height,
   onClick,
   navHome
 }) => {
@@ -70,7 +84,11 @@ export const LunexLogo: React.FC<LunexLogoProps> = ({
   return (
     <SvgContainer
       $width={width}
+      $height={height}
+      $clickable={!!(onClick || navHome)}
       onClick={handleClick}
+      role="img"
+      aria-label="Lunex"
       viewBox="0 0 1580 327"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"

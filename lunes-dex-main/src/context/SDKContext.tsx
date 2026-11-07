@@ -5,11 +5,24 @@ import React, {
   useState,
   ReactNode,
   useCallback,
-  useMemo
+  useMemo,
+  useRef
 } from 'react'
 import { contractService } from '../services/contractService'
+import { clearReadSession, ensureReadSession } from '../services/sessionService'
 import type { InjectedAccountWithMeta } from '@polkadot/extension-inject/types'
 import { CONTRACTS, NETWORK as NET_CONFIG } from '../config/contracts'
+import {
+  getActiveWallet,
+  getWalletAccount,
+  setActiveWallet
+} from '../wallet/activeWallet'
+import { createExtensionAdapter } from '../wallet/extensionAdapter'
+import {
+  genesisHashOverride,
+  isWalletConnectConfigured
+} from '../wallet/config'
+import type { WalletAdapter, WalletKind } from '../wallet/types'
 
 interface Quote {
   amountOut: string
@@ -73,11 +86,20 @@ interface SDKContextState {
   error: string | null
   walletAddress: string | null
   balance: string
+  /** Kind of the connected wallet (extension or WalletConnect). */
+  walletKind: WalletKind | null
 
   // Funções de Wallet
   connectWallet: (walletSource?: string) => Promise<void>
+  /** Pair a phone wallet over WalletConnect; `onUri` gets the QR payload. */
+  connectWalletConnect: (onUri: (uri: string) => void) => Promise<void>
+  /** Abort a pending WalletConnect pairing. */
+  cancelWalletConnect: () => void
   disconnectWallet: () => void
   signMessage: (message: string) => Promise<string>
+  /** Last error set by any SDK call (sync, unlike `error`). Used by TxContext
+   *  to tell a wallet rejection apart from a failure when a call returns false. */
+  getLastError: () => string | null
 
   // Funções de Swap
   getQuote: (amountIn: string, path: string[]) => Promise<Quote | null>
@@ -204,11 +226,18 @@ interface SDKProviderProps {
 export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setErrorState] = useState<string | null>(null)
+  const lastErrorRef = useRef<string | null>(null)
+  const setError = useCallback((e: string | null) => {
+    lastErrorRef.current = e
+    setErrorState(e)
+  }, [])
+  const getLastError = useCallback(() => lastErrorRef.current, [])
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [balance, setBalance] = useState('0')
   const [currentAccount, setCurrentAccount] =
     useState<InjectedAccountWithMeta | null>(null)
+  const [walletKind, setWalletKind] = useState<WalletKind | null>(null)
 
   // Initialize blockchain connection
   useEffect(() => {
@@ -261,6 +290,107 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     return () => clearInterval(interval)
   }, [walletAddress, isConnected])
 
+  // Read sessions are per address: drop (and revoke) the previous account's
+  // session when the connected account changes.
+  const prevAddressRef = useRef<string | null>(null)
+  useEffect(() => {
+    const prev = prevAddressRef.current
+    if (prev && walletAddress && prev !== walletAddress) {
+      void clearReadSession(prev, { revoke: true })
+    }
+    prevAddressRef.current = walletAddress
+  }, [walletAddress])
+
+  /** Genesis hash for the WalletConnect chain id (env override first). */
+  const resolveGenesisHash = async (): Promise<string> => {
+    const override = genesisHashOverride()
+    if (override) return override
+    if (!contractService.getIsConnected()) {
+      await contractService.connect(NETWORK)
+    }
+    const api = contractService.getApi()
+    if (!api) throw new Error('Could not connect to the Lunes network')
+    return api.genesisHash.toHex()
+  }
+
+  /**
+   * Make `adapter` the app's signer and mark the wallet connected. Every
+   * signature from here on goes through the adapter (wallet approval).
+   */
+  const activateAdapter = async (
+    adapter: WalletAdapter,
+    source: string
+  ): Promise<void> => {
+    // Switching wallets: end the previous session (e.g. a WalletConnect
+    // pairing) so it cannot keep signing in the background.
+    const previous = getActiveWallet()
+    if (previous && previous !== adapter) {
+      void previous.disconnect().catch(() => undefined)
+    }
+    setActiveWallet(adapter)
+    setCurrentAccount(getWalletAccount(adapter.address))
+    setWalletKind(adapter.kind)
+    setWalletAddress(adapter.address)
+    setIsConnected(true)
+    localStorage.setItem('lunex_last_wallet_address', adapter.address)
+    localStorage.setItem('lunex_last_wallet_source', source)
+
+    // "Sign in to Lunex": one signature for an 8h READ-ONLY session so
+    // private pages never prompt again. Non-blocking; if the user declines,
+    // pages show a "Sign in" button instead of prompting on load.
+    void ensureReadSession(adapter.address, adapter.signMessage).catch(
+      () => undefined
+    )
+  }
+
+  // The phone wallet ended the session (or it expired): drop the app state.
+  const disconnectRef = useRef<() => void>(() => undefined)
+  const handleRemoteDisconnect = useCallback(() => {
+    disconnectRef.current()
+  }, [])
+
+  // Restore a WalletConnect session after reload. UniversalProvider keeps it
+  // in storage; we only mark the wallet connected once the session is
+  // validated (live, unexpired, grants an account on this chain).
+  useEffect(() => {
+    let source = ''
+    let preferred: string | null = null
+    try {
+      source = localStorage.getItem('lunex_last_wallet_source') || ''
+      preferred = localStorage.getItem('lunex_last_wallet_address')
+    } catch {
+      return
+    }
+    if (source !== 'walletconnect' || !isWalletConnectConfigured()) return
+    let alive = true
+    const restore = async () => {
+      try {
+        const genesisHash = await resolveGenesisHash()
+        const wc = await import('../wallet/walletConnectAdapter')
+        const adapter = await wc.restoreWalletConnect({
+          genesisHash,
+          preferredAddress: preferred,
+          handlers: { onRemoteDisconnect: handleRemoteDisconnect }
+        })
+        if (!adapter || !alive) return
+        // The user connected another wallet meanwhile: drop the old pairing.
+        if (getActiveWallet()) {
+          await adapter.disconnect()
+          return
+        }
+        await activateAdapter(adapter, adapter.kind)
+        setBalance(await contractService.getNativeBalance(adapter.address))
+      } catch (err: unknown) {
+        console.error('Could not restore WalletConnect session:', err)
+      }
+    }
+    void restore()
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Connect Wallet (Polkadot.js / SubWallet / Talisman Extension)
   const connectWallet = async (walletSource?: string): Promise<void> => {
     setIsLoading(true)
@@ -298,14 +428,11 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
 
       // Use first available account from the selected wallet
       const account = accounts[0]
-      setCurrentAccount(account)
-      setWalletAddress(account.address)
-      setIsConnected(true)
-      localStorage.setItem('lunex_last_wallet_address', account.address)
-      localStorage.setItem(
-        'lunex_last_wallet_source',
-        account.meta.source || ''
+      const adapter = await createExtensionAdapter(
+        account,
+        account.meta.name || account.meta.source
       )
+      await activateAdapter(adapter, account.meta.source || '')
 
       // Fetch real native balance from blockchain
       if (!contractService.getIsConnected()) {
@@ -324,52 +451,76 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
     }
   }
 
+  const wcPairingRef = useRef(0)
+
+  // WalletConnect (phone wallets: SubWallet, Talisman, Nova). The SDK is
+  // loaded on demand so extension users never download it.
+  const connectWalletConnect = async (
+    onUri: (uri: string) => void
+  ): Promise<void> => {
+    const pairing = ++wcPairingRef.current
+    setIsLoading(true)
+    setError(null)
+    try {
+      if (!isWalletConnectConfigured()) {
+        throw new Error('WalletConnect not configured')
+      }
+      const genesisHash = await resolveGenesisHash()
+      const wc = await import('../wallet/walletConnectAdapter')
+      const adapter = await wc.connectWalletConnect({
+        genesisHash,
+        onUri,
+        handlers: { onRemoteDisconnect: handleRemoteDisconnect }
+      })
+      // The user cancelled while the wallet was approving: never connect.
+      if (pairing !== wcPairingRef.current) {
+        await adapter.disconnect()
+        throw new Error('Connection cancelled')
+      }
+      await activateAdapter(adapter, adapter.kind)
+      setBalance(await contractService.getNativeBalance(adapter.address))
+    } catch (err: unknown) {
+      setError(parseBlockchainError(err))
+      console.error('Error connecting WalletConnect:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const cancelWalletConnect = useCallback((): void => {
+    wcPairingRef.current++
+    void import('../wallet/walletConnectAdapter')
+      .then(wc => wc.abortWalletConnect())
+      .catch(() => undefined)
+  }, [])
+
   // Desconectar Wallet
   const disconnectWallet = useCallback((): void => {
+    const adapter = getActiveWallet()
+    setActiveWallet(null)
+    void adapter?.disconnect().catch(() => undefined)
+    void clearReadSession(null, { revoke: true })
     setWalletAddress(null)
     setCurrentAccount(null)
+    setWalletKind(null)
     setIsConnected(false)
     setBalance('0')
     localStorage.removeItem('lunex_last_wallet_address')
   }, [])
+  disconnectRef.current = disconnectWallet
 
   const signMessage = useCallback(
     async (message: string): Promise<string> => {
       if (!walletAddress) {
         throw new Error('Connect your wallet first')
       }
-
-      const { web3Accounts, web3FromSource } =
-        await import('@polkadot/extension-dapp')
-      const account =
-        currentAccount ||
-        (await web3Accounts()).find(item => item.address === walletAddress) ||
-        null
-
-      if (!account) {
+      const adapter = getActiveWallet()
+      if (!adapter || adapter.address !== walletAddress) {
         throw new Error('Reconnect your wallet to enable signing')
       }
-
-      if (!currentAccount) {
-        setCurrentAccount(account)
-      }
-
-      const injector = await web3FromSource(account.meta.source)
-      const signRaw = injector?.signer?.signRaw
-
-      if (!signRaw) {
-        throw new Error('Signer not available in the connected wallet')
-      }
-
-      const { signature } = await signRaw({
-        address: walletAddress,
-        data: message,
-        type: 'bytes'
-      })
-
-      return signature
+      return adapter.signMessage(message)
     },
-    [currentAccount, walletAddress]
+    [walletAddress]
   )
 
   // Obter Quote para Swap
@@ -401,8 +552,17 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
         // price_impact ≈ amountIn / (reserve_in + amountIn)  [simplified]
         let priceImpact = '0'
         if (pairInfo) {
-          const reserveIn = BigInt(pairInfo.reserve0)
-          const reserveOut = BigInt(pairInfo.reserve1)
+          // Orient reserves to the swap direction: reserve0 belongs to token0,
+          // which is not necessarily path[0].
+          const inIsToken0 =
+            !pairInfo.token0 ||
+            pairInfo.token0.toLowerCase() === path[0].toLowerCase()
+          const reserveIn = BigInt(
+            inIsToken0 ? pairInfo.reserve0 : pairInfo.reserve1
+          )
+          const reserveOut = BigInt(
+            inIsToken0 ? pairInfo.reserve1 : pairInfo.reserve0
+          )
           const aIn = BigInt(amountIn)
           const aOut = BigInt(amountOut)
 
@@ -961,9 +1121,13 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       error,
       walletAddress,
       balance,
+      walletKind,
       connectWallet,
+      connectWalletConnect,
+      cancelWalletConnect,
       disconnectWallet,
       signMessage,
+      getLastError,
       getQuote,
       executeSwap,
       addLiquidity,
@@ -987,7 +1151,15 @@ export const SDKProvider: React.FC<SDKProviderProps> = ({ children }) => {
       calculateMinAmount
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }),
-    [isConnected, isLoading, error, walletAddress, balance, signMessage]
+    [
+      isConnected,
+      isLoading,
+      error,
+      walletAddress,
+      balance,
+      walletKind,
+      signMessage
+    ]
   )
 
   return <SDKContext.Provider value={value}>{children}</SDKContext.Provider>

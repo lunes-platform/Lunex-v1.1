@@ -67,6 +67,7 @@ services:
       SUBQUERY_ENDPOINT: "http://subquery-query:3000"
       SUBQUERY_ENABLED: "true"
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
     networks:
       - internal_network
     healthcheck:
