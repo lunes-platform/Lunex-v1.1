@@ -40,9 +40,9 @@ jobs:
 
     - name: Install cargo contract
       if: ${{ steps.check-cargo-contract.outcome == 'failure' }}
-      run: |
-        cargo install cargo-dylint dylint-link
-        cargo install --force --locked cargo-contract
+      # Pinned: unpinned installs pull crates that need a newer Rust than the
+      # 1.85.0 in rust-toolchain.toml. cargo-contract 4.x no longer needs dylint.
+      run: cargo install --force --locked cargo-contract --version 4.1.1
 
     - name: Compile contracts
       run: |
