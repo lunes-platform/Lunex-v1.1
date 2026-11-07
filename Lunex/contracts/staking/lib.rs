@@ -1103,16 +1103,14 @@ pub mod staking_contract {
             // === DISTRIBUTE VOTE PAYMENT ===
             // 10% to rewards pool (stakers)
             let rewards_share = payment / 10; // 10%
-            // 10% to project liquidity pool
+                                              // 10% to project liquidity pool
             let liquidity_share = payment / 10; // 10%
-            // 10% to treasury
+                                                // 10% to treasury
             let treasury_share = payment / 10; // 10%
-            // 70% to team (remains in contract, to be withdrawn by team)
+                                               // 70% to team (remains in contract, to be withdrawn by team)
 
             // Add to rewards pool
-            self.trading_rewards_pool = self
-                .trading_rewards_pool
-                .saturating_add(rewards_share);
+            self.trading_rewards_pool = self.trading_rewards_pool.saturating_add(rewards_share);
 
             // Add to proposal's liquidity fund
             // proposal.votes_against is currently being used to track liquidity fund for YES votes
@@ -1148,9 +1146,8 @@ pub mod staking_contract {
 
             // Update voter's governance participation
             let mut updated_stake = stake;
-            updated_stake.governance_participation = updated_stake
-                .governance_participation
-                .saturating_add(1);
+            updated_stake.governance_participation =
+                updated_stake.governance_participation.saturating_add(1);
             self.stakes.insert(&caller, &updated_stake);
 
             // Emit event
@@ -1246,17 +1243,19 @@ pub mod staking_contract {
 
                     if treasury_share > 0 {
                         if self.env().balance() < treasury_share {
-                            self.trading_rewards_pool = self
-                                .trading_rewards_pool
-                                .saturating_sub(staking_share);
+                            self.trading_rewards_pool =
+                                self.trading_rewards_pool.saturating_sub(staking_share);
                             proposal.fee_refunded = false;
                             self.proposals.insert(&proposal_id, &proposal);
                             return Err(StakingError::InsufficientBalance);
                         }
-                        if self.env().transfer(self.treasury_address, treasury_share).is_err() {
-                            self.trading_rewards_pool = self
-                                .trading_rewards_pool
-                                .saturating_sub(staking_share);
+                        if self
+                            .env()
+                            .transfer(self.treasury_address, treasury_share)
+                            .is_err()
+                        {
+                            self.trading_rewards_pool =
+                                self.trading_rewards_pool.saturating_sub(staking_share);
                             proposal.fee_refunded = false;
                             self.proposals.insert(&proposal_id, &proposal);
                             return Err(StakingError::InsufficientBalance);
@@ -1270,8 +1269,7 @@ pub mod staking_contract {
             #[cfg(test)]
             if needs_distribution {
                 let staking_share = fee_to_move / 10;
-                self.trading_rewards_pool =
-                    self.trading_rewards_pool.saturating_add(staking_share);
+                self.trading_rewards_pool = self.trading_rewards_pool.saturating_add(staking_share);
             }
             // Suppress unused-variable warnings when cfg(test).
             #[cfg(test)]
@@ -2597,7 +2595,10 @@ pub mod staking_contract {
             let deadline = contract.get_proposal(id).unwrap().voting_deadline;
             test::set_block_timestamp::<ink::env::DefaultEnvironment>(deadline + 1);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::VOTE_COST);
-            assert_eq!(contract.vote(id, true), Err(StakingError::VotingPeriodExpired));
+            assert_eq!(
+                contract.vote(id, true),
+                Err(StakingError::VotingPeriodExpired)
+            );
         }
 
         #[ink::test]
@@ -2620,19 +2621,40 @@ pub mod staking_contract {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::MIN_STAKE);
             let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
-            assert_eq!(contract.stake(6 * DAY_MS), Err(StakingError::InvalidDuration));
-            assert_eq!(contract.stake(366 * DAY_MS), Err(StakingError::InvalidDuration));
+            assert_eq!(
+                contract.stake(6 * DAY_MS),
+                Err(StakingError::InvalidDuration)
+            );
+            assert_eq!(
+                contract.stake(366 * DAY_MS),
+                Err(StakingError::InvalidDuration)
+            );
             assert_eq!(contract.stake(30 * DAY_MS), Ok(()));
         }
 
         #[ink::test]
         fn test_tier_thresholds_are_in_days() {
             let contract = StakingContract::new(AccountId::from([0x1; 32]));
-            assert_eq!(contract.calculate_staking_tier(7 * DAY_MS), StakingTier::Bronze);
-            assert_eq!(contract.calculate_staking_tier(30 * DAY_MS), StakingTier::Bronze);
-            assert_eq!(contract.calculate_staking_tier(31 * DAY_MS), StakingTier::Silver);
-            assert_eq!(contract.calculate_staking_tier(91 * DAY_MS), StakingTier::Gold);
-            assert_eq!(contract.calculate_staking_tier(181 * DAY_MS), StakingTier::Platinum);
+            assert_eq!(
+                contract.calculate_staking_tier(7 * DAY_MS),
+                StakingTier::Bronze
+            );
+            assert_eq!(
+                contract.calculate_staking_tier(30 * DAY_MS),
+                StakingTier::Bronze
+            );
+            assert_eq!(
+                contract.calculate_staking_tier(31 * DAY_MS),
+                StakingTier::Silver
+            );
+            assert_eq!(
+                contract.calculate_staking_tier(91 * DAY_MS),
+                StakingTier::Gold
+            );
+            assert_eq!(
+                contract.calculate_staking_tier(181 * DAY_MS),
+                StakingTier::Platinum
+            );
         }
 
         #[ink::test]
@@ -2656,7 +2678,10 @@ pub mod staking_contract {
             let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
             let contract = staked_contract(constants::MIN_STAKE, 7 * DAY_MS);
             test::set_block_timestamp::<ink::env::DefaultEnvironment>(1_000 + 30 * DAY_MS);
-            assert_eq!(contract.get_pending_rewards(accounts.alice), Ok(986_301_369));
+            assert_eq!(
+                contract.get_pending_rewards(accounts.alice),
+                Ok(986_301_369)
+            );
         }
 
         #[ink::test]
@@ -2710,7 +2735,10 @@ pub mod staking_contract {
             test::set_block_timestamp::<E>(1_000);
             test::set_caller::<E>(accounts.alice);
             test::set_value_transferred::<E>(0);
-            (StakingContract::new(AccountId::from([0x1; 32])), contract_id)
+            (
+                StakingContract::new(AccountId::from([0x1; 32])),
+                contract_id,
+            )
         }
 
         fn balance_of(who: AccountId) -> Balance {
@@ -2832,7 +2860,10 @@ pub mod staking_contract {
             as_caller(accounts.alice, 0);
             c.unstake().unwrap();
             let penalty = 10_000 * LUNES / 20;
-            assert_eq!(balance_of(accounts.alice), before + 10_000 * LUNES - penalty);
+            assert_eq!(
+                balance_of(accounts.alice),
+                before + 10_000 * LUNES - penalty
+            );
             assert_eq!(c.get_reward_pools().0, penalty);
             assert_eq!(balance_of(contract_id), penalty);
             assert_solvent(&c, contract_id);
@@ -2910,12 +2941,19 @@ pub mod staking_contract {
         #[ink::test]
         fn test_invariant_holds_over_random_sequences() {
             let accounts = test::default_accounts::<E>();
-            let stakers = [accounts.bob, accounts.charlie, accounts.django, accounts.frank];
+            let stakers = [
+                accounts.bob,
+                accounts.charlie,
+                accounts.django,
+                accounts.frank,
+            ];
             for seed in 1u64..=12 {
                 let (mut c, contract_id) = solvency_setup_at([0xC0 + seed as u8; 32]);
                 let mut rng = seed;
                 let mut next = || {
-                    rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    rng = rng
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
                     rng >> 33
                 };
                 let mut now = 1_000u64;

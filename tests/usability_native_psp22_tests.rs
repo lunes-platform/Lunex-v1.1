@@ -44,21 +44,30 @@ impl LunesNativeAssetRegistry {
     }
 
     fn balance_of(&self, user: &str, asset_id: &str) -> u128 {
-        self.balances.get(&(user.to_string(), asset_id.to_string())).copied().unwrap_or(0)
+        self.balances
+            .get(&(user.to_string(), asset_id.to_string()))
+            .copied()
+            .unwrap_or(0)
     }
 
-    fn transfer(&mut self, from: &str, to: &str, asset_id: &str, amount: u128) -> Result<(), String> {
+    fn transfer(
+        &mut self,
+        from: &str,
+        to: &str,
+        asset_id: &str,
+        amount: u128,
+    ) -> Result<(), String> {
         let from_balance = self.balance_of(from, asset_id);
         if from_balance < amount {
             return Err("Insufficient balance".to_string());
         }
-        
+
         let from_key = (from.to_string(), asset_id.to_string());
         let to_key = (to.to_string(), asset_id.to_string());
-        
+
         *self.balances.get_mut(&from_key).unwrap() -= amount;
         *self.balances.entry(to_key).or_insert(0) += amount;
-        
+
         Ok(())
     }
 }
@@ -109,11 +118,15 @@ impl PSP22Token {
     }
 
     fn approve(&mut self, owner: &str, spender: &str, amount: u128) {
-        self.allowances.insert((owner.to_string(), spender.to_string()), amount);
+        self.allowances
+            .insert((owner.to_string(), spender.to_string()), amount);
     }
 
     fn allowance(&self, owner: &str, spender: &str) -> u128 {
-        self.allowances.get(&(owner.to_string(), spender.to_string())).copied().unwrap_or(0)
+        self.allowances
+            .get(&(owner.to_string(), spender.to_string()))
+            .copied()
+            .unwrap_or(0)
     }
 }
 
@@ -133,25 +146,45 @@ impl NativeAssetWrapper {
         Self {
             asset_id: asset_id.to_string(),
             wrapped_symbol: format!("W{}", symbol),
-            psp22: PSP22Token::new(&format!("Wrapped {}", name), &format!("W{}", symbol), decimals),
+            psp22: PSP22Token::new(
+                &format!("Wrapped {}", name),
+                &format!("W{}", symbol),
+                decimals,
+            ),
         }
     }
 
-    fn wrap(&mut self, native_registry: &mut LunesNativeAssetRegistry, user: &str, amount: u128) -> Result<(), String> {
+    fn wrap(
+        &mut self,
+        native_registry: &mut LunesNativeAssetRegistry,
+        user: &str,
+        amount: u128,
+    ) -> Result<(), String> {
         // Transfer native asset to wrapper
         native_registry.transfer(user, "WRAPPER_CONTRACT", &self.asset_id, amount)?;
         // Mint wrapped PSP22
         self.psp22.mint(user, amount);
-        println!("   🎁 Wrapped {} {} -> {} {}", amount, self.asset_id, amount, self.wrapped_symbol);
+        println!(
+            "   🎁 Wrapped {} {} -> {} {}",
+            amount, self.asset_id, amount, self.wrapped_symbol
+        );
         Ok(())
     }
 
-    fn unwrap(&mut self, native_registry: &mut LunesNativeAssetRegistry, user: &str, amount: u128) -> Result<(), String> {
+    fn unwrap(
+        &mut self,
+        native_registry: &mut LunesNativeAssetRegistry,
+        user: &str,
+        amount: u128,
+    ) -> Result<(), String> {
         // Burn wrapped PSP22
         self.psp22.transfer(user, "BURN_ADDRESS", amount)?;
         // Transfer native asset back to user
         native_registry.transfer("WRAPPER_CONTRACT", user, &self.asset_id, amount)?;
-        println!("   📦 Unwrapped {} {} -> {} {}", amount, self.wrapped_symbol, amount, self.asset_id);
+        println!(
+            "   📦 Unwrapped {} {} -> {} {}",
+            amount, self.wrapped_symbol, amount, self.asset_id
+        );
         Ok(())
     }
 
@@ -276,7 +309,10 @@ impl MockDEX {
             return Err("Par já existe".to_string());
         }
 
-        self.pairs.insert(pair_id.clone(), MockPair::new(token_0.to_string(), token_1.to_string()));
+        self.pairs.insert(
+            pair_id.clone(),
+            MockPair::new(token_0.to_string(), token_1.to_string()),
+        );
         println!("   🔄 Par criado: {}/{}", token_0, token_1);
         Ok(pair_id)
     }
@@ -340,7 +376,7 @@ fn test_usability_wrap_unwrap_flow() {
     println!("{}", "━".repeat(50));
 
     let mut native_registry = LunesNativeAssetRegistry::new();
-    
+
     // Setup: Registrar asset e dar balance ao usuário
     let eth_native = NativeAsset {
         asset_id: "ETH_NATIVE_ID".to_string(),
@@ -356,29 +392,48 @@ fn test_usability_wrap_unwrap_flow() {
     let mut weth_wrapper = NativeAssetWrapper::new("ETH_NATIVE_ID", "Ethereum", "ETH", 18);
 
     println!("\n📊 Estado Inicial:");
-    println!("   Alice ETH nativo: {}", native_registry.balance_of("ALICE", "ETH_NATIVE_ID"));
+    println!(
+        "   Alice ETH nativo: {}",
+        native_registry.balance_of("ALICE", "ETH_NATIVE_ID")
+    );
     println!("   Alice WETH: {}", weth_wrapper.balance_of("ALICE"));
 
     // Wrap
     println!("\n🎁 Passo 1: Wrap 5 ETH -> WETH");
-    weth_wrapper.wrap(&mut native_registry, "ALICE", 5_000000000000000000).unwrap();
-    
+    weth_wrapper
+        .wrap(&mut native_registry, "ALICE", 5_000000000000000000)
+        .unwrap();
+
     println!("\n📊 Estado Após Wrap:");
-    println!("   Alice ETH nativo: {}", native_registry.balance_of("ALICE", "ETH_NATIVE_ID"));
+    println!(
+        "   Alice ETH nativo: {}",
+        native_registry.balance_of("ALICE", "ETH_NATIVE_ID")
+    );
     println!("   Alice WETH: {}", weth_wrapper.balance_of("ALICE"));
 
-    assert_eq!(native_registry.balance_of("ALICE", "ETH_NATIVE_ID"), 5_000000000000000000);
+    assert_eq!(
+        native_registry.balance_of("ALICE", "ETH_NATIVE_ID"),
+        5_000000000000000000
+    );
     assert_eq!(weth_wrapper.balance_of("ALICE"), 5_000000000000000000);
 
     // Unwrap
     println!("\n📦 Passo 2: Unwrap 2 WETH -> ETH");
-    weth_wrapper.unwrap(&mut native_registry, "ALICE", 2_000000000000000000).unwrap();
-    
+    weth_wrapper
+        .unwrap(&mut native_registry, "ALICE", 2_000000000000000000)
+        .unwrap();
+
     println!("\n📊 Estado Final:");
-    println!("   Alice ETH nativo: {}", native_registry.balance_of("ALICE", "ETH_NATIVE_ID"));
+    println!(
+        "   Alice ETH nativo: {}",
+        native_registry.balance_of("ALICE", "ETH_NATIVE_ID")
+    );
     println!("   Alice WETH: {}", weth_wrapper.balance_of("ALICE"));
 
-    assert_eq!(native_registry.balance_of("ALICE", "ETH_NATIVE_ID"), 7_000000000000000000);
+    assert_eq!(
+        native_registry.balance_of("ALICE", "ETH_NATIVE_ID"),
+        7_000000000000000000
+    );
     assert_eq!(weth_wrapper.balance_of("ALICE"), 3_000000000000000000);
 
     println!("\n✅ TESTE PASSOU: Wrap/Unwrap funcionando corretamente!\n");
@@ -415,8 +470,10 @@ fn test_usability_swap_native_with_psp22() {
 
     // LP Provider wrapa LUNES e adiciona liquidez
     println!("\n💧 Passo 1: LP Provider adiciona liquidez");
-    wlunes_wrapper.wrap(&mut native_registry, "LP_PROVIDER", 100_000_00000000).unwrap();
-    
+    wlunes_wrapper
+        .wrap(&mut native_registry, "LP_PROVIDER", 100_000_00000000)
+        .unwrap();
+
     let pair = dex.get_pair("WLUNES", "USDT").unwrap();
     let lp_tokens = pair.add_liquidity("LP_PROVIDER", 100_000_00000000, 500_000_000000);
     println!("   ✅ Liquidez adicionada: 100K WLUNES + 500K USDT");
@@ -429,7 +486,10 @@ fn test_usability_swap_native_with_psp22() {
     let amount_out = pair.swap(amount_in, "USDT").unwrap();
     println!("   📊 Input: 1000 USDT");
     println!("   📊 Output: {} WLUNES", amount_out as f64 / 100000000.0);
-    println!("   📊 Novo preço: 1 WLUNES = {} USDT", pair.get_price("WLUNES"));
+    println!(
+        "   📊 Novo preço: 1 WLUNES = {} USDT",
+        pair.get_price("WLUNES")
+    );
 
     assert!(amount_out > 0, "Deveria receber WLUNES");
 
@@ -446,7 +506,7 @@ fn test_usability_full_user_journey() {
 
     // Setup inicial
     println!("\n🔧 Setup: Inicializando ecossistema...");
-    
+
     // Asset nativo LUNES
     native_registry.register_asset(NativeAsset {
         asset_id: "LUNES".to_string(),
@@ -456,7 +516,7 @@ fn test_usability_full_user_journey() {
         total_supply: 1_000_000_000_00000000,
     });
     native_registry.mint("WRAPPER_CONTRACT", "LUNES", 0);
-    
+
     let mut wlunes = NativeAssetWrapper::new("LUNES", "Lunes", "LUNES", 8);
     let mut usdt = PSP22Token::new("Tether USD", "USDT", 6);
 
@@ -470,14 +530,16 @@ fn test_usability_full_user_journey() {
     // ALICE: LP Provider
     // ===============================
     println!("\n👩 ALICE (LP Provider):");
-    
+
     // Alice tem LUNES nativo e USDT
     native_registry.mint("ALICE", "LUNES", 10_000_00000000); // 10k LUNES
     usdt.mint("ALICE", 50_000_000000); // 50k USDT
     println!("   📊 Balance inicial: 10K LUNES nativo, 50K USDT");
 
     // Alice wrapa LUNES
-    wlunes.wrap(&mut native_registry, "ALICE", 10_000_00000000).unwrap();
+    wlunes
+        .wrap(&mut native_registry, "ALICE", 10_000_00000000)
+        .unwrap();
     println!("   ✅ Wrapped 10K LUNES -> WLUNES");
 
     // Alice adiciona liquidez
@@ -489,7 +551,7 @@ fn test_usability_full_user_journey() {
     // BOB: Trader
     // ===============================
     println!("\n👨 BOB (Trader):");
-    
+
     // Bob tem apenas USDT (PSP22)
     usdt.mint("BOB", 5_000_000000); // 5k USDT
     println!("   📊 Balance inicial: 5K USDT");
@@ -497,17 +559,23 @@ fn test_usability_full_user_journey() {
     // Bob compra WLUNES
     let pair = dex.get_pair("WLUNES", "USDT").unwrap();
     let bob_wlunes = pair.swap(1_000_000000, "USDT").unwrap();
-    println!("   🔄 Swap: 1000 USDT -> {} WLUNES", bob_wlunes as f64 / 100000000.0);
+    println!(
+        "   🔄 Swap: 1000 USDT -> {} WLUNES",
+        bob_wlunes as f64 / 100000000.0
+    );
 
     // Bob unwrapa para LUNES nativo
     native_registry.mint("BOB", "LUNES", 0); // Inicializa balance
-    // Simula que Bob recebeu os WLUNES
+                                             // Simula que Bob recebeu os WLUNES
     wlunes.psp22.mint("BOB", bob_wlunes);
     native_registry.mint("WRAPPER_CONTRACT", "LUNES", bob_wlunes); // Wrapper precisa ter os tokens
-    wlunes.unwrap(&mut native_registry, "BOB", bob_wlunes).unwrap();
-    
+    wlunes
+        .unwrap(&mut native_registry, "BOB", bob_wlunes)
+        .unwrap();
+
     let bob_native_lunes = native_registry.balance_of("BOB", "LUNES");
-    println!("   📦 Unwrap: {} WLUNES -> {} LUNES nativo", 
+    println!(
+        "   📦 Unwrap: {} WLUNES -> {} LUNES nativo",
         bob_wlunes as f64 / 100000000.0,
         bob_native_lunes as f64 / 100000000.0
     );
@@ -516,36 +584,49 @@ fn test_usability_full_user_journey() {
     // CHARLIE: Arbitrageur
     // ===============================
     println!("\n🧑 CHARLIE (Arbitrageur):");
-    
+
     // Charlie tem LUNES nativo e quer fazer arbitragem
     native_registry.mint("CHARLIE", "LUNES", 5_000_00000000);
     println!("   📊 Balance inicial: 5K LUNES nativo");
 
     // Wrapa, faz múltiplos trades pequenos
-    wlunes.wrap(&mut native_registry, "CHARLIE", 1_000_00000000).unwrap();
-    
+    wlunes
+        .wrap(&mut native_registry, "CHARLIE", 1_000_00000000)
+        .unwrap();
+
     let pair = dex.get_pair("WLUNES", "USDT").unwrap();
     let price_before = pair.get_price("WLUNES");
-    
+
     // Trade 1
     let out1 = pair.swap(500_00000000, "WLUNES").unwrap();
-    println!("   🔄 Trade 1: 500 WLUNES -> {} USDT", out1 as f64 / 1000000.0);
-    
+    println!(
+        "   🔄 Trade 1: 500 WLUNES -> {} USDT",
+        out1 as f64 / 1000000.0
+    );
+
     // Trade 2: Compra de volta
     let out2 = pair.swap(out1, "USDT").unwrap();
-    println!("   🔄 Trade 2: {} USDT -> {} WLUNES", out1 as f64 / 1000000.0, out2 as f64 / 100000000.0);
-    
+    println!(
+        "   🔄 Trade 2: {} USDT -> {} WLUNES",
+        out1 as f64 / 1000000.0,
+        out2 as f64 / 100000000.0
+    );
+
     let price_after = pair.get_price("WLUNES");
-    println!("   📊 Preço antes: {:.4}, depois: {:.4}", price_before, price_after);
+    println!(
+        "   📊 Preço antes: {:.4}, depois: {:.4}",
+        price_before, price_after
+    );
 
     // ===============================
     // Resumo Final
     // ===============================
     println!("\n📋 RESUMO FINAL:");
     println!("{}", "━".repeat(50));
-    
+
     let pair = dex.get_pair("WLUNES", "USDT").unwrap();
-    println!("   Pool: {} WLUNES / {} USDT", 
+    println!(
+        "   Pool: {} WLUNES / {} USDT",
         pair.reserve_0 as f64 / 100000000.0,
         pair.reserve_1 as f64 / 1000000.0
     );

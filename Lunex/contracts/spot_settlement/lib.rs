@@ -700,8 +700,12 @@ pub mod spot_settlement {
             // exhausted; a partial fill could otherwise settle twice.
             let maker_order_hash = Self::build_order_hash(&maker_order);
             let taker_order_hash = Self::build_order_hash(&taker_order);
-            let trade_key =
-                Self::build_trade_key(&maker_order_hash, &taker_order_hash, fill_amount, fill_price);
+            let trade_key = Self::build_trade_key(
+                &maker_order_hash,
+                &taker_order_hash,
+                fill_amount,
+                fill_price,
+            );
             if self.settled_trades.get(trade_key).unwrap_or(false) {
                 return Err(SpotError::TradeAlreadySettled);
             }
@@ -1463,7 +1467,7 @@ pub mod spot_settlement {
         ) -> Result<(), SpotError> {
             self.ensure_owner()?;
             if !enforced {
-                return Err(SpotError::EnforcementTimelockNotExpired)
+                return Err(SpotError::EnforcementTimelockNotExpired);
             }
             self.signature_verification_enforced = true;
             self.env().emit_event(SignatureEnforcementChanged {
@@ -1506,7 +1510,7 @@ pub mod spot_settlement {
                 .pending_enforcement_off
                 .ok_or(SpotError::NoPendingEnforcementDisable)?;
             if self.env().block_timestamp() < deadline {
-                return Err(SpotError::EnforcementTimelockNotExpired)
+                return Err(SpotError::EnforcementTimelockNotExpired);
             }
             self.signature_verification_enforced = false;
             self.pending_enforcement_off = None;
@@ -1656,14 +1660,11 @@ pub mod spot_settlement {
         /// Sign `blake2_256(build_order_message_v2(order))` with `secret`,
         /// producing the 65-byte `r ‖ s ‖ recovery_id` attestation exactly
         /// like the off-chain attestor service must.
-        fn sign_attestation_with(
-            order: &SignedOrder,
-            secret: &secp256k1::SecretKey,
-        ) -> [u8; 65] {
+        fn sign_attestation_with(order: &SignedOrder, secret: &secp256k1::SecretKey) -> [u8; 65] {
             let secp = secp256k1::Secp256k1::new();
             let hash = SpotSettlement::build_attestation_hash(order);
-            let message = secp256k1::Message::from_slice(&hash)
-                .expect("blake2_256 output is 32 bytes");
+            let message =
+                secp256k1::Message::from_slice(&hash).expect("blake2_256 output is 32 bytes");
             let recoverable = secp.sign_ecdsa_recoverable(&message, secret);
             let (recovery_id, compact) = recoverable.serialize_compact();
             let mut attestation = [0u8; 65];
@@ -1794,9 +1795,7 @@ pub mod spot_settlement {
             assert!(contract.propose_disable_enforcement().is_ok());
             // Advance past the 48-hour deadline.
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
 
             let events_before = test::recorded_events().count();
             // Execute: this emits exactly one SignatureEnforcementChanged event.
@@ -1807,9 +1806,8 @@ pub mod spot_settlement {
             assert_eq!(events.len(), events_before + 1);
 
             type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
-            let decoded =
-                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
-                    .expect("SignatureEnforcementChanged must decode");
+            let decoded = <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                .expect("SignatureEnforcementChanged must decode");
             match decoded {
                 Event::SignatureEnforcementChanged(e) => {
                     assert!(!e.enforced);
@@ -1925,10 +1923,7 @@ pub mod spot_settlement {
                 contract.get_balance(accounts.bob, quote),
                 10_000_000_000 - 2_002_000_000
             );
-            assert_eq!(
-                contract.get_balance(accounts.charlie, quote),
-                1_995_000_000
-            );
+            assert_eq!(contract.get_balance(accounts.charlie, quote), 1_995_000_000);
             assert_eq!(contract.get_balance(accounts.charlie, base), 4_000_000_000);
         }
 
@@ -2027,9 +2022,8 @@ pub mod spot_settlement {
             assert_eq!(events.len(), events_before + 1);
 
             type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
-            let decoded =
-                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
-                    .expect("AttestorKeyChanged must decode");
+            let decoded = <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                .expect("AttestorKeyChanged must decode");
             match decoded {
                 Event::AttestorKeyChanged(e) => {
                     assert_eq!(e.attestor_pubkey, attestor_pubkey());
@@ -3698,9 +3692,7 @@ pub mod spot_settlement {
             // Advance the block timestamp past the 48-hour deadline.
             // ENFORCEMENT_DISABLE_TIMELOCK_MS = 48 * 3_600_000 = 172_800_000 ms.
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
 
             let events_before = test::recorded_events().count();
             assert!(contract.execute_disable_enforcement().is_ok());
@@ -3710,9 +3702,8 @@ pub mod spot_settlement {
             let events: Vec<_> = test::recorded_events().collect();
             assert_eq!(events.len(), events_before + 1);
             type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
-            let decoded =
-                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
-                    .expect("must decode SignatureEnforcementChanged");
+            let decoded = <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                .expect("must decode SignatureEnforcementChanged");
             match decoded {
                 Event::SignatureEnforcementChanged(e) => {
                     assert!(!e.enforced);
@@ -3736,9 +3727,7 @@ pub mod spot_settlement {
             // First disable via the correct two-step flow.
             assert!(contract.propose_disable_enforcement().is_ok());
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
             assert!(contract.execute_disable_enforcement().is_ok());
             assert!(!contract.is_signature_verification_enforced());
 
@@ -3767,9 +3756,7 @@ pub mod spot_settlement {
 
             // Non-owner execute attempt (even after delay).
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
             set_caller(accounts.bob);
             assert_eq!(
                 contract.execute_disable_enforcement(),
@@ -3795,9 +3782,7 @@ pub mod spot_settlement {
 
             // Execute after cancel with expired time must now return NoPendingEnforcementDisable.
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
             assert_eq!(
                 contract.execute_disable_enforcement(),
                 Err(SpotError::NoPendingEnforcementDisable),

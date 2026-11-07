@@ -791,9 +791,7 @@ pub mod copy_vault {
                 self.active_depositors = self.active_depositors.saturating_sub(1);
             } else {
                 self.shares.insert(&caller, &remaining_shares);
-                let remaining_basis = basis
-                    .checked_sub(cost_for_shares)
-                    .unwrap_or(0);
+                let remaining_basis = basis.checked_sub(cost_for_shares).unwrap_or(0);
                 self.cost_basis.insert(&caller, &remaining_basis);
             }
 
@@ -1138,9 +1136,9 @@ pub mod copy_vault {
         #[ink(message)]
         pub fn swap_through_router(
             &mut self,
-            token_in:       AccountId,
-            token_out:      AccountId,
-            amount_in:      Balance,
+            token_in: AccountId,
+            token_out: AccountId,
+            amount_in: Balance,
             min_amount_out: Balance,
         ) -> Result<Balance, VaultError> {
             self.ensure_leader()?;
@@ -1267,11 +1265,7 @@ pub mod copy_vault {
             // script E2E `spot-api/scripts/e2e-copy-vault-swap.ts`.
             #[cfg(not(test))]
             let amount_out: Balance = {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
 
                 // 1) approve(router, amount_in) no token_in.
                 let approve_result = build_call::<ink::env::DefaultEnvironment>()
@@ -1317,14 +1311,12 @@ pub mod copy_vault {
                     .gas_limit(0)
                     .transferred_value(0)
                     .exec_input(
-                        ExecutionInput::new(Selector::new(
-                            ROUTER_SWAP_EXACT_TOKENS_SELECTOR,
-                        ))
-                        .push_arg(amount_in)
-                        .push_arg(min_amount_out)
-                        .push_arg(path)
-                        .push_arg(self.env().account_id())
-                        .push_arg(deadline),
+                        ExecutionInput::new(Selector::new(ROUTER_SWAP_EXACT_TOKENS_SELECTOR))
+                            .push_arg(amount_in)
+                            .push_arg(min_amount_out)
+                            .push_arg(path)
+                            .push_arg(self.env().account_id())
+                            .push_arg(deadline),
                     )
                     .returns::<core::result::Result<Vec<Balance>, RouterErrorMirror>>()
                     .try_invoke();
@@ -1450,7 +1442,7 @@ pub mod copy_vault {
 
                     self.env().emit_event(CircuitBreakerTriggered {
                         vault: self.env().account_id(),
-                        current_equity: current_equity,
+                        current_equity,
                         high_water_mark: self.high_water_mark,
                         drawdown_bps,
                         timestamp: self.env().block_timestamp(),
@@ -1809,9 +1801,7 @@ pub mod copy_vault {
 
         fn get_vault_equity_internal(&self) -> Result<Balance, VaultError> {
             let (native, tokens_value) = self.equity_split_internal()?;
-            native
-                .checked_add(tokens_value)
-                .ok_or(VaultError::Overflow)
+            native.checked_add(tokens_value).ok_or(VaultError::Overflow)
         }
 
         fn share_price_from_equity(&self, equity: Balance) -> Balance {
@@ -1860,8 +1850,7 @@ pub mod copy_vault {
             // Mitigação v1 (ADR-002): par precisa existir e ter reserva
             // nativa mínima — encarece manipulação do preço da cota via
             // tokens ilíquidos.
-            let (_reserve_token, reserve_native) =
-                self.pair_reserves(token, wnative, factory)?;
+            let (_reserve_token, reserve_native) = self.pair_reserves(token, wnative, factory)?;
             if reserve_native < constants::MIN_TRACKING_RESERVE_NATIVE {
                 return Err(VaultError::InsufficientPairLiquidity);
             }
@@ -1869,8 +1858,7 @@ pub mod copy_vault {
             let idx = self.tracked_token_count;
             self.tracked_tokens.insert(&idx, &token);
             self.tracked_token_index.insert(&token, &idx);
-            self.tracked_token_count =
-                idx.checked_add(1).ok_or(VaultError::Overflow)?;
+            self.tracked_token_count = idx.checked_add(1).ok_or(VaultError::Overflow)?;
 
             self.env().emit_event(TrackedTokenAdded {
                 token,
@@ -1925,11 +1913,7 @@ pub mod copy_vault {
         fn psp22_balance_of(&self, token: AccountId) -> Result<Balance, VaultError> {
             #[cfg(not(test))]
             {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
                 let result = build_call::<ink::env::DefaultEnvironment>()
                     .call(token)
                     .gas_limit(0)
@@ -1961,11 +1945,7 @@ pub mod copy_vault {
         ) -> Result<(Balance, Balance), VaultError> {
             #[cfg(not(test))]
             {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
                 let pair_result = build_call::<ink::env::DefaultEnvironment>()
                     .call(factory)
                     .gas_limit(0)
@@ -2023,28 +2003,21 @@ pub mod copy_vault {
             if token == wnative {
                 return Ok(amount);
             }
-            let (reserve_token, reserve_native) =
-                self.pair_reserves(token, wnative, factory)?;
+            let (reserve_token, reserve_native) = self.pair_reserves(token, wnative, factory)?;
 
             #[cfg(not(test))]
             {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
                 let router = self.router.ok_or(VaultError::RouterNotConfigured)?;
                 let result = build_call::<ink::env::DefaultEnvironment>()
                     .call(router)
                     .gas_limit(0)
                     .transferred_value(0)
                     .exec_input(
-                        ExecutionInput::new(Selector::new(
-                            ROUTER_GET_AMOUNT_OUT_SELECTOR,
-                        ))
-                        .push_arg(amount)
-                        .push_arg(reserve_token)
-                        .push_arg(reserve_native),
+                        ExecutionInput::new(Selector::new(ROUTER_GET_AMOUNT_OUT_SELECTOR))
+                            .push_arg(amount)
+                            .push_arg(reserve_token)
+                            .push_arg(reserve_native),
                     )
                     .returns::<core::result::Result<Balance, RouterErrorMirror>>()
                     .try_invoke();
@@ -2134,14 +2107,8 @@ pub mod copy_vault {
     /// isolado por teste.
     #[cfg(test)]
     pub(crate) mod test_mocks {
-        use super::{
-            AccountId,
-            Balance,
-        };
-        use std::{
-            cell::RefCell,
-            collections::BTreeMap,
-        };
+        use super::{AccountId, Balance};
+        use std::{cell::RefCell, collections::BTreeMap};
 
         thread_local! {
             static PSP22_BALANCES: RefCell<BTreeMap<AccountId, Balance>> =
@@ -2169,7 +2136,8 @@ pub mod copy_vault {
             reserve_native: Balance,
         ) {
             PAIR_RESERVES.with(|m| {
-                m.borrow_mut().insert(token, (reserve_token, reserve_native));
+                m.borrow_mut()
+                    .insert(token, (reserve_token, reserve_native));
             });
         }
 
@@ -2208,7 +2176,10 @@ pub mod copy_vault {
             ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(account, balance);
         }
 
-        fn create_vault() -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+        fn create_vault() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
             let accounts = default_accounts();
             set_caller(accounts.alice); // alice = admin
             let vault = CopyVault::new(accounts.bob, 2000); // bob = leader, 20% fee
@@ -2269,13 +2240,15 @@ pub mod copy_vault {
             // Non-leader tries to trade
             set_caller(accounts.charlie);
             set_value(0);
-            let result = vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
+            let result =
+                vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
             assert_eq!(result, Err(VaultError::NotLeader));
 
             // Leader can trade
             set_caller(accounts.bob);
             set_value(0);
-            let result = vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
+            let result =
+                vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
             assert!(result.is_ok());
         }
 
@@ -2392,9 +2365,9 @@ pub mod copy_vault {
             let (vault, _) = create_vault();
             let stats = vault.get_vault_stats().unwrap();
             assert_eq!(stats.3, 2000); // performance_fee_bps
-            assert_eq!(stats.4, 0);    // active_depositors
-            assert!(!stats.6);         // not paused
-            assert!(!stats.7);         // trading not halted
+            assert_eq!(stats.4, 0); // active_depositors
+            assert!(!stats.6); // not paused
+            assert!(!stats.7); // trading not halted
         }
 
         // ── swap_through_router (P0-2 fix) ──────────────────────
@@ -2416,10 +2389,7 @@ pub mod copy_vault {
                 PSP22_BALANCE_OF_SELECTOR,
                 ink::selector_bytes!("PSP22::balance_of"),
             );
-            assert_eq!(
-                FACTORY_GET_PAIR_SELECTOR,
-                ink::selector_bytes!("get_pair"),
-            );
+            assert_eq!(FACTORY_GET_PAIR_SELECTOR, ink::selector_bytes!("get_pair"),);
             assert_eq!(
                 PAIR_GET_RESERVES_SELECTOR,
                 ink::selector_bytes!("get_reserves"),
@@ -2450,11 +2420,10 @@ pub mod copy_vault {
             // Result<Vec<Balance>, RouterErrorMirror>
             let ok: core::result::Result<Vec<Balance>, RouterErrorMirror> =
                 Ok(ink::prelude::vec![5_000u128, 9_500u128]);
-            let decoded =
-                <core::result::Result<Vec<Balance>, RouterErrorMirror>>::decode(
-                    &mut ok.encode().as_slice(),
-                )
-                .unwrap();
+            let decoded = <core::result::Result<Vec<Balance>, RouterErrorMirror>>::decode(
+                &mut ok.encode().as_slice(),
+            )
+            .unwrap();
             assert_eq!(decoded.unwrap().last().copied(), Some(9_500u128));
         }
 
@@ -2473,8 +2442,10 @@ pub mod copy_vault {
         ///   - nativo: 100 LUNES (100e9)
         ///   - django: balance 50e9 @ rate 0.1 → valuation 5e9
         ///   - equity total: 105e9
-        fn setup_funded_vault_with_router(
-        ) -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+        fn setup_funded_vault_with_router() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
             let (mut vault, accounts) = create_vault();
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
 
@@ -2493,20 +2464,12 @@ pub mod copy_vault {
                 .unwrap();
 
             // django = token_in rastreado (rate 0.1 → valuation 5e9)
-            test_mocks::set_pair_reserves(
-                accounts.django,
-                100_000_000_000_000,
-                10_000_000_000_000,
-            );
+            test_mocks::set_pair_reserves(accounts.django, 100_000_000_000_000, 10_000_000_000_000);
             vault.add_tracked_token(accounts.django).unwrap();
             test_mocks::set_psp22_balance(accounts.django, 50_000_000_000);
 
             // eve = token_out com par líquido 1:1 (auto-track no swap)
-            test_mocks::set_pair_reserves(
-                accounts.eve,
-                1_000_000_000_000,
-                1_000_000_000_000,
-            );
+            test_mocks::set_pair_reserves(accounts.eve, 1_000_000_000_000, 1_000_000_000_000);
 
             (vault, accounts)
         }
@@ -2554,8 +2517,7 @@ pub mod copy_vault {
             let (mut vault, accounts) = setup_funded_vault_with_router();
 
             set_caller(accounts.bob);
-            let result =
-                vault.swap_through_router(accounts.django, accounts.eve, 0, 0);
+            let result = vault.swap_through_router(accounts.django, accounts.eve, 0, 0);
             assert_eq!(result, Err(VaultError::ZeroAmount));
             assert!(!vault.locked);
         }
@@ -2611,22 +2573,14 @@ pub mod copy_vault {
 
             set_caller(accounts.bob);
             // 50% do vault — estoura o cap de volume por bloco (40%)
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                50_000_000_000,
-                1,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, 50_000_000_000, 1);
             assert_eq!(result, Err(VaultError::BlockVolumeExceeded));
 
             // 25% do vault — passa no volume (40%) mas estoura o cap
             // por trade (20%)
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                25_000_000_000,
-                1,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, 25_000_000_000, 1);
             assert_eq!(result, Err(VaultError::TradeExceedsLimit));
             assert!(!vault.locked);
         }
@@ -2641,12 +2595,8 @@ pub mod copy_vault {
             // cross-contract call é mockado e retorna min_amount_out.
             let amount_in: Balance = 10_000_000_000;
             let min_out: Balance = 9_000_000_000;
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                amount_in,
-                min_out,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, amount_in, min_out);
             assert_eq!(result, Ok(min_out));
 
             // Trade registrado no histórico com pair = token_in||token_out
@@ -2672,8 +2622,10 @@ pub mod copy_vault {
         }
 
         /// Vault com infra de valuation configurada (sem depósito).
-        fn vault_with_infra(
-        ) -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+        fn vault_with_infra() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
             let (mut vault, accounts) = create_vault();
             set_caller(accounts.alice);
             vault
@@ -2843,7 +2795,8 @@ pub mod copy_vault {
             let (vault, _) = {
                 let (mut v, a) = create_vault();
                 set_caller(a.alice);
-                v.set_valuation_infra(factory_addr(), wnative_addr()).unwrap();
+                v.set_valuation_infra(factory_addr(), wnative_addr())
+                    .unwrap();
                 (v, a)
             };
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
@@ -3081,12 +3034,8 @@ pub mod copy_vault {
 
             // token(0x99) não está na lista e não é wnative
             set_caller(accounts.bob);
-            let result = vault.swap_through_router(
-                token(0x99),
-                accounts.eve,
-                1_000_000_000,
-                900_000_000,
-            );
+            let result =
+                vault.swap_through_router(token(0x99), accounts.eve, 1_000_000_000, 900_000_000);
             assert_eq!(result, Err(VaultError::TokenNotTracked));
             assert!(!vault.locked);
         }
@@ -3097,12 +3046,8 @@ pub mod copy_vault {
 
             // django tem 50e9 mockado — pedir 60e9 falha ANTES dos caps
             set_caller(accounts.bob);
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                60_000_000_000,
-                1,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, 60_000_000_000, 1);
             assert_eq!(result, Err(VaultError::InsufficientTokenBalance));
             assert!(!vault.locked);
         }
@@ -3114,12 +3059,7 @@ pub mod copy_vault {
             assert!(!vault.is_tracked(accounts.eve));
             set_caller(accounts.bob);
             vault
-                .swap_through_router(
-                    accounts.django,
-                    accounts.eve,
-                    10_000_000_000,
-                    9_000_000_000,
-                )
+                .swap_through_router(accounts.django, accounts.eve, 10_000_000_000, 9_000_000_000)
                 .unwrap();
 
             // Invariante 1: o ativo adquirido entrou na lista ANTES do
@@ -3174,10 +3114,7 @@ pub mod copy_vault {
 
             // E falha explícita quando a cotação some
             test_mocks::clear_pair_reserves(t);
-            assert_eq!(
-                vault.sync_equity(),
-                Err(VaultError::ValuationUnavailable),
-            );
+            assert_eq!(vault.sync_equity(), Err(VaultError::ValuationUnavailable),);
         }
 
         // ════════════════════════════════════════════════════════
@@ -3194,8 +3131,10 @@ pub mod copy_vault {
         }
 
         /// Charlie alone in the vault: ANY withdrawal is > 10% (large).
-        fn vault_with_single_depositor(
-        ) -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+        fn vault_with_single_depositor() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
             let (mut vault, accounts) = create_vault();
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
             set_now(1_000);

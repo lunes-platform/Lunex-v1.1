@@ -56,7 +56,7 @@ mod listing_manager {
     const TIER3_MIN_LIQ_UNITS: u128 = 50_000;
 
     // Lock duration in milliseconds per tier
-    const TIER1_LOCK_MS: u64 = 90  * 24 * 60 * 60 * 1_000;
+    const TIER1_LOCK_MS: u64 = 90 * 24 * 60 * 60 * 1_000;
     const TIER2_LOCK_MS: u64 = 120 * 24 * 60 * 60 * 1_000;
     const TIER3_LOCK_MS: u64 = 180 * 24 * 60 * 60 * 1_000;
 
@@ -67,25 +67,25 @@ mod listing_manager {
     const MAX_DECIMALS: u8 = 24;
 
     // Fee split basis points (out of 10_000)
-    const BPS_DENOM:    u128 = 10_000;
-    const BPS_STAKING:  u128 = 2_000; // 20% → staking pool
+    const BPS_DENOM: u128 = 10_000;
+    const BPS_STAKING: u128 = 2_000; // 20% → staking pool
     const BPS_TREASURY: u128 = 5_000; // 50% → team revenue
     #[allow(dead_code)] // only checked at compile time below
-    const BPS_REWARDS:  u128 = 3_000; // 30% → rewards pool (gets rounding dust)
-    // The split must cover exactly 100% (rewards = fee - staking - treasury).
+    const BPS_REWARDS: u128 = 3_000; // 30% → rewards pool (gets rounding dust)
+                                     // The split must cover exactly 100% (rewards = fee - staking - treasury).
     const _: () = assert!(BPS_STAKING + BPS_TREASURY + BPS_REWARDS == BPS_DENOM);
 
     // ── Cross-contract selectors ─────────────────────────────────────
     // PSP22 (explicit selectors used by Lunex Pair / WNative)
-    const SEL_PSP22_TRANSFER:      [u8; 4] = ink::selector_bytes!("PSP22::transfer");
+    const SEL_PSP22_TRANSFER: [u8; 4] = ink::selector_bytes!("PSP22::transfer");
     const SEL_PSP22_TRANSFER_FROM: [u8; 4] = ink::selector_bytes!("PSP22::transfer_from");
     // Factory / Pair / LiquidityLock (default ink! selectors = message names)
-    const SEL_FACTORY_GET_PAIR:  [u8; 4] = ink::selector_bytes!("get_pair");
+    const SEL_FACTORY_GET_PAIR: [u8; 4] = ink::selector_bytes!("get_pair");
     const SEL_PAIR_GET_RESERVES: [u8; 4] = ink::selector_bytes!("get_reserves");
-    const SEL_PAIR_TOKEN_0:      [u8; 4] = ink::selector_bytes!("token_0");
-    const SEL_PAIR_TOKEN_1:      [u8; 4] = ink::selector_bytes!("token_1");
+    const SEL_PAIR_TOKEN_0: [u8; 4] = ink::selector_bytes!("token_0");
+    const SEL_PAIR_TOKEN_1: [u8; 4] = ink::selector_bytes!("token_1");
     const SEL_PAIR_TOTAL_SUPPLY: [u8; 4] = ink::selector_bytes!("total_supply");
-    const SEL_LOCK_CREATE_LOCK:  [u8; 4] = ink::selector_bytes!("create_lock");
+    const SEL_LOCK_CREATE_LOCK: [u8; 4] = ink::selector_bytes!("create_lock");
 
     // ── PSP22 Error (for cross-contract returns) ─────────────────────
 
@@ -261,7 +261,9 @@ mod listing_manager {
         if decimals > MAX_DECIMALS {
             return Err(Error::InvalidConfig);
         }
-        10u128.checked_pow(u32::from(decimals)).ok_or(Error::Overflow)
+        10u128
+            .checked_pow(u32::from(decimals))
+            .ok_or(Error::Overflow)
     }
 
     /// Default tier config scaled by the fee token's real decimals.
@@ -274,8 +276,8 @@ mod listing_manager {
             _ => return Err(Error::InvalidTier),
         };
         Ok(TierConfig {
-            listing_fee:      fee.checked_mul(unit).ok_or(Error::Overflow)?,
-            min_lunes_liq:    min.checked_mul(unit).ok_or(Error::Overflow)?,
+            listing_fee: fee.checked_mul(unit).ok_or(Error::Overflow)?,
+            min_lunes_liq: min.checked_mul(unit).ok_or(Error::Overflow)?,
             lock_duration_ms: lock,
         })
     }
@@ -358,31 +360,31 @@ mod listing_manager {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
     pub struct ListingRecord {
-        pub id:              ListingId,
-        pub owner:           AccountId,
-        pub token_address:   AccountId,
-        pub pair_address:    AccountId,
-        pub lp_token:        AccountId,
-        pub lp_amount:       Balance,
+        pub id: ListingId,
+        pub owner: AccountId,
+        pub token_address: AccountId,
+        pub pair_address: AccountId,
+        pub lp_token: AccountId,
+        pub lp_amount: Balance,
         /// LUNES side of the locked LP share, derived on-chain from reserves
         pub lunes_liquidity: Balance,
         /// TOKEN side of the locked LP share, derived on-chain from reserves
         pub token_liquidity: Balance,
-        pub tier:            u8,
+        pub tier: u8,
         /// LiquidityLock lock id holding the LP tokens
-        pub lock_id:         u64,
-        pub unlock_at:       Timestamp,
-        pub fee_paid:        Balance,
-        pub status:          ListingStatus,
-        pub listed_at:       Timestamp,
+        pub lock_id: u64,
+        pub unlock_at: Timestamp,
+        pub fee_paid: Balance,
+        pub status: ListingStatus,
+        pub listed_at: Timestamp,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
     pub struct TierConfig {
-        pub listing_fee:      Balance,
-        pub min_lunes_liq:    Balance,
+        pub listing_fee: Balance,
+        pub min_lunes_liq: Balance,
         pub lock_duration_ms: u64,
     }
 
@@ -393,28 +395,28 @@ mod listing_manager {
 
     #[ink(storage)]
     pub struct ListingManager {
-        admin:           AccountId,
+        admin: AccountId,
         /// PSP22 the fee is paid in AND the pool's base token (WLUNES)
-        lunes_token:     AccountId,
-        lunes_decimals:  u8,
-        factory:         AccountId,
-        liquidity_lock:  AccountId,
-        treasury:        AccountId,
-        rewards_pool:    AccountId,
-        staking_pool:    AccountId,
-        next_id:         ListingId,
-        listings:        Mapping<ListingId, ListingRecord>,
-        token_listing:   Mapping<AccountId, ListingId>,  // token → listing id
-        tier_configs:    Mapping<u8, TierConfig>,
+        lunes_token: AccountId,
+        lunes_decimals: u8,
+        factory: AccountId,
+        liquidity_lock: AccountId,
+        treasury: AccountId,
+        rewards_pool: AccountId,
+        staking_pool: AccountId,
+        next_id: ListingId,
+        listings: Mapping<ListingId, ListingRecord>,
+        token_listing: Mapping<AccountId, ListingId>, // token → listing id
+        tier_configs: Mapping<u8, TierConfig>,
         /// tier → (proposed config, executable after)
-        pending_tiers:   Mapping<u8, (TierConfig, Timestamp)>,
+        pending_tiers: Mapping<u8, (TierConfig, Timestamp)>,
         total_collected: Balance,
-        total_staked:    Balance,
-        paused:          bool,
+        total_staked: Balance,
+        paused: bool,
         /// Atraso obrigatório para troca de admin / tier config (timelock)
-        timelock_delay:  u64,
+        timelock_delay: u64,
         /// Admin proposto (aguardando timelock)
-        pending_admin:   Option<AccountId>,
+        pending_admin: Option<AccountId>,
         /// Timestamp após o qual a mudança de admin pode ser executada
         admin_change_at: Timestamp,
     }
@@ -424,23 +426,23 @@ mod listing_manager {
     #[ink(event)]
     pub struct TokenListed {
         #[ink(topic)]
-        pub listing_id:    ListingId,
+        pub listing_id: ListingId,
         #[ink(topic)]
-        pub owner:         AccountId,
+        pub owner: AccountId,
         #[ink(topic)]
         pub token_address: AccountId,
-        pub pair_address:  AccountId,
-        pub tier:          u8,
-        pub lock_id:       u64,
-        pub listed_at:     Timestamp,
+        pub pair_address: AccountId,
+        pub tier: u8,
+        pub lock_id: u64,
+        pub listed_at: Timestamp,
     }
 
     #[ink(event)]
     pub struct AdminChangeProposed {
         #[ink(topic)]
         pub proposed_by: AccountId,
-        pub new_admin:   AccountId,
-        pub execute_at:  Timestamp,
+        pub new_admin: AccountId,
+        pub execute_at: Timestamp,
     }
 
     #[ink(event)]
@@ -454,9 +456,9 @@ mod listing_manager {
     pub struct ListingFeeCollected {
         #[ink(topic)]
         pub listing_id: ListingId,
-        pub payer:      AccountId,
-        pub amount:     Balance,
-        pub tier:       u8,
+        pub payer: AccountId,
+        pub amount: Balance,
+        pub tier: u8,
     }
 
     #[ink(event)]
@@ -469,24 +471,24 @@ mod listing_manager {
 
     #[ink(event)]
     pub struct FeeDistributed {
-        pub listing_id:      ListingId,
-        pub staking_amount:  Balance,
+        pub listing_id: ListingId,
+        pub staking_amount: Balance,
         pub treasury_amount: Balance,
-        pub rewards_amount:  Balance,
+        pub rewards_amount: Balance,
     }
 
     #[ink(event)]
     pub struct TierConfigProposed {
         #[ink(topic)]
-        pub tier:       u8,
-        pub config:     TierConfig,
+        pub tier: u8,
+        pub config: TierConfig,
         pub execute_at: Timestamp,
     }
 
     #[ink(event)]
     pub struct TierConfigUpdated {
         #[ink(topic)]
-        pub tier:   u8,
+        pub tier: u8,
         pub config: TierConfig,
     }
 
@@ -532,23 +534,23 @@ mod listing_manager {
         /// (WLUNES = 8); tier amounts are scaled with it.
         #[ink(constructor)]
         pub fn new(
-            lunes_token:    AccountId,
+            lunes_token: AccountId,
             lunes_decimals: u8,
-            factory:        AccountId,
+            factory: AccountId,
             liquidity_lock: AccountId,
-            treasury:       AccountId,
-            rewards_pool:   AccountId,
-            staking_pool:   AccountId,
+            treasury: AccountId,
+            rewards_pool: AccountId,
+            staking_pool: AccountId,
         ) -> Self {
             let mut tier_configs = Mapping::default();
             for tier in 1u8..=3 {
                 // Constructor panics (deploy fails) on unsupported decimals.
-                let cfg = default_tier(tier, lunes_decimals)
-                    .expect("unsupported fee token decimals");
+                let cfg =
+                    default_tier(tier, lunes_decimals).expect("unsupported fee token decimals");
                 tier_configs.insert(tier, &cfg);
             }
             Self {
-                admin:           Self::env().caller(),
+                admin: Self::env().caller(),
                 lunes_token,
                 lunes_decimals,
                 factory,
@@ -556,16 +558,16 @@ mod listing_manager {
                 treasury,
                 rewards_pool,
                 staking_pool,
-                next_id:         0,
-                listings:        Mapping::default(),
-                token_listing:   Mapping::default(),
+                next_id: 0,
+                listings: Mapping::default(),
+                token_listing: Mapping::default(),
                 tier_configs,
-                pending_tiers:   Mapping::default(),
+                pending_tiers: Mapping::default(),
                 total_collected: 0,
-                total_staked:    0,
-                paused:          false,
-                timelock_delay:  DEFAULT_TIMELOCK_DELAY_MS,
-                pending_admin:   None,
+                total_staked: 0,
+                paused: false,
+                timelock_delay: DEFAULT_TIMELOCK_DELAY_MS,
+                pending_admin: None,
                 admin_change_at: 0,
             }
         }
@@ -588,10 +590,10 @@ mod listing_manager {
         #[ink(message)]
         pub fn list_token(
             &mut self,
-            tier:          u8,
+            tier: u8,
             token_address: AccountId,
-            pair_address:  AccountId,
-            lp_amount:     Balance,
+            pair_address: AccountId,
+            lp_amount: Balance,
         ) -> Result<ListingId> {
             // ── Checks ───────────────────────────────────────────────
             self.ensure_not_paused()?;
@@ -672,9 +674,9 @@ mod listing_manager {
             Ext::psp22_transfer(self.lunes_token, self.rewards_pool, rewards_amt)?;
             self.env().emit_event(FeeDistributed {
                 listing_id,
-                staking_amount:  staking_amt,
+                staking_amount: staking_amt,
                 treasury_amount: treasury_amt,
-                rewards_amount:  rewards_amt,
+                rewards_amount: rewards_amt,
             });
 
             // 3. Move LP from the caller straight into the LiquidityLock
@@ -764,7 +766,10 @@ mod listing_manager {
         #[ink(message)]
         pub fn reject_listing(&mut self, listing_id: ListingId) -> Result<()> {
             self.ensure_admin()?;
-            let mut record = self.listings.get(listing_id).ok_or(Error::ListingNotFound)?;
+            let mut record = self
+                .listings
+                .get(listing_id)
+                .ok_or(Error::ListingNotFound)?;
             record.status = ListingStatus::Rejected;
             self.listings.insert(listing_id, &record);
             self.env().emit_event(ListingStatusChanged {
@@ -780,17 +785,29 @@ mod listing_manager {
         #[ink(message)]
         pub fn propose_tier_config(
             &mut self,
-            tier:             u8,
-            listing_fee:      Balance,
-            min_lunes_liq:    Balance,
+            tier: u8,
+            listing_fee: Balance,
+            min_lunes_liq: Balance,
             lock_duration_ms: u64,
         ) -> Result<()> {
             self.ensure_admin()?;
-            let config = TierConfig { listing_fee, min_lunes_liq, lock_duration_ms };
+            let config = TierConfig {
+                listing_fee,
+                min_lunes_liq,
+                lock_duration_ms,
+            };
             validate_tier_config(tier, &config)?;
-            let execute_at = self.env().block_timestamp().saturating_add(self.timelock_delay);
-            self.pending_tiers.insert(tier, &(config.clone(), execute_at));
-            self.env().emit_event(TierConfigProposed { tier, config, execute_at });
+            let execute_at = self
+                .env()
+                .block_timestamp()
+                .saturating_add(self.timelock_delay);
+            self.pending_tiers
+                .insert(tier, &(config.clone(), execute_at));
+            self.env().emit_event(TierConfigProposed {
+                tier,
+                config,
+                execute_at,
+            });
             Ok(())
         }
 
@@ -853,31 +870,49 @@ mod listing_manager {
 
         /// Fee token (also the pool base token, WLUNES) and its decimals.
         #[ink(message)]
-        pub fn lunes_token(&self) -> AccountId { self.lunes_token }
+        pub fn lunes_token(&self) -> AccountId {
+            self.lunes_token
+        }
 
         #[ink(message)]
-        pub fn lunes_decimals(&self) -> u8 { self.lunes_decimals }
+        pub fn lunes_decimals(&self) -> u8 {
+            self.lunes_decimals
+        }
 
         #[ink(message)]
-        pub fn factory(&self) -> AccountId { self.factory }
+        pub fn factory(&self) -> AccountId {
+            self.factory
+        }
 
         #[ink(message)]
-        pub fn liquidity_lock(&self) -> AccountId { self.liquidity_lock }
+        pub fn liquidity_lock(&self) -> AccountId {
+            self.liquidity_lock
+        }
 
         #[ink(message)]
-        pub fn total_collected(&self) -> Balance { self.total_collected }
+        pub fn total_collected(&self) -> Balance {
+            self.total_collected
+        }
 
         #[ink(message)]
-        pub fn total_staked(&self) -> Balance { self.total_staked }
+        pub fn total_staked(&self) -> Balance {
+            self.total_staked
+        }
 
         #[ink(message)]
-        pub fn admin(&self) -> AccountId { self.admin }
+        pub fn admin(&self) -> AccountId {
+            self.admin
+        }
 
         #[ink(message)]
-        pub fn staking_pool(&self) -> AccountId { self.staking_pool }
+        pub fn staking_pool(&self) -> AccountId {
+            self.staking_pool
+        }
 
         #[ink(message)]
-        pub fn is_paused(&self) -> bool { self.paused }
+        pub fn is_paused(&self) -> bool {
+            self.paused
+        }
 
         // ── Guards ────────────────────────────────────────────────
 
@@ -904,7 +939,7 @@ mod listing_manager {
             self.ensure_admin()?;
             let now = self.env().block_timestamp();
             let execute_at = now.saturating_add(self.timelock_delay);
-            self.pending_admin   = Some(new_admin);
+            self.pending_admin = Some(new_admin);
             self.admin_change_at = execute_at;
             self.env().emit_event(AdminChangeProposed {
                 proposed_by: self.env().caller(),
@@ -924,9 +959,12 @@ mod listing_manager {
                 return Err(Error::TimelockNotExpired);
             }
             let old_admin = self.admin;
-            self.admin         = pending;
+            self.admin = pending;
             self.pending_admin = None;
-            self.env().emit_event(AdminChanged { old_admin, new_admin: pending });
+            self.env().emit_event(AdminChanged {
+                old_admin,
+                new_admin: pending,
+            });
             Ok(())
         }
 
@@ -980,13 +1018,16 @@ mod listing_manager {
             let contract = make_contract();
 
             let t1 = contract.tier_config(1).unwrap();
-            assert_eq!(t1.listing_fee,      1_000 * UNIT);
-            assert_eq!(t1.min_lunes_liq,    10_000 * UNIT);
+            assert_eq!(t1.listing_fee, 1_000 * UNIT);
+            assert_eq!(t1.min_lunes_liq, 10_000 * UNIT);
             assert_eq!(t1.lock_duration_ms, TIER1_LOCK_MS);
 
             assert_eq!(contract.tier_config(2).unwrap().listing_fee, 5_000 * UNIT);
             assert_eq!(contract.tier_config(3).unwrap().listing_fee, 20_000 * UNIT);
-            assert_eq!(contract.tier_config(3).unwrap().min_lunes_liq, 50_000 * UNIT);
+            assert_eq!(
+                contract.tier_config(3).unwrap().min_lunes_liq,
+                50_000 * UNIT
+            );
 
             assert_eq!(contract.tier_config(0), Err(Error::InvalidTier));
             assert_eq!(contract.tier_config(4), Err(Error::InvalidTier));
@@ -1067,9 +1108,9 @@ mod listing_manager {
             let fee = 1_000 * UNIT;
             let (staking, treasury, rewards) = split_fee(fee).unwrap();
             assert_eq!(staking + treasury + rewards, fee);
-            assert_eq!(staking,  200 * UNIT);
+            assert_eq!(staking, 200 * UNIT);
             assert_eq!(treasury, 500 * UNIT);
-            assert_eq!(rewards,  300 * UNIT);
+            assert_eq!(rewards, 300 * UNIT);
         }
 
         #[ink::test]
@@ -1094,8 +1135,14 @@ mod listing_manager {
         fn order_reserves_matches_pair_tokens() {
             let a = default_accounts();
             // lunes = alice, token = frank
-            assert_eq!(order_reserves(a.alice, a.frank, a.alice, a.frank, 10, 20), Ok((10, 20)));
-            assert_eq!(order_reserves(a.alice, a.frank, a.frank, a.alice, 10, 20), Ok((20, 10)));
+            assert_eq!(
+                order_reserves(a.alice, a.frank, a.alice, a.frank, 10, 20),
+                Ok((10, 20))
+            );
+            assert_eq!(
+                order_reserves(a.alice, a.frank, a.frank, a.alice, 10, 20),
+                Ok((20, 10))
+            );
             assert_eq!(
                 order_reserves(a.alice, a.frank, a.alice, a.bob, 10, 20),
                 Err(Error::InvalidPair)
@@ -1121,9 +1168,18 @@ mod listing_manager {
 
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.eve);
             assert_eq!(contract.set_paused(true), Err(Error::Unauthorized));
-            assert_eq!(contract.set_treasury(accounts.eve), Err(Error::Unauthorized));
-            assert_eq!(contract.set_rewards_pool(accounts.eve), Err(Error::Unauthorized));
-            assert_eq!(contract.set_staking_pool(accounts.eve), Err(Error::Unauthorized));
+            assert_eq!(
+                contract.set_treasury(accounts.eve),
+                Err(Error::Unauthorized)
+            );
+            assert_eq!(
+                contract.set_rewards_pool(accounts.eve),
+                Err(Error::Unauthorized)
+            );
+            assert_eq!(
+                contract.set_staking_pool(accounts.eve),
+                Err(Error::Unauthorized)
+            );
             assert_eq!(
                 contract.propose_tier_config(1, UNIT, UNIT, MIN_LOCK_MS),
                 Err(Error::Unauthorized)
@@ -1150,9 +1206,14 @@ mod listing_manager {
             );
             assert_eq!(contract.execute_tier_config(1), Err(Error::NoPendingConfig));
 
-            contract.propose_tier_config(1, 2 * UNIT, 3 * UNIT, MIN_LOCK_MS).unwrap();
+            contract
+                .propose_tier_config(1, 2 * UNIT, 3 * UNIT, MIN_LOCK_MS)
+                .unwrap();
             assert!(contract.get_pending_tier_config(1).is_some());
-            assert_eq!(contract.execute_tier_config(1), Err(Error::TimelockNotExpired));
+            assert_eq!(
+                contract.execute_tier_config(1),
+                Err(Error::TimelockNotExpired)
+            );
             // Effective config unchanged until execution
             assert_eq!(contract.tier_config(1).unwrap().listing_fee, 1_000 * UNIT);
 
@@ -1171,7 +1232,9 @@ mod listing_manager {
         #[ink::test]
         fn tier_config_proposal_can_be_cancelled() {
             let mut contract = make_contract();
-            contract.propose_tier_config(2, UNIT, UNIT, MIN_LOCK_MS).unwrap();
+            contract
+                .propose_tier_config(2, UNIT, UNIT, MIN_LOCK_MS)
+                .unwrap();
             contract.cancel_tier_config(2).unwrap();
             assert_eq!(contract.execute_tier_config(2), Err(Error::NoPendingConfig));
             assert_eq!(contract.cancel_tier_config(2), Err(Error::NoPendingConfig));
@@ -1193,7 +1256,10 @@ mod listing_manager {
             let mut contract = make_contract();
 
             contract.propose_admin_change(accounts.bob).unwrap();
-            assert_eq!(contract.execute_admin_change(), Err(Error::TimelockNotExpired));
+            assert_eq!(
+                contract.execute_admin_change(),
+                Err(Error::TimelockNotExpired)
+            );
 
             test::advance_block::<ink::env::DefaultEnvironment>();
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();

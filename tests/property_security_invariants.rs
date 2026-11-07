@@ -8,7 +8,10 @@ struct PairModel {
 
 impl PairModel {
     fn new(reserve_0: u128, reserve_1: u128) -> Self {
-        Self { reserve_0, reserve_1 }
+        Self {
+            reserve_0,
+            reserve_1,
+        }
     }
 
     fn get_amount_out(amount_in: u128, reserve_in: u128, reserve_out: u128) -> Option<u128> {
@@ -18,7 +21,9 @@ impl PairModel {
 
         let amount_in_with_fee = amount_in.checked_mul(997)?;
         let numerator = amount_in_with_fee.checked_mul(reserve_out)?;
-        let denominator = reserve_in.checked_mul(1000)?.checked_add(amount_in_with_fee)?;
+        let denominator = reserve_in
+            .checked_mul(1000)?
+            .checked_add(amount_in_with_fee)?;
         let amount_out = numerator.checked_div(denominator)?;
 
         if amount_out == 0 {

@@ -45,7 +45,7 @@ mod security_tests {
             }
 
             self.call_count += 1;
-            
+
             // Simulate reentrancy attempt
             if self.call_count == 1 {
                 // First call succeeds
@@ -101,7 +101,12 @@ mod security_tests {
         }
 
         // Secure mint with overflow protection and K-invariant check
-        pub fn secure_mint(&mut self, to: String, amount_0: u128, amount_1: u128) -> Result<u128, String> {
+        pub fn secure_mint(
+            &mut self,
+            to: String,
+            amount_0: u128,
+            amount_1: u128,
+        ) -> Result<u128, String> {
             // Reentrancy protection
             self.lock()?;
 
@@ -112,18 +117,25 @@ mod security_tests {
             }
 
             // Overflow protection
-            let new_reserve_0 = self.reserve_0.checked_add(amount_0)
+            let new_reserve_0 = self
+                .reserve_0
+                .checked_add(amount_0)
                 .ok_or("Overflow in reserve_0")?;
-            let new_reserve_1 = self.reserve_1.checked_add(amount_1)
+            let new_reserve_1 = self
+                .reserve_1
+                .checked_add(amount_1)
                 .ok_or("Overflow in reserve_1")?;
 
             // Calculate liquidity with overflow protection
             let liquidity = if self.total_supply == 0 {
                 // First liquidity provision
-                let sqrt_product = self.sqrt(amount_0.checked_mul(amount_1)
-                    .ok_or("Overflow in liquidity calculation")?);
+                let sqrt_product = self.sqrt(
+                    amount_0
+                        .checked_mul(amount_1)
+                        .ok_or("Overflow in liquidity calculation")?,
+                );
                 let minimum_liquidity = 100;
-                
+
                 if sqrt_product <= minimum_liquidity {
                     self.unlock();
                     return Err("Insufficient first liquidity".to_string());
@@ -139,12 +151,14 @@ mod security_tests {
                     return Err("Division by zero in liquidity calculation".to_string());
                 }
 
-                let liquidity_a = amount_0.checked_mul(self.total_supply)
+                let liquidity_a = amount_0
+                    .checked_mul(self.total_supply)
                     .ok_or("Overflow in liquidity_a")?
                     .checked_div(self.reserve_0)
                     .ok_or("Division by zero in liquidity_a")?;
-                
-                let liquidity_b = amount_1.checked_mul(self.total_supply)
+
+                let liquidity_b = amount_1
+                    .checked_mul(self.total_supply)
                     .ok_or("Overflow in liquidity_b")?
                     .checked_div(self.reserve_1)
                     .ok_or("Division by zero in liquidity_b")?;
@@ -157,17 +171,22 @@ mod security_tests {
             self.reserve_1 = new_reserve_1;
 
             // Update total supply with overflow protection
-            self.total_supply = self.total_supply.checked_add(liquidity)
+            self.total_supply = self
+                .total_supply
+                .checked_add(liquidity)
                 .ok_or("Overflow in total_supply")?;
 
             // Update user balance with overflow protection
             let current_balance = self.balances.get(&to).unwrap_or(&0);
-            let new_balance = current_balance.checked_add(liquidity)
+            let new_balance = current_balance
+                .checked_add(liquidity)
                 .ok_or("Overflow in user balance")?;
             self.balances.insert(to, new_balance);
 
             // Update K-invariant for security check
-            self.k_last = self.reserve_0.checked_mul(self.reserve_1)
+            self.k_last = self
+                .reserve_0
+                .checked_mul(self.reserve_1)
                 .ok_or("Overflow in K-invariant")?;
 
             self.unlock();
@@ -175,7 +194,13 @@ mod security_tests {
         }
 
         // Secure swap with K-invariant verification
-        pub fn secure_swap(&mut self, amount_0_out: u128, amount_1_out: u128, amount_0_in: u128, amount_1_in: u128) -> Result<(), String> {
+        pub fn secure_swap(
+            &mut self,
+            amount_0_out: u128,
+            amount_1_out: u128,
+            amount_0_in: u128,
+            amount_1_in: u128,
+        ) -> Result<(), String> {
             // Reentrancy protection
             self.lock()?;
 
@@ -191,46 +216,55 @@ mod security_tests {
             }
 
             // Calculate new reserves with overflow protection
-            let reserve_0_adjusted = self.reserve_0
+            let reserve_0_adjusted = self
+                .reserve_0
                 .checked_sub(amount_0_out)
                 .ok_or("Underflow in reserve_0")?
                 .checked_add(amount_0_in)
                 .ok_or("Overflow in reserve_0")?;
 
-            let reserve_1_adjusted = self.reserve_1
+            let reserve_1_adjusted = self
+                .reserve_1
                 .checked_sub(amount_1_out)
                 .ok_or("Underflow in reserve_1")?
                 .checked_add(amount_1_in)
                 .ok_or("Overflow in reserve_1")?;
 
             // K-invariant check (accounting for 0.3% fee)
-            let k_before = self.reserve_0.checked_mul(self.reserve_1)
+            let k_before = self
+                .reserve_0
+                .checked_mul(self.reserve_1)
                 .ok_or("Overflow in K-invariant before")?;
 
             // Apply 0.3% fee to input amounts
-            let amount_0_in_with_fee = amount_0_in.checked_mul(997)
+            let amount_0_in_with_fee = amount_0_in
+                .checked_mul(997)
                 .ok_or("Overflow in fee calculation")?
                 .checked_div(1000)
                 .ok_or("Division by zero in fee")?;
 
-            let amount_1_in_with_fee = amount_1_in.checked_mul(997)
+            let amount_1_in_with_fee = amount_1_in
+                .checked_mul(997)
                 .ok_or("Overflow in fee calculation")?
                 .checked_div(1000)
                 .ok_or("Division by zero in fee")?;
 
-            let balance_0_adjusted = self.reserve_0
+            let balance_0_adjusted = self
+                .reserve_0
                 .checked_sub(amount_0_out)
                 .ok_or("Underflow in balance_0")?
                 .checked_add(amount_0_in_with_fee)
                 .ok_or("Overflow in balance_0")?;
 
-            let balance_1_adjusted = self.reserve_1
+            let balance_1_adjusted = self
+                .reserve_1
                 .checked_sub(amount_1_out)
                 .ok_or("Underflow in balance_1")?
                 .checked_add(amount_1_in_with_fee)
                 .ok_or("Overflow in balance_1")?;
 
-            let k_after = balance_0_adjusted.checked_mul(balance_1_adjusted)
+            let k_after = balance_0_adjusted
+                .checked_mul(balance_1_adjusted)
                 .ok_or("Overflow in K-invariant after")?;
 
             // K-invariant must not decrease (allowing for rounding)
@@ -248,7 +282,11 @@ mod security_tests {
         }
 
         // Secure burn with underflow protection
-        pub fn secure_burn(&mut self, from: String, liquidity: u128) -> Result<(u128, u128), String> {
+        pub fn secure_burn(
+            &mut self,
+            from: String,
+            liquidity: u128,
+        ) -> Result<(u128, u128), String> {
             // Reentrancy protection
             self.lock()?;
 
@@ -271,12 +309,14 @@ mod security_tests {
             }
 
             // Calculate proportional amounts with underflow protection
-            let amount_0 = liquidity.checked_mul(self.reserve_0)
+            let amount_0 = liquidity
+                .checked_mul(self.reserve_0)
                 .ok_or("Overflow in amount_0 calculation")?
                 .checked_div(self.total_supply)
                 .ok_or("Division by zero in amount_0")?;
 
-            let amount_1 = liquidity.checked_mul(self.reserve_1)
+            let amount_1 = liquidity
+                .checked_mul(self.reserve_1)
                 .ok_or("Overflow in amount_1 calculation")?
                 .checked_div(self.total_supply)
                 .ok_or("Division by zero in amount_1")?;
@@ -287,13 +327,19 @@ mod security_tests {
             }
 
             // Update reserves with underflow protection
-            self.reserve_0 = self.reserve_0.checked_sub(amount_0)
+            self.reserve_0 = self
+                .reserve_0
+                .checked_sub(amount_0)
                 .ok_or("Underflow in reserve_0")?;
-            self.reserve_1 = self.reserve_1.checked_sub(amount_1)
+            self.reserve_1 = self
+                .reserve_1
+                .checked_sub(amount_1)
                 .ok_or("Underflow in reserve_1")?;
 
             // Update total supply with underflow protection
-            self.total_supply = self.total_supply.checked_sub(liquidity)
+            self.total_supply = self
+                .total_supply
+                .checked_sub(liquidity)
                 .ok_or("Underflow in total_supply")?;
 
             // Update user balance
@@ -315,15 +361,15 @@ mod security_tests {
             if value == 0 {
                 return 0;
             }
-            
+
             let mut x = value;
             let mut y = (value + 1) / 2;
-            
+
             while y < x {
                 x = y;
                 y = (value / x + x) / 2;
             }
-            
+
             x
         }
     }
@@ -437,7 +483,8 @@ mod security_tests {
                 } else {
                     (token_b.clone(), token_a.clone())
                 };
-                self.pairs.insert(pair_key.clone(), SecurePairContract::new(token_0, token_1));
+                self.pairs
+                    .insert(pair_key.clone(), SecurePairContract::new(token_0, token_1));
             }
 
             let pair = self.pairs.get_mut(&pair_key).unwrap();
@@ -559,7 +606,12 @@ mod security_tests {
         let k_after = reserve_0_after * reserve_1_after;
 
         // K should be maintained or increased (due to fees)
-        assert!(k_after >= k_before, "K-invariant violation: {} < {}", k_after, k_before);
+        assert!(
+            k_after >= k_before,
+            "K-invariant violation: {} < {}",
+            k_after,
+            k_before
+        );
 
         // RED: Attempt to violate K-invariant by extracting value without sufficient input
         let result = pair.secure_swap(1000, 0, 0, 100); // Try to get 1000 TOKEN_A for only 100 TOKEN_B
@@ -592,8 +644,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 1
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            1,
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Contract is paused");
@@ -607,8 +664,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 1
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            1,
         );
         assert!(result.is_ok());
 
@@ -629,8 +691,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            1000, 2000, 1 // deadline < current_time
+            1000,
+            2000,
+            900,
+            1800,
+            1000,
+            2000,
+            1, // deadline < current_time
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Transaction expired");
@@ -640,8 +707,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 1 // deadline > current_time
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            1, // deadline > current_time
         );
         assert!(result.is_ok());
 
@@ -662,8 +734,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 1 // nonce = 1
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            1, // nonce = 1
         );
         assert!(result.is_ok());
 
@@ -672,8 +749,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 1 // nonce = 1 (replay)
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            1, // nonce = 1 (replay)
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Invalid nonce");
@@ -683,8 +765,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 5 // nonce = 5 (should be 2)
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            5, // nonce = 5 (should be 2)
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Invalid nonce");
@@ -694,8 +781,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 2 // nonce = 2
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            2, // nonce = 2
         );
         assert!(result.is_ok());
 
@@ -716,30 +808,45 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000,
-            1100, 1800, // amount_a_min > amount_a_desired
-            9999, 1000, 1
+            1000,
+            2000,
+            1100,
+            1800, // amount_a_min > amount_a_desired
+            9999,
+            1000,
+            1,
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Invalid minimum amounts");
 
         // Setup: Add initial liquidity (user1, nonce 1)
-        let _result = router.secure_add_liquidity(
-            "user1".to_string(),
-            "TOKEN_A".to_string(),
-            "TOKEN_B".to_string(),
-            10000, 20000, 9000, 18000,
-            9999, 1000, 1
-        ).unwrap();
+        let _result = router
+            .secure_add_liquidity(
+                "user1".to_string(),
+                "TOKEN_A".to_string(),
+                "TOKEN_B".to_string(),
+                10000,
+                20000,
+                9000,
+                18000,
+                9999,
+                1000,
+                1,
+            )
+            .unwrap();
 
         // RED: Slippage protection should trigger when amounts are too low
         let result = router.secure_add_liquidity(
             "user2".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000,
-            1100, 1800, // Expecting more than what we can get
-            9999, 2000, 1 // nonce = 1 for user2 (their first tx)
+            1000,
+            2000,
+            1100,
+            1800, // Expecting more than what we can get
+            9999,
+            2000,
+            1, // nonce = 1 for user2 (their first tx)
         );
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -750,8 +857,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_C".to_string(), // Different pair to avoid state conflicts
             "TOKEN_D".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 2000, 2 // nonce = 2 for user1
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            2000,
+            2, // nonce = 2 for user1
         );
         assert!(result.is_ok());
 
@@ -806,8 +918,13 @@ mod security_tests {
             "user1".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            0, 2000, 0, 1800,
-            9999, 1000, 1
+            0,
+            2000,
+            0,
+            1800,
+            9999,
+            1000,
+            1,
         );
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Zero amount not allowed");
@@ -820,8 +937,13 @@ mod security_tests {
             "user2".to_string(),
             "TOKEN_A".to_string(),
             "TOKEN_B".to_string(),
-            1000, 2000, 900, 1800,
-            9999, 1000, 1
+            1000,
+            2000,
+            900,
+            1800,
+            9999,
+            1000,
+            1,
         );
         assert!(result.is_ok());
 
@@ -853,11 +975,15 @@ mod security_benchmarks {
                 user,
                 "TOKEN_A".to_string(),
                 "TOKEN_B".to_string(),
-                100 * i as u128, 200 * i as u128,
-                90 * i as u128, 180 * i as u128,
-                9999, 1000, 1, // Each user's first transaction uses nonce 1
+                100 * i as u128,
+                200 * i as u128,
+                90 * i as u128,
+                180 * i as u128,
+                9999,
+                1000,
+                1, // Each user's first transaction uses nonce 1
             );
-            
+
             // All operations should succeed with proper nonce
             assert!(result.is_ok(), "Failed for user {}: {:?}", i, result);
         }
@@ -872,10 +998,10 @@ mod security_benchmarks {
 
         // Test with very large numbers (but not MAX to avoid overflow)
         let large_amount = u128::MAX / 1000;
-        
+
         // Should handle large amounts gracefully
         let result = pair.secure_mint("whale".to_string(), large_amount, large_amount);
-        
+
         // This might succeed or fail depending on overflow protection
         match result {
             Ok(_) => {
@@ -901,7 +1027,9 @@ mod security_benchmarks {
         let mut attacker = ReentrancyAttacker::new("pair_address".to_string(), 1000, 100);
 
         // Setup liquidity
-        let _result = pair.secure_mint("user1".to_string(), 100000, 200000).unwrap();
+        let _result = pair
+            .secure_mint("user1".to_string(), 100000, 200000)
+            .unwrap();
 
         // Attempt multiple reentrancy attacks (should all fail after the first)
         let mut successful_attacks = 0;
@@ -917,9 +1045,14 @@ mod security_benchmarks {
 
         // Only the first call should succeed, rest should fail
         assert_eq!(successful_attacks, 1, "Only first attack should succeed");
-        assert_eq!(failed_attacks, 9, "9 attacks should fail due to reentrancy protection");
+        assert_eq!(
+            failed_attacks, 9,
+            "9 attacks should fail due to reentrancy protection"
+        );
 
-        println!("✅ Gas optimization under attack: {} successful, {} failed", 
-                successful_attacks, failed_attacks);
+        println!(
+            "✅ Gas optimization under attack: {} successful, {} failed",
+            successful_attacks, failed_attacks
+        );
     }
 }
