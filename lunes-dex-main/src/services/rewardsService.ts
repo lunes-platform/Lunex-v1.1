@@ -1,9 +1,16 @@
+import { SPOT_API_URL } from '../config/api'
 import {
   buildWalletActionMessage,
   createSignedActionMetadata,
   signedAuthHeaders
 } from '../utils/signing'
-import { SPOT_API_URL } from '../config/api'
+
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  requireReadAuth
+} from './sessionService'
+
 
 export interface TradingRewardEntry {
   id: string
@@ -71,11 +78,11 @@ export interface RewardRankingsResponse {
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${SPOT_API_URL}${path}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(options?.headers ?? {})
-    },
-    ...options
+      ...((options?.headers as Record<string, string> | undefined) ?? {})
+    }
   })
 
   const isJson = response.headers
@@ -85,7 +92,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     if (isJson) {
       const data = await response.json()
-      throw new Error(data.error || 'API error')
+      throw handleReadAuthError(data.error)
     }
 
     const text = await response.text()
@@ -142,19 +149,17 @@ async function signRewardsAction(
 }
 
 const rewardsApi = {
+  /**
+   * Private read via the read session (never prompts the wallet). Throws
+   * `ReadSessionRequiredError` when the user has not signed in.
+   */
   async getPendingRewards(
-    address: string,
-    signMessage: (message: string) => Promise<string>
+    address: string
   ): Promise<PendingTradingRewardsSummary> {
-    const auth = await signRewardsAction(
-      'rewards.pending',
-      address,
-      signMessage
-    )
-    const query = toQueryString({ address })
+    const auth = requireReadAuth(address)
     const data = await fetchApi<{ pending: PendingTradingRewardsSummary }>(
-      `/api/v1/rewards/pending${query}`,
-      { headers: signedAuthHeaders(auth) }
+      `/api/v1/rewards/pending${toQueryString({ address })}`,
+      { headers: readAuthHeaders(auth) }
     )
 
     return data.pending

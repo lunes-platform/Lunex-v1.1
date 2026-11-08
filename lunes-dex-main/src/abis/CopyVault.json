@@ -1,11 +1,11 @@
 {
   "source": {
-    "hash": "0xe6379525d76d504b8b57e0c50180b1b739db4494524e666667d4e11c4500c733",
+    "hash": "0x0f10709a4d3a1883f799944af7ea574a727dcc70d0a9025de60fe4ae76cf673b",
     "language": "ink! 4.3.0",
     "compiler": "rustc 1.85.0",
     "build_info": {
       "build_mode": "Release",
-      "cargo_contract_version": "3.2.0",
+      "cargo_contract_version": "5.0.3",
       "rust_toolchain": "stable-x86_64-apple-darwin",
       "wasm_opt_settings": {
         "keep_debug_symbols": false,
@@ -20,6 +20,7 @@
       "Lunes Team <dev@lunes.io>"
     ]
   },
+  "image": null,
   "spec": {
     "constructors": [
       {
@@ -82,7 +83,31 @@
       " - Checked arithmetic everywhere",
       " - Only leader can execute trades",
       " - Followers can always withdraw (with cooldown for large amounts)",
-      " - Circuit breaker at configurable max drawdown"
+      " - Circuit breaker at configurable max drawdown",
+      "",
+      " ## Modelo de ativo (ADR-002, fecha o P0-3):",
+      " O vault custodia LUNES nativo (ativo-base de depósito/saque) e uma",
+      " lista BOUNDED de tokens PSP22 rastreados (`tracked_tokens`, máx. 8).",
+      " O equity é a soma do saldo nativo + saldo de WLUNES (1:1) + a",
+      " valuation spot on-chain de cada token rastreado com balance > 0,",
+      " cotada via `factory.get_pair` → `pair.get_reserves` →",
+      " `router.get_amount_out(balance, reserve_token, reserve_native)`.",
+      "",
+      " ## Invariantes de contabilidade (base p/ fuzz `copy_vault_accounting`):",
+      " 1. Completude do equity: todo ativo que qualquer codepath do vault",
+      "    pode adquirir está em {nativo, wnative} ∪ tracked_tokens — o swap",
+      "    restringe as pontas a esse conjunto e `remove_tracked_token`",
+      "    exige balance 0.",
+      " 2. `total_shares == 0 ⟺` equity atribuível a cotistas == 0 (módulo",
+      "    donations diretas, que entram no equity diluindo A FAVOR dos",
+      "    cotistas existentes).",
+      " 3. `share_price` nunca é lido com valuation parcial — falha de",
+      "    cotação reverte a operação (`ValuationUnavailable`), nunca",
+      "    \"vale 0\".",
+      " 4. Saque nunca paga mais que `shares/total_shares × equity` no",
+      "    momento do pagamento, e nunca mais que a liquidez nativa",
+      "    disponível (`InsufficientNativeLiquidity` caso contrário).",
+      " 5. `tracked_token_count <= MAX_TRACKED_TOKENS` sempre."
     ],
     "environment": {
       "accountId": {
@@ -107,13 +132,13 @@
         "displayName": [
           "ChainExtension"
         ],
-        "type": 29
+        "type": 44
       },
       "hash": {
         "displayName": [
           "Hash"
         ],
-        "type": 28
+        "type": 43
       },
       "maxEventTopics": 4,
       "timestamp": {
@@ -278,7 +303,7 @@
               "displayName": [
                 "TradeSide"
               ],
-              "type": 16
+              "type": 19
             }
           },
           {
@@ -523,6 +548,218 @@
         ],
         "docs": [],
         "label": "VaultUnpausedEvent"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "by",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TrackedTokenAdded"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "by",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "docs": [],
+        "label": "TrackedTokenRemoved"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token_in",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "token_out",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount_in",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "amount_out",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "executed_by",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "docs": [],
+        "label": "VaultSwapExecuted"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "native",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "tokens_value",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "total",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "docs": [
+          "Snapshot de equity emitido em deposit/withdraw para",
+          "indexer/reconciliação (`vaultReconciliationService`)."
+        ],
+        "label": "EquitySnapshot"
+      },
+      {
+        "args": [
+          {
+            "docs": [],
+            "indexed": true,
+            "label": "depositor",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "shares",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "unlock_at",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          },
+          {
+            "docs": [],
+            "indexed": false,
+            "label": "timestamp",
+            "type": {
+              "displayName": [
+                "Timestamp"
+              ],
+              "type": 6
+            }
+          }
+        ],
+        "docs": [
+          "Large-withdrawal cooldown started (`request_withdrawal`). Declared",
+          "last so the indexes of the existing events stay stable."
+        ],
+        "label": "WithdrawalRequested"
       }
     ],
     "lang_error": {
@@ -581,6 +818,65 @@
         "selector": "0x410fcc9d"
       },
       {
+        "args": [
+          {
+            "label": "shares",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Start the 24h cooldown required for a large withdrawal (> 10% of",
+          " the vault shares). Returns the timestamp from which `withdraw`",
+          " accepts up to `shares`. Calling again replaces the request and",
+          " restarts the cooldown."
+        ],
+        "label": "request_withdrawal",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 14
+        },
+        "selector": "0x7df79e6b"
+      },
+      {
+        "args": [
+          {
+            "label": "account",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Pending large-withdrawal cooldown request of `account`, if any."
+        ],
+        "label": "get_withdrawal_request",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 16
+        },
+        "selector": "0xe51a88f9"
+      },
+      {
         "args": [],
         "default": false,
         "docs": [
@@ -633,7 +929,7 @@
               "displayName": [
                 "TradeSide"
               ],
-              "type": 16
+              "type": 19
             }
           },
           {
@@ -660,9 +956,83 @@
             "ink",
             "MessageResult"
           ],
-          "type": 17
+          "type": 20
         },
         "selector": "0x6bf421ce"
+      },
+      {
+        "args": [
+          {
+            "label": "token_in",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "token_out",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "amount_in",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          },
+          {
+            "label": "min_amount_out",
+            "type": {
+              "displayName": [
+                "Balance"
+              ],
+              "type": 4
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Execute a real on-chain swap through the configured Router (T25).",
+          "",
+          " Unlike `execute_trade`, this method:",
+          "   1. Approves the Router to pull `amount_in` of `token_in`",
+          "      (`PSP22::approve`), since the Router funds itself via",
+          "      `PSP22::transfer_from(path[0], caller, pair, ...)`,",
+          "   2. Performs a real cross-contract call to",
+          "      `Router::swap_exact_tokens_for_tokens(amount_in,",
+          "      amount_out_min, path, to, deadline)` with",
+          "      `path = [token_in, token_out]` and `to = self`,",
+          "   3. Receives the actual `amount_out` (last element of the",
+          "      returned `Vec<Balance>`),",
+          "   4. Updates `total_equity` from on-chain state — never from a",
+          "      parameter provided by the leader.",
+          "",
+          " Slippage protection is enforced via `min_amount_out`: if the",
+          " router returns less than that, the call reverts and the vault",
+          " state is unchanged.",
+          "",
+          " Requires: leader, not paused, trading active, router configured."
+        ],
+        "label": "swap_through_router",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 11
+        },
+        "selector": "0x36d128ea"
       },
       {
         "args": [
@@ -688,9 +1058,29 @@
             "ink",
             "MessageResult"
           ],
-          "type": 17
+          "type": 20
         },
         "selector": "0x43e5924d"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Sincroniza total_equity com o equity real on-chain (reconciliação).",
+          " ADR-002: usa o equity completo (nativo + wnative + tracked),",
+          " nunca apenas o saldo nativo. Falha de cotação ⇒ erro explícito."
+        ],
+        "label": "sync_equity",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 11
+        },
+        "selector": "0xcc6c5622"
       },
       {
         "args": [],
@@ -706,7 +1096,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 17
+          "type": 20
         },
         "selector": "0x81e0c604"
       },
@@ -724,7 +1114,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 17
+          "type": 20
         },
         "selector": "0x67616649"
       },
@@ -742,7 +1132,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 17
+          "type": 20
         },
         "selector": "0x6633162f"
       },
@@ -760,7 +1150,9 @@
         ],
         "default": false,
         "docs": [
-          " Set performance fee (admin only, max 50%)"
+          " Set performance fee (admin only, max 50%). Raising it is only",
+          " allowed while no depositor holds shares, so a raise never applies",
+          " retroactively to capital already in the vault. Lowering is free."
         ],
         "label": "set_performance_fee",
         "mutates": true,
@@ -770,7 +1162,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 17
+          "type": 20
         },
         "selector": "0x485b40ed"
       },
@@ -798,15 +1190,250 @@
             "ink",
             "MessageResult"
           ],
-          "type": 17
+          "type": 20
         },
         "selector": "0x81dc7a92"
+      },
+      {
+        "args": [
+          {
+            "label": "router",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Configure the Router contract used for real on-chain swaps",
+          " (admin only). Must be set before `swap_through_router` is callable."
+        ],
+        "label": "set_router",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0x5a6d6019"
       },
       {
         "args": [],
         "default": false,
         "docs": [
-          " Get vault equity (total native balance)"
+          " Returns the configured router address (None if not set)."
+        ],
+        "label": "router_address",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 22
+        },
+        "selector": "0x37c4e3ab"
+      },
+      {
+        "args": [
+          {
+            "label": "factory",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          },
+          {
+            "label": "wnative",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Configura a infra de valuation (factory + wnative) usada na",
+          " cotação on-chain do equity (admin/leader). Deve ser chamada",
+          " antes de qualquer swap/tracking."
+        ],
+        "label": "set_valuation_infra",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0xc446a883"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Retorna (factory, wnative) configurados."
+        ],
+        "label": "get_valuation_infra",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 24
+        },
+        "selector": "0xe97c7a66"
+      },
+      {
+        "args": [
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Adiciona um token PSP22 à lista de rastreados (admin/leader).",
+          " Falha se a lista está cheia (MAX_TRACKED_TOKENS), se o token",
+          " já é rastreado, ou se o par token<>wnative não existe / não",
+          " tem a reserva nativa mínima (anti-manipulação v1)."
+        ],
+        "label": "add_tracked_token",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0x32bf9324"
+      },
+      {
+        "args": [
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Remove um token da lista de rastreados (admin/leader).",
+          " NUNCA des-rastreia com posição aberta: falha se",
+          " balance_of(vault, token) > 0 (invariante 1)."
+        ],
+        "label": "remove_tracked_token",
+        "mutates": true,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 20
+        },
+        "selector": "0xfbf022fe"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Lista densa dos tokens rastreados."
+        ],
+        "label": "get_tracked_tokens",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 26
+        },
+        "selector": "0xf1b70eb2"
+      },
+      {
+        "args": [
+          {
+            "label": "token",
+            "type": {
+              "displayName": [
+                "AccountId"
+              ],
+              "type": 0
+            }
+          }
+        ],
+        "default": false,
+        "docs": [
+          " Valuation em nativo do saldo do vault em `token`",
+          " (0 se balance == 0; ERRO explícito se a cotação falhar)."
+        ],
+        "label": "get_token_valuation",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 11
+        },
+        "selector": "0xc59162ef"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Decomposição do equity: (saldo_nativo,",
+          " [(token, balance, valor_em_nativo)], total).",
+          " Inclui wnative (1:1) quando o vault tem saldo. ERRO explícito",
+          " se qualquer cotação falhar — nunca valuation parcial."
+        ],
+        "label": "get_equity_breakdown",
+        "mutates": false,
+        "payable": false,
+        "returnType": {
+          "displayName": [
+            "ink",
+            "MessageResult"
+          ],
+          "type": 28
+        },
+        "selector": "0xf2fc2da0"
+      },
+      {
+        "args": [],
+        "default": false,
+        "docs": [
+          " Get vault equity — ADR-002: saldo nativo + wnative (1:1) +",
+          " valuation on-chain dos tracked tokens. ERRO explícito se",
+          " alguma cotação falhar (nunca \"vale 0\")."
         ],
         "label": "get_vault_equity",
         "mutates": false,
@@ -816,7 +1443,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 19
+          "type": 11
         },
         "selector": "0xd60a1d76"
       },
@@ -834,7 +1461,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 19
+          "type": 11
         },
         "selector": "0xe69f8eb4"
       },
@@ -862,7 +1489,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 20
+          "type": 33
         },
         "selector": "0x3098ca1f"
       },
@@ -880,7 +1507,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 22
+          "type": 36
         },
         "selector": "0xd83080a1"
       },
@@ -898,7 +1525,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 24
+          "type": 39
         },
         "selector": "0x87aba724"
       },
@@ -926,7 +1553,7 @@
             "ink",
             "MessageResult"
           ],
-          "type": 25
+          "type": 40
         },
         "selector": "0xc64b3114"
       }
@@ -1207,6 +1834,148 @@
                 }
               },
               "name": "active_depositors"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 4
+                }
+              },
+              "name": "block_volume"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "last_trade_block"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x00000000",
+                              "ty": 0
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "router"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0x362bd62f",
+                      "ty": 0
+                    }
+                  },
+                  "root_key": "0x362bd62f"
+                }
+              },
+              "name": "tracked_tokens"
+            },
+            {
+              "layout": {
+                "root": {
+                  "layout": {
+                    "leaf": {
+                      "key": "0xe7fcf053",
+                      "ty": 5
+                    }
+                  },
+                  "root_key": "0xe7fcf053"
+                }
+              },
+              "name": "tracked_token_index"
+            },
+            {
+              "layout": {
+                "leaf": {
+                  "key": "0x00000000",
+                  "ty": 5
+                }
+              },
+              "name": "tracked_token_count"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x00000000",
+                              "ty": 0
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "factory"
+            },
+            {
+              "layout": {
+                "enum": {
+                  "dispatchKey": "0x00000000",
+                  "name": "Option",
+                  "variants": {
+                    "0": {
+                      "fields": [],
+                      "name": "None"
+                    },
+                    "1": {
+                      "fields": [
+                        {
+                          "layout": {
+                            "leaf": {
+                              "key": "0x00000000",
+                              "ty": 0
+                            }
+                          },
+                          "name": "0"
+                        }
+                      ],
+                      "name": "Some"
+                    }
+                  }
+                }
+              },
+              "name": "wnative"
             }
           ],
           "name": "CopyVault"
@@ -1531,6 +2300,70 @@
               {
                 "index": 18,
                 "name": "InvalidPair"
+              },
+              {
+                "index": 19,
+                "name": "BlockVolumeExceeded"
+              },
+              {
+                "index": 20,
+                "name": "RouterNotConfigured"
+              },
+              {
+                "index": 21,
+                "name": "SwapFailed"
+              },
+              {
+                "index": 22,
+                "name": "SlippageExceeded"
+              },
+              {
+                "index": 23,
+                "name": "TokenApproveFailed"
+              },
+              {
+                "index": 24,
+                "name": "TooManyTrackedTokens"
+              },
+              {
+                "index": 25,
+                "name": "TokenAlreadyTracked"
+              },
+              {
+                "index": 26,
+                "name": "TokenNotTracked"
+              },
+              {
+                "index": 27,
+                "name": "TokenHasBalance"
+              },
+              {
+                "index": 28,
+                "name": "ValuationUnavailable"
+              },
+              {
+                "index": 29,
+                "name": "ValuationInfraNotConfigured"
+              },
+              {
+                "index": 30,
+                "name": "InsufficientNativeLiquidity"
+              },
+              {
+                "index": 31,
+                "name": "InsufficientTokenBalance"
+              },
+              {
+                "index": 32,
+                "name": "InsufficientPairLiquidity"
+              },
+              {
+                "index": 33,
+                "name": "CannotTrackWnative"
+              },
+              {
+                "index": 34,
+                "name": "FeeIncreaseWithDepositors"
               }
             ]
           }
@@ -1633,6 +2466,107 @@
           "variant": {
             "variants": [
               {
+                "fields": [
+                  {
+                    "type": 17
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 17
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 17,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 18
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 18
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 18,
+      "type": {
+        "def": {
+          "composite": {
+            "fields": [
+              {
+                "name": "shares",
+                "type": 4,
+                "typeName": "Balance"
+              },
+              {
+                "name": "requested_at",
+                "type": 6,
+                "typeName": "Timestamp"
+              }
+            ]
+          }
+        },
+        "path": [
+          "copy_vault",
+          "copy_vault",
+          "WithdrawalRequest"
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
                 "index": 0,
                 "name": "Buy"
               },
@@ -1647,132 +2581,6 @@
           "copy_vault",
           "copy_vault",
           "TradeSide"
-        ]
-      }
-    },
-    {
-      "id": 17,
-      "type": {
-        "def": {
-          "variant": {
-            "variants": [
-              {
-                "fields": [
-                  {
-                    "type": 18
-                  }
-                ],
-                "index": 0,
-                "name": "Ok"
-              },
-              {
-                "fields": [
-                  {
-                    "type": 10
-                  }
-                ],
-                "index": 1,
-                "name": "Err"
-              }
-            ]
-          }
-        },
-        "params": [
-          {
-            "name": "T",
-            "type": 18
-          },
-          {
-            "name": "E",
-            "type": 10
-          }
-        ],
-        "path": [
-          "Result"
-        ]
-      }
-    },
-    {
-      "id": 18,
-      "type": {
-        "def": {
-          "variant": {
-            "variants": [
-              {
-                "fields": [
-                  {
-                    "type": 9
-                  }
-                ],
-                "index": 0,
-                "name": "Ok"
-              },
-              {
-                "fields": [
-                  {
-                    "type": 13
-                  }
-                ],
-                "index": 1,
-                "name": "Err"
-              }
-            ]
-          }
-        },
-        "params": [
-          {
-            "name": "T",
-            "type": 9
-          },
-          {
-            "name": "E",
-            "type": 13
-          }
-        ],
-        "path": [
-          "Result"
-        ]
-      }
-    },
-    {
-      "id": 19,
-      "type": {
-        "def": {
-          "variant": {
-            "variants": [
-              {
-                "fields": [
-                  {
-                    "type": 4
-                  }
-                ],
-                "index": 0,
-                "name": "Ok"
-              },
-              {
-                "fields": [
-                  {
-                    "type": 10
-                  }
-                ],
-                "index": 1,
-                "name": "Err"
-              }
-            ]
-          }
-        },
-        "params": [
-          {
-            "name": "T",
-            "type": 4
-          },
-          {
-            "name": "E",
-            "type": 10
-          }
-        ],
-        "path": [
-          "Result"
         ]
       }
     },
@@ -1822,11 +2630,42 @@
       "id": 21,
       "type": {
         "def": {
-          "tuple": [
-            4,
-            4
-          ]
-        }
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 9
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 9
+          },
+          {
+            "name": "E",
+            "type": 13
+          }
+        ],
+        "path": [
+          "Result"
+        ]
       }
     },
     {
@@ -1875,6 +2714,441 @@
       "id": 23,
       "type": {
         "def": {
+          "variant": {
+            "variants": [
+              {
+                "index": 0,
+                "name": "None"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 0
+                  }
+                ],
+                "index": 1,
+                "name": "Some"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 0
+          }
+        ],
+        "path": [
+          "Option"
+        ]
+      }
+    },
+    {
+      "id": 24,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 25
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 25
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "type": {
+        "def": {
+          "tuple": [
+            23,
+            23
+          ]
+        }
+      }
+    },
+    {
+      "id": 26,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 27
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 27
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 27,
+      "type": {
+        "def": {
+          "sequence": {
+            "type": 0
+          }
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 29
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 29
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 30
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 30
+          },
+          {
+            "name": "E",
+            "type": 13
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 30,
+      "type": {
+        "def": {
+          "tuple": [
+            4,
+            31,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 31,
+      "type": {
+        "def": {
+          "sequence": {
+            "type": 32
+          }
+        }
+      }
+    },
+    {
+      "id": 32,
+      "type": {
+        "def": {
+          "tuple": [
+            0,
+            4,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 33,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 34
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 34
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 34,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 35
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 35
+          },
+          {
+            "name": "E",
+            "type": 13
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 35,
+      "type": {
+        "def": {
+          "tuple": [
+            4,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "id": 36,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 37
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 10
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 37
+          },
+          {
+            "name": "E",
+            "type": 10
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 37,
+      "type": {
+        "def": {
+          "variant": {
+            "variants": [
+              {
+                "fields": [
+                  {
+                    "type": 38
+                  }
+                ],
+                "index": 0,
+                "name": "Ok"
+              },
+              {
+                "fields": [
+                  {
+                    "type": 13
+                  }
+                ],
+                "index": 1,
+                "name": "Err"
+              }
+            ]
+          }
+        },
+        "params": [
+          {
+            "name": "T",
+            "type": 38
+          },
+          {
+            "name": "E",
+            "type": 13
+          }
+        ],
+        "path": [
+          "Result"
+        ]
+      }
+    },
+    {
+      "id": 38,
+      "type": {
+        "def": {
           "tuple": [
             4,
             4,
@@ -1890,7 +3164,7 @@
       }
     },
     {
-      "id": 24,
+      "id": 39,
       "type": {
         "def": {
           "variant": {
@@ -1932,7 +3206,7 @@
       }
     },
     {
-      "id": 25,
+      "id": 40,
       "type": {
         "def": {
           "variant": {
@@ -1940,7 +3214,7 @@
               {
                 "fields": [
                   {
-                    "type": 26
+                    "type": 41
                   }
                 ],
                 "index": 0,
@@ -1961,7 +3235,7 @@
         "params": [
           {
             "name": "T",
-            "type": 26
+            "type": 41
           },
           {
             "name": "E",
@@ -1974,17 +3248,17 @@
       }
     },
     {
-      "id": 26,
+      "id": 41,
       "type": {
         "def": {
           "sequence": {
-            "type": 27
+            "type": 42
           }
         }
       }
     },
     {
-      "id": 27,
+      "id": 42,
       "type": {
         "def": {
           "composite": {
@@ -1996,7 +3270,7 @@
               },
               {
                 "name": "side",
-                "type": 16,
+                "type": 19,
                 "typeName": "TradeSide"
               },
               {
@@ -2020,7 +3294,7 @@
       }
     },
     {
-      "id": 28,
+      "id": 43,
       "type": {
         "def": {
           "composite": {
@@ -2040,7 +3314,7 @@
       }
     },
     {
-      "id": 29,
+      "id": 44,
       "type": {
         "def": {
           "variant": {}

@@ -43,13 +43,16 @@ services:
       --requirepass ${REDIS_PASSWORD:?Defina REDIS_PASSWORD no Doppler}
       --appendonly yes
       --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy noeviction
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
     volumes:
       - redisdata:/data
     expose:
       - "6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      # REDISCLI_AUTH keeps the password out of `ps`/docker inspect args.
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -70,14 +73,21 @@ services:
       NODE_ENV: production
       PORT: "4000"
       WS_PORT: "4001"
-      TRUST_PROXY: "true"
+      # nginx overwrites X-Forwarded-For with $remote_addr → exactly 1 hop.
+      TRUST_PROXY: "1"
       DATABASE_URL: postgresql://${DB_USER:-lunex}:${DB_PASSWORD}@postgres:5432/lunex_spot?schema=public
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       # Secrets sensíveis — vêm do Doppler, nunca escritos em arquivo
       RELAYER_SEED: ${RELAYER_SEED}
       BRIDGE_ADMIN_SEED: ${BRIDGE_ADMIN_SEED}
       ADMIN_SECRET: ${ADMIN_SECRET}
+      SESSION_SECRET: ${SESSION_SECRET:?Defina SESSION_SECRET no Doppler}
       LUNES_WS_URL: ${LUNES_WS_URL}
+      # spot-api production guards (productionGuards.ts)
+      SIGNING_DOMAIN: ${SIGNING_DOMAIN:-lunex.lunes.io}
+      LUNES_GENESIS_HASH: ${LUNES_GENESIS_HASH:?Defina LUNES_GENESIS_HASH no Doppler}
+      PUBLIC_API_ORIGIN: ${PUBLIC_API_ORIGIN:-https://lunex.lunes.io}
+      ATTESTOR_SEED: ${ATTESTOR_SEED:?Defina ATTESTOR_SEED no Doppler (≠ RELAYER_SEED)}
       ALLOWED_WS_ORIGINS: ${ALLOWED_WS_ORIGINS}
       FACTORY_CONTRACT_ADDRESS: ${FACTORY_CONTRACT_ADDRESS}
       NATIVE_TOKEN_ADDRESS: ${NATIVE_TOKEN_ADDRESS}
@@ -121,6 +131,26 @@ services:
         REACT_APP_ENABLE_STAKING: "true"
         REACT_APP_ENABLE_REWARDS: "true"
         REACT_APP_DEV_MODE: "false"
+        REACT_APP_API_URL: ${REACT_APP_SPOT_API_URL}
+        REACT_APP_SPOT_WS_URL: ${REACT_APP_SPOT_WS_URL:-}
+        REACT_APP_GENESIS_HASH: ${LUNES_GENESIS_HASH:?Defina LUNES_GENESIS_HASH no Doppler}
+        REACT_APP_LUNES_GENESIS_HASH: ${LUNES_GENESIS_HASH:?Defina LUNES_GENESIS_HASH no Doppler}
+        REACT_APP_CHAIN_NAME: ${REACT_APP_CHAIN_NAME:-Lunes}
+        REACT_APP_SIGNING_DOMAIN: ${SIGNING_DOMAIN:-lunex.lunes.io}
+        REACT_APP_WALLETCONNECT_PROJECT_ID: ${WALLETCONNECT_PROJECT_ID:-}
+        REACT_APP_WNATIVE_CONTRACT: ${WLUNES_ADDRESS:-}
+        REACT_APP_LISTING_MANAGER_CONTRACT: ${LISTING_MANAGER_CONTRACT_ADDRESS:-}
+        REACT_APP_LISTING_FEE_TOKEN: ${LISTING_FEE_TOKEN:-}
+        REACT_APP_COPY_VAULT_CONTRACT: ${COPY_VAULT_CONTRACT:-}
+        REACT_APP_SPOT_SETTLEMENT_CONTRACT: ${SPOT_CONTRACT_ADDRESS:-}
+        REACT_APP_FAUCET_URL: ""
+        REACT_APP_TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+        REACT_APP_SENTRY_DSN: ${FRONTEND_SENTRY_DSN:-}
+        REACT_APP_VERSION: ${IMAGE_TAG:-dev}
+        REACT_APP_MAINTENANCE: ${MAINTENANCE:-false}
+        REACT_APP_FEATURE_MARGIN: ${FEATURE_MARGIN:-false}
+        REACT_APP_NATIVE_EXISTENTIAL_DEPOSIT_LUNES: ${NATIVE_EXISTENTIAL_DEPOSIT_LUNES:-}
+        REACT_APP_NATIVE_FEE_BUFFER_LUNES: ${NATIVE_FEE_BUFFER_LUNES:-}
     restart: unless-stopped
     depends_on:
       api:
@@ -147,15 +177,23 @@ services:
 
   # ── nginx (reverse proxy público) ────────────────────────────────────────
   nginx:
-    image: nginx:alpine
+    image: nginx:1.25-alpine
     restart: unless-stopped
     depends_on:
       - api
       - frontend
       - admin
     volumes:
-      - ./nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      # IN-09: nginx.prod.conf is an http-context include (no events{}/http{}).
+      # It is also an envsubst template (^LUNEX_ vars): mounted under
+      # templates/ and rendered to conf.d/default.conf by /docker-entrypoint.sh.
+      - ./nginx.prod.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./snippets:/etc/nginx/snippets:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
+    environment:
+      NGINX_ENVSUBST_FILTER: "^LUNEX_"
+      # Exact Sentry ingest origin of FRONTEND_SENTRY_DSN (empty = no Sentry).
+      LUNEX_CSP_SENTRY_ORIGIN: ${SENTRY_INGEST_ORIGIN:-}
     ports:
       - "80:80"
       - "443:443"

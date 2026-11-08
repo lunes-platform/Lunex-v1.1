@@ -1,3 +1,8 @@
+import { SPOT_API_URL } from '../config/api'
+import {
+  buildWalletActionMessage,
+  createSignedActionMetadata
+} from '../utils/signing'
 import type {
   Idea,
   IdeaComment,
@@ -5,11 +10,12 @@ import type {
   Trader
 } from '../pages/social/types'
 import {
-  buildWalletActionMessage,
-  createSignedActionMetadata,
-  signedAuthHeaders
-} from '../utils/signing'
-import { SPOT_API_URL } from '../config/api'
+  authHeaders,
+  getReadSessionToken,
+  handleReadAuthError,
+  readAuthHeaders,
+  type ReadAuth
+} from './sessionService'
 
 export { buildWalletActionMessage, createSignedActionMetadata }
 
@@ -52,6 +58,7 @@ interface LeaderApiResponse {
     totalWithdrawals: number
     twapThreshold: number
     maxSlippageBps: number
+    contractAddress?: string | null
   } | null
   trades?: Array<{
     date: string
@@ -139,7 +146,13 @@ interface LeadersQueryParams {
   limit?: number
 }
 
-interface DepositToVaultInput {
+/** Proof of a finalized, follower-signed CopyVault tx (verified by the API). */
+export interface VaultTxProof {
+  txHash: string
+  blockHash: string
+}
+
+interface DepositToVaultInput extends VaultTxProof {
   amount: string
   followerAddress: string
   token: string
@@ -168,7 +181,7 @@ export interface UpsertLeaderProfileInput {
   signature: string
 }
 
-interface WithdrawFromVaultInput {
+interface WithdrawFromVaultInput extends VaultTxProof {
   followerAddress: string
   shares: string
   nonce: string
@@ -206,6 +219,7 @@ export interface CopytradePosition {
   highWaterMarkValue: number
   feePaid: number
   realizedPnl: number
+  stopLossPct?: number | null
   vault: {
     id: string
     name: string
@@ -213,6 +227,8 @@ export interface CopytradePosition {
     leaderId: string
     leaderName: string
     leaderUsername: string
+    /** ink! CopyVault address; null until deployed (deposits disabled). */
+    contractAddress?: string | null
   }
 }
 
@@ -221,8 +237,9 @@ export interface CopytradeDepositResult {
   sharesMinted: number
   amount: number
   positionId: string
-  txHash: string | null
-  executionMode: 'db-journal' | 'on-chain-confirmed'
+  txHash: string
+  blockHash?: string
+  executionMode: 'on-chain-confirmed'
 }
 
 export interface CopytradeWithdrawResult {
@@ -234,8 +251,9 @@ export interface CopytradeWithdrawResult {
   remainingShares: number
   collateralToken?: string
   followerAddress?: string
-  txHash: string | null
-  executionMode: 'db-journal' | 'on-chain-confirmed'
+  txHash: string
+  blockHash?: string
+  executionMode: 'on-chain-confirmed'
 }
 
 export interface CopytradeActivityItem {
@@ -284,11 +302,11 @@ export interface LeaderApiKeyResult {
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${SPOT_API_URL}${path}`, {
+    ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(options?.headers ?? {})
-    },
-    ...options
+      ...((options?.headers as Record<string, string> | undefined) ?? {})
+    }
   })
 
   const isJson = response.headers
@@ -298,7 +316,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     if (isJson) {
       const data = await response.json()
-      throw new Error(data.error || 'API error')
+      throw handleReadAuthError(data.error)
     } else {
       const text = await response.text()
       throw new Error(
@@ -433,6 +451,8 @@ export function buildCopytradeDepositMessage(input: {
   maxPerTradeUsdt?: number
   stopLossPct?: number
   maxDrawdownPct?: number
+  txHash: string
+  blockHash: string
   nonce: string
   timestamp: number
 }) {
@@ -443,10 +463,13 @@ export function buildCopytradeDepositMessage(input: {
     timestamp: input.timestamp,
     // Risk fields are signed when present (undefined ones are dropped by
     // buildWalletActionMessage), so the backend can trust the parameters.
+    // txHash/blockHash bind the signature to the finalized on-chain deposit.
     fields: {
       leaderId: input.leaderId,
       token: input.token,
       amount: input.amount,
+      txHash: input.txHash,
+      blockHash: input.blockHash,
       copyMultiplier: input.copyMultiplier,
       maxPerTradeUsdt: input.maxPerTradeUsdt,
       stopLossPct: input.stopLossPct,
@@ -459,6 +482,8 @@ export function buildCopytradeWithdrawMessage(input: {
   leaderId: string
   followerAddress: string
   shares: string
+  txHash: string
+  blockHash: string
   nonce: string
   timestamp: number
 }) {
@@ -469,7 +494,9 @@ export function buildCopytradeWithdrawMessage(input: {
     timestamp: input.timestamp,
     fields: {
       leaderId: input.leaderId,
-      shares: input.shares
+      shares: input.shares,
+      txHash: input.txHash,
+      blockHash: input.blockHash
     }
   })
 }
@@ -550,7 +577,8 @@ function mapTrader(leader: LeaderApiResponse): Trader {
           totalDeposits: leader.vault.totalDeposits,
           totalWithdrawals: leader.vault.totalWithdrawals,
           twapThreshold: leader.vault.twapThreshold,
-          maxSlippageBps: leader.vault.maxSlippageBps
+          maxSlippageBps: leader.vault.maxSlippageBps,
+          contractAddress: leader.vault.contractAddress ?? null
         }
       : undefined
   }
@@ -603,64 +631,40 @@ export const socialApi = {
     return data.leaders.map(mapTrader)
   },
 
+  /**
+   * Public leader profile. When `viewerAddress` has a read session, the
+   * viewer-specific fields (e.g. isFollowing) are included via the session
+   * bearer — no wallet prompt. Without a session the public profile is read.
+   */
   async getLeaderProfile(
     leaderId: string,
-    viewerAddress?: string,
-    signMessage?: (message: string) => Promise<string>
+    viewerAddress?: string
   ): Promise<Trader> {
-    let query = toQueryString({ viewerAddress })
-    let headers: HeadersInit | undefined
-    if (viewerAddress && signMessage) {
-      const metadata = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action: 'social.leader-profile',
-          address: viewerAddress,
-          nonce: metadata.nonce,
-          timestamp: metadata.timestamp,
-          fields: { leaderId }
-        })
-      )
-      headers = signedAuthHeaders({
-        nonce: metadata.nonce,
-        timestamp: metadata.timestamp,
-        signature
-      })
-    }
+    const viewer = getReadSessionToken(viewerAddress)
+      ? viewerAddress
+      : undefined
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
-      `/api/v1/social/leaders/${leaderId}${query}`,
-      headers ? { headers } : undefined
+      `/api/v1/social/leaders/${leaderId}${toQueryString({
+        viewerAddress: viewer
+      })}`,
+      { headers: authHeaders(viewer) }
     )
     return mapTrader(data.leader)
   },
 
   async getLeaderProfileByAddress(
     address: string,
-    viewerAddress?: string,
-    signMessage?: (message: string) => Promise<string>
+    viewerAddress?: string
   ): Promise<Trader> {
-    let query = toQueryString({ address, viewerAddress })
-    let headers: HeadersInit | undefined
-    if (viewerAddress && signMessage) {
-      const metadata = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action: 'social.leader-profile-by-address',
-          address: viewerAddress,
-          nonce: metadata.nonce,
-          timestamp: metadata.timestamp,
-          fields: { address }
-        })
-      )
-      headers = signedAuthHeaders({
-        nonce: metadata.nonce,
-        timestamp: metadata.timestamp,
-        signature
-      })
-    }
+    const viewer = getReadSessionToken(viewerAddress)
+      ? viewerAddress
+      : undefined
     const data = await fetchApi<{ leader: LeaderApiResponse }>(
-      `/api/v1/social/leaders/by-address${query}`,
-      headers ? { headers } : undefined
+      `/api/v1/social/leaders/by-address${toQueryString({
+        address,
+        viewerAddress: viewer
+      })}`,
+      { headers: authHeaders(viewer) }
     )
     return mapTrader(data.leader)
   },
@@ -779,25 +783,25 @@ export const socialApi = {
 
   async getPositions(
     address: string,
-    auth: SignedAddressActionInput
+    auth: ReadAuth
   ): Promise<CopytradePosition[]> {
     const query = toQueryString({ address })
     const data = await fetchApi<{ positions: CopytradePosition[] }>(
       `/api/v1/copytrade/positions${query}`,
-      { headers: signedAuthHeaders(auth) }
+      { headers: readAuthHeaders(auth) }
     )
     return data.positions
   },
 
   async getActivity(
     address: string,
-    auth: SignedAddressActionInput,
+    auth: ReadAuth,
     limit = 20
   ): Promise<CopytradeActivityItem[]> {
     const query = toQueryString({ address, limit })
     const data = await fetchApi<{ activity: CopytradeActivityItem[] }>(
       `/api/v1/copytrade/activity${query}`,
-      { headers: signedAuthHeaders(auth) }
+      { headers: readAuthHeaders(auth) }
     )
     return data.activity
   },

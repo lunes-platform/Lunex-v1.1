@@ -54,7 +54,9 @@ jest.mock('../services/walletRiskService', () => ({
 import { signatureVerify } from '@polkadot/util-crypto';
 import { config } from '../config';
 import {
+  buildLegacyWalletActionMessage,
   buildWalletActionMessage,
+  NONCE_RETENTION_SECONDS,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
@@ -74,8 +76,10 @@ const signatureVerifyMock = signatureVerify as jest.MockedFunction<
 >;
 
 describe('buildWalletActionMessage', () => {
-  it('builds a deterministic canonical message', () => {
-    const msg = buildWalletActionMessage({
+  it('builds a deterministic legacy (unbound) message', () => {
+    // FE-03: the canonical format now also carries domain/chain lines
+    // (covered in hardening/authSigning.test.ts); legacy layout unchanged.
+    const msg = buildLegacyWalletActionMessage({
       action: 'deposit',
       address: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
       nonce: 'abc123',
@@ -103,7 +107,8 @@ describe('buildWalletActionMessage', () => {
     });
 
     const lines = msg.split('\n');
-    const fieldLines = lines.slice(2, lines.length - 2);
+    // lunex-auth, domain, chain, address, ...fields, nonce, timestamp
+    const fieldLines = lines.slice(4, lines.length - 2);
     expect(fieldLines).toEqual(['a:first', 'm:middle', 'z:last']);
   });
 
@@ -160,7 +165,8 @@ describe('verifyWalletActionSignature — replay protection', () => {
       'nonce:trade:addr:fresh-atomic-nonce',
       '1',
       'EX',
-      config.redis.nonceTtlSeconds,
+      // BE-17: retention never below 2× the signature window
+      Math.max(config.redis.nonceTtlSeconds, NONCE_RETENTION_SECONDS),
       'NX',
     );
   });
@@ -231,7 +237,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/expired/i);
+    expect(result.error).toMatch(/expired|future/i);
   });
 
   it('rejects if nonce is already used (Redis)', async () => {

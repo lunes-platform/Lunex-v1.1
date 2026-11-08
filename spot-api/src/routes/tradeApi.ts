@@ -108,6 +108,10 @@ async function emitCopyTradeSignalIfLeader(
   if (!agent?.leader?.vault || agent.leader.vault.status !== 'ACTIVE')
     return null;
 
+  // Defense in depth: an agent may only signal for its OWN leader. A link to
+  // a leader whose address is not the agent's wallet never emits signals.
+  if (agent.leader.address !== agent.walletAddress) return null;
+
   const amountValue = Number.parseFloat(trade.amount);
   const amountOutMin =
     Number.isFinite(amountValue) && amountValue > 0
@@ -204,6 +208,7 @@ router.post(
       if (order?.id) {
         await executionLayerService
           .updateExecutionStatus(logId, {
+            agentId: agent.id,
             status: 'EXECUTED',
             orderId: order.id,
           })
@@ -244,6 +249,19 @@ router.post(
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+
+      // Agent orders carry a synthetic `agent:<id>` signature that on-chain
+      // settlement always rejects (assertOrderTrustedSource). Accepting them
+      // while settlement is on would create trades that can never settle:
+      // fake volume/fees and consumed counterparty orders (BE-05). Same gate
+      // as /swap; checked before any side effect.
+      if (settlementService.isEnabled()) {
+        return res.status(409).json({
+          error:
+            'Agent spot orders require delegated settlement authorization before on-chain settlement can be used',
+          code: 'SYNTHETIC_SIGNATURE_SETTLEMENT_BLOCKED',
+        });
       }
 
       const agent = req.agent!;
@@ -303,6 +321,7 @@ router.post(
 
         await executionLayerService
           .updateExecutionStatus(logId, {
+            agentId: agent.id,
             status: 'EXECUTED',
             orderId: order.id,
             executionPrice: parsed.data.price,

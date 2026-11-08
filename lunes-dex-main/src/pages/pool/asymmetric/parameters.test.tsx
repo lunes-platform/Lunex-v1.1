@@ -1,16 +1,22 @@
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react-dom/test-utils'
-import { ThemeProvider } from 'styled-components'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import theme from '../../../theme'
-import AsymmetricPool from './index'
+import type { CurveSide } from '../../../components/asymmetric/CurveChart'
 
-const mocks = vi.hoisted(() => ({
-  deploy: vi.fn(),
-  sign: vi.fn(),
-  preview: { buyParams: {} as any, sellParams: {} as any }
-}))
+const mocks = vi.hoisted(() => {
+  // Pair tokens are read from env when the page module loads.
+  process.env.REACT_APP_TOKEN_WLUNES = 'wlunes-address'
+  process.env.REACT_APP_TOKEN_LUSDT = 'lusdt-address'
+  return {
+    sign: vi.fn(),
+    createDeployment: vi.fn(),
+    calls: [] as string[],
+    runs: [] as any[],
+    preview: { buy: {} as CurveSide, sell: {} as CurveSide }
+  }
+})
 vi.mock('../../../context/SDKContext', () => ({
   useSDK: () => ({
     isConnected: true,
@@ -18,26 +24,44 @@ vi.mock('../../../context/SDKContext', () => ({
     signMessage: mocks.sign
   })
 }))
-vi.mock('../../../hooks/useAsymmetricDeploy', () => ({
-  useAsymmetricDeploy: () => ({
-    state: { step: 'idle' },
-    deploy: mocks.deploy,
-    reset: () => {}
+// Fake tx runner at the TxProvider boundary: runs every step in order.
+vi.mock('../../../context/TxContext', () => ({
+  useTx: () => ({
+    run: async (cfg: any) => {
+      mocks.runs.push(cfg)
+      for (const step of cfg.steps) await step.run?.({ advance: () => {} })
+      cfg.onSuccess?.()
+    }
   })
 }))
-vi.mock('../../../components/layout', () => ({
-  default: ({ children }: { children: React.ReactNode }) => <>{children}</>
+vi.mock('../../../hooks/useAsymmetricDeploy', () => ({
+  useAsymmetricDeploy: () => ({ createDeployment: mocks.createDeployment })
 }))
-vi.mock('../../../components/tradeSubNav', () => ({ default: () => null }))
+vi.mock('../../../hooks/usePools', () => ({
+  usePools: () => ({ prices: {} })
+}))
+vi.mock('../../../hooks/useReadSession', () => ({
+  useReadSession: () => ({ hasSession: true })
+}))
+vi.mock('../../../components/session/ReadSessionPrompt', () => ({
+  ReadSessionPrompt: () => null
+}))
 vi.mock('../../../components/asymmetric/AgentDelegationPanel', () => ({
-  default: () => null
+  DEFAULT_GUARDRAILS: { gammaMin: 1, gammaMax: 3 },
+  DelegationCard: () => null,
+  ApiKeyDialog: () => null,
+  enforceDelegation: vi.fn(),
+  useAiAgents: () => []
 }))
-vi.mock('../../../components/asymmetric/CurveChart', () => ({
+// Capture what the live preview chart is asked to draw.
+vi.mock('../../../components/asymmetric/CurveChart', async importOriginal => ({
+  ...(await importOriginal<
+    typeof import('../../../components/asymmetric/CurveChart')
+  >()),
   default: (props: typeof mocks.preview) => {
-    mocks.preview = props
+    mocks.preview = { buy: props.buy, sell: props.sell }
     return null
-  },
-  simulateLiquidity: () => 0
+  }
 }))
 vi.mock('../../../sdk/AsymmetricClient', () => ({
   AsymmetricClient: class {
@@ -46,20 +70,38 @@ vi.mock('../../../sdk/AsymmetricClient', () => ({
     }
   }
 }))
+import AsymmetricPool from './index'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+
 let root: Root
 let container: HTMLDivElement
 beforeEach(async () => {
+  mocks.calls = []
+  mocks.runs = []
   mocks.sign.mockResolvedValue('0xsignature')
-  mocks.deploy.mockResolvedValue(undefined)
+  mocks.createDeployment.mockImplementation(() => ({
+    instantiate: async () => {
+      mocks.calls.push('instantiate')
+      return '0xinstantiate'
+    },
+    seed: async () => {
+      mocks.calls.push('seed')
+      return '0xseed'
+    },
+    register: async () => {
+      mocks.calls.push('register')
+      return { strategyId: 's1', contractAddress: 'pair', txHash: '0xreg' }
+    },
+    result: () => ({ strategyId: 's1' })
+  }))
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
   await act(async () =>
     root.render(
-      <ThemeProvider theme={theme}>
+      <MemoryRouter>
         <AsymmetricPool />
-      </ThemeProvider>
+      </MemoryRouter>
     )
   )
 })
@@ -74,27 +116,45 @@ async function click(name: string) {
   expect(button, name).toBeTruthy()
   await act(async () => button!.click())
 }
+function summary(label: string) {
+  const row = Array.from(container.querySelectorAll('span')).find(
+    s => s.textContent === label
+  )?.parentElement
+  expect(row, label).toBeTruthy()
+  return row!.lastElementChild!.textContent
+}
 
 it('applies the full selected template to both preview curves', async () => {
   await click('Stablecoin Range')
-  for (const side of [mocks.preview.buyParams, mocks.preview.sellParams]) {
-    expect(side).toMatchObject({
-      k: 5000,
-      x0: 2000,
-      gamma: 5,
-      feeT: 0.001,
-      L: 0
-    })
+  for (const side of [mocks.preview.buy, mocks.preview.sell]) {
+    expect(side).toEqual({ k: 2000, x0: 20000, g: 5 })
   }
+  expect(summary('Fee target')).toBe('0.10%')
+
+  await click('Deploy asymmetric strategy')
+  expect(mocks.createDeployment).toHaveBeenCalledWith(
+    expect.objectContaining({
+      buyGamma: 5,
+      sellGamma: 5,
+      buyMaxCapacity: '20000',
+      sellMaxCapacity: '20000',
+      buyFeeBps: 10,
+      sellFeeBps: 10,
+      profitTargetBps: 100
+    })
+  )
 })
 
 it('deploys the same buy and sell liquidity shown in the preview', async () => {
-  await click('Builder Pro')
-  expect(mocks.preview.buyParams.k).toBe(1000)
-  expect(mocks.preview.sellParams.k).toBe(500)
-  await click('Deploy Asymmetric Strategy')
-  await click('Confirm & Deploy')
-  expect(mocks.deploy).toHaveBeenCalledWith(
-    expect.objectContaining({ initialBuyK: '1000', initialSellK: '500' })
+  // default preset (Buy the Dip): buy k 1000, sell k 200
+  expect(mocks.preview.buy.k).toBe(1000)
+  expect(mocks.preview.sell.k).toBe(200)
+  await click('Deploy asymmetric strategy')
+  expect(mocks.calls).toEqual(['instantiate', 'seed', 'register'])
+  expect(mocks.createDeployment).toHaveBeenCalledWith(
+    expect.objectContaining({
+      initialBuyK: String(mocks.preview.buy.k),
+      initialSellK: String(mocks.preview.sell.k)
+    })
   )
 })

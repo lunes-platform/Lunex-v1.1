@@ -614,7 +614,7 @@ async function main() {
       !listed?.tokenAddress
     ) {
       log(
-        `💸 FeeDistributed — listing ${rawData[0]}: burn=${rawData[1]}, treasury=${rawData[2]}, rewards=${rawData[3]}`,
+        `💸 FeeDistributed — listing ${rawData[0]}: staking=${rawData[1]}, treasury=${rawData[2]}, rewards=${rawData[3]}`,
       );
     }
   }

@@ -1,11 +1,17 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
+import { decodeAddress } from '@polkadot/util-crypto';
 import { copytradeService } from '../services/copytradeService';
+import { requireAdmin } from '../middleware/adminGuard';
 import {
   getSignedAuthInput,
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import {
   CopyTradeApiKeyChallengeSchema,
   CopyTradeApiKeySchema,
@@ -17,6 +23,52 @@ import {
 } from '../utils/validation';
 
 const router = Router();
+
+// BE-01/BE-02: vault fund movement is signed by the follower ON CHAIN; the API
+// only journals a finalized tx it can prove. Both hashes are part of the
+// wallet-signed API message.
+const TxHashSchema = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{64}$/, 'Must be a 0x-prefixed 32-byte hash');
+const VaultTxProofSchema = z.object({
+  txHash: TxHashSchema,
+  blockHash: TxHashSchema,
+});
+const VaultDepositRequestSchema =
+  CopyVaultDepositSchema.merge(VaultTxProofSchema);
+const VaultWithdrawRequestSchema =
+  CopyVaultWithdrawSchema.merge(VaultTxProofSchema);
+
+// BE-04: vault-wide risk config is leader-only (signed by the leader wallet).
+const VaultRiskConfigSchema = z.object({
+  leaderAddress: z.string().min(3),
+  copyMultiplier: z.coerce.number().min(0.1).max(10).optional(),
+  maxPerTradeUsdt: z.coerce.number().min(0).optional(),
+  stopLossPct: z.coerce.number().min(1).max(100).optional(),
+  maxDrawdownPct: z.coerce.number().min(1).max(100).optional(),
+  nonce: z.string().min(8),
+  timestamp: z.coerce.number().int().positive(),
+  signature: z.string().min(8),
+});
+
+// Item 7: SS58 only (hex public keys are rejected so the stored value is the
+// canonical address the frontend signs against).
+const Ss58AddressSchema = z
+  .string()
+  .trim()
+  .min(40)
+  .max(64)
+  .refine((value) => {
+    if (value.startsWith('0x')) return false;
+    try {
+      return decodeAddress(value).length === 32;
+    } catch {
+      return false;
+    }
+  }, 'Must be an SS58 contract address');
+const BindVaultContractSchema = z.object({
+  contractAddress: Ss58AddressSchema,
+});
 
 const SignedReadSchema = z.object({
   address: z.string().min(8).max(128),
@@ -82,7 +134,7 @@ router.get(
   '/positions',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
       });
@@ -91,7 +143,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'copytrade.positions',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -113,7 +165,7 @@ router.get(
   '/activity',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
       });
@@ -122,7 +174,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'copytrade.activity',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -206,11 +258,40 @@ router.post(
   },
 );
 
+// ─── Admin ────────────────────────────────────────────────────────
+
+/**
+ * Item 7: bind a leader's vault to its deployed CopyVault contract. Admin
+ * bearer only; the service proves on-chain that the contract exists, runs the
+ * audited code and is led by the vault leader, then forces LUNES collateral.
+ */
+router.post(
+  '/admin/vaults/:leaderId/contract',
+  requireAdmin,
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = BindVaultContractSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+      const result = await copytradeService.bindVaultContract(
+        req.params.leaderId,
+        parsed.data.contractAddress,
+      );
+      res.json(result);
+    } catch (err: unknown) {
+      next(err);
+    }
+  },
+);
+
 router.post(
   '/vaults/:leaderId/deposit',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = CopyVaultDepositSchema.safeParse(req.body);
+      const parsed = VaultDepositRequestSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
           .status(400)
@@ -226,10 +307,11 @@ router.post(
           leaderId: req.params.leaderId,
           token: parsed.data.token,
           amount: parsed.data.amount,
-          // Risk limits are part of the FE-signed payload
-          // (buildCopytradeDepositMessage); they must be reconstructed here
-          // identically. buildWalletActionMessage drops undefined/null and
-          // sorts keys, so passing them through is symmetric with the FE.
+          txHash: parsed.data.txHash,
+          blockHash: parsed.data.blockHash,
+          // Risk fields stay in the FE-signed payload (buildWalletActionMessage
+          // drops undefined and sorts keys). Only stopLossPct is persisted —
+          // on the follower's OWN position, never on the vault (BE-04).
           copyMultiplier: parsed.data.copyMultiplier,
           maxPerTradeUsdt: parsed.data.maxPerTradeUsdt,
           stopLossPct: parsed.data.stopLossPct,
@@ -253,7 +335,7 @@ router.post(
   '/vaults/:leaderId/withdraw',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = CopyVaultWithdrawSchema.safeParse(req.body);
+      const parsed = VaultWithdrawRequestSchema.safeParse(req.body);
       if (!parsed.success) {
         return res
           .status(400)
@@ -265,13 +347,56 @@ router.post(
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,
-        fields: { leaderId: req.params.leaderId, shares: parsed.data.shares },
+        fields: {
+          leaderId: req.params.leaderId,
+          shares: parsed.data.shares,
+          txHash: parsed.data.txHash,
+          blockHash: parsed.data.blockHash,
+        },
       });
       if (!auth.ok) return res.status(401).json({ error: auth.error });
 
       const result = await copytradeService.withdrawFromVault(
         req.params.leaderId,
         parsed.data,
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  '/vaults/:leaderId/risk-config',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = VaultRiskConfigSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+      const risk = {
+        copyMultiplier: parsed.data.copyMultiplier,
+        maxPerTradeUsdt: parsed.data.maxPerTradeUsdt,
+        stopLossPct: parsed.data.stopLossPct,
+        maxDrawdownPct: parsed.data.maxDrawdownPct,
+      };
+      const auth = await verifyWalletActionSignature({
+        action: 'copytrade.vault-risk-config',
+        address: parsed.data.leaderAddress,
+        nonce: parsed.data.nonce,
+        timestamp: parsed.data.timestamp,
+        signature: parsed.data.signature,
+        fields: { leaderId: req.params.leaderId, ...risk },
+      });
+      if (!auth.ok) return res.status(401).json({ error: auth.error });
+
+      const result = await copytradeService.updateVaultRiskConfig(
+        req.params.leaderId,
+        parsed.data.leaderAddress,
+        risk,
       );
       res.json(result);
     } catch (err) {

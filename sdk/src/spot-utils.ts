@@ -29,17 +29,61 @@ export function createWalletActionMetadata(): {
   };
 }
 
-export function buildWalletActionSignMessage(input: {
-  action: string;
-  address: string;
-  nonce: string;
-  timestamp: number | string;
-  fields?: Record<
-    string,
-    string | number | boolean | Array<string | number> | undefined | null
-  >;
-}): string {
-  const lines = [`lunex-auth:${input.action}`, `address:${input.address}`];
+/**
+ * Domain + chain genesis every signed message is bound to (anti replay
+ * across deployments/chains). Must match the API's SIGNING_DOMAIN and
+ * LUNES_GENESIS_HASH, e.g. `{ domain: 'lunex.lunes.io', chain: api.genesisHash.toHex() }`.
+ */
+export type SigningContext = { domain: string; chain: string };
+
+let defaultSigningContext: SigningContext | null = null;
+
+/**
+ * Sets the signing context used by every builder that is not given one.
+ * Without a context the builders emit the deprecated unbound formats, which
+ * production APIs reject unless SIGNING_ACCEPT_LEGACY is enabled.
+ */
+export function configureSigningContext(context: SigningContext | null): void {
+  defaultSigningContext = context
+    ? {
+        domain: context.domain.trim().toLowerCase(),
+        chain: context.chain.trim().toLowerCase(),
+      }
+    : null;
+}
+
+function resolveSigningContext(
+  context: SigningContext | null | undefined,
+): SigningContext | null {
+  if (context === null) return null;
+  if (context) {
+    return {
+      domain: context.domain.trim().toLowerCase(),
+      chain: context.chain.trim().toLowerCase(),
+    };
+  }
+  return defaultSigningContext;
+}
+
+export function buildWalletActionSignMessage(
+  input: {
+    action: string;
+    address: string;
+    nonce: string;
+    timestamp: number | string;
+    fields?: Record<
+      string,
+      string | number | boolean | Array<string | number> | undefined | null
+    >;
+  },
+  signingContext?: SigningContext | null,
+): string {
+  const context = resolveSigningContext(signingContext);
+  const lines = [
+    `lunex-auth:${input.action}`,
+    ...(context ? [`domain:${context.domain}`, `chain:${context.chain}`] : []),
+    `address:${input.address}`,
+  ];
 
   const orderedFields = Object.entries(input.fields || {})
     .filter(([, value]) => value !== undefined && value !== null)
@@ -75,20 +119,27 @@ function canonicalOrderDecimal(value: string | undefined): string {
   return digits.slice(0, point) + '.' + digits.slice(point);
 }
 
-export function buildSpotOrderSignMessage(input: {
-  pairSymbol: string;
-  side: string;
-  type: string;
-  price?: string;
-  stopPrice?: string;
-  amount: string;
-  nonce: string;
-  timestamp: number | string;
-  timeInForce?: string;
-  expiresAt?: string | Date | null;
-}) {
+export function buildSpotOrderSignMessage(
+  input: {
+    pairSymbol: string;
+    side: string;
+    type: string;
+    price?: string;
+    stopPrice?: string;
+    amount: string;
+    nonce: string;
+    timestamp: number | string;
+    timeInForce?: string;
+    expiresAt?: string | Date | null;
+  },
+  signingContext?: SigningContext | null,
+) {
   const expiry = input.expiresAt ? new Date(input.expiresAt).getTime() : 0;
-  return `lunex-order-v2:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp}:${input.timeInForce || 'GTC'}:${expiry}`;
+  const context = resolveSigningContext(signingContext);
+  const prefix = context
+    ? `lunex-order-v3:${context.domain}:${context.chain}`
+    : 'lunex-order-v2';
+  return `${prefix}:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp}:${input.timeInForce || 'GTC'}:${expiry}`;
 }
 
 export function buildSpotCancelSignMessage(input: {
@@ -192,6 +243,15 @@ export function buildCopytradeDepositSignMessage(input: {
   followerAddress: string;
   token: string;
   amount: string;
+  /** Hash of the follower-signed CopyVault.deposit extrinsic (BE-02). */
+  txHash: string;
+  /** Finalized block that includes it. */
+  blockHash: string;
+  copyMultiplier?: number;
+  maxPerTradeUsdt?: number;
+  /** Follower preference, stored on the follower's own position. */
+  stopLossPct?: number;
+  maxDrawdownPct?: number;
   nonce: string;
   timestamp: number;
 }): string {
@@ -204,6 +264,12 @@ export function buildCopytradeDepositSignMessage(input: {
       leaderId: input.leaderId,
       token: input.token,
       amount: input.amount,
+      txHash: input.txHash,
+      blockHash: input.blockHash,
+      copyMultiplier: input.copyMultiplier,
+      maxPerTradeUsdt: input.maxPerTradeUsdt,
+      stopLossPct: input.stopLossPct,
+      maxDrawdownPct: input.maxDrawdownPct,
     },
   });
 }
@@ -212,6 +278,10 @@ export function buildCopytradeWithdrawSignMessage(input: {
   leaderId: string;
   followerAddress: string;
   shares: string;
+  /** Hash of the follower-signed CopyVault.withdraw extrinsic (BE-02). */
+  txHash: string;
+  /** Finalized block that includes it. */
+  blockHash: string;
   nonce: string;
   timestamp: number;
 }): string {
@@ -223,6 +293,8 @@ export function buildCopytradeWithdrawSignMessage(input: {
     fields: {
       leaderId: input.leaderId,
       shares: input.shares,
+      txHash: input.txHash,
+      blockHash: input.blockHash,
     },
   });
 }

@@ -96,6 +96,13 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
           // Relayer nonce seed for the settle_trade pipeline.
           accountNextIndex: jest.fn(async () => ({ toString: () => '0' })),
         },
+        // Mortal-era anchor for settle_trade (BE-07).
+        chain: {
+          getFinalizedHead: jest.fn(async () => ({ toHex: () => '0xfin' })),
+          getHeader: jest.fn(async () => ({
+            number: { toNumber: () => 1 },
+          })),
+        },
       },
     };
 
@@ -106,7 +113,20 @@ describe('settlementService gas params (Bloqueador A regression)', () => {
     const buildTxMethod = (record: (g: CapturedGas) => void) =>
       jest.fn((gas: CapturedGas) => {
         record(gas);
+        const finalized = {
+          status: { isInBlock: true, isFinalized: true },
+          txHash: { toHex: () => '0xfeed' },
+        };
         return {
+          // settle_trade path (BE-07): sign first, persist, then send.
+          hash: { toHex: () => '0xfeed' },
+          signAsync: async (_signer: unknown, opts: { nonce?: bigint }) => {
+            submittedNonces.push(opts?.nonce);
+          },
+          send: (cb: (r: any) => void) => {
+            cb(finalized);
+            return Promise.resolve(() => undefined);
+          },
           signAndSend: (_signer: unknown, ...rest: any[]) => {
             submittedNonces.push(rest[0]?.nonce);
             const cb = (typeof rest[0] === 'function' ? rest[0] : rest[1]) as (

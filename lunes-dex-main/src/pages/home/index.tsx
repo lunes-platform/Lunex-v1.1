@@ -1,471 +1,510 @@
-import React, { useEffect, useState } from 'react'
-import * as B from 'components/bases'
-import * as S from './styles'
-import { Tooltip } from 'components/bases/tooltip'
-import TabBar from './tabBar'
-import FooterTag from 'components/FooterTag'
-import TradeSubNav from '../../components/tradeSubNav'
-//Modals
-import * as M from './modals'
-import { searchableTokens } from './modals/chooseToken/tokenRegistry'
-import useSelectOptions from 'hooks/useSelectOptions'
-import { Option } from 'context/useContext'
-import { useSDK } from '../../context/SDKContext'
+/**
+ * Swap — README "Swap" + prototype SWAP / TOKEN MODAL / REVIEW MODAL.
+ *
+ * Real data: token selection + amount in AppContext (useSelectOptions),
+ * router quotes and execution via useSwap → useSDK, on-chain balances, spot
+ * ticker prices (display only). Fund movement goes through useTx().run.
+ * Query params `?from=SYM&to=SYM` (symbol or address) prefill the pair.
+ */
+import React, { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
-  classifyTrade,
-  isLunes,
-  toRoutingAddress
-} from '../../utils/nativeToken'
+  AlertTriangle,
+  ArrowDownUp,
+  ChevronDown,
+  SlidersHorizontal
+} from 'lucide-react'
+import { Button, Page } from 'components/ui/kit'
+import {
+  TOKENS,
+  Token,
+  TokenImg,
+  TokenSelectModal,
+  fmtAmount,
+  fmtUsd,
+  useTokenBalances,
+  useTokenPrices
+} from 'components/TokenSelect'
+import { useSDK } from 'context/SDKContext'
+import { openWalletModal } from 'pages/header/modals/wallets'
+import { useTx } from 'context/TxContext'
+import useSelectOptions from 'hooks/useSelectOptions'
+import useSwap from 'hooks/useSwap'
+import { balanceFraction } from 'utils/gasReserve'
+import { isLunes } from 'utils/nativeToken'
+import * as S from './styles'
+import * as M from './modals'
+import {
+  FEE_SPLIT_TEXT,
+  IMPACT_BLOCK,
+  IMPACT_RISK,
+  IMPACT_WARN,
+  SLIPPAGE_RISK,
+  buildDetailRows
+} from './details'
+
+const SLIP_KEY = 'lunex-swap-slippage'
+/** Default slippage set in the header settings menu. */
+const DEFAULT_SLIP_KEY = 'lunex_default_slippage'
+const DEADLINE_KEY = 'lunex-swap-deadline'
+
+const readNum = (key: string, fallback: number) => {
+  try {
+    const n = Number(localStorage.getItem(key))
+    return Number.isFinite(n) && n > 0 ? n : fallback
+  } catch {
+    return fallback
+  }
+}
+
+const writeNum = (key: string, v: number) => {
+  try {
+    localStorage.setItem(key, String(v))
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+const findToken = (q: string | null) => {
+  if (!q) return null
+  const k = q.trim().toLowerCase()
+  const sym = k === 'lunes' ? 'wlunes' : k
+  return (
+    TOKENS.find(
+      t => t.acronym.toLowerCase() === sym || (!!t.address && t.address === q)
+    ) ?? null
+  )
+}
+
+/** Keep digits and one dot, cap decimals to the token's precision. */
+const cleanAmount = (raw: string, decimals: number) => {
+  let v = raw.replace(',', '.').replace(/[^0-9.]/g, '')
+  const i = v.indexOf('.')
+  if (i >= 0) {
+    v = v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, '')
+    v = v.slice(0, i + 1 + decimals)
+  }
+  if (v.startsWith('.')) v = '0' + v
+  return v.replace(/^0+(?=\d)/, '')
+}
+
+type Side = 'from' | 'to'
 
 const Home = () => {
-  // SDK Integration
   const sdk = useSDK()
-
+  const tx = useTx()
+  const [params] = useSearchParams()
   const {
-    selectedOption1,
-    selectedOption2,
-    inputValue1,
-    setInputValue1,
-    setInputValue2,
+    selectedOption1: from,
+    selectedOption2: to,
+    inputValue1: amount,
+    setInputValue1: setAmount,
     selectOptionForFirst,
     selectOptionForSecond
   } = useSelectOptions()
-  const [selectingForFirst, setSelectingForFirst] = useState<boolean | null>(
-    null
+
+  const [picking, setPicking] = useState<Side | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [slippage, setSlippageState] = useState(() =>
+    readNum(SLIP_KEY, readNum(DEFAULT_SLIP_KEY, 0.5))
   )
-  const [modal, setModal] = useState('null')
+  const [deadline, setDeadlineState] = useState(() => readNum(DEADLINE_KEY, 20))
+  const [flipDeg, setFlipDeg] = useState(0)
+  const [invert, setInvert] = useState(false)
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [needsApproval, setNeedsApproval] = useState<boolean | null>(null)
 
-  // Estado para integração com SDK
-  interface QuoteState {
-    key: string
-    amountOut: string
-    executionPrice?: string
-    priceImpact?: string
-    minimumReceived?: string
+  const setSlippage = (v: number) => {
+    setSlippageState(v)
+    writeNum(SLIP_KEY, v)
   }
-  const [quoteState, setQuote] = useState<QuoteState | null>(null)
-  const [quoteError, setQuoteError] = useState<string | null>(null)
-  const [tokenBalances, setTokenBalances] = useState<{ [key: string]: string }>(
-    {}
-  )
-  const [slippage, setSlippage] = useState(0.5) // 0.5% default
-  const [deadline, setDeadline] = useState(20) // 20 minutes default
-  const quoteKey = `${selectedOption1?.address}:${selectedOption2?.address}:${inputValue1}`
-  const quote = quoteState?.key === quoteKey ? quoteState : null
-  const tradeKind =
-    selectedOption1 && selectedOption2
-      ? classifyTrade(selectedOption1, selectedOption2).kind
-      : 'swap'
-  const isConversion = tradeKind === 'wrap' || tradeKind === 'unwrap'
-  const outputDecimals = selectedOption2?.decimals ?? 8
-  const outputAmount = quote
-    ? sdk.formatAmount(quote.amountOut, outputDecimals)
-    : ''
-  const priceImpact = quote?.priceImpact || '0'
-  const minimumReceived = quote
-    ? sdk.formatAmount(
-        isConversion
-          ? quote.amountOut
-          : sdk.calculateMinAmount(quote.amountOut, slippage),
-        outputDecimals
-      )
-    : '0'
-
-  const handleOpenModal = (forFirst: boolean) => {
-    setSelectingForFirst(forFirst)
-    setModal('chooseToken')
+  const setDeadline = (v: number) => {
+    setDeadlineState(v)
+    writeNum(DEADLINE_KEY, v)
   }
 
-  const handleSelectOption = (option: Option) => {
-    if (selectingForFirst) {
-      selectOptionForFirst(option)
-    } else {
-      selectOptionForSecond(option)
-    }
-    setModal('null')
-  }
-
-  // A quote belongs to one input/token combination. Cleanup also prevents an
-  // older RPC response from replacing the latest quote after a selection edit.
+  // ?from=&to= prefill (Pools "Swap" button → /swap?from=X&to=Y)
+  const qFrom = params.get('from')
+  const qTo = params.get('to')
   useEffect(() => {
-    let cancelled = false
-    setQuote(null)
-    setQuoteError(null)
-    setInputValue2('')
-    if (
-      !selectedOption1?.address ||
-      !selectedOption2?.address ||
-      selectedOption1.address === selectedOption2.address ||
-      !/^(?:\d+\.?\d*|\.\d+)$/.test(inputValue1) ||
-      Number(inputValue1) <= 0
-    )
-      return
+    const f = findToken(qFrom)
+    const t = findToken(qTo)
+    if (f) selectOptionForFirst(f)
+    if (t && (!f || t.acronym !== f.acronym)) selectOptionForSecond(t)
+    // run when the query changes only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qFrom, qTo])
 
-    const timer = setTimeout(async () => {
-      try {
-        const decimals = selectedOption1.decimals ?? 8
-        const amountInWei = sdk.parseAmount(inputValue1, decimals)
-        if (BigInt(amountInWei) <= 0n) return
-        const trade = classifyTrade(selectedOption1, selectedOption2)
-        const conversion = trade.kind === 'wrap' || trade.kind === 'unwrap'
-        const result = conversion
-          ? { amountOut: amountInWei, executionPrice: '1', priceImpact: '0' }
-          : await sdk.getQuote(
-              amountInWei,
-              [
-                toRoutingAddress(selectedOption1),
-                toRoutingAddress(selectedOption2)
-              ],
-              decimals,
-              selectedOption2.decimals ?? 8
-            )
-        if (cancelled) return
-        if (!result) {
-          setQuoteError('Insufficient liquidity for this trade')
-          return
-        }
-        setQuote({ ...result, key: quoteKey })
-        setInputValue2(
-          sdk.formatAmount(result.amountOut, selectedOption2.decimals ?? 8)
-        )
-      } catch {
-        if (!cancelled) setQuoteError('Could not get a quote for this trade')
-      }
-    }, 500)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [inputValue1, selectedOption1, selectedOption2])
+  const connected = !!sdk.walletAddress
+  const { balances, refresh: refreshBalances } = useTokenBalances(TOKENS)
+  const prices = useTokenPrices(TOKENS)
 
-  // Buscar balances quando conectar wallet
-  useEffect(() => {
-    const fetchBalances = async () => {
-      if (!sdk.walletAddress) return
+  const swap = useSwap({
+    tokenIn: from,
+    tokenOut: to,
+    amountIn: amount,
+    slippage,
+    deadlineMin: deadline
+  })
+  const { quote, loading } = swap
 
-      const balances: { [key: string]: string } = {}
-      for (const token of searchableTokens) {
-        if (!token.address) continue
-        // LUNES is the native coin — read the on-chain account balance, not a
-        // PSP22 balanceOf (its sentinel address has no token contract).
-        const balance = isLunes(token)
-          ? await sdk.getNativeBalance(sdk.walletAddress)
-          : await sdk.getTokenBalance(token.address, sdk.walletAddress)
-        balances[token.address] = sdk.formatAmount(balance, token.decimals || 8)
-      }
-      setTokenBalances(balances)
-    }
+  const amountNum = Number(amount) || 0
+  const fromBal = from ? balances[from.acronym] : undefined
+  const toBal = to ? balances[to.acronym] : undefined
 
-    fetchBalances()
-  }, [sdk.walletAddress, sdk])
-
-  // Handler para executar swap
-  const handleConfirmSwap = async () => {
-    if (!sdk.walletAddress) {
-      sdk.connectWallet()
-      return
-    }
-
-    if (
-      !selectedOption1?.address ||
-      !selectedOption2?.address ||
-      !inputValue1 ||
-      !quote
-    ) {
-      return
-    }
-
-    setModal('waitingConfirmation')
-
+  const exceeds = useMemo(() => {
+    if (!connected || !from || !fromBal || amountNum <= 0) return false
     try {
-      const decimals = selectedOption1.decimals || 8
-      const amountInWei = sdk.parseAmount(inputValue1, decimals)
-      const trade = classifyTrade(selectedOption1, selectedOption2)
-      // Wrap/unwrap is 1:1 — the "min out" is exactly the input.
-      const amountOutMinWei =
-        trade.kind === 'wrap' || trade.kind === 'unwrap'
-          ? amountInWei
-          : sdk.calculateMinAmount(quote.amountOut, slippage)
-      const deadlineTs = sdk.calculateDeadline(deadline)
+      return (
+        BigInt(sdk.parseAmount(amount, from.decimals || 8)) >
+        BigInt(fromBal.raw || '0')
+      )
+    } catch {
+      return amountNum > fromBal.value
+    }
+    // sdk helpers are pure
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, from, fromBal, amount, amountNum])
 
-      const success = await sdk.executeSwap({
-        amountIn: amountInWei,
-        amountOutMin: amountOutMinWei,
-        // Pools trade WLUNES/X — pass routing addresses, never the native sentinel.
-        path: [
-          toRoutingAddress(selectedOption1),
-          toRoutingAddress(selectedOption2)
-        ],
-        to: sdk.walletAddress,
-        deadline: deadlineTs,
-        fromToken: selectedOption1,
-        toToken: selectedOption2
-      })
+  const priceOf = (t: Token | null) => (t ? (prices[t.acronym] ?? 0) : 0)
+  const out = amountNum > 0 && quote ? quote.amountOut : 0
+  const impact = quote && amountNum > 0 ? quote.priceImpact : 0
+  const usdLabel = (v: number, t: Token | null) =>
+    v > 0 ? (priceOf(t) > 0 ? '≈ ' + fmtUsd(v * priceOf(t)) : '—') : '$0.00'
 
-      if (success) {
-        setModal('transactionSubmitted')
-        // Limpar campos
-        setInputValue1('')
-        setInputValue2('')
-        setQuote(null)
-      } else {
-        setModal('modalError')
-      }
-    } catch (error) {
-      console.error('Erro ao executar swap:', error)
-      setModal('modalError')
+  const setFraction = (num: bigint, den: bigint) => {
+    if (!from || !fromBal) return
+    try {
+      // Native LUNES keeps existential deposit + fee buffer (utils/gasReserve)
+      const raw = balanceFraction(fromBal.raw || '0', num, den, isLunes(from))
+      setAmount(sdk.formatAmount(raw, from.decimals || 8))
+    } catch {
+      /* ignore */
     }
   }
 
-  // Handler para salvar slippage e deadline
-  const handleSaveSettings = (newSlippage: number, newDeadline: number) => {
-    setSlippage(newSlippage)
-    setDeadline(newDeadline)
-    setModal('null')
+  const flip = () => {
+    if (!from || !to) return
+    setFlipDeg(d => d + 180)
+    selectOptionForFirst(to)
+    selectOptionForSecond(from)
+    if (out > 0) {
+      const dec = Math.min(6, to.decimals || 8)
+      setAmount(String(+out.toFixed(dec)))
+    }
   }
 
-  // LUNES<->WLUNES is a wrap/unwrap action, not a swap — relabel the button.
-  const actionLabel =
-    tradeKind === 'wrap'
-      ? 'Wrap'
-      : tradeKind === 'unwrap'
-        ? 'Unwrap'
-        : 'Swap tokens'
+  const onPick = (t: Token) => {
+    const side = picking
+    if (!side) return
+    const cur = side === 'from' ? from : to
+    const other = side === 'from' ? to : from
+    if (other && t.acronym === other.acronym) {
+      // picking the other side's token swaps the two sides
+      if (cur) {
+        selectOptionForFirst(side === 'from' ? t : cur)
+        selectOptionForSecond(side === 'from' ? cur : t)
+        setFlipDeg(d => d + 180)
+      }
+      return
+    }
+    if (side === 'from') selectOptionForFirst(t)
+    else selectOptionForSecond(t)
+  }
+
+  const rate = quote?.rate ?? 0
+  const rateLabel =
+    from && to && rate > 0
+      ? invert
+        ? `1 ${to.acronym} = ${fmtAmount(1 / rate)} ${from.acronym}`
+        : `1 ${from.acronym} = ${fmtAmount(rate)} ${to.acronym}`
+      : ''
+
+  const rows =
+    from && to && quote
+      ? buildDetailRows({
+          impact,
+          minReceived: swap.minReceived,
+          slippage,
+          fee: swap.feeAmount,
+          fromSym: from.acronym,
+          toSym: to.acronym,
+          route: quote.route,
+          wrap: swap.isWrapOrUnwrap
+        })
+      : []
+
+  const riskText =
+    impact > IMPACT_RISK
+      ? `I understand this trade has ${impact.toFixed(1)}% price impact and I may receive much less than the market rate.`
+      : slippage > SLIPPAGE_RISK
+        ? `I understand that a ${slippage}% slippage tolerance can fill at a noticeably worse price.`
+        : null
+
+  const openReview = () => {
+    if (loading || !quote) return
+    setSettingsOpen(false)
+    setNeedsApproval(null)
+    setReviewOpen(true)
+    swap.needsApproval().then(setNeedsApproval)
+  }
+
+  const confirm = async () => {
+    if (!from || !to || !quote) return
+    setReviewOpen(false)
+    const approval = needsApproval ?? (await swap.needsApproval())
+    const steps = swap.buildSteps(approval)
+    if (!steps.length) return
+    const txt = `${fmtAmount(amountNum)} ${from.acronym} → ${fmtAmount(out)} ${to.acronym}`
+    tx.run({
+      type: 'swap',
+      title: 'Swapping',
+      summary: txt,
+      actTitle: `Swap ${txt}`,
+      successTitle: 'Swap confirmed',
+      errorText: 'The swap did not complete.',
+      steps,
+      onSuccess: () => {
+        setAmount('')
+        refreshBalances()
+      }
+    })
+  }
+
+  // CTA sequence: Connect wallet → Select a token → Enter an amount →
+  // Insufficient X balance → (quote) → Review swap
+  type Cta = {
+    label: string
+    on?: () => void
+    danger?: boolean
+  }
+  let cta: Cta
+  if (!connected) cta = { label: 'Connect wallet', on: openWalletModal }
+  else if (!from || !to)
+    cta = {
+      label: 'Select a token',
+      on: () => setPicking(from ? 'to' : 'from')
+    }
+  else if (amountNum <= 0) cta = { label: 'Enter an amount' }
+  else if (exceeds) cta = { label: `Insufficient ${from.acronym} balance` }
+  else if (!quote && loading) cta = { label: 'Fetching best price…' }
+  else if (!quote)
+    cta = { label: swap.error ? 'Quote unavailable' : 'Insufficient liquidity' }
+  else if (impact > IMPACT_BLOCK) cta = { label: 'Price impact too high' }
+  else
+    cta = {
+      label: impact > IMPACT_RISK ? 'Review swap · high impact' : 'Review swap',
+      on: openReview,
+      danger: impact > IMPACT_RISK
+    }
+
+  const showDetails = !!quote && amountNum > 0 && !!from && !!to
+  const dim = loading && amountNum > 0
 
   return (
-    <B.Container height="100vh" padding="80px 8px">
-      <TabBar />
+    <Page $max={480} style={{ gap: 12 }}>
+      <S.SwapCard>
+        <S.CardHead>
+          <h1>Swap</h1>
+          <S.SettingsBtn
+            $open={settingsOpen}
+            onClick={() => setSettingsOpen(o => !o)}
+            aria-label="Swap settings"
+            aria-expanded={settingsOpen}
+            aria-controls="swap-settings"
+          >
+            <SlidersHorizontal size={16} strokeWidth={2} />
+            {slippage}%
+          </S.SettingsBtn>
+        </S.CardHead>
 
-      <S.Box
-        width="592px"
-        minHeight="448px"
-        padding="0 24px 24px"
-        justify="space-between"
-        bg={500}
-        radius
-        shadow
-      >
-        <TradeSubNav
-          active="swap"
-          onSettingsClick={() => setModal('transactionSetting')}
-        />
+        {settingsOpen && (
+          <M.SwapSettings
+            slippage={slippage}
+            deadline={deadline}
+            onSlippage={setSlippage}
+            onDeadline={setDeadline}
+          />
+        )}
 
-        <S.Content>
-          <B.Wrapper radius position="relative">
-            <S.Details inset="16px auto auto 16px">From</S.Details>
-            <S.Details inset="16px 16px auto auto" active>
-              Balance:{' '}
-              {selectedOption1?.address
-                ? tokenBalances[selectedOption1.address] || '0'
-                : '0'}
-            </S.Details>
-            <B.Input
-              id="swap-from-amount"
-              name="swapFromAmount"
-              aria-label="Amount to swap from"
-              placeholder="0"
-              height="112px"
-              sizeInput="24px"
-              disabled={!selectedOption1}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setInputValue1(e.target.value)
-              }
-              value={inputValue1}
-            />
-            <S.Token
-              isToken={!selectedOption1}
-              onClick={() => handleOpenModal(true)}
-            >
-              <img src={selectedOption1?.icon} />
-              {selectedOption1?.acronym || 'Select a token'}
-              <img src="img/arrow-down.svg" />
-            </S.Token>
-          </B.Wrapper>
-
-          <img src="img/from-token.svg" />
-
-          <B.Wrapper radius position="relative">
-            <S.Details inset="16px auto auto 16px">To (Estimated)</S.Details>
-            <S.Details inset="16px 16px auto auto" active>
-              Balance:{' '}
-              {selectedOption2?.address
-                ? tokenBalances[selectedOption2.address] || '0'
-                : '0'}
-            </S.Details>
-            <B.Input
-              id="swap-to-amount"
-              name="swapToAmount"
-              aria-label="Estimated amount to receive"
-              placeholder="0"
-              height="112px"
-              sizeInput="24px"
-              disabled={!selectedOption2}
-              readOnly
-              value={outputAmount}
-            />
-            {selectedOption1 && selectedOption2 && quote && (
-              <S.Details inset="auto auto 16px 16px" active size="14px">
-                {sdk.isLoading ? (
-                  'Loading...'
-                ) : (
-                  <>
-                    $ {quote.executionPrice || '0.00'}
-                    <strong
-                      style={{
-                        color: Number(priceImpact) > 1 ? '#ff6b6b' : '#26d07c'
-                      }}
-                    >
-                      {' '}
-                      ({Number(priceImpact) > 0 ? '-' : '+'} {priceImpact}%)
-                    </strong>
-                  </>
-                )}
-              </S.Details>
+        <S.AmountPanel $error={exceeds}>
+          <S.PanelTop>
+            <S.Label $error={exceeds}>You pay</S.Label>
+            {connected && from && (
+              <S.BalRow>
+                <span>Balance: {fromBal ? fmtAmount(fromBal.value) : '—'}</span>
+                <S.MiniBtn
+                  onClick={() => setFraction(BigInt(1), BigInt(2))}
+                  disabled={!fromBal}
+                >
+                  50%
+                </S.MiniBtn>
+                <S.MiniBtn
+                  $solid
+                  onClick={() => setFraction(BigInt(1), BigInt(1))}
+                  disabled={!fromBal}
+                >
+                  MAX
+                </S.MiniBtn>
+              </S.BalRow>
             )}
-            <S.Token
-              isToken={!selectedOption2}
-              onClick={() => handleOpenModal(false)}
-            >
-              <img src={selectedOption2?.icon} />
-              {selectedOption2?.acronym || 'Select a token'}
-              <img src="img/arrow-down.svg" />
-            </S.Token>
-          </B.Wrapper>
-        </S.Content>
+          </S.PanelTop>
+          <S.AmountRow>
+            <S.AmountInput
+              value={amount}
+              onChange={e =>
+                setAmount(cleanAmount(e.target.value, from?.decimals || 8))
+              }
+              placeholder="0"
+              inputMode="decimal"
+              autoComplete="off"
+              aria-label="Amount to pay"
+              aria-invalid={exceeds}
+              data-bare=""
+              $error={exceeds}
+            />
+            <TokenPillBtn token={from} onClick={() => setPicking('from')} />
+          </S.AmountRow>
+          <S.PanelBottom>
+            <span>{usdLabel(amountNum, from)}</span>
+            {exceeds && from && fromBal && (
+              <S.PayError role="alert">
+                Max {fmtAmount(fromBal.value)} {from.acronym}
+              </S.PayError>
+            )}
+          </S.PanelBottom>
+        </S.AmountPanel>
 
-        <S.Descriptions
-          display={
-            selectedOption1 && selectedOption2 && quote ? 'flex' : 'none'
-          }
-        >
-          <B.Wrapper width="auto" bg="trasnparent" alignItems="flex-start">
-            <p>Price</p>
-            <span style={{ display: 'flex', alignItems: 'center' }}>
-              Minimum received
-              <Tooltip
-                content={`A quantia mínima garantida que você receberá. Se o preço mudar desfavoravelmente acima do Slippage (${slippage}%), a transação reverterá.`}
-                position="right"
-              />
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center' }}>
-              Price impact
-              <Tooltip
-                content="A estimativa de perda gerada pelo tamanho da sua ordem em relação à liquidez disponível da Pool."
-                position="right"
-              />
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center' }}>
-              Protocol Fee
-              <Tooltip
-                content="0.5% total: 0.3% para provedores de liquidez, 0.1% para o protocolo (time) e 0.1% para stakers de LUNES."
-                position="right"
-              />
-            </span>
-          </B.Wrapper>
-          <B.Wrapper width="auto" bg="trasnparent" alignItems="flex-end">
-            <p>
-              1 {selectedOption1?.acronym} = {quote?.executionPrice || '0'}{' '}
-              {selectedOption2?.acronym}
-            </p>
-            <span>
-              {minimumReceived} {selectedOption2?.acronym}
-            </span>
-            <span
-              style={{ color: Number(priceImpact) > 1 ? '#ff6b6b' : '#26d07c' }}
-            >
-              {priceImpact}%
-            </span>
-            <span>
-              {isConversion ? '0%' : '0.3% LP + 0.1% Protocolo + 0.1% Stakers'}
-            </span>
-          </B.Wrapper>
-        </S.Descriptions>
+        <S.FlipWrap>
+          <S.FlipBtn
+            $deg={flipDeg}
+            onClick={flip}
+            disabled={!from || !to}
+            aria-label="Switch tokens"
+          >
+            <ArrowDownUp size={16} strokeWidth={2} />
+          </S.FlipBtn>
+        </S.FlipWrap>
 
-        {/* Loading indicator */}
-        {sdk.isLoading && (
-          <S.Paragraph style={{ textAlign: 'center', color: '#8a8a8e' }}>
-            Loading...
-          </S.Paragraph>
+        <S.ReceivePanel>
+          <S.PanelTop>
+            <S.Label>
+              You receive
+              {dim && (
+                <S.QuoteSpinner
+                  role="status"
+                  aria-label="Updating quote"
+                  data-motion="pulse"
+                />
+              )}
+            </S.Label>
+            {connected && to && (
+              <span>Balance: {toBal ? fmtAmount(toBal.value) : '—'}</span>
+            )}
+          </S.PanelTop>
+          <S.AmountRow>
+            <S.AmountOut $empty={out <= 0} $dim={dim} aria-live="polite">
+              {out > 0 ? fmtAmount(out) : '0'}
+            </S.AmountOut>
+            <TokenPillBtn token={to} onClick={() => setPicking('to')} />
+          </S.AmountRow>
+          <S.PanelBottom>
+            <span>{usdLabel(out, to)}</span>
+          </S.PanelBottom>
+        </S.ReceivePanel>
+
+        {showDetails && (
+          <S.Details $dim={dim}>
+            <S.RateBtn
+              onClick={() => setInvert(v => !v)}
+              aria-label="Invert rate"
+              title="Invert rate"
+            >
+              <span>{rateLabel}</span>
+              <ArrowDownUp size={14} strokeWidth={2} color="#8A8A8E" />
+            </S.RateBtn>
+            {rows.map(r => (
+              <S.DetailLine key={r.label}>
+                <span title={r.tip}>{r.label}</span>
+                <span style={{ color: r.color ?? '#fff' }}>{r.value}</span>
+              </S.DetailLine>
+            ))}
+          </S.Details>
         )}
 
-        {/* Error message */}
-        {(quoteError ||
-          (sdk.error && (!sdk.isConnected || modal === 'modalError'))) && (
-          <S.Paragraph style={{ textAlign: 'center', color: '#ff6b6b' }}>
-            {quoteError || sdk.error}
-          </S.Paragraph>
+        {!quote && !loading && swap.error && amountNum > 0 && (
+          <S.QuoteError role="status">{swap.error}</S.QuoteError>
         )}
 
-        <B.Button
-          disabled={
-            sdk.isConnected &&
-            (sdk.isLoading ||
-              !selectedOption1 ||
-              !selectedOption2 ||
-              inputValue1.length < 1 ||
-              !quote)
-          }
-          onClick={
-            sdk.isConnected ? handleConfirmSwap : () => sdk.connectWallet()
-          }
-        >
-          {!sdk.isConnected
-            ? 'Connect Wallet'
-            : !selectedOption1 || !selectedOption2
-              ? 'Select a token'
-              : !inputValue1 || Number(inputValue1) <= 0
-                ? 'Enter an amount'
-                : quoteError
-                  ? 'Quote unavailable'
-                  : !quote
-                    ? 'Loading quote...'
-                    : actionLabel}
-        </B.Button>
-      </S.Box>
-      <FooterTag />
+        {showDetails && impact >= IMPACT_WARN && (
+          <S.ImpactWarn role="alert">
+            <AlertTriangle size={16} strokeWidth={2} />
+            {impact > IMPACT_BLOCK
+              ? `Price impact is ${impact.toFixed(1)}%. Pool liquidity is too low for this size — try a smaller amount.`
+              : `High price impact (${impact.toFixed(1)}%). You would receive noticeably less than the market rate.`}
+          </S.ImpactWarn>
+        )}
 
-      {modal === 'chooseToken' && (
-        <M.ChooseToken
-          tokens={searchableTokens}
-          onSelect={handleSelectOption}
-          close={() => setModal('null')}
+        <S.Cta>
+          <Button
+            size="xl"
+            block
+            variant={cta.danger ? 'danger' : 'primary'}
+            disabled={!cta.on}
+            onClick={cta.on}
+          >
+            {cta.label}
+          </Button>
+        </S.Cta>
+      </S.SwapCard>
+
+      <S.Footer>{FEE_SPLIT_TEXT}</S.Footer>
+
+      <TokenSelectModal
+        open={picking !== null}
+        onClose={() => setPicking(null)}
+        onSelect={onPick}
+        selected={picking === 'from' ? from : to}
+        other={picking === 'from' ? to : from}
+        balances={balances}
+        prices={prices}
+      />
+
+      {from && to && quote && (
+        <M.ReviewSwap
+          open={reviewOpen}
+          onClose={() => setReviewOpen(false)}
+          onConfirm={confirm}
+          from={from}
+          to={to}
+          payLabel={`${fmtAmount(amountNum)} ${from.acronym}`}
+          receiveLabel={`${fmtAmount(out)} ${to.acronym}`}
+          usdIn={usdLabel(amountNum, from)}
+          usdOut={usdLabel(out, to)}
+          rows={rows}
+          minOutLabel={`${fmtAmount(swap.minReceived)} ${to.acronym}`}
+          riskText={riskText}
+          danger={impact > IMPACT_RISK}
+          needsApproval={needsApproval}
         />
       )}
-
-      {modal === 'waitingConfirmation' && (
-        <M.WaitingConfirmation close={() => setModal('null')} />
-      )}
-
-      {modal === 'transactionSubmitted' && (
-        <M.TransactionSubmitted close={() => setModal('null')} />
-      )}
-
-      {modal === 'confirmSwap' && (
-        <M.ConfirmSwap
-          close={() => setModal('null')}
-          confirm={() => setModal('waitingConfirmation')}
-          minimumReceived={minimumReceived}
-          priceImpact={priceImpact}
-          inputValue1={inputValue1}
-          inputAcronym={selectedOption1?.acronym}
-          outputAcronym={selectedOption2?.acronym}
-        />
-      )}
-
-      {modal === 'transactionSetting' && (
-        <M.TransactionSetting
-          close={() => setModal('null')}
-          onSave={handleSaveSettings}
-          currentSlippage={slippage}
-          currentDeadline={deadline}
-        />
-      )}
-
-      {modal === 'modalError' && (
-        <M.ModalError close={() => setModal('null')} />
-      )}
-    </B.Container>
+    </Page>
   )
 }
+
+const TokenPillBtn: React.FC<{ token: Token | null; onClick: () => void }> = ({
+  token,
+  onClick
+}) => (
+  <S.TokenPill
+    $empty={!token}
+    onClick={onClick}
+    aria-label={token ? `Change token, ${token.acronym}` : 'Select a token'}
+  >
+    {token && <TokenImg token={token} size={28} />}
+    {token ? token.acronym : 'Select token'}
+    <ChevronDown size={16} strokeWidth={2} color={token ? '#8A8A8E' : '#fff'} />
+  </S.TokenPill>
+)
 
 export default Home

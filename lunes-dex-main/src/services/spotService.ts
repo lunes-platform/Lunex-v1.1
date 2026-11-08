@@ -4,7 +4,46 @@
 import { signedAuthHeaders } from '../utils/signing'
 import { SPOT_API_URL } from '../config/api'
 
-const SPOT_WS_URL = process.env.REACT_APP_SPOT_WS_URL || 'ws://localhost:4001'
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  type ReadAuth
+} from './sessionService'
+
+/**
+ * WS endpoint: REACT_APP_SPOT_WS_URL when set; otherwise derived from the
+ * Spot API URL — the dev API on :4000 serves WS on :4001 (spot-api wsPort),
+ * any other host goes through the reverse proxy's `/ws` route
+ * (docker/nginx.*.conf). Never a hardcoded localhost for a remote API.
+ */
+export function resolveSpotWsUrl(
+  explicit: string | undefined,
+  apiUrl: string
+): string {
+  const set = explicit?.trim()
+  if (set) return set
+  let url: URL
+  try {
+    url = new URL(apiUrl)
+  } catch {
+    // relative API base (same-origin deployment) → same-origin /ws
+    url = new URL(apiUrl, window.location.origin)
+  }
+  const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  if (url.port === '4000') return `${protocol}//${url.hostname}:4001`
+  return `${protocol}//${url.host}/ws`
+}
+
+// Vite only replaces process.env.REACT_APP_* when defined at build time.
+const readEnvWsUrl = (): string | undefined => {
+  try {
+    return process.env.REACT_APP_SPOT_WS_URL
+  } catch {
+    return undefined
+  }
+}
+
+const SPOT_WS_URL = resolveSpotWsUrl(readEnvWsUrl(), SPOT_API_URL)
 
 // ─── Types ───
 
@@ -178,6 +217,25 @@ class SpotWebSocket {
   private reconnectAttempts = 0
   private readonly maxReconnectAttempts = 10
   private readonly subscriptions = new Set<string>()
+  /** Read-session token binding this socket to a wallet (user:<addr>). */
+  private authToken: string | null = null
+  private authedAddress: string | null = null
+
+  /**
+   * Bind (or unbind with null) the socket to a wallet using the 8h read
+   * session. Private `user:<address>` channels are only (re)subscribed after
+   * the server confirms with `authenticated`.
+   */
+  authenticate(token: string | null) {
+    if (token === this.authToken) return
+    this.authToken = token
+    this.authedAddress = null
+    if (token) this.send({ action: 'auth', token })
+  }
+
+  private isUserChannel(channel: string) {
+    return channel.startsWith('user:')
+  }
 
   connect() {
     if (
@@ -195,16 +253,32 @@ class SpotWebSocket {
         if (process.env.NODE_ENV !== 'production')
           console.log('[SpotWS] Connected')
         this.reconnectAttempts = 0
-        // Re-subscribe to all channels
-        Array.from(this.subscriptions).forEach(channel => {
-          this.send({ action: 'subscribe', channel })
-        })
+        this.authedAddress = null
+        if (this.authToken) this.send({ action: 'auth', token: this.authToken })
+        // Re-subscribe to public channels; user channels wait for auth
+        Array.from(this.subscriptions)
+          .filter(channel => !this.isUserChannel(channel))
+          .forEach(channel => {
+            this.send({ action: 'subscribe', channel })
+          })
       }
 
       this.ws.onmessage = event => {
         try {
           const msg = JSON.parse(event.data)
-          if (msg.channel) {
+          if (msg.type === 'authenticated' && typeof msg.address === 'string') {
+            this.authedAddress = msg.address
+            Array.from(this.subscriptions)
+              .filter(channel => channel === `user:${msg.address}`)
+              .forEach(channel => this.send({ action: 'subscribe', channel }))
+            return
+          }
+          // Acks (subscribed/unsubscribed) carry no data — never hand
+          // listeners an undefined payload.
+          if (
+            msg.channel &&
+            (msg.type === 'update' || msg.type === 'snapshot')
+          ) {
             const callbacks = this.listeners.get(msg.channel)
             if (callbacks) {
               Array.from(callbacks).forEach(cb => {
@@ -258,6 +332,12 @@ class SpotWebSocket {
     const callbacks = this.listeners.get(channel)
     if (callbacks) callbacks.add(callback)
 
+    if (
+      this.isUserChannel(channel) &&
+      channel !== `user:${this.authedAddress}`
+    ) {
+      return // sent once the server confirms the session (see onmessage)
+    }
     this.send({ action: 'subscribe', channel })
   }
 
@@ -289,11 +369,14 @@ export const spotWs = new SpotWebSocket()
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${SPOT_API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options?.headers as Record<string, string> | undefined)
+    }
   })
   const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'API error')
+  if (!res.ok) throw handleReadAuthError(data.error)
   return data
 }
 
@@ -305,14 +388,27 @@ export interface SpotBalance {
 }
 
 export const spotApi = {
+  /** Spot vault balances (private read: read session or signed headers). */
   async getBalances(
     address: string,
-    auth: SignedActionAuth
-  ): Promise<{ balances: SpotBalance[] }> {
-    return fetchApi<{ balances: SpotBalance[] }>(
+    auth: ReadAuth
+  ): Promise<{ balances: SpotBalance[]; settlementEnabled?: boolean }> {
+    return fetchApi<{ balances: SpotBalance[]; settlementEnabled?: boolean }>(
       `/api/v1/balances?address=${encodeURIComponent(address)}`,
-      { headers: signedAuthHeaders(auth) }
+      { headers: readAuthHeaders(auth) }
     )
+  },
+
+  /**
+   * Public: whether spot-api settles trades on-chain, and against which
+   * spot_settlement vault. `settlementEnabled: false` = off-chain matching
+   * only (trades end SKIPPED); the UI must say so.
+   */
+  async getSettlementMode(): Promise<{
+    settlementEnabled: boolean
+    contractAddress: string | null
+  }> {
+    return fetchApi('/api/v1/balances/settlement')
   },
 
   // ─── Pairs ───
@@ -355,7 +451,7 @@ export const spotApi = {
 
   async getUserOrders(
     makerAddress: string,
-    auth: SignedActionAuth,
+    auth: ReadAuth,
     status?: string,
     limit = 50,
     offset = 0
@@ -365,7 +461,7 @@ export const spotApi = {
     )}&limit=${limit}&offset=${offset}`
     if (status) url += `&status=${encodeURIComponent(status)}`
     return await fetchApi<{ orders: SpotOrder[] }>(url, {
-      headers: signedAuthHeaders(auth)
+      headers: readAuthHeaders(auth)
     })
   },
 
@@ -381,7 +477,7 @@ export const spotApi = {
 
   async getUserTrades(
     address: string,
-    auth: SignedActionAuth,
+    auth: ReadAuth,
     limit = 50,
     offset = 0
   ): Promise<{ trades: SpotTrade[] }> {
@@ -389,7 +485,7 @@ export const spotApi = {
       `/api/v1/trades?address=${encodeURIComponent(
         address
       )}&limit=${limit}&offset=${offset}`,
-      { headers: signedAuthHeaders(auth) }
+      { headers: readAuthHeaders(auth) }
     )
   },
 
@@ -407,13 +503,10 @@ export const spotApi = {
   },
 
   // ─── Favorites ───
-  async getFavorites(
-    address: string,
-    auth: SignedActionAuth
-  ): Promise<string[]> {
+  async getFavorites(address: string, auth: ReadAuth): Promise<string[]> {
     const data = await fetchApi<{ favorites: string[] }>(
       `/api/v1/user/${encodeURIComponent(address)}/favorites`,
-      { headers: signedAuthHeaders(auth) }
+      { headers: readAuthHeaders(auth) }
     )
     return data.favorites
   },

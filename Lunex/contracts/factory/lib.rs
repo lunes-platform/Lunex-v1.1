@@ -101,10 +101,7 @@ pub mod factory {
         /// panicking constructor can leave storage in a partially-initialised
         /// state in ink! 4.x.
         #[ink(constructor)]
-        pub fn new(
-            fee_to_setter: AccountId,
-            pair_code_hash: Hash,
-        ) -> Result<Self, FactoryError> {
+        pub fn new(fee_to_setter: AccountId, pair_code_hash: Hash) -> Result<Self, FactoryError> {
             if fee_to_setter == AccountId::from(constants::ZERO_ADDRESS) {
                 return Err(FactoryError::ZeroAddress);
             }
@@ -251,9 +248,7 @@ pub mod factory {
         /// * `Hash` - Hash usado para deterministic deployment dos pares
         #[ink(message)]
         pub fn pair_contract_code_hash(&self) -> Hash {
-            self.pair_contract_code_hash
-                .get()
-                .unwrap_or(Hash::default())
+            self.pair_contract_code_hash.get().unwrap_or_default()
         }
 
         /// Cria um novo par de tokens
@@ -293,10 +288,7 @@ pub mod factory {
             salt.extend_from_slice(token_1.as_ref());
 
             // Obter code hash do par armazenado no constructor
-            let code_hash = self
-                .pair_contract_code_hash
-                .get()
-                .unwrap_or_default();
+            let code_hash = self.pair_contract_code_hash.get().unwrap_or_default();
 
             let factory_address = self.env().account_id();
 
@@ -315,13 +307,11 @@ pub mod factory {
             // aqui É a factory. Atomicidade: o `?` aborta ANTES de registrar o
             // par, então uma falha de setup não deixa par órfão registrado.
             if let Some(fee_to) = self.protocol_fee_to {
-                pair
-                    .set_protocol_fee_to(fee_to)
+                pair.set_protocol_fee_to(fee_to)
                     .map_err(|_| FactoryError::PairSetupFailed)?;
             }
             if let Some(rewards) = self.trading_rewards_contract {
-                pair
-                    .set_trading_rewards_contract(rewards)
+                pair.set_trading_rewards_contract(rewards)
                     .map_err(|_| FactoryError::PairSetupFailed)?;
             }
 
@@ -329,13 +319,18 @@ pub mod factory {
             self.register_pair(token_0, token_1, pair_address);
 
             // Emitir evento para indexadores/UIs
-            // Use ink::env::emit_event to avoid ambiguity with pair_contract's EmitEvent impl
-            ink::env::emit_event::<ink::env::DefaultEnvironment, PairCreated>(PairCreated {
-                token_0,
-                token_1,
-                pair: pair_address,
-                length: self.all_pairs_len,
-            });
+            // Name the contract in EmitEvent to pick this contract's impl over
+            // pair_contract's. Calling ink::env::emit_event directly skips the
+            // event-enum index byte, so metadata-based decoders can't read it.
+            ink::codegen::EmitEvent::<FactoryContract>::emit_event(
+                self.env(),
+                PairCreated {
+                    token_0,
+                    token_1,
+                    pair: pair_address,
+                    length: self.all_pairs_len,
+                },
+            );
 
             Ok(pair_address)
         }
@@ -358,7 +353,10 @@ pub mod factory {
 
         /// Configura a liquidez mínima exigida para pools (anti-spam, 0 = desabilitado)
         #[ink(message)]
-        pub fn set_min_pool_liquidity(&mut self, min_liquidity: Balance) -> Result<(), FactoryError> {
+        pub fn set_min_pool_liquidity(
+            &mut self,
+            min_liquidity: Balance,
+        ) -> Result<(), FactoryError> {
             self.ensure_caller_is_fee_setter()?;
             self.min_pool_liquidity = min_liquidity;
             Ok(())
@@ -468,7 +466,9 @@ pub mod factory {
             let accounts = default_accounts();
             set_sender(accounts.bob); // fee_to_setter
             let mut factory = FactoryContract::new(accounts.bob, Hash::default()).unwrap();
-            factory.set_protocol_fee_to_global(accounts.charlie).unwrap();
+            factory
+                .set_protocol_fee_to_global(accounts.charlie)
+                .unwrap();
             factory.set_trading_rewards_global(accounts.django).unwrap();
             assert_eq!(factory.get_protocol_fee_to_global(), Some(accounts.charlie));
             assert_eq!(factory.get_trading_rewards_global(), Some(accounts.django));

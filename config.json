@@ -1,5 +1,11 @@
 {
-  "projectFiles": ["uniswap-v2/contracts/**/*"],
+  "projectFiles": [
+    "Lunex/contracts/factory/Cargo.toml",
+    "Lunex/contracts/pair/Cargo.toml",
+    "Lunex/contracts/psp22/Cargo.toml",
+    "Lunex/contracts/wnative/Cargo.toml",
+    "Lunex/contracts/router/Cargo.toml"
+  ],
   "typechainGeneratedPath": "types",
   "isWorkspace": true,
   "workspacePath": "./"

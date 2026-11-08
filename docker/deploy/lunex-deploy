@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# =============================================================================
+# lunex-deploy — the ONLY privileged command the CI deploy key may run (IN-08).
+#
+# Installed root-owned at /usr/local/bin/lunex-deploy by
+# scripts/provision-vps.sh (step "CI deploy wrapper"). The CI user gets
+#   lunex-ci ALL=(root) NOPASSWD: /usr/local/bin/lunex-deploy
+# and nothing else (no docker group, no `sudo docker`, which is root-equivalent).
+#
+# Usage (arguments are validated; nothing is passed through to docker):
+#   lunex-deploy sandbox <image-tag>   pull + migrate + rolling update (sandbox)
+#   lunex-deploy prod    <image-tag>   pull + migrate + rolling update (prod)
+#   lunex-deploy rollback              redeploy the previous immutable prod tag
+#
+# Fixed inputs: compose files and env files under $APP_DIR; registry and image
+# prefix come from the root-owned /etc/lunex/deploy.env, never from the caller.
+# =============================================================================
+set -euo pipefail
+umask 077
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+die() { echo "lunex-deploy: $*" >&2; exit 2; }
+
+CONF=/etc/lunex/deploy.env
+[[ -f "$CONF" ]] || die "missing $CONF"
+# Refuse a config anyone but root could have written.
+[[ "$(stat -c '%u' "$CONF")" == "0" ]] || die "$CONF must be owned by root"
+[[ "$(stat -c '%a' "$CONF")" =~ ^[0-7][0-5][0-5]$ ]] || die "$CONF must not be group/world writable"
+
+APP_DIR=/opt/lunex
+REGISTRY=ghcr.io
+IMAGE_PREFIX=
+# shellcheck disable=SC1090
+source "$CONF"
+[[ "$REGISTRY" =~ ^[a-z0-9.-]+(:[0-9]+)?$ ]] || die "bad REGISTRY in $CONF"
+[[ "$IMAGE_PREFIX" =~ ^[a-z0-9._/-]+$ ]] || die "bad IMAGE_PREFIX in $CONF"
+[[ "$APP_DIR" == /opt/lunex ]] || die "APP_DIR is fixed to /opt/lunex"
+export REGISTRY IMAGE_PREFIX
+
+PROD=(-f "$APP_DIR/docker/docker-compose.prod.yml")
+SANDBOX=(-f "$APP_DIR/docker/docker-compose.prod.yml"
+         -f "$APP_DIR/docker/docker-compose.sandbox.yml"
+         --env-file "$APP_DIR/docker/.env.prod"
+         --env-file "$APP_DIR/docker/.env.sandbox")
+
+valid_tag() { [[ "$1" =~ ^[0-9a-f]{7,40}$ ]] || die "image tag must be a git sha (7-40 hex)"; }
+
+wait_healthy() { # <port> <label>
+  for i in $(seq 1 12); do
+    if curl -sf "http://127.0.0.1:$1/health" >/dev/null; then
+      echo "✅ $2 healthy (attempt $i)"; return 0
+    fi
+    sleep 5
+  done
+  echo "❌ $2 health check failed" >&2
+  return 1
+}
+
+cd "$APP_DIR"
+cmd="${1:-}"
+case "$cmd" in
+  sandbox)
+    [[ $# -eq 2 ]] || die "usage: lunex-deploy sandbox <tag>"
+    valid_tag "$2"; export IMAGE_TAG="$2"
+    echo "📦 sandbox → ${IMAGE_TAG}"
+    docker compose "${SANDBOX[@]}" pull sandbox-api sandbox-frontend
+    docker compose "${SANDBOX[@]}" run --rm sandbox-api npx prisma migrate deploy
+    docker compose "${SANDBOX[@]}" up -d --no-deps sandbox-api
+    sleep 10
+    wait_healthy 4010 "sandbox API"
+    docker compose "${SANDBOX[@]}" up -d --no-deps sandbox-frontend nginx
+    docker system prune -f --filter "until=24h"
+    echo "✅ sandbox deploy complete — ${IMAGE_TAG}"
+    ;;
+  prod)
+    [[ $# -eq 2 ]] || die "usage: lunex-deploy prod <tag>"
+    valid_tag "$2"; export IMAGE_TAG="$2"
+    echo "📦 prod → ${IMAGE_TAG}"
+    docker compose "${PROD[@]}" pull api frontend admin
+    docker compose "${PROD[@]}" run --rm api npx prisma migrate deploy
+    docker compose "${PROD[@]}" up -d --no-deps api
+    if ! wait_healthy 4000 "API"; then
+      PREV_TAG=$(docker images "${REGISTRY}/${IMAGE_PREFIX}/api" --format '{{.Tag}}' \
+        | grep -E '^[0-9a-f]{7,40}$' | grep -vx "${IMAGE_TAG}" | head -1 || true)
+      if [[ -n "${PREV_TAG}" ]]; then
+        echo "⏪ rolling API back to ${PREV_TAG}"
+        IMAGE_TAG="${PREV_TAG}" docker compose "${PROD[@]}" up -d --no-deps api
+      fi
+      exit 1
+    fi
+    docker compose "${PROD[@]}" up -d --no-deps frontend admin
+    # nginx.prod.conf is an envsubst template (templates/default.conf.template):
+    # re-render conf.d/default.conf so template edits apply, then test+reload.
+    docker compose "${PROD[@]}" exec -T nginx /docker-entrypoint.d/20-envsubst-on-templates.sh
+    docker compose "${PROD[@]}" exec -T nginx nginx -t
+    docker compose "${PROD[@]}" exec -T nginx nginx -s reload
+    docker system prune -f --filter "until=24h"
+    echo "✅ prod deploy complete — ${IMAGE_TAG}"
+    ;;
+  rollback)
+    [[ $# -eq 1 ]] || die "usage: lunex-deploy rollback"
+    CUR_TAG=$(docker inspect --format '{{.Config.Image}}' "$(docker compose "${PROD[@]}" ps -q api)" 2>/dev/null | sed 's/.*://' || true)
+    PREV_TAG=$(docker images "${REGISTRY}/${IMAGE_PREFIX}/api" --format '{{.Tag}}' \
+      | grep -E '^[0-9a-f]{7,40}$' | grep -vx "${CUR_TAG:-none}" | head -1 || true)
+    [[ -n "${PREV_TAG}" ]] || die "no previous immutable tag found"
+    export IMAGE_TAG="${PREV_TAG}"
+    echo "⏪ rollback prod → ${IMAGE_TAG}"
+    docker compose "${PROD[@]}" up -d --no-deps api frontend admin
+    wait_healthy 4000 "API"
+    echo "✅ rollback complete — ${IMAGE_TAG}"
+    ;;
+  *)
+    die "usage: lunex-deploy {sandbox <tag>|prod <tag>|rollback}"
+    ;;
+esac

@@ -15,9 +15,13 @@ import { log } from '../utils/logger';
 import {
   buildSpotOrderMessage,
   buildLegacySpotOrderMessage,
-  verifyAddressSignature,
+  verifySpotOrderSignature,
 } from '../middleware/auth';
 import { withTxTimeout } from '../utils/txWithTimeout';
+import {
+  reconcileFinalizedExtrinsic,
+  type ExtrinsicReconciliation,
+} from '../utils/extrinsicReconciliation';
 import {
   toSettlementPriceUnits,
   toSettlementOrderPriceUnits,
@@ -62,29 +66,113 @@ export type TradeSettlementInput = {
   fillPrice: string;
 };
 
+/**
+ * Mortal-era length (in blocks) of every settle_trade extrinsic. Once the
+ * finalized head is past `birthBlock + SETTLEMENT_TX_MORTALITY_BLOCKS` a
+ * not-yet-included extrinsic can never be included, which is what makes an
+ * ambiguous submission provably resolvable (BE-07).
+ */
+export const SETTLEMENT_TX_MORTALITY_BLOCKS = 64;
+
+/** Persisted before broadcast so an ambiguous outcome can be reconciled. */
+export type SettlementSubmission = {
+  txHash: string;
+  relayerNonce: number;
+  birthBlock: number;
+  mortality: number;
+};
+
+export type SettlementHooks = {
+  /**
+   * Called with the signed extrinsic's hash/nonce/era right BEFORE it is
+   * broadcast. If it throws, nothing is broadcast (fail closed).
+   */
+  onBeforeBroadcast?: (
+    tradeId: string,
+    submission: SettlementSubmission,
+  ) => Promise<void>;
+};
+
 export type SettlementResult = {
   tradeId: string;
-  status: 'SETTLED' | 'FAILED' | 'SKIPPED';
+  /**
+   * UNKNOWN: the extrinsic was broadcast but its outcome is not known (e.g.
+   * timeout before finality, dropped, RPC error). It may still land and must
+   * NOT be re-submitted until reconciled.
+   */
+  status: 'SETTLED' | 'FAILED' | 'SKIPPED' | 'UNKNOWN';
   txHash?: string;
   error?: string;
+  submission?: SettlementSubmission;
+  /**
+   * SETTLED because the contract already records this fill as settled
+   * (is_fill_settled at the finalized head) — no funds moved in this attempt
+   * and the settling extrinsic hash is not known here.
+   */
+  alreadySettled?: boolean;
 };
+
+export type SubmissionReconciliation =
+  | ExtrinsicReconciliation
+  /**
+   * The contract records this fill as settled at the FINALIZED head
+   * (is_fill_settled). Idempotent contract: any still-pending copy of our
+   * extrinsic would revert with TradeAlreadySettled, so this is final.
+   */
+  | { outcome: 'ALREADY_SETTLED' };
+
+/** Outcome after broadcast is final: the extrinsic did not / cannot apply. */
+class DefinitiveSettlementFailure extends Error {}
+
+/** The contract already settled this fill (TradeAlreadySettled). */
+class FillAlreadySettled extends Error {}
+
+/**
+ * Variant name of a contract-level `Err` in a decoded MessageResult
+ * (`Ok(Err(SpotError::X))`), or null when the message returned Ok / the
+ * output is not decodable.
+ */
+export function contractErrorVariant(output: unknown): string | null {
+  const toJSON = (output as { toJSON?: () => unknown } | null)?.toJSON;
+  if (typeof toJSON !== 'function') return null;
+  const json = toJSON.call(output) as Record<string, unknown> | null;
+  if (!json || typeof json !== 'object') return null;
+  const inner = (json.ok ?? json.Ok) as Record<string, unknown> | undefined;
+  if (!inner || typeof inner !== 'object') return null;
+  const err = inner.err ?? inner.Err;
+  if (err === undefined || err === null) return null;
+  if (typeof err === 'string') return err;
+  if (typeof err === 'object') return Object.keys(err)[0] ?? 'Unknown';
+  return String(err);
+}
+
+function isTradeAlreadySettled(variant: string | null) {
+  return variant?.toLowerCase() === 'tradealreadysettled';
+}
+
+/** Broadcast happened (or may have) and the outcome is unknown. */
+class AmbiguousSubmissionError extends Error {
+  constructor(
+    message: string,
+    public readonly submission: SettlementSubmission,
+  ) {
+    super(message);
+  }
+}
 
 type ContractMethodKind = 'tx' | 'query';
 
-export function buildSettlementOrderSignatureMessage(
+/** The order fields exactly as signed at intake (input of every format). */
+function settlementOrderMessageInput(
   pair: Pick<PairSettlementSnapshot, 'symbol'>,
   order: OrderSettlementSnapshot,
-  version: 'v1' | 'v2' = 'v2',
 ) {
   if (!order.signatureTimestamp) {
     throw new Error(
       `Missing order signature timestamp for ${order.makerAddress}`,
     );
   }
-
-  const build =
-    version === 'v1' ? buildLegacySpotOrderMessage : buildSpotOrderMessage;
-  return build({
+  return {
     timeInForce: order.timeInForce || 'GTC',
     expiresAt: order.expiresAt,
     pairSymbol: pair.symbol,
@@ -95,7 +183,23 @@ export function buildSettlementOrderSignatureMessage(
     amount: order.amount,
     nonce: order.nonce,
     timestamp: order.signatureTimestamp.getTime(),
-  });
+  };
+}
+
+/**
+ * Canonical (v3, domain + genesis bound) message for a stored order, or the
+ * deprecated unbound v1 format. Verification at settlement goes through
+ * verifySpotOrderSignature, which owns the legacy gate.
+ */
+export function buildSettlementOrderSignatureMessage(
+  pair: Pick<PairSettlementSnapshot, 'symbol'>,
+  order: OrderSettlementSnapshot,
+  version: 'v1' | 'v3' = 'v3',
+) {
+  const input = settlementOrderMessageInput(pair, order);
+  return version === 'v1'
+    ? buildLegacySpotOrderMessage(input)
+    : buildSpotOrderMessage(input);
 }
 
 function normalizeMethodKey(key: string) {
@@ -806,25 +910,15 @@ class SpotSettlementService {
       );
     }
 
-    let isValid = await verifyAddressSignature(
-      buildSettlementOrderSignatureMessage(pair, order),
+    // Same acceptance rules as order intake: v3 always; legacy v2 / v1 only
+    // with SIGNING_ACCEPT_LEGACY (v1 only for plain GTC without expiry).
+    const version = await verifySpotOrderSignature(
+      settlementOrderMessageInput(pair, order),
       order.signature,
       order.makerAddress,
     );
 
-    if (
-      !isValid &&
-      (order.timeInForce || 'GTC') === 'GTC' &&
-      !order.expiresAt
-    ) {
-      isValid = await verifyAddressSignature(
-        buildSettlementOrderSignatureMessage(pair, order, 'v1'),
-        order.signature,
-        order.makerAddress,
-      );
-    }
-
-    if (!isValid) {
+    if (!version) {
       throw new Error(`Invalid order signature for ${order.makerAddress}`);
     }
   }
@@ -836,7 +930,10 @@ class SpotSettlementService {
     ]);
   }
 
-  private async submitSettlement(input: TradeSettlementInput) {
+  private async submitSettlement(
+    input: TradeSettlementInput,
+    hooks: SettlementHooks = {},
+  ): Promise<string | null> {
     await this.assertSettlementInputTrusted(input);
 
     const isReady = await this.ensureReady();
@@ -864,7 +961,7 @@ class SpotSettlementService {
     ).toString();
     const fillPrice = toSettlementPriceUnits(input.fillPrice, input.pair);
 
-    const { gasRequired, result } = await queryMethod(
+    const { gasRequired, result, output } = await queryMethod(
       this.relayer.address,
       { gasLimit: this.dryRunGasLimit(), storageDepositLimit: null },
       makerOrder,
@@ -879,66 +976,270 @@ class SpotSettlementService {
       );
     }
 
+    // Contract-level Err in the dry-run: never broadcast a call that reverts.
+    // TradeAlreadySettled (idempotent spot_settlement) is only trusted once
+    // the FINALIZED state confirms the fill — then no funds move here.
+    const dryRunError = contractErrorVariant(output);
+    if (dryRunError) {
+      if (
+        isTradeAlreadySettled(dryRunError) &&
+        (await this.isFillSettled(input)) === true
+      ) {
+        throw new FillAlreadySettled(
+          `Fill for trade ${input.tradeId} already settled on-chain`,
+        );
+      }
+      throw new Error(
+        `[SpotSettlement] Dry-run reverted for trade ${input.tradeId}: ${dryRunError}`,
+      );
+    }
+
     // Acquire an explicit, distinct relayer nonce immediately before submit.
     // Without this, concurrent settle_trade submissions (pipeline mode) would
     // share a lazily-resolved nonce and the node would silently drop all but
     // one. With it, each in-flight extrinsic is uniquely sequenced; the
     // contract's used_nonces guard still rejects any genuine replay.
     const relayerNonce = await this.nextNonce();
+    const api = this.api!;
+    let submission: SettlementSubmission | null = null;
 
-    const txPromise = new Promise<string>((resolve, reject) => {
-      let unsub: (() => void) | undefined;
+    try {
+      // Explicit mortal era anchored on the finalized head: the extrinsic is
+      // only valid in blocks [birth, birth + MORTALITY). This bounds how long
+      // an ambiguous submission can still land, so reconciliation can prove
+      // "not included" from finalized data alone (BE-07).
+      const birthHash = await api.rpc.chain.getFinalizedHead();
+      const birthHeader = await api.rpc.chain.getHeader(birthHash);
+      const birthBlock = birthHeader.number.toNumber();
+      const era = api.registry.createType('ExtrinsicEra', {
+        current: birthBlock,
+        period: SETTLEMENT_TX_MORTALITY_BLOCKS,
+      });
 
-      txMethod(
+      const extrinsic = txMethod(
         { gasLimit: this.txGasLimit(gasRequired), storageDepositLimit: null },
         makerOrder,
         takerOrder,
         fillAmount,
         fillPrice,
-      )
-        .signAndSend(
-          this.relayer!,
-          { nonce: relayerNonce },
-          (txResult: {
-            status: { isInBlock: boolean; isFinalized: boolean };
-            dispatchError?: { toString(): string };
-            txHash: { toHex(): string };
-          }) => {
-            if (txResult.dispatchError) {
-              if (unsub) unsub();
-              reject(new Error(txResult.dispatchError.toString()));
-              return;
-            }
+      );
+      await extrinsic.signAsync(this.relayer!, {
+        nonce: relayerNonce,
+        blockHash: birthHash,
+        era,
+      });
+      const signed: SettlementSubmission = {
+        txHash: extrinsic.hash.toHex(),
+        relayerNonce: Number(relayerNonce),
+        birthBlock,
+        mortality: SETTLEMENT_TX_MORTALITY_BLOCKS,
+      };
 
-            // Wait for finality — `isInBlock` only means included in a
-            // non-finalized block, which forks can revert. For operations
-            // that move user funds (settlements, cancels), the off-chain
-            // DB state must only update after the chain confirms finality.
-            if (txResult.status.isFinalized) {
-              const txHash = txResult.txHash.toHex();
-              if (unsub) unsub();
-              resolve(txHash);
-            }
-          },
-        )
-        .then((unsubscribe: () => void) => {
-          unsub = unsubscribe;
-        })
-        .catch(reject);
-    });
+      // Persist BEFORE broadcast. If this throws (DB error, or the claim was
+      // superseded by another worker) nothing has been sent.
+      if (hooks.onBeforeBroadcast) {
+        await hooks.onBeforeBroadcast(input.tradeId, signed);
+      }
+      submission = signed;
 
-    // If this submission fails (dispatch error, broadcast failure, or
-    // timeout), the nonce we reserved may never be consumed on-chain, which
-    // would leave a gap and stall every subsequent settle_trade. Invalidate
-    // the cached counter so the next nextNonce() re-seeds from the node's
-    // authoritative accountNextIndex. The contract's used_nonces guard makes
-    // any accidental re-submission of an already-settled trade a no-op revert.
-    return withTxTimeout(`settle_trade:${input.tradeId}`, txPromise).catch(
-      (err) => {
-        this.invalidateNonce();
-        throw err;
-      },
-    );
+      const txPromise = new Promise<string>((resolve, reject) => {
+        let unsub: (() => void) | undefined;
+        let done = false;
+        const finish = (fn: () => void) => {
+          if (done) return;
+          done = true;
+          if (unsub) unsub();
+          fn();
+        };
+
+        extrinsic
+          .send(
+            (txResult: {
+              status: Record<string, boolean | undefined>;
+              dispatchError?: { toString(): string };
+            }) => {
+              const status = txResult.status ?? {};
+              // Definitive: the pool rejected it or another extrinsic took
+              // its nonce — it can never be included.
+              if (status.isInvalid || status.isUsurped) {
+                finish(() =>
+                  reject(
+                    new DefinitiveSettlementFailure(
+                      `settle_trade ${status.isInvalid ? 'Invalid' : 'Usurped'}`,
+                    ),
+                  ),
+                );
+                return;
+              }
+              // Ambiguous: dropped from the local pool / finality timeout —
+              // it may still be gossiped and included elsewhere.
+              if (status.isDropped || status.isFinalityTimeout) {
+                finish(() =>
+                  reject(new Error('settle_trade dropped / finality timeout')),
+                );
+                return;
+              }
+              // Only finalized state is final: an error (or success) in a
+              // non-finalized block can be reorged out and re-included.
+              if (status.isFinalized) {
+                if (txResult.dispatchError) {
+                  const message = txResult.dispatchError.toString();
+                  finish(() =>
+                    reject(new DefinitiveSettlementFailure(message)),
+                  );
+                  return;
+                }
+                finish(() => resolve(signed.txHash));
+              }
+            },
+          )
+          .then((unsubscribe: () => void) => {
+            unsub = unsubscribe;
+            if (done) unsubscribe();
+          })
+          .catch((err: unknown) => finish(() => reject(err)));
+      });
+
+      return await withTxTimeout(`settle_trade:${input.tradeId}`, txPromise);
+    } catch (err: unknown) {
+      // The reserved nonce may never be consumed (gap) — re-seed from the
+      // node's accountNextIndex, which also counts our still-pooled tx.
+      this.invalidateNonce();
+      if (
+        err instanceof DefinitiveSettlementFailure &&
+        (await this.isFillSettled(input)) === true
+      ) {
+        // Our extrinsic reverted (e.g. TradeAlreadySettled — ink! revert data
+        // is not in the dispatch error) but the fill IS settled at the
+        // finalized head: nothing to retry.
+        throw new FillAlreadySettled(
+          `Fill for trade ${input.tradeId} already settled on-chain`,
+        );
+      }
+      if (submission && !(err instanceof DefinitiveSettlementFailure)) {
+        // Broadcast (or attempted): the extrinsic may still land within its
+        // mortal era. Even with the idempotent contract this must
+        // be reconciled, never blindly re-submitted.
+        throw new AmbiguousSubmissionError(
+          err instanceof Error ? err.message : 'Unknown submission outcome',
+          submission,
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Reads `is_fill_settled(maker, taker, fill, price)` at the FINALIZED head
+   * (contractsApi.call on `api.at(finalizedHash)`), so a reorg cannot undo
+   * the answer. Returns null when it cannot be determined (service not
+   * ready, legacy contract without the message, revert, decode failure).
+   */
+  async isFillSettled(input: TradeSettlementInput): Promise<boolean | null> {
+    try {
+      const isReady = await this.ensureReady();
+      if (!isReady || !this.api || !this.contract || !this.relayer) {
+        return null;
+      }
+      const message = this.contract.abi.messages.find(
+        (m) =>
+          normalizeMethodKey(m.identifier) ===
+          normalizeMethodKey('is_fill_settled'),
+      );
+      if (!message) return null;
+
+      const data = message.toU8a([
+        this.toSignedOrder(input.pair, input.makerOrder),
+        this.toSignedOrder(input.pair, input.takerOrder),
+        decimalToUnits(input.fillAmount, input.pair.baseDecimals).toString(),
+        toSettlementPriceUnits(input.fillPrice, input.pair),
+      ]);
+
+      const finalizedHash = await this.api.rpc.chain.getFinalizedHead();
+      const apiAt = await this.api.at(finalizedHash);
+      const exec = (await apiAt.call.contractsApi.call(
+        this.relayer.address,
+        this.contract.address,
+        0,
+        this.dryRunGasLimit(),
+        null,
+        data,
+      )) as unknown as {
+        result: {
+          isOk: boolean;
+          asOk: {
+            flags: { isRevert: boolean };
+            data: { toU8a(isBare?: boolean): Uint8Array };
+          };
+        };
+      };
+      if (!exec.result.isOk || exec.result.asOk.flags.isRevert) return null;
+
+      const returnType = message.returnType;
+      if (!returnType) return null;
+      const output = this.contract.abi.registry.createTypeUnsafe(
+        returnType.lookupName || returnType.type,
+        [exec.result.asOk.data.toU8a(true)],
+        { isPedantic: true },
+      );
+      return readContractBoolean(output as never);
+    } catch (err: unknown) {
+      log.warn(
+        { err, tradeId: input.tradeId },
+        '[SpotSettlement] is_fill_settled unavailable',
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Resolves an ambiguous settle_trade submission from FINALIZED chain data
+   * only (BE-07). Scans the extrinsic's whole mortal-era window
+   * [birthBlock, birthBlock + mortality] (clamped to the finalized head) for
+   * the persisted extrinsic hash:
+   *   - found + ExtrinsicSuccess → INCLUDED_SUCCESS
+   *   - found + ExtrinsicFailed  → INCLUDED_FAILED (contract reverted)
+   *   - absent and finalized head past the window → NOT_INCLUDED (can never
+   *     land: safe to re-submit)
+   *   - absent and window still open → PENDING (do nothing)
+   * With the trade `input`, the idempotent contract adds a second finalized
+   * signal: if is_fill_settled is true at the finalized head, any verdict
+   * other than INCLUDED_SUCCESS becomes ALREADY_SETTLED (a late landing of
+   * our extrinsic would revert with TradeAlreadySettled).
+   */
+  async reconcileSubmission(
+    submission: SettlementSubmission,
+    input?: TradeSettlementInput,
+  ): Promise<SubmissionReconciliation> {
+    const isReady = await this.ensureReady();
+    if (!isReady || !this.api) {
+      return {
+        outcome: 'UNAVAILABLE',
+        error: 'Settlement service unavailable',
+      };
+    }
+    let verdict: ExtrinsicReconciliation;
+    try {
+      verdict = await reconcileFinalizedExtrinsic(this.api, submission);
+    } catch (err: unknown) {
+      log.error(
+        { err, txHash: submission.txHash },
+        '[SpotSettlement] reconcileSubmission failed',
+      );
+      verdict = {
+        outcome: 'UNAVAILABLE',
+        error: err instanceof Error ? err.message : 'Reconciliation failed',
+      };
+    }
+
+    if (
+      input &&
+      verdict.outcome !== 'INCLUDED_SUCCESS' &&
+      (await this.isFillSettled(input)) === true
+    ) {
+      return { outcome: 'ALREADY_SETTLED' };
+    }
+    return verdict;
   }
 
   /**
@@ -954,19 +1255,23 @@ class SpotSettlementService {
 
   async settleTrades(
     inputs: TradeSettlementInput[],
+    hooks: SettlementHooks = {},
   ): Promise<SettlementResult[]> {
     // Pipeline mode: submit up to settleConcurrency() settle_trade extrinsics
     // concurrently instead of serializing one-per-finalized-block. Results are
-    // collected in input order. Each trade still maps to exactly one extrinsic
-    // with a distinct relayer nonce, so no trade is ever settled twice (the
-    // on-chain used_nonces guard is the final idempotency backstop), and a
-    // single failure is isolated to its own result without blocking siblings.
+    // collected in input order. Each trade maps to exactly one extrinsic with a
+    // distinct relayer nonce, and a single failure is isolated to its own
+    // result without blocking siblings. An ambiguous submission is returned
+    // as UNKNOWN and reconciled (reconcileSubmission), never re-submitted
+    // (BE-07). The idempotent contract (settled_trades / TradeAlreadySettled)
+    // is a second line of defence: a repeat reverts instead of re-applying,
+    // and a fill already settled at the finalized head is marked SETTLED.
     return this.mapWithConcurrency(
       inputs,
       this.settleConcurrency(),
       async (input): Promise<SettlementResult> => {
         try {
-          const txHash = await this.submitSettlement(input);
+          const txHash = await this.submitSettlement(input, hooks);
           if (txHash) {
             return { tradeId: input.tradeId, status: 'SETTLED', txHash };
           }
@@ -976,6 +1281,33 @@ class SpotSettlementService {
             error: 'Settlement service unavailable',
           };
         } catch (error) {
+          if (error instanceof FillAlreadySettled) {
+            log.warn(
+              { tradeId: input.tradeId },
+              '[SpotSettlement] fill already settled on-chain (finalized); marking SETTLED without moving funds',
+            );
+            return {
+              tradeId: input.tradeId,
+              status: 'SETTLED',
+              alreadySettled: true,
+            };
+          }
+          if (error instanceof AmbiguousSubmissionError) {
+            log.error(
+              {
+                err: error,
+                tradeId: input.tradeId,
+                txHash: error.submission.txHash,
+              },
+              '[SpotSettlement] settle_trade outcome unknown; parked for reconciliation',
+            );
+            return {
+              tradeId: input.tradeId,
+              status: 'UNKNOWN',
+              error: error.message,
+              submission: error.submission,
+            };
+          }
           log.error(
             { err: error, tradeId: input.tradeId },
             '[SpotSettlement] Failed to settle trade',

@@ -84,25 +84,31 @@ impl NativeAssetWrapper {
 
     /// Deposita asset nativo e recebe tokens PSP22
     pub fn wrap(&mut self, user: &str, amount: u128) -> Result<(), &'static str> {
-        if amount == 0 { return Err("ZeroAmount"); }
-        
+        if amount == 0 {
+            return Err("ZeroAmount");
+        }
+
         // Na implementação real, isso chamaria a API Lunes para verificar balance
         *self.balances.entry(user.to_string()).or_insert(0) += amount;
         self.wrapped_supply += amount;
-        
+
         Ok(())
     }
 
     /// Queima tokens PSP22 e saca asset nativo
     pub fn unwrap(&mut self, user: &str, amount: u128) -> Result<(), &'static str> {
-        if amount == 0 { return Err("ZeroAmount"); }
-        
+        if amount == 0 {
+            return Err("ZeroAmount");
+        }
+
         let balance = self.balances.get(user).copied().unwrap_or(0);
-        if balance < amount { return Err("InsufficientBalance"); }
-        
+        if balance < amount {
+            return Err("InsufficientBalance");
+        }
+
         *self.balances.get_mut(user).unwrap() -= amount;
         self.wrapped_supply -= amount;
-        
+
         Ok(())
     }
 
@@ -120,6 +126,12 @@ pub struct NativeAssetRegistry {
     wrappers: HashMap<String, NativeAssetWrapper>,
     /// Assets aprovados para listing no DEX
     approved_for_dex: HashMap<String, bool>,
+}
+
+impl Default for NativeAssetRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NativeAssetRegistry {
@@ -143,7 +155,7 @@ impl NativeAssetRegistry {
     /// Cria um wrapper PSP22 para um asset nativo
     pub fn create_wrapper(&mut self, asset_id: &str) -> Result<String, &'static str> {
         let asset = self.assets.get(asset_id).ok_or("AssetNotFound")?.clone();
-        
+
         if self.wrappers.contains_key(asset_id) {
             return Err("WrapperAlreadyExists");
         }
@@ -151,7 +163,7 @@ impl NativeAssetRegistry {
         let wrapper_address = format!("WRAPPER_{}", asset_id);
         let wrapper = NativeAssetWrapper::new(asset, wrapper_address.clone());
         self.wrappers.insert(asset_id.to_string(), wrapper);
-        
+
         Ok(wrapper_address)
     }
 
@@ -166,12 +178,16 @@ impl NativeAssetRegistry {
 
     /// Verifica se asset está aprovado para DEX
     pub fn is_approved(&self, asset_id: &str) -> bool {
-        self.approved_for_dex.get(asset_id).copied().unwrap_or(false)
+        self.approved_for_dex
+            .get(asset_id)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Lista todos os assets aprovados
     pub fn list_approved_assets(&self) -> Vec<&LunesNativeAsset> {
-        self.approved_for_dex.keys()
+        self.approved_for_dex
+            .keys()
             .filter_map(|id| self.assets.get(id))
             .collect()
     }
@@ -200,7 +216,7 @@ impl LunesNodeApiClient {
     pub fn get_asset_info(&self, asset_id: &str) -> Result<LunesNativeAsset, &'static str> {
         // Na implementação real, isso faria uma chamada HTTP:
         // GET {node_url}/assets/details/{asset_id}
-        
+
         // Mock para demonstração
         Ok(LunesNativeAsset {
             asset_id: asset_id.to_string(),
@@ -215,19 +231,19 @@ impl LunesNodeApiClient {
     }
 
     /// Busca balance de um asset para um endereço
-    pub fn get_asset_balance(&self, address: &str, asset_id: &str) -> Result<u128, &'static str> {
+    pub fn get_asset_balance(&self, _address: &str, _asset_id: &str) -> Result<u128, &'static str> {
         // Na implementação real:
         // GET {node_url}/assets/balance/{address}/{asset_id}
-        
+
         // Mock
         Ok(100_000_000_000) // 1000 tokens (8 decimals)
     }
 
     /// Lista todos os assets de um endereço
-    pub fn list_assets(&self, address: &str) -> Result<Vec<(String, u128)>, &'static str> {
+    pub fn list_assets(&self, _address: &str) -> Result<Vec<(String, u128)>, &'static str> {
         // Na implementação real:
         // GET {node_url}/assets/balance/{address}
-        
+
         // Mock
         Ok(vec![
             ("ASSET_USDT".to_string(), 50_000_000_000_000),
@@ -248,7 +264,7 @@ mod tests {
     #[test]
     fn test_native_asset_registration() {
         let mut registry = NativeAssetRegistry::new();
-        
+
         let asset = LunesNativeAsset {
             asset_id: "ABC123".to_string(),
             name: "Test Token".to_string(),
@@ -261,16 +277,18 @@ mod tests {
         };
 
         assert!(registry.register_asset(asset).is_ok());
-        assert!(registry.register_asset(LunesNativeAsset {
-            asset_id: "ABC123".to_string(),
-            ..Default::default()
-        }).is_err()); // Duplicata deve falhar
+        assert!(registry
+            .register_asset(LunesNativeAsset {
+                asset_id: "ABC123".to_string(),
+                ..Default::default()
+            })
+            .is_err()); // Duplicata deve falhar
     }
 
     #[test]
     fn test_wrapper_creation_and_operations() {
         let mut registry = NativeAssetRegistry::new();
-        
+
         let asset = LunesNativeAsset {
             asset_id: "USDT_NATIVE".to_string(),
             name: "USDT Native".to_string(),
@@ -284,9 +302,9 @@ mod tests {
 
         registry.register_asset(asset).unwrap();
         let wrapper_addr = registry.create_wrapper("USDT_NATIVE").unwrap();
-        
+
         println!("✅ Wrapper criado: {}", wrapper_addr);
-        
+
         // Aprovar para DEX
         registry.approve_for_dex("USDT_NATIVE").unwrap();
         assert!(registry.is_approved("USDT_NATIVE"));
@@ -306,15 +324,15 @@ mod tests {
         };
 
         let mut wrapper = NativeAssetWrapper::new(asset, "WRAPPER_BTC".to_string());
-        
+
         // User wraps 1 BTC
         wrapper.wrap("USER_A", 100_000_000).unwrap();
         assert_eq!(wrapper.balance_of("USER_A"), 100_000_000);
-        
+
         // User unwraps 0.5 BTC
         wrapper.unwrap("USER_A", 50_000_000).unwrap();
         assert_eq!(wrapper.balance_of("USER_A"), 50_000_000);
-        
+
         // Cannot unwrap more than balance
         assert!(wrapper.unwrap("USER_A", 100_000_000).is_err());
     }
@@ -322,15 +340,15 @@ mod tests {
     #[test]
     fn test_lunes_api_client() {
         let client = LunesNodeApiClient::new("https://nodes.lunes.io");
-        
+
         // Buscar info de asset
         let asset = client.get_asset_info("SOME_ASSET_ID").unwrap();
         println!("Asset: {} ({})", asset.name, asset.symbol);
-        
+
         // Buscar balance
         let balance = client.get_asset_balance("3P...", "SOME_ASSET_ID").unwrap();
         println!("Balance: {}", balance);
-        
+
         // Listar assets
         let assets = client.list_assets("3P...").unwrap();
         println!("User has {} different assets", assets.len());

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 env:
   NODE_JS_VER: 18.x
-  SWANKY_NODE_VER: v1.2.0
+  SWANKY_NODE_VER: v1.7.0
 jobs:
   tests:
     runs-on: ubuntu-latest
@@ -40,9 +40,9 @@ jobs:
 
     - name: Install cargo contract
       if: ${{ steps.check-cargo-contract.outcome == 'failure' }}
-      run: |
-        cargo install cargo-dylint dylint-link
-        cargo install --force --locked cargo-contract
+      # Pinned: unpinned installs pull crates that need a newer Rust than the
+      # 1.85.0 in rust-toolchain.toml. cargo-contract 4.x no longer needs dylint.
+      run: cargo install --force --locked cargo-contract --version 4.1.1
 
     - name: Compile contracts
       run: |
@@ -55,7 +55,7 @@ jobs:
     - name: e2e test
       run: |
         sudo wget https://github.com/AstarNetwork/swanky-node/releases/download/${{ env.SWANKY_NODE_VER }}/swanky-node-${{ env.SWANKY_NODE_VER }}-ubuntu-x86_64.tar.gz
-        sudo tar -zxvf swanky-node-v1.2.0-ubuntu-x86_64.tar.gz
+        sudo tar -zxvf swanky-node-${{ env.SWANKY_NODE_VER }}-ubuntu-x86_64.tar.gz
         sudo chmod +x swanky-node
         ./swanky-node -lerror,runtime::contracts=debug &
         sleep 10

@@ -27,12 +27,14 @@ export const rewardScheduler = {
     intervalId = setInterval(
       () => {
         this.checkAndDistribute();
+        this.reconcilePayouts();
       },
       60 * 60 * 1000,
     ); // 1 hour
 
     // Also check immediately on startup
     this.checkAndDistribute();
+    this.reconcilePayouts();
   },
 
   stop() {
@@ -63,6 +65,23 @@ export const rewardScheduler = {
       }
     } catch (err) {
       log.error({ err }, '[RewardScheduler] Distribution failed');
+    }
+  },
+
+  /**
+   * Resolve UNKNOWN / stale SUBMITTED payouts by their tx hash (read-only,
+   * never broadcasts). FAILED rows are NOT auto-retried: legacy FAILED rows
+   * from pre-reconciliation timeouts may already be paid, so re-paying stays
+   * a manual, reviewed action (retryFailedPayouts).
+   */
+  async reconcilePayouts() {
+    try {
+      const summary = await rewardDistributionService.reconcileUnknownPayouts();
+      if (summary.checked > 0) {
+        log.info({ summary }, '[RewardScheduler] Payout reconciliation');
+      }
+    } catch (err) {
+      log.error({ err }, '[RewardScheduler] Payout reconciliation failed');
     }
   },
 

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# =============================================================================
+# lunex-deploy-ssh — authorized_keys forced command for the CI deploy key.
+#
+#   restrict,command="/usr/local/bin/lunex-deploy-ssh" ssh-ed25519 AAAA… lunex-ci
+#
+# Whatever the client asks to run arrives in $SSH_ORIGINAL_COMMAND. It is split
+# on whitespace (no eval, no globbing) and handed to the root wrapper, which
+# validates every argument. No shell, no port forwarding, no pty.
+# =============================================================================
+set -euo pipefail
+set -f   # no globbing of the client-supplied words
+orig="${SSH_ORIGINAL_COMMAND:-}"
+# Single line, conservative charset only.
+if [[ "$orig" == *$'\n'* ]] || [[ ! "$orig" =~ ^[a-z0-9\ -]{1,80}$ ]]; then
+  echo "lunex-deploy-ssh: rejected command" >&2
+  exit 2
+fi
+read -r -a args <<<"$orig"
+# Accept both "prod <tag>" and "lunex-deploy prod <tag>".
+[[ "${args[0]:-}" == "lunex-deploy" ]] && args=("${args[@]:1}")
+exec sudo -n /usr/local/bin/lunex-deploy "${args[@]}"

@@ -1,919 +1,857 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components'
-import CopyModal from './CopyModal'
+import { Copy, RefreshCw } from 'lucide-react'
+import {
+  Button,
+  C,
+  Card,
+  H1,
+  Notice,
+  Page,
+  Panel,
+  PillChip,
+  SkeletonLine,
+  Spinner,
+  Sub,
+  grotesk,
+  tabular
+} from 'components/ui/kit'
+import { Dialog } from 'components/ui/Dialog'
+import { AnimatedNumber } from 'components/ui/AnimatedNumber'
 import { useSDK } from '../../context/SDKContext'
+import { useToast } from '../../components/feedback/ToastProvider'
 import socialApi, {
-  buildWalletActionMessage,
-  buildCopytradeWithdrawMessage,
   CopytradeActivityItem,
   CopytradeExecution,
-  CopytradePosition,
-  createSignedActionMetadata,
-  SocialStats
+  CopytradePosition
 } from '../../services/socialService'
 import { Trader } from '../social/types'
+import {
+  aumLabel,
+  BackToSocial,
+  DashedEmpty,
+  fmtCount,
+  fmtPct,
+  fmtUsd,
+  ListBox,
+  ListRow,
+  MiniStat,
+  relTime,
+  roiColor,
+  SectionTitle,
+  SideLabel,
+  TraderAvatar,
+  traderVaultToken
+} from '../social/shared'
+import CopyModal from './CopyModal'
+import { useCopyPositions, useCopyWithdraw } from './useCopytrade'
+import { ReadSessionPrompt } from '../../components/session/ReadSessionPrompt'
+import { useReadSession } from '../../hooks/useReadSession'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
 
-const Page = styled.div`
-  min-height: 100vh;
-  background: #1a1a1a;
-  padding: 84px 24px 48px;
-`
-
-const Container = styled.div`
-  max-width: 1280px;
-  margin: 0 auto;
-`
-
-const Hero = styled.div`
-  margin-bottom: 28px;
-`
-
-const Title = styled.h1`
-  margin: 0 0 8px 0;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 40px;
-  font-weight: 700;
-`
-
-const Subtitle = styled.p`
-  margin: 0;
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 16px;
-  line-height: 1.6;
-`
-
-const Banner = styled.div<{ tone?: 'error' | 'success' }>`
-  margin-top: 18px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid
-    ${({ tone }) =>
-      tone === 'success' ? 'rgba(38,208,124,0.25)' : 'rgba(254,146,63,0.2)'};
-  background: ${({ tone }) =>
-    tone === 'success' ? 'rgba(38,208,124,0.1)' : 'rgba(254,146,63,0.12)'};
-  color: ${({ tone }) => (tone === 'success' ? '#26D07C' : '#FE923F')};
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-`
-
-const StatsGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
-  margin: 24px 0 28px;
-`
-
-const Card = styled.div`
-  background: #232323;
-  border: 1px solid #2a2a2c;
-  border-radius: 18px;
-  padding: 20px;
-`
-
-const StatValue = styled.div`
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 28px;
-  font-weight: 700;
-  margin-bottom: 8px;
-`
-
-const StatLabel = styled.div`
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-`
-
-const Section = styled.div`
-  margin-bottom: 24px;
-`
-
-const SectionHeader = styled.div`
+const VaultRow = styled.div<{ $selected?: boolean }>`
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: 10px 18px;
+  padding: 14px 16px;
+  background: ${p => (p.$selected ? 'rgba(108,56,255,0.06)' : 'transparent')};
+  transition: background-color 150ms ease;
 `
 
-const SectionTitle = styled.h2`
-  margin: 0;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 22px;
-`
-
-const Actions = styled.div`
+const VaultWho = styled.button`
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-`
-
-const Button = styled.button<{ secondary?: boolean }>`
-  border: 1px solid ${({ secondary }) => (secondary ? '#2A2A2C' : '#6C38FF')};
-  background: ${({ secondary }) => (secondary ? '#232323' : '#6C38FF')};
-  color: #ffffff;
-  border-radius: 10px;
-  padding: 10px 14px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  opacity: ${({ disabled }) => (disabled ? 0.6 : 1)};
-`
-
-const LeaderGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 16px;
-`
-
-const LeaderName = styled.div`
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 18px;
-  font-weight: 700;
-`
-
-const Meta = styled.div`
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 13px;
-  margin: 6px 0 12px;
-`
-
-const Tags = styled.div`
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 14px;
-`
-
-const Tag = styled.span`
-  background: #2a2a2c;
-  color: #ad87ff;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 11px;
-  font-weight: 700;
-`
-
-const Metrics = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
-`
-
-const Metric = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-`
-
-const MetricValue = styled.span<{ positive?: boolean }>`
-  color: ${({ positive }) =>
-    positive === undefined ? '#FFFFFF' : positive ? '#26D07C' : '#FF284C'};
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 18px;
-  font-weight: 700;
-`
-
-const MetricLabel = styled.span`
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-`
-
-const ContentGrid = styled.div`
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-  gap: 20px;
-
-  @media (max-width: 1080px) {
-    grid-template-columns: 1fr;
+  flex: 1 1 200px;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  > div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  b {
+    ${grotesk};
+    font-weight: 600;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  span {
+    font-size: 12px;
+    color: ${C.muted};
+  }
+  &:hover b {
+    color: ${C.primaryText2};
   }
 `
 
-const Stack = styled.div`
-  display: grid;
-  gap: 20px;
-`
-
-const PositionGrid = styled.div`
-  display: grid;
-  gap: 14px;
-`
-
-const InputRow = styled.div`
+const VaultStats = styled.div`
   display: flex;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 18px;
+  flex: 1 1 260px;
+  @media (max-width: 759px) {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    flex-basis: 100%;
+  }
 `
 
-const Input = styled.input`
-  flex: 1;
-  background: #1a1a1a;
-  border: 1px solid #2a2a2c;
-  border-radius: 10px;
-  padding: 12px 14px;
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-`
-
-const FeedList = styled.div`
-  display: grid;
+const Columns = styled.div`
+  display: flex;
+  flex-wrap: wrap;
   gap: 12px;
+  align-items: flex-start;
+`
+
+const Col = styled.div<{ $grow: number; $basis: number }>`
+  flex: ${p => p.$grow} 1 ${p => p.$basis}px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+`
+
+const SectionHead = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+`
+
+const PosCard = styled(Card)`
+  padding: 14px 16px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  font-size: 12px;
+  color: ${C.muted};
+  ${tabular};
+  b {
+    color: #fff;
+    font-weight: 600;
+  }
 `
 
 const FeedItem = styled.div`
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: #1a1a1a;
-  border: 1px solid #2a2a2c;
-`
-
-const FeedTitle = styled.div`
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-`
-
-const FeedMeta = styled.div`
-  margin-top: 6px;
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  line-height: 1.6;
-`
-
-const Table = styled.table`
-  width: 100%;
-  border-collapse: collapse;
-`
-
-const Th = styled.th`
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  text-align: left;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #2a2a2c;
-`
-
-const Td = styled.td`
-  color: #ffffff;
-  font-family: 'Space Grotesk', sans-serif;
+  display: flex;
+  gap: 10px;
   font-size: 13px;
-  padding: 12px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  line-height: 1.45;
 `
 
-const CodeBox = styled.pre`
-  margin: 12px 0 0;
-  background: #111111;
-  border: 1px solid #2a2a2c;
-  border-radius: 12px;
-  padding: 14px;
-  color: #26d07c;
-  font-family: monospace;
+const Dot = styled.span<{ $c: string }>`
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: ${p => p.$c};
+`
+
+const KeyBox = styled.pre`
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: ${C.terminal};
+  border: 1px solid ${C.border};
+  color: ${C.primaryText2};
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  overflow: auto;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre;
 `
 
-const EmptyState = styled.div`
-  color: #8a8a8e;
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 14px;
+const Select = styled.select`
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid ${C.borderStrong};
+  background: ${C.bg};
+  color: #fff;
+  font-size: 13px;
+  max-width: 220px;
 `
 
-const getEmptyStats = (): SocialStats => ({
-  totalAum: 0,
-  activeTraders: 0,
-  aiAgents: 0,
-  totalFollowers: 0,
-  totalIdeas: 0,
-  totalVaultEquity: 0
-})
+const SharesInput = styled.input.attrs({ 'data-bare': '' })`
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  ${grotesk};
+  ${tabular};
+  font-size: 26px;
+  font-weight: 500;
+  width: 100%;
+  min-width: 0;
+`
 
-const formatMoney = (value: number) =>
-  `$${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-const formatDateTime = (value: string) => new Date(value).toLocaleString()
-
-const renderActivityTitle = (item: CopytradeActivityItem) => {
-  if (item.type === 'DEPOSIT') return `${item.leaderName} received a deposit`
-  if (item.type === 'WITHDRAWAL')
-    return `${item.leaderName} processed a withdrawal`
-  return `${item.leaderName} executed ${item.side ?? 'SIGNAL'} ${
-    item.pairSymbol ?? 'trade'
-  }`
+const activityLine = (a: CopytradeActivityItem) => {
+  const tok = a.token ?? ''
+  if (a.type === 'DEPOSIT')
+    return {
+      color: C.success,
+      what: `received a deposit${a.amount ? ` of ${a.amount.toLocaleString()} ${tok}` : ''}`
+    }
+  if (a.type === 'WITHDRAWAL')
+    return {
+      color: C.warning,
+      what: `processed a withdrawal${
+        a.netAmount ? ` · net ${a.netAmount.toLocaleString()} ${tok}` : ''
+      }`
+    }
+  return {
+    color: C.primaryText,
+    what: `${a.side === 'SELL' ? 'sold' : a.side === 'BUY' ? 'bought' : 'signalled'} ${
+      a.pairSymbol ?? ''
+    }${a.slices ? ` in ${a.slices} slices` : ''}`
+  }
 }
 
 const CopytradePage: React.FC = () => {
   const navigate = useNavigate()
-  const { walletAddress, connectWallet, signMessage } = useSDK()
+  const { walletAddress, signMessage } = useSDK()
+  const { toast } = useToast()
   const [leaders, setLeaders] = useState<Trader[]>([])
-  const [stats, setStats] = useState<SocialStats>(getEmptyStats())
-  const [positions, setPositions] = useState<CopytradePosition[]>([])
-  const [activity, setActivity] = useState<CopytradeActivityItem[]>([])
+  const [loadingLeaders, setLoadingLeaders] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [selectedId, setSelectedId] = useState('')
   const [executions, setExecutions] = useState<CopytradeExecution[]>([])
-  const [selectedLeaderId, setSelectedLeaderId] = useState<string>('')
+  const [execLoading, setExecLoading] = useState(false)
   const [copyTarget, setCopyTarget] = useState<Trader | null>(null)
-  const [withdrawInputs, setWithdrawInputs] = useState<Record<string, string>>(
-    {}
-  )
-  const [statusMessage, setStatusMessage] = useState('')
-  const [successMessage, setSuccessMessage] = useState('')
-  const [, setIsLoading] = useState(true)
-  const [dashboardLoading, setDashboardLoading] = useState(false)
-  const [apiKeyLoading, setApiKeyLoading] = useState(false)
-  const [leaderApiKey, setLeaderApiKey] = useState('')
+  const [withdrawPos, setWithdrawPos] = useState<CopytradePosition | null>(null)
+  const [shares, setShares] = useState('')
+  const [apiKey, setApiKey] = useState('')
+  const [keyLoading, setKeyLoading] = useState(false)
+  const [noLeader, setNoLeader] = useState(false)
+  const copy = useCopyPositions()
+  const { hasSession } = useReadSession()
+  const withdraw = useCopyWithdraw()
 
-  const selectedLeader = useMemo(
-    () =>
-      leaders.find(leader => leader.id === selectedLeaderId) ??
-      leaders[0] ??
-      null,
-    [leaders, selectedLeaderId]
-  )
-
-  const refreshOverview = async () => {
+  const refreshLeaders = async () => {
     try {
-      const [nextStats, nextLeaders] = await Promise.all([
-        socialApi.getStats(),
-        socialApi.getLeaders({ limit: 20, sortBy: 'roi30d' })
-      ])
-      setStats(nextStats)
-      setLeaders(nextLeaders)
-      if (!selectedLeaderId && nextLeaders[0])
-        setSelectedLeaderId(nextLeaders[0].id)
-    } catch (err) {
-      setStatusMessage(
+      const next = await socialApi.getLeaders({ limit: 20, sortBy: 'roi30d' })
+      setLeaders(next)
+      setLoadError('')
+      setSelectedId(cur => cur || next[0]?.id || '')
+    } catch (err: unknown) {
+      setLoadError(
         err instanceof Error
-          ? `${err.message}. Could not load leaders.`
+          ? `${err.message}. Could not load vaults.`
           : 'Copytrade API unavailable.'
       )
-    }
-  }
-
-  const refreshFollowerDashboard = async (address: string) => {
-    setDashboardLoading(true)
-    try {
-      const signedPositions = createSignedActionMetadata()
-      const positionsSignature = await signMessage(
-        buildWalletActionMessage({
-          action: 'copytrade.positions',
-          address,
-          nonce: signedPositions.nonce,
-          timestamp: signedPositions.timestamp
-        })
-      )
-      const positionsAuth = {
-        address,
-        nonce: signedPositions.nonce,
-        timestamp: signedPositions.timestamp,
-        signature: positionsSignature
-      }
-
-      const signedActivity = createSignedActionMetadata()
-      const activitySignature = await signMessage(
-        buildWalletActionMessage({
-          action: 'copytrade.activity',
-          address,
-          nonce: signedActivity.nonce,
-          timestamp: signedActivity.timestamp,
-          fields: { limit: 20 }
-        })
-      )
-      const activityAuth = {
-        address,
-        nonce: signedActivity.nonce,
-        timestamp: signedActivity.timestamp,
-        signature: activitySignature
-      }
-
-      const [nextPositions, nextActivity] = await Promise.all([
-        socialApi.getPositions(address, positionsAuth),
-        socialApi.getActivity(address, activityAuth, 20)
-      ])
-      setPositions(nextPositions)
-      setActivity(nextActivity)
-    } catch (err) {
-      setPositions([])
-      setActivity([])
-      setStatusMessage(
-        err instanceof Error ? err.message : 'Failed to load follower dashboard'
-      )
     } finally {
-      setDashboardLoading(false)
+      setLoadingLeaders(false)
     }
   }
 
   useEffect(() => {
-    void (async () => {
-      setIsLoading(true)
-      await refreshOverview()
-      setIsLoading(false)
-    })()
+    void refreshLeaders()
   }, [])
 
+  // Follower dashboard: private reads via the read session (no wallet
+  // prompt); re-runs when the wallet or the session changes.
   useEffect(() => {
-    if (!walletAddress) {
-      setPositions([])
-      setActivity([])
+    copy.reset()
+    setApiKey('')
+    setNoLeader(false)
+    if (walletAddress) void copy.load(walletAddress, { withActivity: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, hasSession])
+
+  const loadExecutions = async (leaderId: string) => {
+    setExecLoading(true)
+    try {
+      setExecutions(await socialApi.getVaultExecutions(leaderId, 20))
+    } catch {
+      setExecutions([])
+    } finally {
+      setExecLoading(false)
     }
-  }, [walletAddress])
+  }
 
   useEffect(() => {
-    if (!selectedLeader?.id) {
+    if (!selectedId) {
       setExecutions([])
       return
     }
-    void (async () => {
-      try {
-        const nextExecutions = await socialApi.getVaultExecutions(
-          selectedLeader.id,
-          20
-        )
-        setExecutions(nextExecutions)
-      } catch (err) {
-        setExecutions([])
-        setStatusMessage(
-          err instanceof Error ? err.message : 'Failed to load vault executions'
-        )
-      }
-    })()
-  }, [selectedLeader?.id])
+    void loadExecutions(selectedId)
+  }, [selectedId])
 
-  const handleWithdraw = async (position: CopytradePosition) => {
-    const shares = withdrawInputs[position.id]
-    if (!shares || Number(shares) <= 0) return
-    try {
-      if (!walletAddress) {
-        await connectWallet()
-        setStatusMessage('Wallet connected. Click withdraw again to continue.')
-        return
-      }
+  const positionByLeader = useMemo(() => {
+    const m = new Map<string, CopytradePosition>()
+    copy.positions.forEach(p => {
+      if (p.shareBalance > 0) m.set(p.vault.leaderId, p)
+    })
+    return m
+  }, [copy.positions])
 
-      const auth = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildCopytradeWithdrawMessage({
-          leaderId: position.vault.leaderId,
-          followerAddress: position.followerAddress,
-          shares,
-          nonce: auth.nonce,
-          timestamp: auth.timestamp
-        })
-      )
+  const activePositions = copy.positions.filter(p => p.shareBalance > 0)
+  const selected = leaders.find(l => l.id === selectedId) ?? null
+  const myLeader = walletAddress
+    ? (leaders.find(l => l.address === walletAddress) ?? null)
+    : null
 
-      const result = await socialApi.withdrawFromVault(
-        position.vault.leaderId,
-        {
-          followerAddress: position.followerAddress,
-          shares,
-          nonce: auth.nonce,
-          timestamp: auth.timestamp,
-          signature
-        }
-      )
-      setSuccessMessage(
-        `Withdraw successful. Net received: ${formatMoney(result.netAmount)}`
-      )
-      if (walletAddress) await refreshFollowerDashboard(walletAddress)
-      if (selectedLeader?.id === position.vault.leaderId) {
-        const nextExecutions = await socialApi.getVaultExecutions(
-          position.vault.leaderId,
-          20
-        )
-        setExecutions(nextExecutions)
-      }
-      setWithdrawInputs(current => ({ ...current, [position.id]: '' }))
-      await refreshOverview()
-    } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : 'Failed to withdraw from vault'
-      )
-    }
+  const afterTx = () => {
+    if (walletAddress) void copy.load(walletAddress, { withActivity: true })
+    void refreshLeaders()
+    if (selectedId) void loadExecutions(selectedId)
   }
 
-  const handleGenerateApiKey = async () => {
-    if (!selectedLeader) return
-    setLeaderApiKey('')
-    setSuccessMessage('')
+  const connect = () =>
+    requestWalletConnect().catch((err: unknown) =>
+      toast(
+        'error',
+        'Wallet not connected',
+        err instanceof Error ? err.message : undefined
+      )
+    )
 
+  const onDeposit = (t: Trader) => {
     if (!walletAddress) {
-      await connectWallet()
-      setStatusMessage('Wallet connected. Click again to generate the API key.')
+      void connect()
       return
     }
-
-    if (walletAddress !== selectedLeader.address) {
-      setStatusMessage(
-        'Connect the wallet that owns this leader profile to rotate the API key.'
+    if (positionByLeader.has(t.id)) {
+      toast(
+        'info',
+        'Already deposited',
+        'Manage it in the follower dashboard below.'
       )
       return
     }
+    setCopyTarget(t)
+  }
 
-    setApiKeyLoading(true)
+  const openWithdraw = (p: CopytradePosition) => {
+    setShares(String(p.shareBalance))
+    setWithdrawPos(p)
+  }
+
+  const confirmWithdraw = () => {
+    if (!withdrawPos) return
+    const p = withdrawPos
+    setWithdrawPos(null)
+    withdraw(p, shares, afterTx)
+  }
+
+  const generateKey = async () => {
+    if (!walletAddress) {
+      void connect()
+      return
+    }
+    setKeyLoading(true)
     try {
-      const challenge = await socialApi.getApiKeyChallenge(selectedLeader.id, {
+      const leader =
+        myLeader ??
+        (await socialApi
+          .getLeaderProfileByAddress(walletAddress)
+          .catch(() => null))
+      if (!leader || leader.address !== walletAddress) {
+        setNoLeader(true)
+        return
+      }
+      const challenge = await socialApi.getApiKeyChallenge(leader.id, {
         leaderAddress: walletAddress
       })
       const signature = await signMessage(challenge.message)
-      const result = await socialApi.rotateLeaderApiKey(selectedLeader.id, {
+      const res = await socialApi.rotateLeaderApiKey(leader.id, {
         leaderAddress: walletAddress,
         challengeId: challenge.challengeId,
         signature
       })
-      setLeaderApiKey(result.apiKey)
-      setSuccessMessage(
-        'API key generated. Save it now — it is only shown once.'
+      setApiKey(res.apiKey)
+      toast(
+        'success',
+        apiKey ? 'Leader key rotated' : 'Leader key created',
+        'Copy it now — it will not be shown again.'
       )
-    } catch (err) {
-      setStatusMessage(
-        err instanceof Error ? err.message : 'Failed to rotate the API key'
+    } catch (err: unknown) {
+      toast(
+        'error',
+        'Could not generate the key',
+        err instanceof Error ? err.message : undefined
       )
     } finally {
-      setApiKeyLoading(false)
+      setKeyLoading(false)
     }
   }
 
+  const sharesNum = Number(shares)
+  const sharesOk =
+    !!withdrawPos &&
+    sharesNum > 0 &&
+    sharesNum <= withdrawPos.shareBalance + 1e-12
+  const estValue =
+    withdrawPos && withdrawPos.shareBalance > 0
+      ? (withdrawPos.currentValue *
+          Math.min(sharesNum || 0, withdrawPos.shareBalance)) /
+        withdrawPos.shareBalance
+      : 0
+
+  const renderDashboard = () => {
+    if (!walletAddress)
+      return (
+        <DashedEmpty>
+          Connect your wallet to see your deposits.
+          <div style={{ marginTop: 12 }}>
+            <Button size="sm" onClick={() => void connect()}>
+              Connect wallet
+            </Button>
+          </div>
+        </DashedEmpty>
+      )
+    if (copy.needsSignIn)
+      return (
+        <DashedEmpty>
+          <ReadSessionPrompt
+            compact
+            message="Sign in to see your vault deposits"
+          />
+        </DashedEmpty>
+      )
+    if (copy.loading && copy.loadedFor !== walletAddress)
+      return (
+        <>
+          <SkeletonLine $h={64} style={{ borderRadius: 16 }} />
+          <SkeletonLine $h={64} style={{ borderRadius: 16 }} />
+        </>
+      )
+    if (copy.error && copy.loadedFor !== walletAddress)
+      return (
+        <DashedEmpty>
+          {copy.error}
+          <div style={{ marginTop: 12 }}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                void copy.load(walletAddress, { withActivity: true })
+              }
+            >
+              Try again
+            </Button>
+          </div>
+        </DashedEmpty>
+      )
+    if (activePositions.length === 0)
+      return <DashedEmpty>You have no vault deposits yet.</DashedEmpty>
+    return activePositions.map(p => {
+      const pnl = p.currentValue - p.netDeposited
+      return (
+        <PosCard key={p.id}>
+          <span
+            style={{
+              fontFamily: 'Space Grotesk',
+              fontWeight: 600,
+              fontSize: 14,
+              color: '#fff',
+              flex: '1 1 140px',
+              minWidth: 0
+            }}
+          >
+            {p.vault.leaderName || p.vault.name} Vault
+          </span>
+          <span>
+            Deposited <b>{fmtUsd(p.netDeposited)}</b>
+          </span>
+          <span>
+            Value{' '}
+            <b>
+              <AnimatedNumber text={fmtUsd(p.currentValue)} />
+            </b>
+          </span>
+          <span style={{ fontWeight: 600, color: roiColor(pnl) }}>
+            {pnl >= 0 ? '+' : '−'}
+            {fmtUsd(Math.abs(pnl))}
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => openWithdraw(p)}>
+            Withdraw
+          </Button>
+        </PosCard>
+      )
+    })
+  }
+
   return (
-    <Page>
-      <Container>
-        <Hero>
-          <Title>Copytrade Vaults</Title>
-          <Subtitle>
-            Dedicated vault marketplace, follower dashboard, execution feed,
-            withdrawals and API key management for leaders and AI agents.
-          </Subtitle>
-          {statusMessage ? <Banner>{statusMessage}</Banner> : null}
-          {successMessage ? (
-            <Banner tone="success">{successMessage}</Banner>
-          ) : null}
-        </Hero>
+    <Page $max={1080} style={{ gap: 16 }}>
+      <BackToSocial />
+      <div>
+        <H1>Copytrade vaults</H1>
+        <Sub style={{ fontSize: 15 }}>
+          Deposit into a leader’s on-chain vault. Trades are mirrored
+          proportionally and you can withdraw at any time.
+        </Sub>
+      </div>
 
-        <StatsGrid>
-          <Card>
-            <StatValue>{formatMoney(stats.totalAum)}</StatValue>
-            <StatLabel>Total AUM</StatLabel>
-          </Card>
-          <Card>
-            <StatValue>{stats.activeTraders}</StatValue>
-            <StatLabel>Human Traders</StatLabel>
-          </Card>
-          <Card>
-            <StatValue>{stats.aiAgents}</StatValue>
-            <StatLabel>AI Agents</StatLabel>
-          </Card>
-          <Card>
-            <StatValue>{stats.totalFollowers.toLocaleString()}</StatValue>
-            <StatLabel>Total Followers</StatLabel>
-          </Card>
-        </StatsGrid>
+      {loadError && <Notice $tone="warning">{loadError}</Notice>}
 
-        <Section>
-          <SectionHeader>
-            <SectionTitle>Vault Marketplace</SectionTitle>
-            <Actions>
-              <Button secondary onClick={() => navigate('/social')}>
-                Open Social
+      <SectionTitle>Vault marketplace</SectionTitle>
+      {loadingLeaders ? (
+        <ListBox aria-busy="true">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <VaultRow key={i}>
+              <SkeletonLine $w="36px" $h={36} style={{ borderRadius: '50%' }} />
+              <div style={{ flex: 1, display: 'grid', gap: 6 }}>
+                <SkeletonLine $w="35%" />
+                <SkeletonLine $w="25%" $h={10} />
+              </div>
+            </VaultRow>
+          ))}
+        </ListBox>
+      ) : leaders.length === 0 ? (
+        <DashedEmpty>No vaults listed yet.</DashedEmpty>
+      ) : (
+        <ListBox>
+          {leaders.map(l => {
+            const on = positionByLeader.has(l.id)
+            const token = traderVaultToken(l)
+            const min = l.vault?.minDeposit ?? 0
+            return (
+              <VaultRow key={l.id} $selected={l.id === selectedId}>
+                <VaultWho
+                  type="button"
+                  onClick={() =>
+                    navigate(`/social/profile/${l.id}`, {
+                      state: { trader: l }
+                    })
+                  }
+                >
+                  <TraderAvatar
+                    name={l.name}
+                    avatar={l.avatar}
+                    ai={l.isAI}
+                    size={36}
+                  />
+                  <div>
+                    <b>{l.name} Vault</b>
+                    <span>
+                      {l.isAI ? 'AI agent' : 'Human trader'} ·{' '}
+                      {fmtCount(l.followers)} followers
+                    </span>
+                  </div>
+                </VaultWho>
+                <VaultStats>
+                  <MiniStat>
+                    <span>ROI 30d</span>
+                    <span style={{ color: roiColor(l.roi30d) }}>
+                      {fmtPct(l.roi30d)}
+                    </span>
+                  </MiniStat>
+                  <MiniStat>
+                    <span>AUM</span>
+                    <span>{aumLabel(l.aum)}</span>
+                  </MiniStat>
+                  <MiniStat>
+                    <span>Perf. fee</span>
+                    <span>{l.fee}%</span>
+                  </MiniStat>
+                  <MiniStat>
+                    <span>Min.</span>
+                    <span>
+                      {min > 0 ? `${min.toLocaleString()} ${token}` : '—'}
+                    </span>
+                  </MiniStat>
+                </VaultStats>
+                <Button
+                  size="sm"
+                  variant={on ? 'secondary' : 'primary'}
+                  style={{ height: 38, padding: '0 16px' }}
+                  onClick={() => onDeposit(l)}
+                >
+                  {on ? 'Deposited' : 'Deposit'}
+                </Button>
+              </VaultRow>
+            )
+          })}
+        </ListBox>
+      )}
+
+      <Columns>
+        <Col $grow={1.3} $basis={360}>
+          <SectionHead>
+            <SectionTitle>Follower dashboard</SectionTitle>
+            {walletAddress && copy.loadedFor === walletAddress && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={copy.loading}
+                onClick={() =>
+                  void copy.load(walletAddress, { withActivity: true })
+                }
+              >
+                {copy.loading ? (
+                  <Spinner $size={14} />
+                ) : (
+                  <RefreshCw size={14} />
+                )}
+                Refresh
               </Button>
-            </Actions>
-          </SectionHeader>
-          <LeaderGrid>
-            {leaders.map(leader => (
-              <Card key={leader.id}>
-                <LeaderName>{leader.name}</LeaderName>
-                <Meta>
-                  @{leader.username} · {leader.fee}% Fee ·{' '}
-                  {leader.vault?.collateralToken ?? 'USDT'}
-                </Meta>
-                <Tags>
-                  {leader.tags.slice(0, 3).map(tag => (
-                    <Tag key={tag}>{tag}</Tag>
-                  ))}
-                </Tags>
-                <Metrics>
-                  <Metric>
-                    <MetricValue positive>{`+${leader.roi30d}%`}</MetricValue>
-                    <MetricLabel>30d ROI</MetricLabel>
-                  </Metric>
-                  <Metric>
-                    <MetricValue>{leader.aum}</MetricValue>
-                    <MetricLabel>AUM</MetricLabel>
-                  </Metric>
-                  <Metric>
-                    <MetricValue>{leader.followers}</MetricValue>
-                    <MetricLabel>Followers</MetricLabel>
-                  </Metric>
-                  <Metric>
-                    <MetricValue positive={false}>
-                      {leader.drawdown}%
-                    </MetricValue>
-                    <MetricLabel>Drawdown</MetricLabel>
-                  </Metric>
-                </Metrics>
-                <Actions>
-                  <Button
-                    secondary
-                    onClick={() => setSelectedLeaderId(leader.id)}
-                  >
-                    Select
-                  </Button>
-                  <Button
-                    secondary
-                    onClick={() =>
-                      navigate(`/social/profile/${leader.id}`, {
-                        state: { trader: leader }
-                      })
-                    }
-                  >
-                    Profile
-                  </Button>
-                  <Button onClick={() => setCopyTarget(leader)}>Copy</Button>
-                </Actions>
-              </Card>
-            ))}
-          </LeaderGrid>
-        </Section>
+            )}
+          </SectionHead>
+          {renderDashboard()}
 
-        <ContentGrid>
-          <Stack>
-            <Section>
-              <SectionHeader>
-                <SectionTitle>Follower Dashboard</SectionTitle>
-                <Actions>
-                  {!walletAddress ? (
-                    <Button
-                      onClick={() => {
-                        connectWallet().catch(() => undefined)
-                      }}
-                    >
-                      Connect Wallet
-                    </Button>
-                  ) : (
-                    <Button
-                      secondary
-                      onClick={() => {
-                        refreshFollowerDashboard(walletAddress).catch(
-                          () => undefined
-                        )
-                      }}
-                    >
-                      Refresh
-                    </Button>
-                  )}
-                </Actions>
-              </SectionHeader>
-              <Card>
-                {!walletAddress ? (
-                  <EmptyState>
-                    Connect your wallet to load your copytrade positions and
-                    activity.
-                  </EmptyState>
-                ) : dashboardLoading ? (
-                  <EmptyState>Loading follower dashboard...</EmptyState>
-                ) : (
-                  <PositionGrid>
-                    {positions.map(position => (
-                      <Card key={position.id}>
-                        <LeaderName>{position.vault.leaderName}</LeaderName>
-                        <Meta>
-                          {position.vault.name} ·{' '}
-                          {position.vault.collateralToken}
-                        </Meta>
-                        <Metrics>
-                          <Metric>
-                            <MetricValue>
-                              {formatMoney(position.currentValue)}
-                            </MetricValue>
-                            <MetricLabel>Current Value</MetricLabel>
-                          </Metric>
-                          <Metric>
-                            <MetricValue>
-                              {position.shareBalance.toFixed(4)}
-                            </MetricValue>
-                            <MetricLabel>Shares</MetricLabel>
-                          </Metric>
-                          <Metric>
-                            <MetricValue>
-                              {formatMoney(position.netDeposited)}
-                            </MetricValue>
-                            <MetricLabel>Net Deposited</MetricLabel>
-                          </Metric>
-                          <Metric>
-                            <MetricValue positive={position.realizedPnl >= 0}>
-                              {formatMoney(position.realizedPnl)}
-                            </MetricValue>
-                            <MetricLabel>Realized PnL</MetricLabel>
-                          </Metric>
-                        </Metrics>
-                        <InputRow>
-                          <Input
-                            type="number"
-                            placeholder="Shares to withdraw"
-                            value={withdrawInputs[position.id] ?? ''}
-                            onChange={event =>
-                              setWithdrawInputs(current => ({
-                                ...current,
-                                [position.id]: event.target.value
-                              }))
-                            }
-                          />
-                          <Button
-                            secondary
-                            onClick={() =>
-                              setWithdrawInputs(current => ({
-                                ...current,
-                                [position.id]: String(position.shareBalance)
-                              }))
-                            }
-                          >
-                            Max
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              handleWithdraw(position).catch(() => undefined)
-                            }}
-                          >
-                            Withdraw
-                          </Button>
-                        </InputRow>
-                      </Card>
-                    ))}
-                    {positions.length === 0 ? (
-                      <EmptyState>
-                        No active copytrade positions for this wallet yet.
-                      </EmptyState>
-                    ) : null}
-                  </PositionGrid>
-                )}
-              </Card>
-            </Section>
-
-            <Section>
-              <SectionHeader>
-                <SectionTitle>Activity Feed</SectionTitle>
-              </SectionHeader>
-              <Card>
-                <FeedList>
-                  {activity.map((item, index) => (
-                    <FeedItem key={`${item.type}-${item.createdAt}-${index}`}>
-                      <FeedTitle>{renderActivityTitle(item)}</FeedTitle>
-                      <FeedMeta>
-                        {item.amount
-                          ? `Amount: ${item.amount} ${item.token ?? ''} · `
-                          : ''}
-                        {item.netAmount
-                          ? `Net: ${item.netAmount} ${item.token ?? ''} · `
-                          : ''}
-                        {item.slices ? `Slices: ${item.slices} · ` : ''}
-                        {formatDateTime(item.createdAt)}
-                      </FeedMeta>
-                    </FeedItem>
-                  ))}
-                  {activity.length === 0 ? (
-                    <EmptyState>No recent activity to show.</EmptyState>
-                  ) : null}
-                </FeedList>
-              </Card>
-            </Section>
-          </Stack>
-
-          <Stack>
-            <Section>
-              <SectionHeader>
-                <SectionTitle>
-                  {selectedLeader?.name ?? 'Vault Details'}
-                </SectionTitle>
-              </SectionHeader>
-              <Card>
-                {selectedLeader ? (
-                  <>
-                    <Meta>
-                      @{selectedLeader.username} ·{' '}
-                      {selectedLeader.vault?.collateralToken ?? 'USDT'} Vault ·{' '}
-                      {selectedLeader.fee}% Performance Fee
-                    </Meta>
-                    <Tags>
-                      {selectedLeader.tags.map(tag => (
-                        <Tag key={tag}>{tag}</Tag>
-                      ))}
-                    </Tags>
-                    <Metrics>
-                      <Metric>
-                        <MetricValue>{selectedLeader.aum}</MetricValue>
-                        <MetricLabel>AUM</MetricLabel>
-                      </Metric>
-                      <Metric>
-                        <MetricValue>{selectedLeader.winRate}%</MetricValue>
-                        <MetricLabel>Win Rate</MetricLabel>
-                      </Metric>
-                      <Metric>
-                        <MetricValue>
-                          {selectedLeader.vault?.minDeposit ?? 0}
-                        </MetricValue>
-                        <MetricLabel>Min Deposit</MetricLabel>
-                      </Metric>
-                      <Metric>
-                        <MetricValue>
-                          {selectedLeader.vault?.maxSlippageBps ?? 0} bps
-                        </MetricValue>
-                        <MetricLabel>Max Slippage</MetricLabel>
-                      </Metric>
-                    </Metrics>
-                  </>
-                ) : (
-                  <EmptyState>Select a leader to inspect the vault.</EmptyState>
-                )}
-              </Card>
-            </Section>
-
-            <Section>
-              <SectionHeader>
-                <SectionTitle>Execution History</SectionTitle>
-              </SectionHeader>
-              <Card>
-                {executions.length > 0 ? (
-                  <Table>
-                    <thead>
-                      <tr>
-                        <Th>Pair</Th>
-                        <Th>Side</Th>
-                        <Th>Slice</Th>
-                        <Th>Amount In</Th>
-                        <Th>Price</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {executions.map(execution => (
-                        <tr key={execution.id}>
-                          <Td>{execution.pairSymbol}</Td>
-                          <Td>{execution.side}</Td>
-                          <Td>
-                            {execution.sliceIndex}/{execution.totalSlices}
-                          </Td>
-                          <Td>{execution.amountIn.toLocaleString()}</Td>
-                          <Td>{execution.executionPrice.toLocaleString()}</Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                ) : (
-                  <EmptyState>
-                    No executions available for this vault yet.
-                  </EmptyState>
-                )}
-              </Card>
-            </Section>
-
-            <Section>
-              <SectionHeader>
-                <SectionTitle>Leader / Agent API Key</SectionTitle>
-                <Actions>
-                  <Button
-                    disabled={!selectedLeader || apiKeyLoading}
-                    onClick={() => {
-                      handleGenerateApiKey().catch(() => undefined)
+          <SectionHead style={{ paddingTop: 8 }}>
+            <SectionTitle>Execution history</SectionTitle>
+            {leaders.length > 0 && (
+              <Select
+                aria-label="Vault"
+                value={selectedId}
+                onChange={e => setSelectedId(e.target.value)}
+              >
+                {leaders.map(l => (
+                  <option key={l.id} value={l.id}>
+                    {l.name} Vault
+                  </option>
+                ))}
+              </Select>
+            )}
+          </SectionHead>
+          {execLoading ? (
+            <SkeletonLine $h={120} style={{ borderRadius: 16 }} />
+          ) : executions.length === 0 ? (
+            <DashedEmpty>
+              {selected
+                ? `No executions for ${selected.name} Vault yet.`
+                : 'Pick a vault to see its executions.'}
+            </DashedEmpty>
+          ) : (
+            <ListBox>
+              {executions.map(ex => (
+                <ListRow key={ex.id}>
+                  <SideLabel $buy={ex.side === 'BUY'}>
+                    {ex.side === 'BUY' ? 'Buy' : 'Sell'}
+                  </SideLabel>
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
                     }}
                   >
-                    {apiKeyLoading ? 'Signing...' : 'Generate / Rotate'}
-                  </Button>
-                </Actions>
-              </SectionHeader>
-              <Card>
-                <Meta>
-                  {selectedLeader
-                    ? `Connected wallet must match ${selectedLeader.address}`
-                    : 'Select a leader to manage the API key.'}
-                </Meta>
-                {leaderApiKey ? (
-                  <CodeBox>{leaderApiKey}</CodeBox>
-                ) : (
-                  <EmptyState>No API key generated in this session.</EmptyState>
-                )}
-              </Card>
-            </Section>
-          </Stack>
-        </ContentGrid>
+                    {ex.pairSymbol} · {ex.amountIn.toLocaleString()} @{' '}
+                    {ex.executionPrice.toLocaleString()}
+                    {ex.totalSlices > 1
+                      ? ` · slice ${ex.sliceIndex}/${ex.totalSlices}`
+                      : ''}
+                  </span>
+                  <span style={{ color: C.muted, whiteSpace: 'nowrap' }}>
+                    {relTime(ex.createdAt)}
+                  </span>
+                </ListRow>
+              ))}
+            </ListBox>
+          )}
+        </Col>
 
-        <CopyModal
-          trader={copyTarget as any}
-          onClose={() => setCopyTarget(null)}
-          onConfirm={async () => {
-            if (walletAddress) {
-              await refreshFollowerDashboard(walletAddress)
-            }
-            await refreshOverview()
-          }}
-        />
-      </Container>
+        <Col $grow={1} $basis={280}>
+          <SectionTitle>Activity feed</SectionTitle>
+          <Card $pad={16} style={{ gap: 10 }}>
+            {!walletAddress ? (
+              <span style={{ fontSize: 13, color: C.muted }}>
+                Connect your wallet to see activity on your vaults.
+              </span>
+            ) : copy.needsSignIn ? (
+              <span style={{ fontSize: 13, color: C.muted }}>
+                Sign in to see activity on your vaults.
+              </span>
+            ) : copy.loading && copy.loadedFor !== walletAddress ? (
+              <>
+                <SkeletonLine />
+                <SkeletonLine $w="80%" />
+                <SkeletonLine $w="60%" />
+              </>
+            ) : copy.activity.length === 0 ? (
+              <span style={{ fontSize: 13, color: C.muted }}>
+                No recent activity.
+              </span>
+            ) : (
+              copy.activity.map((a, i) => {
+                const line = activityLine(a)
+                return (
+                  <FeedItem key={`${a.type}-${a.createdAt}-${i}`}>
+                    <Dot $c={line.color} />
+                    <span style={{ flex: 1 }}>
+                      <b style={{ fontWeight: 600 }}>{a.leaderName}</b>{' '}
+                      <span style={{ color: C.secondary }}>{line.what}</span>
+                      <br />
+                      <span style={{ fontSize: 11, color: C.muted }}>
+                        {relTime(a.createdAt)}
+                      </span>
+                    </span>
+                  </FeedItem>
+                )
+              })
+            )}
+          </Card>
+
+          <SectionTitle style={{ paddingTop: 8 }}>
+            Leader / agent API key
+          </SectionTitle>
+          <Card $pad={16} style={{ gap: 10 }}>
+            <span style={{ fontSize: 13, color: C.secondary, lineHeight: 1.5 }}>
+              Leaders sign trade signals with a restricted key. Followers’
+              vaults execute them automatically.
+            </span>
+            {walletAddress && noLeader && (
+              <Notice $tone="neutral">
+                This wallet has no leader profile yet. Create one to get a key.
+              </Notice>
+            )}
+            {apiKey && (
+              <>
+                <KeyBox>{`X-API-Key: ${apiKey}\npermissions: COPYTRADE_SIGNAL`}</KeyBox>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    navigator.clipboard
+                      .writeText(apiKey)
+                      .then(() => toast('success', 'API key copied'))
+                      .catch(() => toast('error', 'Could not copy the key'))
+                  }
+                >
+                  <Copy size={14} /> Copy key
+                </Button>
+              </>
+            )}
+            <Button
+              disabled={keyLoading}
+              style={{ height: 42 }}
+              onClick={() =>
+                walletAddress && noLeader
+                  ? navigate('/social/settings')
+                  : void generateKey()
+              }
+            >
+              {keyLoading ? (
+                <>
+                  <Spinner $size={14} /> Sign in your wallet…
+                </>
+              ) : !walletAddress ? (
+                'Connect wallet'
+              ) : noLeader ? (
+                'Create trader profile'
+              ) : apiKey ? (
+                'Rotate key'
+              ) : (
+                'Generate leader key'
+              )}
+            </Button>
+          </Card>
+        </Col>
+      </Columns>
+
+      <CopyModal
+        trader={copyTarget}
+        onClose={() => setCopyTarget(null)}
+        onSuccess={afterTx}
+      />
+
+      <Dialog
+        open={!!withdrawPos}
+        onClose={() => setWithdrawPos(null)}
+        width={420}
+        title={
+          withdrawPos
+            ? `Withdraw from ${withdrawPos.vault.leaderName || withdrawPos.vault.name} Vault`
+            : 'Withdraw'
+        }
+        description="Shares are redeemed at the current vault value. The leader fee applies only to profit above the high-water mark."
+      >
+        {withdrawPos && (
+          <>
+            <Panel>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 12,
+                  color: C.muted
+                }}
+              >
+                <span>Shares</span>
+                <span className="num">
+                  Balance {withdrawPos.shareBalance.toFixed(4)}
+                </span>
+              </div>
+              <SharesInput
+                value={shares}
+                onChange={e => {
+                  const v = e.target.value.replace(',', '.')
+                  if (/^\d*\.?\d*$/.test(v)) setShares(v)
+                }}
+                inputMode="decimal"
+                aria-label="Shares to withdraw"
+                placeholder="0"
+              />
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[25, 50, 75, 100].map(pct => (
+                  <PillChip
+                    key={pct}
+                    $active={
+                      Math.abs(
+                        sharesNum - (withdrawPos.shareBalance * pct) / 100
+                      ) < 1e-9
+                    }
+                    onClick={() =>
+                      setShares(
+                        pct === 100
+                          ? String(withdrawPos.shareBalance)
+                          : String(
+                              +((withdrawPos.shareBalance * pct) / 100).toFixed(
+                                6
+                              )
+                            )
+                      )
+                    }
+                  >
+                    {pct === 100 ? 'Max' : `${pct}%`}
+                  </PillChip>
+                ))}
+              </div>
+            </Panel>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: 13
+              }}
+            >
+              <span style={{ color: C.muted }}>Estimated value</span>
+              <span className="num" style={{ fontWeight: 600 }}>
+                ≈ {fmtUsd(estValue)}
+              </span>
+            </div>
+            <Button
+              size="xl"
+              block
+              disabled={!sharesOk}
+              onClick={confirmWithdraw}
+            >
+              {!sharesNum
+                ? 'Enter shares'
+                : !sharesOk
+                  ? 'Exceeds your shares'
+                  : `Withdraw ≈ ${fmtUsd(estValue)}`}
+            </Button>
+          </>
+        )}
+      </Dialog>
     </Page>
   )
 }

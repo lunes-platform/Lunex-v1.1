@@ -44,7 +44,7 @@ const SEED_TOKENS = [
     address: process.env.REACT_APP_TOKEN_LETH || '5DhVzePc99qpcmmm9yA8ZzSRPuLXp8dEc8nSZmQVyczHRGNS',
     symbol: 'LETH',
     name: 'Lunes Ethereum',
-    decimals: 18,
+    decimals: 8, // matches deploy-additional-tokens.ts (LETH is deployed with 8)
     logoURI: '/tokens/LETH.svg',
     isVerified: true,
     isTrusted: true,

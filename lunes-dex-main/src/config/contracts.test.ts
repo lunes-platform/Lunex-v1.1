@@ -43,3 +43,35 @@ it('preserves configured contract addresses in the production transform', async 
   )
   expect(module.exports.TOKENS.LUSDT).toBe(values.REACT_APP_TOKEN_LUSDT)
 })
+
+it('reads the spot settlement vault and keeps Margin off unless explicitly enabled', async () => {
+  const source = readFileSync(
+    new URL('./contracts.ts', import.meta.url),
+    'utf8'
+  )
+  const load = async (define: Record<string, string>) => {
+    const result = await transformWithEsbuild(source, 'contracts.ts', {
+      format: 'cjs',
+      define: { 'process.env': '{}', ...define }
+    })
+    const module = {
+      exports: {} as {
+        CONTRACTS: Record<string, string>
+        FEATURES: Record<string, boolean>
+      }
+    }
+    new Function('module', result.code)(module)
+    return module.exports
+  }
+  const unset = await load({})
+  expect(unset.CONTRACTS.SPOT_SETTLEMENT).toBe('')
+  expect(unset.FEATURES.MARGIN).toBe(false)
+  const set = await load({
+    'process.env.REACT_APP_SPOT_SETTLEMENT_CONTRACT': '"configured-vault"',
+    'process.env.REACT_APP_FEATURE_MARGIN': '"true"'
+  })
+  expect(set.CONTRACTS.SPOT_SETTLEMENT).toBe('configured-vault')
+  expect(set.FEATURES.MARGIN).toBe(true)
+  const other = await load({ 'process.env.REACT_APP_FEATURE_MARGIN': '"1"' })
+  expect(other.FEATURES.MARGIN).toBe(false)
+})

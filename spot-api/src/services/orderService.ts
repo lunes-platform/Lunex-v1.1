@@ -45,6 +45,13 @@ import { broadcastOrderbook } from '../websocket/server';
 
 const STOP_PENDING_STATUS = 'PENDING_TRIGGER';
 
+/** Off-chain signature markers used by agent/router orders. */
+const isSyntheticOrderSignature = (signature: string) =>
+  signature.startsWith('agent:') || signature.startsWith('manual:');
+
+/** Per-maker admission lock key (see createOrder). */
+const makerLockKey = (makerAddress: string) => `maker:${makerAddress}`;
+
 async function getReferencePrice(
   pairId: string,
   pairSymbol: string,
@@ -371,6 +378,21 @@ export const orderService = {
     if (input.expiresAt && new Date(input.expiresAt).getTime() <= Date.now()) {
       throw ApiError.badRequest('Order already expired');
     }
+    // Synthetic `agent:` / `manual:` markers are not wallet sr25519 signatures
+    // over the order message: settlement (assertOrderTrustedSource) always
+    // rejects them, so with on-chain settlement on such an order would only
+    // consume counterparty liquidity and produce trades that never settle.
+    // Same gate as routes/tradeApi.ts /swap and /limit, before any side effect.
+    if (
+      settlementService.isEnabled() &&
+      isSyntheticOrderSignature(input.signature)
+    ) {
+      throw new ApiError(
+        409,
+        'SYNTHETIC_SIGNATURE_SETTLEMENT_BLOCKED',
+        'Orders without a wallet signature cannot be settled on-chain',
+      );
+    }
     // 1. Find pair
     const pair = await prisma.pair.findUnique({
       where: { symbol: input.pairSymbol },
@@ -419,52 +441,59 @@ export const orderService = {
     });
     if (existing) throw ApiError.conflict('Nonce already used');
 
-    return withMatchingLock(pair.symbol, async () => {
-      await rehydrateOrderbookForPair(pair.id, pair.symbol);
-      await assertValidOnChainState(pair, input);
+    // Lock order: maker (outer) → pair (inner). The pair lock alone does not
+    // serialize two orders of the same maker on DIFFERENT pairs that share a
+    // vault token (e.g. LUNES as base on one pair and quote on another): both
+    // would pass the balance check against the same funds. Nothing acquires
+    // these locks in the opposite order, so nesting cannot deadlock.
+    return withMatchingLock(makerLockKey(input.makerAddress), () =>
+      withMatchingLock(pair.symbol, async () => {
+        await rehydrateOrderbookForPair(pair.id, pair.symbol);
+        await assertValidOnChainState(pair, input);
 
-      if (
-        input.expiresAt &&
-        new Date(input.expiresAt).getTime() <= Date.now()
-      ) {
-        throw ApiError.badRequest('Order already expired');
-      }
+        if (
+          input.expiresAt &&
+          new Date(input.expiresAt).getTime() <= Date.now()
+        ) {
+          throw ApiError.badRequest('Order already expired');
+        }
 
-      // 5. Create order in DB
-      const order = await prisma.order.create({
-        data: {
-          pairId: pair.id,
-          makerAddress: input.makerAddress,
-          side: input.side,
-          type: input.type,
-          price: new Decimal(price),
-          stopPrice: input.stopPrice ? new Decimal(input.stopPrice) : null,
-          amount: new Decimal(input.amount),
-          remainingAmount: new Decimal(input.amount),
-          filledAmount: new Decimal('0'),
-          status:
-            input.type === 'STOP' || input.type === 'STOP_LIMIT'
-              ? STOP_PENDING_STATUS
-              : 'OPEN',
-          signature: input.signature,
-          signatureTimestamp: new Date(input.timestamp),
-          nonce: input.nonce,
-          orderHash,
-          timeInForce: input.timeInForce,
-          expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
-        },
-      });
+        // 5. Create order in DB
+        const order = await prisma.order.create({
+          data: {
+            pairId: pair.id,
+            makerAddress: input.makerAddress,
+            side: input.side,
+            type: input.type,
+            price: new Decimal(price),
+            stopPrice: input.stopPrice ? new Decimal(input.stopPrice) : null,
+            amount: new Decimal(input.amount),
+            remainingAmount: new Decimal(input.amount),
+            filledAmount: new Decimal('0'),
+            status:
+              input.type === 'STOP' || input.type === 'STOP_LIMIT'
+                ? STOP_PENDING_STATUS
+                : 'OPEN',
+            signature: input.signature,
+            signatureTimestamp: new Date(input.timestamp),
+            nonce: input.nonce,
+            orderHash,
+            timeInForce: input.timeInForce,
+            expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
+          },
+        });
 
-      // 6. Add active orders to the in-memory book and attempt matching
-      if (input.type === 'LIMIT' || input.type === 'MARKET') {
-        await executeOrderOnBook(pair.id, pair.symbol, order);
-      }
+        // 6. Add active orders to the in-memory book and attempt matching
+        if (input.type === 'LIMIT' || input.type === 'MARKET') {
+          await executeOrderOnBook(pair.id, pair.symbol, order);
+        }
 
-      await processTriggeredOrders(pair.id, pair.symbol);
-      broadcastOrderbook(pair.symbol);
+        await processTriggeredOrders(pair.id, pair.symbol);
+        broadcastOrderbook(pair.symbol);
 
-      return prisma.order.findUnique({ where: { id: order.id } });
-    });
+        return prisma.order.findUnique({ where: { id: order.id } });
+      }),
+    );
   },
 
   /**

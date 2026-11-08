@@ -6,8 +6,16 @@ import {
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 import { z } from 'zod';
+import {
+  RewardClaimSchema,
+  RewardWeeksQuerySchema,
+} from '../utils/validation';
 
 const router = Router();
 
@@ -70,7 +78,7 @@ router.get(
   '/pending',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
       });
@@ -79,7 +87,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'rewards.pending',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -104,7 +112,7 @@ router.get(
   '/history',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedReadSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedReadSchema).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
       });
@@ -113,7 +121,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'rewards.history',
         address: parsed.data.address,
         nonce: parsed.data.nonce,
@@ -140,7 +148,15 @@ router.get(
   '/weeks',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const limit = parseInt((req.query.limit as string) || '10', 10);
+      const query = RewardWeeksQuerySchema.safeParse(req.query);
+      if (!query.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          code: 'VALIDATION_ERROR',
+          details: query.error.issues,
+        });
+      }
+      const { limit } = query.data;
       const weeks = await rewardDistributionService.getDistributedWeeks(limit);
       res.json({ weeks });
     } catch (err) {
@@ -156,14 +172,16 @@ router.post(
   '/claim',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { address, nonce, timestamp, signature } = req.body;
-
-      if (!address || !nonce || !timestamp || !signature) {
+      const parsed = RewardClaimSchema.safeParse(req.body);
+      if (!parsed.success) {
         return res.status(400).json({
           error:
             'Missing required fields: address, nonce, timestamp, signature',
+          code: 'VALIDATION_ERROR',
+          details: parsed.error.issues,
         });
       }
+      const { address, nonce, timestamp, signature } = parsed.data;
 
       const auth = await verifyWalletActionSignature({
         action: 'rewards.claim',

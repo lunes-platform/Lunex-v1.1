@@ -67,7 +67,8 @@ it('quotes the deposit in selected token order when token A is canonical token1'
 })
 it('assigns withdrawal minimums to their matching token when reserves are reversed', async () => {
   await act(async () => {
-    await state.removeLiquidity('1')
+    // removeLiquidity takes raw LP units (the pool screen scales by LP_DECIMALS)
+    await state.removeLiquidity('100000000')
   })
   expect(mocks.sdk.removeLiquidity).toHaveBeenCalledWith(
     expect.objectContaining({

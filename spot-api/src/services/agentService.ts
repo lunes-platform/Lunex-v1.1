@@ -1,5 +1,6 @@
 import { randomBytes, createHash } from 'crypto';
 import prisma from '../db';
+import { ApiError } from '../middleware/errors';
 import type {
   AgentType,
   AgentApiKeyPermission,
@@ -118,6 +119,22 @@ export const agentService = {
       throw new Error('Agent already registered with this wallet address');
     }
 
+    // BE-03: an agent's signals move the linked leader's vault equity/PnL,
+    // so the agent wallet must OWN the leader (leader.address). The route
+    // already proved the request is signed by `walletAddress`.
+    if (input.linkLeaderId) {
+      const leader = await prisma.leader.findUnique({
+        where: { id: input.linkLeaderId },
+        select: { address: true },
+      });
+      if (!leader) throw ApiError.notFound('Leader not found');
+      if (leader.address !== input.walletAddress) {
+        throw ApiError.forbidden(
+          'Agent wallet must own the linked leader profile',
+        );
+      }
+    }
+
     const agent = await prisma.agent.create({
       data: {
         walletAddress: input.walletAddress,
@@ -139,6 +156,13 @@ export const agentService = {
       permissions: AgentApiKeyPermission[];
       expiresInDays?: number;
     },
+    options?: {
+      /**
+       * BE-13: when a key is minted by another API key, it must not outlive
+       * its parent — otherwise a leaked key survives its own revocation/expiry.
+       */
+      maxExpiresAt?: Date;
+    },
   ) {
     const agent = await prisma.agent.findUnique({ where: { id: agentId } });
     if (!agent) throw new Error('Agent not found');
@@ -153,8 +177,11 @@ export const agentService = {
 
     const { raw, prefix, hash } = generateApiKey();
     const expiresInDays = input.expiresInDays ?? 90;
+    const requestedExpiry = Date.now() + expiresInDays * 24 * 60 * 60 * 1000;
     const expiresAt = new Date(
-      Date.now() + expiresInDays * 24 * 60 * 60 * 1000,
+      options?.maxExpiresAt
+        ? Math.min(requestedExpiry, options.maxExpiresAt.getTime())
+        : requestedExpiry,
     );
 
     const apiKey = await prisma.agentApiKey.create({
@@ -178,16 +205,61 @@ export const agentService = {
     };
   },
 
-  async revokeApiKey(agentId: string, keyId: string) {
+  async revokeApiKey(
+    agentId: string,
+    keyId: string,
+    actor?: {
+      actorKeyId: string;
+      actorPermissions: AgentApiKeyPermission[];
+    },
+  ) {
     const key = await prisma.agentApiKey.findFirst({
       where: { id: keyId, agentId, revokedAt: null },
     });
     if (!key) throw new Error('API key not found or already revoked');
 
+    // BE-13: an API key may revoke itself, or a key whose permissions are a
+    // subset of its own (a READ_ONLY key cannot kill the TRADE key). The
+    // wallet owner can always revoke everything via revokeAllApiKeys().
+    if (actor && actor.actorKeyId !== keyId) {
+      const granted = new Set(actor.actorPermissions);
+      if (!key.permissions.every((permission) => granted.has(permission))) {
+        throw ApiError.forbidden(
+          'Cannot revoke an API key with permissions outside the authenticated key scope',
+        );
+      }
+    }
+
     await prisma.agentApiKey.update({
       where: { id: keyId },
       data: { revokedAt: new Date() },
     });
+  },
+
+  /**
+   * BE-13 emergency path, authorized by the agent OWNER WALLET signature
+   * (route), not by an API key: revokes every active key.
+   */
+  async revokeAllApiKeys(agentId: string) {
+    const { count } = await prisma.agentApiKey.updateMany({
+      where: { agentId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    return { revoked: count };
+  },
+
+  /** BE-13: wallet-signed rotation — revoke all keys, then issue one new key. */
+  async rotateApiKey(
+    agentId: string,
+    input: {
+      label?: string;
+      permissions: AgentApiKeyPermission[];
+      expiresInDays?: number;
+    },
+  ) {
+    const { revoked } = await agentService.revokeAllApiKeys(agentId);
+    const key = await agentService.createApiKey(agentId, input);
+    return { revoked, key };
   },
 
   async verifyApiKey(rawKey: string) {
@@ -221,6 +293,16 @@ export const agentService = {
     });
     if (!agent) throw new Error('Agent not found');
     return formatAgent(agent);
+  },
+
+  /** BE-11: public profile (GET /agents/:id) — no owner wallet. */
+  async getPublicAgentProfile(agentId: string) {
+    const agent = await prisma.agent.findUnique({
+      where: { id: agentId },
+      include: { leader: true, stakes: { where: { status: 'STAKED' } } },
+    });
+    if (!agent) throw new Error('Agent not found');
+    return formatPublicAgent(agent);
   },
 
   async getAgentByWallet(walletAddress: string) {
@@ -265,7 +347,8 @@ export const agentService = {
     ]);
 
     return {
-      agents: agents.map(formatAgent),
+      // BE-11: public listing — owner wallets are not exposed.
+      agents: agents.map(formatPublicAgent),
       total,
     };
   },
@@ -485,4 +568,17 @@ function formatAgent(agent: AgentWithRelations) {
         }
       : null,
   };
+}
+
+/**
+ * BE-11: public agent view. The owner wallet is private (the owner reads it
+ * via READ-signed GET /agents/by-wallet or API-key GET /agents/me). The only
+ * exception is an agent linked to a leader owned by the same wallet: the
+ * leader's address is already public by design (leader profile / copy flow).
+ */
+function formatPublicAgent(agent: AgentWithRelations) {
+  const { walletAddress, ...rest } = formatAgent(agent);
+  const isLeaderOwnWallet =
+    agent.leader != null && agent.leader.address === walletAddress;
+  return isLeaderOwnWallet ? { ...rest, walletAddress } : rest;
 }

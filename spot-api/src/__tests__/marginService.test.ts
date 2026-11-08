@@ -1,6 +1,8 @@
 import { Decimal } from '@prisma/client/runtime/library';
 
 const mockTx = {
+  // BE-06: balance-mutating paths take a row lock (SELECT ... FOR UPDATE).
+  $queryRaw: jest.fn(),
   pair: {
     findUnique: jest.fn(),
   },
@@ -11,6 +13,8 @@ const mockTx = {
     findUnique: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    // BE-06: conditional atomic debits use updateMany with a gte guard.
+    updateMany: jest.fn(async () => ({ count: 1 })),
   },
   marginPosition: {
     findMany: jest.fn(),
@@ -224,10 +228,10 @@ describe('marginService hardening', () => {
         pairSymbol: 'LUNES/USDT',
         side: 'BUY',
         collateralAmount: '100',
-        leverage: '7.95',
+        leverage: '10.5',
         signature: 'sig',
       }),
-    ).rejects.toThrow('Leverage must be between 1x and 7.90x');
+    ).rejects.toThrow('Leverage must be between 1x and 10.00x');
 
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });

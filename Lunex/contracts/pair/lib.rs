@@ -406,11 +406,13 @@ pub mod pair_contract {
         /// Constructor do contrato
         #[ink(constructor)]
         pub fn new(factory: AccountId, token_0: AccountId, token_1: AccountId) -> Self {
-            let mut instance = Self::default();
-            instance.factory = factory;
-            instance.token_0 = token_0;
-            instance.token_1 = token_1;
-            instance.admin = Self::env().caller();
+            let mut instance = Self {
+                factory,
+                token_0,
+                token_1,
+                admin: Self::env().caller(),
+                ..Self::default()
+            };
 
             // Inicializar valores Lazy
             instance.price_0_cumulative_last.set(&0);

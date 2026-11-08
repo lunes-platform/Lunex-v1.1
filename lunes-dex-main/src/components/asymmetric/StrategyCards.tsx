@@ -1,166 +1,121 @@
+/**
+ * Asymmetric strategy presets: one click sets both curves.
+ */
 import React from 'react'
 import styled from 'styled-components'
-import { CurveParams } from './CurveChart'
+import { C, grotesk } from '../ui/kit'
+import type { CurveSide } from './CurveChart'
 
-import { TrendingUp, Coins, Target } from 'lucide-react'
-import { Icon } from '../ui/Icon'
+export type PresetId = 'dip' | 'tp' | 'range'
 
-export interface StrategyTemplate {
-  id: string
+export type Preset = {
+  id: PresetId
   name: string
-  icon: React.ReactNode
-  tagline: string
-  description: string
-  riskLabel: string
-  riskColor: string
-  buyParams: Omit<CurveParams, 'L' | 'c' | 'interestR'>
-  sellParams: Omit<CurveParams, 'L' | 'c' | 'interestR'>
+  tag: string
+  desc: string
+  buy: CurveSide
+  sell: CurveSide
+  /** Sell-side profit target sent to the backend (bps). */
   profitTargetBps: number
+  /** Curve fee target (bps) for both sides. */
+  feeBps: number
 }
 
-export const STRATEGY_TEMPLATES: StrategyTemplate[] = [
+export const PRESETS: Preset[] = [
   {
-    id: 'buy_the_dip',
+    id: 'dip',
     name: 'Buy the Dip',
-    icon: <Icon icon={TrendingUp} color="#fbbf24" size={28} />,
-    tagline: 'Accumulate on decline',
-    description:
-      'Places a heavy buy curve that accumulates tokens automatically if the price drops. More liquidity at lower prices.',
-    riskLabel: 'Moderate',
-    riskColor: '#fbbf24',
-    buyParams: { k: 1_000, x0: 10_000, gamma: 3, feeT: 0.003 },
-    sellParams: { k: 500, x0: 8_000, gamma: 2, feeT: 0.003 },
-    profitTargetBps: 500
+    tag: 'Accumulate on drops',
+    desc: 'Deep buy curve below the price, thin sell curve above.',
+    buy: { k: 1000, x0: 10000, g: 3 },
+    sell: { k: 200, x0: 4000, g: 1 },
+    profitTargetBps: 500,
+    feeBps: 30
   },
   {
-    id: 'take_profit',
+    id: 'tp',
     name: 'Take Profit Gradually',
-    icon: <Icon icon={Coins} color="#34d399" size={28} />,
-    tagline: 'Sell the rally',
-    description:
-      'Distributes your sell orders over a wide price range so you exit gradually as the price rises, avoiding slippage.',
-    riskLabel: 'Conservative',
-    riskColor: '#34d399',
-    buyParams: { k: 300, x0: 5_000, gamma: 1, feeT: 0.003 },
-    sellParams: { k: 1_500, x0: 15_000, gamma: 2, feeT: 0.003 },
-    profitTargetBps: 300
+    tag: 'Scale out on rallies',
+    desc: 'Thin buy side, deep sell curve that sells into strength.',
+    buy: { k: 200, x0: 4000, g: 1 },
+    sell: { k: 1000, x0: 12000, g: 3 },
+    profitTargetBps: 300,
+    feeBps: 30
   },
   {
-    id: 'stablecoin_range',
+    id: 'range',
     name: 'Stablecoin Range',
-    icon: <Icon icon={Target} color="#60a5fa" size={28} />,
-    tagline: 'Fee harvesting ±1%',
-    description:
-      'Maximizes fee collection on a very narrow band (e.g. LUSDT/USDC 0.99–1.01). High γ concentrates liquidity around the peg.',
-    riskLabel: 'Low',
-    riskColor: '#60a5fa',
-    buyParams: { k: 5_000, x0: 2_000, gamma: 5, feeT: 0.001 },
-    sellParams: { k: 5_000, x0: 2_000, gamma: 5, feeT: 0.001 },
-    profitTargetBps: 100
+    tag: 'Fee harvesting ±1%',
+    desc: 'Tight, steep curves on both sides to earn fees in a narrow band.',
+    buy: { k: 2000, x0: 20000, g: 5 },
+    sell: { k: 2000, x0: 20000, g: 5 },
+    profitTargetBps: 100,
+    feeBps: 10
   }
 ]
 
-// ─── Styled ───────────────────────────────────────────────────────
-
 const Grid = styled.div`
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
 `
 
-const Card = styled.button<{ selected: boolean }>`
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+const Card = styled.button<{ $on: boolean }>`
+  white-space: normal;
+  text-align: left;
   padding: 16px;
   border-radius: 16px;
-  border: 2px solid
-    ${({ selected, theme }) =>
-      selected ? theme.colors.themeColors[100] : theme.colors.themeColors[400]};
-  background: ${({ selected, theme }) =>
-    selected ? theme.colors.themeColors[700] : theme.colors.themeColors[600]};
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.18s;
-  overflow: hidden;
-  min-width: 0;
-  word-break: break-word;
-
+  border: 1px solid ${p => (p.$on ? C.primary : C.border)};
+  background: ${p => (p.$on ? 'rgba(108,56,255,0.12)' : C.surface)};
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
   &:hover {
-    border-color: ${({ theme }) => theme.colors.themeColors[300]};
-    transform: translateY(-1px);
+    border-color: ${p => (p.$on ? C.primary : C.borderStrong)};
+  }
+  b {
+    ${grotesk};
+    font-size: 17px;
+    font-weight: 600;
+  }
+  em {
+    font-style: normal;
+    font-size: 12px;
+    font-weight: 600;
+    color: ${C.primaryText};
+  }
+  span {
+    font-size: 13px;
+    color: ${C.secondary};
+    line-height: 1.5;
   }
 `
 
-const CardEmoji = styled.span`
-  font-size: 28px;
-`
-
-const CardName = styled.span`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 14px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-`
-
-const CardTagline = styled.span`
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-`
-
-const CardDesc = styled.p`
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  line-height: 1.5;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
-`
-
-const RiskBadge = styled.span<{ color: string }>`
-  display: inline-flex;
-  align-items: center;
-  padding: 3px 10px;
-  border-radius: 20px;
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  color: ${({ color }) => color};
-  background: ${({ color }) => `${color}22`};
-`
-
-// ─── Component ────────────────────────────────────────────────────
-
-interface Props {
-  selected: string | null
-  onSelect: (template: StrategyTemplate) => void
+type Props = {
+  selected: PresetId | null
+  onSelect: (p: Preset) => void
 }
 
-const StrategyCards: React.FC<Props> = ({ selected, onSelect }) => {
-  return (
-    <Grid>
-      {STRATEGY_TEMPLATES.map(t => (
-        <Card
-          key={t.id}
-          selected={selected === t.id}
-          onClick={() => onSelect(t)}
-        >
-          <CardEmoji>{t.icon}</CardEmoji>
-          <CardName>{t.name}</CardName>
-          <CardTagline>{t.tagline}</CardTagline>
-          <CardDesc>{t.description}</CardDesc>
-          <RiskBadge color={t.riskColor}>{t.riskLabel} Risk</RiskBadge>
-        </Card>
-      ))}
-    </Grid>
-  )
-}
+const StrategyCards: React.FC<Props> = ({ selected, onSelect }) => (
+  <Grid role="radiogroup" aria-label="Strategy presets">
+    {PRESETS.map(p => (
+      <Card
+        key={p.id}
+        role="radio"
+        aria-checked={selected === p.id}
+        $on={selected === p.id}
+        onClick={() => onSelect(p)}
+      >
+        <b>{p.name}</b>
+        <em>{p.tag}</em>
+        <span>{p.desc}</span>
+      </Card>
+    ))}
+  </Grid>
+)
 
 export default StrategyCards

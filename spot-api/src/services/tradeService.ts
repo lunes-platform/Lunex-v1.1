@@ -2,13 +2,14 @@ import prisma from '../db';
 import { MatchResult } from '../utils/orderbook';
 import { candleService } from './candleService';
 import { Decimal } from '@prisma/client/runtime/library';
+import type { TradeSettlementStatus } from '@prisma/client';
 import { TradeSettlementInput } from './settlementService';
 import {
   serializeSettlementInput,
   tradeSettlementService,
 } from './tradeSettlementService';
 import { log } from '../utils/logger';
-import { broadcastTrade } from '../websocket/server';
+import { broadcast, broadcastTrade } from '../websocket/server';
 
 const MoneyDecimal = Decimal.clone({ precision: 80 });
 
@@ -239,6 +240,16 @@ export const tradeService = {
       );
     }
 
+    // 7. Private fill push (best effort — never affects persisted state).
+    //    Public `trades:`/`orderbook:` updates go out via broadcastTrade /
+    //    broadcastOrderbook; each side of a fill also gets a private
+    //    `user:<address>` event (session-authenticated channel).
+    try {
+      publishUserFills(pairId, trades);
+    } catch (err) {
+      log.error({ err, pairId }, 'Fill broadcast failed');
+    }
+
     // Affiliate commissions for SPOT trades are NO LONGER distributed here.
     // They are credited only after the trade reaches SETTLED, inside
     // tradeSettlementService.processAttempt (see audit finding coesao-04 L1):
@@ -286,7 +297,7 @@ export const tradeService = {
   },
 
   async getTradesBySettlementStatus(
-    status?: 'PENDING' | 'SETTLING' | 'SETTLED' | 'FAILED' | 'SKIPPED',
+    status?: TradeSettlementStatus,
     limit = 50,
     offset = 0,
   ) {
@@ -305,3 +316,68 @@ export const tradeService = {
     return tradeSettlementService.retryPendingSettlements(limit);
   },
 };
+
+type BroadcastTrade = {
+  id: string;
+  pairId: string;
+  makerOrderId: string;
+  takerOrderId: string;
+  makerAddress: string;
+  takerAddress: string;
+  side: string;
+  price: { toString(): string };
+  amount: { toString(): string };
+  quoteAmount: { toString(): string };
+  createdAt?: Date;
+};
+
+const pairSymbolCache = new Map<string, string>();
+
+async function resolvePairSymbol(pairId: string) {
+  const cached = pairSymbolCache.get(pairId);
+  if (cached) return cached;
+  const pair = await prisma.pair.findUnique({ where: { id: pairId } });
+  if (pair?.symbol) pairSymbolCache.set(pairId, pair.symbol);
+  return pair?.symbol ?? null;
+}
+
+function publishUserFills(pairId: string, trades: BroadcastTrade[]) {
+  if (!trades.length) return;
+  void resolvePairSymbol(pairId)
+    .then((symbol) => {
+      if (!symbol) return;
+      for (const t of trades) {
+        const createdAt = (t.createdAt ?? new Date()).toISOString();
+        const price = t.price.toString();
+        const amount = t.amount.toString();
+        const makerSide = t.side === 'BUY' ? 'SELL' : 'BUY';
+        broadcast(`user:${t.makerAddress}`, {
+          type: 'fill',
+          role: 'maker',
+          pairSymbol: symbol,
+          orderId: t.makerOrderId,
+          tradeId: t.id,
+          side: makerSide,
+          price,
+          amount,
+          createdAt,
+        });
+        if (t.takerAddress !== t.makerAddress) {
+          broadcast(`user:${t.takerAddress}`, {
+            type: 'fill',
+            role: 'taker',
+            pairSymbol: symbol,
+            orderId: t.takerOrderId,
+            tradeId: t.id,
+            side: t.side,
+            price,
+            amount,
+            createdAt,
+          });
+        }
+      }
+    })
+    .catch((err: unknown) => {
+      log.error({ err, pairId }, 'Fill broadcast: pair lookup failed');
+    });
+}

@@ -44,3 +44,49 @@ test('prepare_spot_order_signature binds canonical values, TIF and expiry with t
     await client.close();
   }
 });
+
+test('prepare_spot_order_signature binds domain + chain genesis when configured (FE-03)', async () => {
+  const genesis = `0x${'ab'.repeat(32)}`;
+  const client = new Client({
+    name: 'lunex-order-signing-bound-test',
+    version: '1.0.0',
+  });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ['--import', 'tsx', 'src/index.ts'],
+    stderr: 'pipe',
+    env: {
+      ...(process.env as Record<string, string>),
+      LUNEX_SIGNING_DOMAIN: 'lunex.lunes.io',
+      LUNEX_GENESIS_HASH: genesis,
+    },
+  });
+  await client.connect(transport);
+  try {
+    const result = await client.callTool({
+      name: 'prepare_spot_order_signature',
+      arguments: {
+        pairSymbol: 'QAX/QUSD',
+        side: 'BUY',
+        type: 'LIMIT',
+        makerAddress: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
+        price: '2.0000',
+        amount: '1e0',
+        nonce: '123456789',
+        timestamp: 1700000000000,
+        timeInForce: 'FOK',
+        expiresAt: '2026-10-18T18:00:00.000Z',
+      },
+    });
+    const content = result.content as Array<{ type: string; text: string }>;
+    const response = JSON.parse(
+      content.find((item) => item.type === 'text')!.text,
+    );
+    assert.equal(
+      response.message,
+      `lunex-order-v3:lunex.lunes.io:${genesis}:QAX/QUSD:BUY:LIMIT:2:0:1:123456789:1700000000000:FOK:1792346400000`,
+    );
+  } finally {
+    await client.close();
+  }
+});

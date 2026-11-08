@@ -1,9 +1,14 @@
 /**
  * Wraps a signAndSend Promise with a configurable timeout.
  * If the transaction is not confirmed within the deadline, rejects with a timeout error.
+ *
+ * A timeout does NOT mean the extrinsic failed: once broadcast it stays valid
+ * in the pool until its mortal era expires and may still be included. Callers
+ * that move funds must treat a post-broadcast timeout as ambiguous and
+ * reconcile against the chain instead of re-submitting (BE-07).
  */
 
-const DEFAULT_TX_TIMEOUT_MS = 60_000;
+export const DEFAULT_TX_TIMEOUT_MS = 60_000;
 
 export class TxTimeoutError extends Error {
   constructor(label: string, timeoutMs: number) {

@@ -20,6 +20,14 @@ import { config } from '../config';
 import { log } from '../utils/logger';
 import { waitForFinalizedTx } from '../utils/finalizedTx';
 import { dryRunGasLimit, txGasLimit } from '../utils/contractGas';
+import {
+  anchorMortalEra,
+  awaitFinalizedSend,
+  DefinitiveTxFailure,
+  reconcileFinalizedExtrinsic,
+  type ExtrinsicReconciliation,
+  type MortalSubmission,
+} from '../utils/extrinsicReconciliation';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -27,7 +35,25 @@ export interface PayoutResult {
   success: boolean;
   txHash: string | null;
   error: string | null;
+  /**
+   * CONFIRMED: finalized without dispatch error.
+   * FAILED: proven not paid (never broadcast, or definitive failure).
+   * UNKNOWN: broadcast but outcome ambiguous (timeout / dropped / RPC error)
+   *          — must be reconciled by hash, NEVER re-paid automatically.
+   */
+  outcome?: 'CONFIRMED' | 'FAILED' | 'UNKNOWN';
+  /** Present once the signed extrinsic's hash + era are known. */
+  submission?: MortalSubmission;
 }
+
+export type TransferNativeOptions = {
+  /**
+   * Persist the submission (hash + era) BEFORE broadcast. If it throws,
+   * nothing is broadcast and the result is FAILED.
+   */
+  onBeforeBroadcast?: (submission: MortalSubmission) => Promise<void>;
+  timeoutMs?: number;
+};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -412,18 +438,22 @@ class RewardPayoutService {
   async transferNative(
     toAddress: string,
     amountLunes: number,
+    options: TransferNativeOptions = {},
   ): Promise<PayoutResult> {
+    const failed = (error: string): PayoutResult => ({
+      success: false,
+      outcome: 'FAILED',
+      txHash: null,
+      error,
+    });
+
     const ready = await this.ensureReady();
     if (!ready || !this.api || !this.relayer) {
-      return {
-        success: false,
-        txHash: null,
-        error: 'Payout service not initialized',
-      };
+      return failed('Payout service not initialized');
     }
 
     if (amountLunes <= 0) {
-      return { success: false, txHash: null, error: 'Amount must be positive' };
+      return failed('Amount must be positive');
     }
 
     const amountPlancks = lunesToPlancks(amountLunes);
@@ -434,31 +464,110 @@ class RewardPayoutService {
     if (balance < minRequired) {
       const errMsg = `Insufficient relayer balance for transfer: has ${plancksToLunes(balance)}, needs ${amountLunes}`;
       log.error(errMsg);
-      return { success: false, txHash: null, error: errMsg };
+      return failed(errMsg);
     }
 
-    try {
-      const txHash = await waitForFinalizedTx(
-        `transfer:${toAddress}:${amountLunes}`,
-        (callback) =>
-          this.api!.tx.balances.transferKeepAlive(
-            toAddress,
-            new BN(amountPlancks.toString()),
-          ).signAndSend(this.relayer!, callback),
-      );
+    const label = `transfer:${toAddress}:${amountLunes}`;
 
-      log.info(
-        { txHash, toAddress, amountLunes },
-        '[RewardPayout] Native LUNES transferred',
+    // Phase 1 — sign with a mortal era and persist the hash. Any failure
+    // here happens BEFORE broadcast, so the payout is provably unpaid.
+    let submission: MortalSubmission;
+    let extrinsic: ReturnType<
+      ApiPromise['tx']['balances']['transferKeepAlive']
+    >;
+    try {
+      const anchor = await anchorMortalEra(this.api);
+      extrinsic = this.api.tx.balances.transferKeepAlive(
+        toAddress,
+        new BN(amountPlancks.toString()),
       );
-      return { success: true, txHash, error: null };
-    } catch (error) {
+      await extrinsic.signAsync(this.relayer, {
+        blockHash: anchor.blockHash,
+        era: anchor.era,
+      });
+      submission = {
+        txHash: extrinsic.hash.toHex(),
+        birthBlock: anchor.birthBlock,
+        mortality: anchor.mortality,
+      };
+      if (options.onBeforeBroadcast) {
+        await options.onBeforeBroadcast(submission);
+      }
+    } catch (error: unknown) {
       const errMsg = error instanceof Error ? error.message : 'Unknown error';
       log.error(
         { err: error, toAddress, amountLunes },
-        '[RewardPayout] Native transfer failed',
+        '[RewardPayout] Native transfer not broadcast',
       );
-      return { success: false, txHash: null, error: errMsg };
+      return failed(errMsg);
+    }
+
+    // Phase 2 — broadcast. Only finalized / pool-definitive results are
+    // final; everything else is UNKNOWN and must be reconciled by hash.
+    try {
+      await awaitFinalizedSend(
+        extrinsic as never,
+        label,
+        submission.txHash,
+        options.timeoutMs,
+      );
+      log.info(
+        { txHash: submission.txHash, toAddress, amountLunes },
+        '[RewardPayout] Native LUNES transferred',
+      );
+      return {
+        success: true,
+        outcome: 'CONFIRMED',
+        txHash: submission.txHash,
+        error: null,
+        submission,
+      };
+    } catch (error: unknown) {
+      const errMsg = error instanceof Error ? error.message : 'Unknown error';
+      const definitive = error instanceof DefinitiveTxFailure;
+      log.error(
+        {
+          err: error,
+          toAddress,
+          amountLunes,
+          txHash: submission.txHash,
+          definitive,
+        },
+        definitive
+          ? '[RewardPayout] Native transfer failed'
+          : '[RewardPayout] Native transfer outcome UNKNOWN — reconcile by hash, do not re-pay',
+      );
+      return {
+        success: false,
+        outcome: definitive ? 'FAILED' : 'UNKNOWN',
+        txHash: submission.txHash,
+        error: errMsg,
+        submission,
+      };
+    }
+  }
+
+  /**
+   * Resolve an ambiguous transfer from FINALIZED blocks only (scan of the
+   * extrinsic's mortal era for the persisted hash).
+   */
+  async reconcileTransfer(
+    submission: MortalSubmission,
+  ): Promise<ExtrinsicReconciliation> {
+    try {
+      const ready = await this.ensureReady();
+      if (!ready || !this.api) {
+        return {
+          outcome: 'UNAVAILABLE',
+          error: 'Payout service not initialized',
+        };
+      }
+      return await reconcileFinalizedExtrinsic(this.api, submission);
+    } catch (error: unknown) {
+      return {
+        outcome: 'UNAVAILABLE',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
     }
   }
 

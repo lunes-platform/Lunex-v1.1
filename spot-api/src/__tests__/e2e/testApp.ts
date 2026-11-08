@@ -15,6 +15,8 @@ import agentsRouter from '../../routes/agents';
 import rewardsRouter from '../../routes/rewards';
 import balancesRouter from '../../routes/balances';
 import asymmetricRouter from '../../routes/asymmetric';
+import authRouter from '../../routes/auth';
+import { attachReadSession } from '../../middleware/readSession';
 import { marginService } from '../../services/marginService';
 
 const app = express();
@@ -22,6 +24,9 @@ const app = express();
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
+app.use('/api/', attachReadSession());
+
+app.use('/api/v1/auth', authRouter);
 
 app.use('/api/v1/pairs', pairsRouter);
 app.use('/api/v1/orders', ordersRouter);

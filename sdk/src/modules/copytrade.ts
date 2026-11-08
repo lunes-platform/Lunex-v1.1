@@ -14,6 +14,7 @@ import {
   CopytradeSignalResult,
   CopytradeVaultDetails,
   CopytradeVaultSummary,
+  CopytradeVaultTxProof,
   CopytradeWithdrawResult,
   CreateCopytradeSignalInput,
 } from '../spot-types';
@@ -23,6 +24,19 @@ import {
   SignedReadAuth,
   signedReadHeaders,
 } from '../spot-utils';
+
+const TX_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
+function assertVaultTxProof(input: CopytradeVaultTxProof): void {
+  for (const key of ['txHash', 'blockHash'] as const) {
+    const value = input[key];
+    if (typeof value !== 'string' || !TX_HASH_PATTERN.test(value)) {
+      throw new Error(
+        `${key} must be the 0x-prefixed 32-byte hash of the finalized CopyVault transaction`,
+      );
+    }
+  }
+}
 
 export class CopytradeModule {
   constructor(private http: HttpClient) {}
@@ -135,20 +149,28 @@ export class CopytradeModule {
     return response.executions;
   }
 
+  /**
+   * Journals a deposit the follower ALREADY signed on the CopyVault contract.
+   * `txHash`/`blockHash` must identify a finalized extrinsic and be included
+   * in the wallet-signed message (`buildCopytradeDepositSignMessage`).
+   */
   async depositToVault(
     leaderId: string,
     input: CopytradeSignedDepositInput,
   ): Promise<CopytradeDepositResult> {
+    assertVaultTxProof(input);
     return this.http.post(
       `/api/v1/copytrade/vaults/${leaderId}/deposit`,
       input,
     );
   }
 
+  /** Journals a withdrawal the follower ALREADY signed on the contract. */
   async withdrawFromVault(
     leaderId: string,
     input: CopytradeSignedWithdrawInput,
   ): Promise<CopytradeWithdrawResult> {
+    assertVaultTxProof(input);
     return this.http.post(
       `/api/v1/copytrade/vaults/${leaderId}/withdraw`,
       input,

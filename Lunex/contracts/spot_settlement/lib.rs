@@ -30,6 +30,9 @@ pub mod spot_settlement {
     use ink::prelude::vec::Vec;
     use ink::storage::Mapping;
 
+    /// Canonical 32-byte order hash.
+    type OrderHash = [u8; 32];
+
     // ========================================
     // PSP22 ERROR TYPE (DEFINIDO LOCALMENTE)
     // ========================================
@@ -166,6 +169,12 @@ pub mod spot_settlement {
         EnforcementTimelockNotExpired,
         /// execute_disable_enforcement called with no pending proposal.
         NoPendingEnforcementDisable,
+        /// BE-07: this exact fill (same maker order, taker order, fill amount
+        /// and fill price) was already settled. Returned when a relayer
+        /// resubmits a settlement after a timeout — the off-chain side should
+        /// mark the trade SETTLED (confirm via `is_fill_settled`), not retry.
+        /// Appended LAST so existing variant indices stay unchanged.
+        TradeAlreadySettled,
     }
 
     // ========================================
@@ -334,7 +343,7 @@ pub mod spot_settlement {
         /// Cumulative amount filled per maker nonce.
         filled_amounts: Mapping<(AccountId, u64), Balance>,
         /// Canonical immutable order hash per maker nonce.
-        order_hashes: Mapping<(AccountId, u64), [u8; 32]>,
+        order_hashes: Mapping<(AccountId, u64), OrderHash>,
         /// Cancelled order nonces
         cancelled_nonces: Mapping<(AccountId, u64), bool>,
         /// Authorized relayers that can call settle_trade
@@ -373,6 +382,11 @@ pub mod spot_settlement {
         /// Minimum delay (ms) between proposing and executing a disable-enforcement
         /// transition. Immutable after construction: 48 * 3_600_000 = 172_800_000 ms.
         enforcement_timelock_ms: u64,
+        /// BE-07 per-trade idempotency: trade keys (see `build_trade_key`) of
+        /// every successfully settled fill. Prevents a resubmitted
+        /// `settle_trade` from settling the same fill twice while both orders
+        /// still have remaining amount. Appended LAST in the storage struct.
+        settled_trades: Mapping<[u8; 32], bool>,
     }
 
     // ========================================
@@ -408,6 +422,7 @@ pub mod spot_settlement {
                 attestor_pubkey: None,
                 pending_enforcement_off: None,
                 enforcement_timelock_ms: 48 * 3_600_000,
+                settled_trades: Mapping::default(),
             }
         }
 
@@ -682,6 +697,22 @@ pub mod spot_settlement {
             self.ensure_not_paused()?;
             self.ensure_relayer_or_owner()?;
 
+            // --- Per-trade idempotency (BE-07) ---
+            // Reject an exact resubmission of a fill that already settled.
+            // `filled_amounts` alone only catches it once an order is
+            // exhausted; a partial fill could otherwise settle twice.
+            let maker_order_hash = Self::build_order_hash(&maker_order);
+            let taker_order_hash = Self::build_order_hash(&taker_order);
+            let trade_key = Self::build_trade_key(
+                &maker_order_hash,
+                &taker_order_hash,
+                fill_amount,
+                fill_price,
+            );
+            if self.settled_trades.get(trade_key).unwrap_or(false) {
+                return Err(SpotError::TradeAlreadySettled);
+            }
+
             // --- Cryptographic Signature Verification ---
             // Verify that each order was actually signed by its claimed maker.
             // This prevents a compromised or malicious relayer from forging trades.
@@ -763,9 +794,7 @@ pub mod spot_settlement {
                 return Err(SpotError::OrderExpired);
             }
 
-            let maker_order_hash = Self::build_order_hash(&maker_order);
             self.ensure_order_hash_matches(&maker_order, &maker_order_hash)?;
-            let taker_order_hash = Self::build_order_hash(&taker_order);
             self.ensure_order_hash_matches(&taker_order, &taker_order_hash)?;
 
             // Check fill doesn't exceed the on-chain remaining amount. The
@@ -909,6 +938,7 @@ pub mod spot_settlement {
                 .insert((maker_order.maker, maker_order.nonce), &maker_order_hash);
             self.order_hashes
                 .insert((taker_order.maker, taker_order.nonce), &taker_order_hash);
+            self.settled_trades.insert(trade_key, &true);
 
             // --- Mark nonces as used (if fully filled) ---
             if new_maker_filled == maker_order.amount {
@@ -993,6 +1023,27 @@ pub mod spot_settlement {
         #[ink(message)]
         pub fn get_balance(&self, user: AccountId, token: AccountId) -> Balance {
             self.balances.get((user, token)).unwrap_or(0)
+        }
+
+        /// BE-07 reconciliation: `true` iff this exact fill (same orders, fill
+        /// amount and fill price passed to `settle_trade`) has already settled.
+        /// The relayer should query this after a submission timeout instead
+        /// of resubmitting blindly.
+        #[ink(message)]
+        pub fn is_fill_settled(
+            &self,
+            maker_order: SignedOrder,
+            taker_order: SignedOrder,
+            fill_amount: Balance,
+            fill_price: Balance,
+        ) -> bool {
+            let key = Self::build_trade_key(
+                &Self::build_order_hash(&maker_order),
+                &Self::build_order_hash(&taker_order),
+                fill_amount,
+                fill_price,
+            );
+            self.settled_trades.get(key).unwrap_or(false)
         }
 
         /// Check if a nonce has been fully filled
@@ -1227,6 +1278,30 @@ pub mod spot_settlement {
             output
         }
 
+        /// BE-07 trade key: `blake2_256(b"lunex:v1:settle-trade\n" ‖
+        /// maker_order_hash ‖ taker_order_hash ‖ fill_amount (u128 LE) ‖
+        /// fill_price (u128 LE))` — 118 bytes hashed. Order hashes are the
+        /// immutable-field hashes from `build_order_hash` (filled_amount,
+        /// signature and attestation excluded), so a resubmission with a
+        /// refreshed attestation still maps to the same key.
+        fn build_trade_key(
+            maker_order_hash: &[u8; 32],
+            taker_order_hash: &[u8; 32],
+            fill_amount: Balance,
+            fill_price: Balance,
+        ) -> [u8; 32] {
+            const PREFIX: &[u8] = b"lunex:v1:settle-trade\n";
+            let mut msg = Vec::with_capacity(118);
+            msg.extend_from_slice(PREFIX);
+            msg.extend_from_slice(maker_order_hash);
+            msg.extend_from_slice(taker_order_hash);
+            msg.extend_from_slice(&fill_amount.to_le_bytes());
+            msg.extend_from_slice(&fill_price.to_le_bytes());
+            let mut output = <Blake2x256 as HashOutput>::Type::default();
+            ink::env::hash_bytes::<Blake2x256>(&msg, &mut output);
+            output
+        }
+
         /// Build the canonical **v2** byte payload of an order (ADR-001).
         ///
         /// ⚠️ INTEGRATION CONTRACT — the off-chain backend (spot-api relayer
@@ -1395,7 +1470,7 @@ pub mod spot_settlement {
         ) -> Result<(), SpotError> {
             self.ensure_owner()?;
             if !enforced {
-                return Err(SpotError::EnforcementTimelockNotExpired)
+                return Err(SpotError::EnforcementTimelockNotExpired);
             }
             self.signature_verification_enforced = true;
             self.env().emit_event(SignatureEnforcementChanged {
@@ -1412,8 +1487,11 @@ pub mod spot_settlement {
         #[ink(message)]
         pub fn propose_disable_enforcement(&mut self) -> Result<(), SpotError> {
             self.ensure_owner()?;
-            self.pending_enforcement_off =
-                Some(self.env().block_timestamp() + self.enforcement_timelock_ms);
+            self.pending_enforcement_off = Some(
+                self.env()
+                    .block_timestamp()
+                    .saturating_add(self.enforcement_timelock_ms),
+            );
             Ok(())
         }
 
@@ -1438,7 +1516,7 @@ pub mod spot_settlement {
                 .pending_enforcement_off
                 .ok_or(SpotError::NoPendingEnforcementDisable)?;
             if self.env().block_timestamp() < deadline {
-                return Err(SpotError::EnforcementTimelockNotExpired)
+                return Err(SpotError::EnforcementTimelockNotExpired);
             }
             self.signature_verification_enforced = false;
             self.pending_enforcement_off = None;
@@ -1588,14 +1666,11 @@ pub mod spot_settlement {
         /// Sign `blake2_256(build_order_message_v2(order))` with `secret`,
         /// producing the 65-byte `r ‖ s ‖ recovery_id` attestation exactly
         /// like the off-chain attestor service must.
-        fn sign_attestation_with(
-            order: &SignedOrder,
-            secret: &secp256k1::SecretKey,
-        ) -> [u8; 65] {
+        fn sign_attestation_with(order: &SignedOrder, secret: &secp256k1::SecretKey) -> [u8; 65] {
             let secp = secp256k1::Secp256k1::new();
             let hash = SpotSettlement::build_attestation_hash(order);
-            let message = secp256k1::Message::from_slice(&hash)
-                .expect("blake2_256 output is 32 bytes");
+            let message =
+                secp256k1::Message::from_slice(&hash).expect("blake2_256 output is 32 bytes");
             let recoverable = secp.sign_ecdsa_recoverable(&message, secret);
             let (recovery_id, compact) = recoverable.serialize_compact();
             let mut attestation = [0u8; 65];
@@ -1726,9 +1801,7 @@ pub mod spot_settlement {
             assert!(contract.propose_disable_enforcement().is_ok());
             // Advance past the 48-hour deadline.
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
 
             let events_before = test::recorded_events().count();
             // Execute: this emits exactly one SignatureEnforcementChanged event.
@@ -1739,9 +1812,8 @@ pub mod spot_settlement {
             assert_eq!(events.len(), events_before + 1);
 
             type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
-            let decoded =
-                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
-                    .expect("SignatureEnforcementChanged must decode");
+            let decoded = <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                .expect("SignatureEnforcementChanged must decode");
             match decoded {
                 Event::SignatureEnforcementChanged(e) => {
                     assert!(!e.enforced);
@@ -1857,10 +1929,7 @@ pub mod spot_settlement {
                 contract.get_balance(accounts.bob, quote),
                 10_000_000_000 - 2_002_000_000
             );
-            assert_eq!(
-                contract.get_balance(accounts.charlie, quote),
-                1_995_000_000
-            );
+            assert_eq!(contract.get_balance(accounts.charlie, quote), 1_995_000_000);
             assert_eq!(contract.get_balance(accounts.charlie, base), 4_000_000_000);
         }
 
@@ -1959,9 +2028,8 @@ pub mod spot_settlement {
             assert_eq!(events.len(), events_before + 1);
 
             type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
-            let decoded =
-                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
-                    .expect("AttestorKeyChanged must decode");
+            let decoded = <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                .expect("AttestorKeyChanged must decode");
             match decoded {
                 Event::AttestorKeyChanged(e) => {
                     assert_eq!(e.attestor_pubkey, attestor_pubkey());
@@ -3154,8 +3222,11 @@ pub mod spot_settlement {
             let seller_quote_after_first = contract.get_balance(accounts.charlie, quote);
             let fees_after_first = contract.get_collected_fees(quote);
 
+            // A *different* fill (600M + 500M > 1B) must still be rejected by
+            // the cumulative-fill check. (An identical replay is now rejected
+            // earlier as TradeAlreadySettled — see the BE-07 tests below.)
             assert_eq!(
-                contract.settle_trade(maker, taker, 600_000_000, 100_000_000),
+                contract.settle_trade(maker, taker, 500_000_000, 100_000_000),
                 Err(SpotError::FillExceedsRemaining)
             );
 
@@ -3178,6 +3249,155 @@ pub mod spot_settlement {
             assert_eq!(contract.get_collected_fees(quote), fees_after_first);
             assert!(!contract.is_nonce_used(accounts.bob, 1));
             assert!(!contract.is_nonce_used(accounts.charlie, 1));
+        }
+
+        // ─── Per-trade idempotency (BE-07) ───
+        //
+        // A relayer that resubmits the SAME matched fill after a timeout must
+        // not settle it twice while both orders still have remaining amount.
+
+        fn funded_partial_pair(contract: &mut SpotSettlement) -> (SignedOrder, SignedOrder) {
+            let accounts = default_accounts();
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            contract
+                .balances
+                .insert((accounts.charlie, base), &5_000_000_000);
+            let maker = SignedOrder {
+                maker: accounts.bob,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_BUY,
+                price: 100_000_000,
+                amount: 2_000_000_000,
+                filled_amount: 0,
+                nonce: 7,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+            let taker = SignedOrder {
+                maker: accounts.charlie,
+                base_token: base,
+                quote_token: quote,
+                side: SIDE_SELL,
+                price: 100_000_000,
+                amount: 2_000_000_000,
+                filled_amount: 0,
+                nonce: 9,
+                expiry: 0,
+                signature: valid_order_signature(),
+                attestation: no_attestation(),
+            };
+            (maker, taker)
+        }
+
+        #[ink::test]
+        fn test_settle_trade_exact_replay_is_rejected_as_already_settled() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+            let (maker, taker) = funded_partial_pair(&mut contract);
+            let quote = maker.quote_token;
+            let base = maker.base_token;
+
+            assert_eq!(
+                contract.settle_trade(maker.clone(), taker.clone(), 500_000_000, 100_000_000),
+                Ok(())
+            );
+            let bob_quote = contract.get_balance(accounts.bob, quote);
+            let bob_base = contract.get_balance(accounts.bob, base);
+            let charlie_base = contract.get_balance(accounts.charlie, base);
+            let charlie_quote = contract.get_balance(accounts.charlie, quote);
+            let fees = contract.get_collected_fees(quote);
+
+            // Both orders still have 1.5B remaining: before BE-07 this replay
+            // would have settled a second time.
+            assert_eq!(
+                contract.settle_trade(maker, taker, 500_000_000, 100_000_000),
+                Err(SpotError::TradeAlreadySettled)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), bob_quote);
+            assert_eq!(contract.get_balance(accounts.bob, base), bob_base);
+            assert_eq!(contract.get_balance(accounts.charlie, base), charlie_base);
+            assert_eq!(contract.get_balance(accounts.charlie, quote), charlie_quote);
+            assert_eq!(contract.get_collected_fees(quote), fees);
+            assert_eq!(contract.get_filled_amount(accounts.bob, 7), 500_000_000);
+            assert_eq!(contract.get_filled_amount(accounts.charlie, 9), 500_000_000);
+        }
+
+        #[ink::test]
+        fn test_is_fill_settled_only_true_after_successful_settlement() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+            let (maker, taker) = funded_partial_pair(&mut contract);
+            let quote = maker.quote_token;
+
+            assert!(!contract.is_fill_settled(
+                maker.clone(),
+                taker.clone(),
+                500_000_000,
+                100_000_000
+            ));
+
+            // A failed attempt (buyer unfunded) must NOT burn the trade key,
+            // otherwise a legitimate retry after funding would be blocked.
+            contract.balances.insert((accounts.bob, quote), &0);
+            assert_eq!(
+                contract.settle_trade(maker.clone(), taker.clone(), 500_000_000, 100_000_000),
+                Err(SpotError::InsufficientBalance)
+            );
+            assert!(!contract.is_fill_settled(
+                maker.clone(),
+                taker.clone(),
+                500_000_000,
+                100_000_000
+            ));
+
+            contract
+                .balances
+                .insert((accounts.bob, quote), &10_000_000_000);
+            assert_eq!(
+                contract.settle_trade(maker.clone(), taker.clone(), 500_000_000, 100_000_000),
+                Ok(())
+            );
+            assert!(contract.is_fill_settled(
+                maker.clone(),
+                taker.clone(),
+                500_000_000,
+                100_000_000
+            ));
+            // Different fill or price → different trade key.
+            assert!(!contract.is_fill_settled(
+                maker.clone(),
+                taker.clone(),
+                400_000_000,
+                100_000_000
+            ));
+            assert!(!contract.is_fill_settled(maker, taker, 500_000_000, 99_000_000));
+        }
+
+        #[ink::test]
+        fn test_distinct_partial_fills_between_same_orders_still_settle() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = create_contract();
+            let (maker, taker) = funded_partial_pair(&mut contract);
+
+            assert_eq!(
+                contract.settle_trade(maker.clone(), taker.clone(), 500_000_000, 100_000_000),
+                Ok(())
+            );
+            assert_eq!(
+                contract.settle_trade(maker, taker, 400_000_000, 100_000_000),
+                Ok(())
+            );
+            assert_eq!(contract.get_filled_amount(accounts.bob, 7), 900_000_000);
+            assert_eq!(contract.get_filled_amount(accounts.charlie, 9), 900_000_000);
         }
 
         #[ink::test]
@@ -3478,9 +3698,7 @@ pub mod spot_settlement {
             // Advance the block timestamp past the 48-hour deadline.
             // ENFORCEMENT_DISABLE_TIMELOCK_MS = 48 * 3_600_000 = 172_800_000 ms.
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
 
             let events_before = test::recorded_events().count();
             assert!(contract.execute_disable_enforcement().is_ok());
@@ -3490,9 +3708,8 @@ pub mod spot_settlement {
             let events: Vec<_> = test::recorded_events().collect();
             assert_eq!(events.len(), events_before + 1);
             type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
-            let decoded =
-                <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
-                    .expect("must decode SignatureEnforcementChanged");
+            let decoded = <Event as scale::Decode>::decode(&mut &events.last().unwrap().data[..])
+                .expect("must decode SignatureEnforcementChanged");
             match decoded {
                 Event::SignatureEnforcementChanged(e) => {
                     assert!(!e.enforced);
@@ -3516,9 +3733,7 @@ pub mod spot_settlement {
             // First disable via the correct two-step flow.
             assert!(contract.propose_disable_enforcement().is_ok());
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
             assert!(contract.execute_disable_enforcement().is_ok());
             assert!(!contract.is_signature_verification_enforced());
 
@@ -3547,9 +3762,7 @@ pub mod spot_settlement {
 
             // Non-owner execute attempt (even after delay).
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
             set_caller(accounts.bob);
             assert_eq!(
                 contract.execute_disable_enforcement(),
@@ -3575,9 +3788,7 @@ pub mod spot_settlement {
 
             // Execute after cancel with expired time must now return NoPendingEnforcementDisable.
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                now + 172_800_001,
-            );
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + 172_800_001);
             assert_eq!(
                 contract.execute_disable_enforcement(),
                 Err(SpotError::NoPendingEnforcementDisable),

@@ -4,10 +4,13 @@
 
 **Authentication:** Most write operations require an `sr25519` wallet signature. Admin operations require `Authorization: Bearer <ADMIN_SECRET>`. AI Agent operations require `X-API-Key: <agent-key>`.
 
+**Private reads (🔏 on `GET`/read endpoints)** accept either a per-request wallet signature (`nonce`, `timestamp`, `signature`) **or** a read-session bearer (`Authorization: Bearer lxs1.…`) obtained once via [`POST /auth/session`](#read-sessions). Read sessions never authorize writes.
+
 ---
 
 ## Table of Contents
 
+- [Read Sessions](#read-sessions)
 - [Pairs](#pairs)
 - [Orders](#orders)
 - [Trades](#trades)
@@ -24,6 +27,88 @@
 - [Governance](#governance)
 - [WebSocket Channels](#websocket-channels)
 - [Error Responses](#error-responses)
+
+---
+
+## Read Sessions
+
+One wallet signature unlocks private **reads** for 8 hours. Every state-changing
+or fund-moving endpoint (orders, cancels, deposits, withdrawals, votes,
+registrations, profile updates, favorite add/remove, …) still requires its own
+wallet signature — a read-session bearer is ignored by those routes.
+
+### `POST /auth/session` 🔏 Signature
+
+Exchange one `sr25519` signature for a read-only session token. Rate limited
+(30 req/min per IP).
+
+The signed message is the standard wallet-action message with action
+`auth.session` (single-use nonce, ±5 min timestamp window):
+
+```text
+lunex-auth:auth.session
+address:<address>
+nonce:<nonce>
+timestamp:<unix ms>
+```
+
+**Body:**
+```json
+{
+  "address": "5GrwvaEF...",
+  "nonce": "a1b2c3d4e5f6",
+  "timestamp": 1735000000000,
+  "signature": "0x..."
+}
+```
+
+**Response `201`:**
+```json
+{
+  "token": "lxs1.<base64url claims>.<base64url HMAC-SHA256>",
+  "tokenType": "Bearer",
+  "scope": "read",
+  "expiresAt": 1735028800000
+}
+```
+
+Token claims: `{ "v": 1, "sub": "<address>", "scope": "read", "iat": <unix s>, "exp": <unix s>, "sid": "<session id>" }`.
+The token is signed server-side with `SESSION_SECRET` (required in production).
+
+Errors: `400` validation, `401` invalid / expired / replayed signature or blocked wallet.
+
+### `POST /auth/session/revoke`
+
+Revoke the session presented in `Authorization: Bearer lxs1.…` (e.g. on wallet
+disconnect). The session id stays revoked until the token's own expiry.
+
+**Response `200`:** `{ "revoked": true }` — `401` if the token is already invalid, expired or revoked.
+
+### Using the session on private reads
+
+Send `Authorization: Bearer <token>` and omit `nonce`/`timestamp`/`signature`:
+
+```http
+GET /api/v1/orders?makerAddress=5GrwvaEF...&status=OPEN
+Authorization: Bearer lxs1.eyJ2Ijox...
+```
+
+The session's `sub` must equal the address being read (exact, case-sensitive
+SS58 match). Responses: `401 { "error": "Invalid or expired session" }` when the
+token is invalid, expired or revoked; `401 { "error": "Session not valid for this address" }`
+on an address mismatch. Requests without a bearer keep the legacy signed-read
+behaviour unchanged.
+
+Endpoints accepting a read session: `GET /orders`, `GET /trades?address=`,
+`GET /margin`, `GET /rewards/pending`, `GET /rewards/history`,
+`GET /affiliate/code|dashboard|tree|payouts`, `GET /copytrade/positions`,
+`GET /copytrade/activity`, `GET /social/following`, `viewerAddress` reads on
+`GET /social/leaders/:leaderId` and `GET /social/leaders/by-address`,
+`POST /governance/vote/check`, `GET /governance/vote/history`,
+`GET /asymmetric/strategies`, `GET /asymmetric/strategies/:id`,
+`GET /asymmetric/strategies/:id/logs`, `GET /listing/owner/:address`,
+`GET /agents/by-wallet/:address`, `GET /strategies/followed/:address`,
+`GET /user/:address/favorites`.
 
 ---
 

@@ -1,4 +1,10 @@
 import { SPOT_API_URL } from '../config/api'
+import {
+  handleReadAuthError,
+  readAuthHeaders,
+  type ReadAuth
+} from './sessionService'
+
 
 interface SignedAgentActionPayload {
   nonce: string
@@ -87,12 +93,15 @@ async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const res = await fetch(`${SPOT_API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-    ...options
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string> | undefined)
+    }
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.error || `Request failed: ${res.status}`)
+    throw handleReadAuthError(body.error || `Request failed: ${res.status}`)
   }
   return res.json() as Promise<T>
 }
@@ -132,12 +141,12 @@ const agentService = {
 
   async getAgentByWallet(
     wallet: string,
-    auth: SignedAgentActionPayload
+    auth: ReadAuth
   ): Promise<AgentProfile | null> {
     try {
       const data = await apiRequest<{ agent: any }>(
         `/api/v1/agents/by-wallet/${encodeURIComponent(wallet)}`,
-        { headers: signedAgentHeaders(auth) }
+        { headers: readAuthHeaders(auth) }
       )
       return normalizeAgentProfile(data.agent)
     } catch {

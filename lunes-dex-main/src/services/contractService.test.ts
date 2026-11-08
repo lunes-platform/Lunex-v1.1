@@ -4,6 +4,10 @@ import { contractService } from './contractService'
 vi.mock('@polkadot/extension-dapp', () => ({
   web3FromAddress: vi.fn().mockResolvedValue({ signer: {} })
 }))
+// Signing goes through the active wallet adapter (extension or WalletConnect).
+vi.mock('../wallet/activeWallet', () => ({
+  getSignerFor: vi.fn(() => ({}))
+}))
 
 const alice = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'
 const bob = '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty'

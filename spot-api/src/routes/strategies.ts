@@ -12,6 +12,10 @@ import {
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 
 const router = Router();
 
@@ -148,48 +152,60 @@ router.get(
 );
 
 // GET /strategies/:id — strategy detail
-router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const strategy = await strategyService.getStrategy(req.params.id);
-    res.json({ strategy });
-  } catch (err: any) {
-    if (err.message === 'Strategy not found')
-      return res.status(404).json({ error: err.message });
-    next(err);
-  }
-});
+// BE-11: private strategies are visible only to the owner agent (API key).
+router.get(
+  '/:id',
+  optionalAgentAuth(),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const strategy = await strategyService.getStrategy(req.params.id, {
+        viewerAgentId: req.agent?.id,
+      });
+      res.json({ strategy });
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'Strategy not found')
+        return res.status(404).json({ error: err.message });
+      next(err);
+    }
+  },
+);
 
 // GET /strategies/:id/performance — historical daily snapshots
 router.get(
   '/:id/performance',
+  optionalAgentAuth(),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
+      // BE-11: same visibility rule as GET /:id.
+      await strategyService.getStrategy(req.params.id, {
+        viewerAgentId: req.agent?.id,
+      });
       const days = Math.min(Number(req.query.days ?? 30), 365);
       const history = await strategyService.getPerformanceHistory(
         req.params.id,
         days,
       );
       res.json({ history, days });
-    } catch (err) {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'Strategy not found')
+        return res.status(404).json({ error: err.message });
       next(err);
     }
   },
 );
 
-// GET /strategies/:id/followers — list active followers
+// GET /strategies/:id/followers — BE-11: aggregate only (count + allocated
+// capital). Follower wallets are private; each follower reads its own list
+// via the READ-signed GET /strategies/followed/:address.
 router.get(
   '/:id/followers',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const limit = Math.min(Number(req.query.limit ?? 50), 200);
-      const offset = Number(req.query.offset ?? 0);
-      const result = await strategyService.getFollowers(
-        req.params.id,
-        limit,
-        offset,
-      );
+      const result = await strategyService.getFollowers(req.params.id);
       res.json(result);
-    } catch (err) {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message === 'Strategy not found')
+        return res.status(404).json({ error: err.message });
       next(err);
     }
   },
@@ -200,7 +216,7 @@ router.get(
   '/followed/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = FollowedQuerySchema.safeParse({
+      const parsed = readAuthSchema(req, FollowedQuerySchema).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
       });
@@ -209,7 +225,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'strategies.followed',
         address: req.params.address,
         nonce: parsed.data.nonce,
@@ -373,7 +389,9 @@ router.post(
   agentAuth(),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const strategy = await strategyService.getStrategy(req.params.id);
+      const strategy = await strategyService.getStrategy(req.params.id, {
+        viewerAgentId: req.agent!.id,
+      });
       if (strategy.agentId !== req.agent!.id) {
         return res
           .status(403)

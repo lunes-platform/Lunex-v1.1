@@ -1,280 +1,167 @@
-import React, { useMemo, useRef, useCallback, useState } from 'react'
+/**
+ * Live SVG preview of the asymmetric buy / sell liquidity curves.
+ *
+ * Buy liquidity sits below the current price (left), sell liquidity above
+ * (right). Height follows k (relative to the larger side), width follows the
+ * max capacity, and the fall-off follows the curvature γ: y ∝ (1 − t)^γ.
+ */
+import React, { useMemo } from 'react'
 import styled from 'styled-components'
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend
-} from 'recharts'
+import { C, grotesk } from '../ui/kit'
 
-// ─── Types ────────────────────────────────────────────────────────
-
-export interface CurveParams {
-  k: number // base liquidity
-  L: number // leverage
-  c: number // allocation 0–1
-  x0: number // max capacity
-  gamma: number // curvature 1–5
-  feeT: number // fee rate e.g. 0.003
-  interestR: number // interest rate e.g. 0.01
+export type CurveSide = {
+  /** Base liquidity (LUSDT). */
+  k: number
+  /** Max capacity (LUSDT). */
+  x0: number
+  /** Curvature γ 1–5. */
+  g: number
 }
 
-interface Props {
-  buyParams: CurveParams
-  sellParams: CurveParams
-  label?: React.ReactNode
-  /** Callback fired when the user drags on the chart to adjust γ. */
-  onGammaChange?: (side: 'buy' | 'sell', newGamma: number) => void
-  /** When true, chart is interactive — curve adjusts on drag. */
-  interactive?: boolean
+export const GAMMA_LABELS = [
+  '',
+  'Linear',
+  'Moderate',
+  'Balanced',
+  'Aggressive',
+  'Extreme'
+]
+
+const W = 300
+const H = 160
+const MID = W / 2
+const MAX_CAP = 50000
+
+const points = (
+  c: CurveSide,
+  dir: -1 | 1,
+  maxK: number
+): [number, number][] => {
+  const pts: [number, number][] = []
+  const span = MID * ((c.x0 / MAX_CAP) * 0.5 + 0.5)
+  for (let i = 0; i <= 30; i++) {
+    const t = i / 30
+    const x = MID + dir * t * span
+    const y = H - 10 - (c.k / maxK) * 130 * Math.pow(1 - t, c.g)
+    pts.push([x, y])
+  }
+  return pts
 }
 
-// ─── Math ─────────────────────────────────────────────────────────
+const poly = (p: [number, number][]) =>
+  p.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
 
-function simulateLiquidity(x: number, p: CurveParams): number {
-  if (x >= p.x0 || p.x0 <= 0) return 0
-  const base = p.k + p.c * p.L
-  const exhaustion = Math.pow(1 - x / p.x0, p.gamma)
-  const gross = base * exhaustion
-  const feeDiscount = p.feeT * x
-  const interestDiscount = p.interestR * p.L
-  return Math.max(0, gross - feeDiscount - interestDiscount)
-}
+const area = (p: [number, number][]) =>
+  `M${p[0][0].toFixed(1)} ${H}` +
+  p.map(([x, y]) => `L${x.toFixed(1)} ${y.toFixed(1)}`).join('') +
+  `L${p[p.length - 1][0].toFixed(1)} ${H}Z`
 
-function buildChartData(
-  buyParams: CurveParams,
-  sellParams: CurveParams,
-  steps = 50
-) {
-  const maxX = Math.max(buyParams.x0, sellParams.x0)
-  return Array.from({ length: steps + 1 }, (_, i) => {
-    const x = (i / steps) * maxX
-    return {
-      x: parseFloat(x.toFixed(2)),
-      buy: parseFloat(simulateLiquidity(x, buyParams).toFixed(4)),
-      sell: parseFloat(simulateLiquidity(x, sellParams).toFixed(4))
-    }
-  })
-}
-
-// ─── Styled ───────────────────────────────────────────────────────
-
-const ChartWrapper = styled.div<{ isDragging?: boolean }>`
-  background: ${({ theme }) => theme.colors.themeColors[600]};
+const Wrap = styled.div`
+  flex: 1.3 1 380px;
+  min-width: 0;
+  border: 1px solid ${C.border};
   border-radius: 16px;
-  padding: 20px;
-  cursor: ${({ isDragging }) => (isDragging ? 'ns-resize' : 'default')};
-  user-select: ${({ isDragging }) => (isDragging ? 'none' : 'auto')};
+  background: ${C.surface};
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  path,
+  polyline {
+    transition: d 200ms ease;
+  }
+  @media (max-width: 759px) {
+    flex-basis: 100%;
+  }
 `
 
-const ChartHeader = styled.div`
+const Head = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
-`
-
-const ChartTitle = styled.h3`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 15px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  margin: 0;
-`
-
-const GammaBadge = styled.span<{ side: 'buy' | 'sell' }>`
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 20px;
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  background: ${({ side }) =>
-    side === 'buy' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(248, 113, 113, 0.15)'};
-  color: ${({ side }) => (side === 'buy' ? '#34d399' : '#f87171')};
-`
-
-const BadgesRow = styled.div`
-  display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  b {
+    ${grotesk};
+    font-weight: 600;
+    font-size: 15px;
+  }
+  span {
+    font-size: 12px;
+  }
 `
 
-const DragHint = styled.span`
-  font-family: 'Inter', sans-serif;
+const Axis = styled.div`
+  display: flex;
+  justify-content: space-between;
   font-size: 11px;
-  color: ${({ theme }) => theme.colors.themeColors[300]};
-  opacity: 0.7;
+  color: ${C.muted};
+  font-variant-numeric: tabular-nums;
 `
 
-const tooltipStyle = {
-  backgroundColor: '#1a1a2e',
-  border: '1px solid rgba(255,255,255,0.1)',
-  borderRadius: 8,
-  fontFamily: 'Inter, sans-serif',
-  fontSize: 12
+type Props = {
+  buy: CurveSide
+  sell: CurveSide
+  pairLabel: string
+  /** Current price of the base token in the quote token (optional). */
+  price?: number
 }
 
-// ─── Component ────────────────────────────────────────────────────
+const fmtPrice = (n: number) =>
+  n.toLocaleString('en-US', { maximumSignificantDigits: 4 })
 
-const CurveChart: React.FC<Props> = ({
-  buyParams,
-  sellParams,
-  label,
-  onGammaChange,
-  interactive = false
-}) => {
-  const data = useMemo(
-    () => buildChartData(buyParams, sellParams),
-    [buyParams, sellParams]
-  )
-
-  // ── Drag-to-adjust gamma ────────────────────────────────────
-  const dragRef = useRef<{
-    startY: number
-    side: 'buy' | 'sell'
-    startGamma: number
-  } | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (!interactive || !onGammaChange) return
-      // Left half of chart = buy curve, right half = sell curve
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-      const relX = e.clientX - rect.left
-      const side: 'buy' | 'sell' = relX < rect.width / 2 ? 'buy' : 'sell'
-      dragRef.current = {
-        startY: e.clientY,
-        side,
-        startGamma: side === 'buy' ? buyParams.gamma : sellParams.gamma
-      }
-      setIsDragging(true)
-    },
-    [interactive, onGammaChange, buyParams.gamma, sellParams.gamma]
-  )
-
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!dragRef.current || !onGammaChange) return
-      const deltaY = dragRef.current.startY - e.clientY // up = positive
-      const sensitivity = 0.02 // γ change per pixel
-      const rawGamma = dragRef.current.startGamma + deltaY * sensitivity
-      const clampedGamma =
-        Math.round(Math.max(1, Math.min(5, rawGamma)) * 10) / 10
-      onGammaChange(dragRef.current.side, clampedGamma)
-    },
-    [onGammaChange]
-  )
-
-  const handleMouseUp = useCallback(() => {
-    dragRef.current = null
-    setIsDragging(false)
-  }, [])
+const CurveChart: React.FC<Props> = ({ buy, sell, pairLabel, price }) => {
+  const { bp, sp } = useMemo(() => {
+    const maxK = Math.max(buy.k, sell.k, 1)
+    return { bp: points(buy, -1, maxK), sp: points(sell, 1, maxK) }
+  }, [buy, sell])
 
   return (
-    <ChartWrapper
-      isDragging={isDragging}
-      onMouseDown={interactive ? handleMouseDown : undefined}
-      onMouseMove={interactive ? handleMouseMove : undefined}
-      onMouseUp={interactive ? handleMouseUp : undefined}
-      onMouseLeave={interactive ? handleMouseUp : undefined}
-    >
-      <ChartHeader>
-        <ChartTitle>{label || 'Liquidity Curves'}</ChartTitle>
-        <BadgesRow>
-          <GammaBadge side="buy">Buy γ={buyParams.gamma}</GammaBadge>
-          <GammaBadge side="sell">Sell γ={sellParams.gamma}</GammaBadge>
-          {interactive && <DragHint>↕ drag to adjust γ</DragHint>}
-        </BadgesRow>
-      </ChartHeader>
-
-      <ResponsiveContainer width="100%" height={220}>
-        <AreaChart
-          data={data}
-          margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
-        >
-          <defs>
-            <linearGradient id="gradBuy" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#34d399" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#34d399" stopOpacity={0.02} />
-            </linearGradient>
-            <linearGradient id="gradSell" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#f87171" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#f87171" stopOpacity={0.02} />
-            </linearGradient>
-          </defs>
-
-          <CartesianGrid
-            strokeDasharray="3 3"
-            stroke="rgba(255,255,255,0.05)"
-          />
-
-          <XAxis
-            dataKey="x"
-            tick={{ fill: '#6b7280', fontSize: 11, fontFamily: 'Inter' }}
-            tickLine={false}
-            axisLine={false}
-            label={{
-              value: 'Volume',
-              position: 'insideBottomRight',
-              offset: -8,
-              fill: '#6b7280',
-              fontSize: 11
-            }}
-          />
-
-          <YAxis
-            tick={{ fill: '#6b7280', fontSize: 11, fontFamily: 'Inter' }}
-            tickLine={false}
-            axisLine={false}
-            label={{
-              value: 'Liquidity',
-              angle: -90,
-              position: 'insideLeft',
-              offset: 8,
-              fill: '#6b7280',
-              fontSize: 11
-            }}
-          />
-
-          <Tooltip contentStyle={tooltipStyle} />
-
-          <Legend
-            wrapperStyle={{ fontFamily: 'Inter', fontSize: 12, paddingTop: 8 }}
-          />
-
-          <Area
-            type="monotone"
-            dataKey="buy"
-            name="Buy Curve"
-            stroke="#34d399"
-            strokeWidth={2}
-            fill="url(#gradBuy)"
-            dot={false}
-            activeDot={{ r: 4, fill: '#34d399' }}
-          />
-
-          <Area
-            type="monotone"
-            dataKey="sell"
-            name="Sell Curve"
-            stroke="#f87171"
-            strokeWidth={2}
-            fill="url(#gradSell)"
-            dot={false}
-            activeDot={{ r: 4, fill: '#f87171' }}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
-    </ChartWrapper>
+    <Wrap>
+      <Head>
+        <b>Liquidity curves · {pairLabel}</b>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <span style={{ color: C.successText }}>● Buy</span>
+          <span style={{ color: C.criticalText2 }}>● Sell</span>
+        </div>
+      </Head>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: 240, display: 'block' }}
+        role="img"
+        aria-label={`Buy curve γ${buy.g}, sell curve γ${sell.g}`}
+      >
+        <path
+          d={`M0 40H${W}M0 80H${W}M0 120H${W}M${MID} 0V${H}`}
+          stroke={C.border}
+          strokeWidth={1}
+          vectorEffect="non-scaling-stroke"
+        />
+        <path d={area(bp)} fill="rgba(38,208,124,0.14)" />
+        <path d={area(sp)} fill="rgba(255,93,105,0.14)" />
+        <polyline
+          points={poly(bp)}
+          fill="none"
+          stroke={C.success}
+          strokeWidth={2}
+          vectorEffect="non-scaling-stroke"
+        />
+        <polyline
+          points={poly(sp)}
+          fill="none"
+          stroke={C.criticalText}
+          strokeWidth={2}
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
+      <Axis>
+        <span>{price ? fmtPrice(price * 0.8) : '−20%'}</span>
+        <span>Current {price ? fmtPrice(price) : 'price'}</span>
+        <span>{price ? fmtPrice(price * 1.2) : '+20%'}</span>
+      </Axis>
+    </Wrap>
   )
 }
 
-export { simulateLiquidity, buildChartData }
 export default CurveChart

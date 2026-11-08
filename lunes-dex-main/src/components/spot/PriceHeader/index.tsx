@@ -1,341 +1,235 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components'
+import { ChartColumn, Info, Share2, Star } from 'lucide-react'
 import { useSpot } from 'context/SpotContext'
-import { useFavorites } from '../../../hooks/useFavorites'
+import { C, grotesk, tabular } from 'components/ui/kit'
+import AnimatedNumber from 'components/ui/AnimatedNumber'
 import contractService from '../../../services/contractService'
+import { useFavorites } from '../../../hooks/useFavorites'
+import { T, fmtPx, fq, splitPair } from '../terminal'
 import PairInfoModal from './PairInfoModal'
 import ShareModal from './ShareModal'
-import AnalyticsModal from './AnalyticsModal'
 import { TOKENS } from '../../../config/contracts'
-import type { OrderbookLevel } from '../../../services/spotService'
-import { formatVolume, formatPrice } from './formatters'
+import AnalyticsModal from './AnalyticsModal'
 
 const MAX_SUPPLY = 6_000_000_000
+// Empty when unconfigured: never fall back to a stale test deployment.
 const WLUNES_ADDRESS = TOKENS.WLUNES
 const LUNES_DECIMALS = 8
+const LUNES_BASES = ['LUNES', 'WLUNES']
 
-const Wrapper = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 28px;
-  flex: 1;
-  overflow: hidden;
-`
-
-const MainPrice = styled.div`
+const Price = styled.div<{ $up: boolean }>`
   display: flex;
   flex-direction: column;
-`
-
-const PriceValue = styled.span<{ positive?: boolean }>`
-  font-size: 22px;
-  font-weight: 700;
-  color: ${({ positive }) => (positive ? '#00C076' : '#FF4B55')};
-  line-height: 1;
-`
-
-const PriceSub = styled.span<{ positive?: boolean }>`
-  font-size: 12px;
-  color: ${({ positive }) => (positive ? '#00C076' : '#FF4B55')};
-  margin-top: 2px;
+  color: ${p => (p.$up ? T.up : T.down)};
+  b {
+    ${grotesk};
+    ${tabular};
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.15;
+  }
+  small {
+    ${tabular};
+    font-size: 12px;
+    font-weight: 600;
+  }
 `
 
 const Stat = styled.div`
   display: flex;
   flex-direction: column;
   gap: 2px;
-`
-
-const StatLabel = styled.span`
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-`
-
-const StatValue = styled.span`
-  font-size: 13px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-`
-
-const RatioWrapper = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 120px;
-  margin-left: 12px;
-`
-
-const RatioLabels = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  font-weight: 500;
-`
-
-const RatioBar = styled.div`
-  display: flex;
-  height: 4px;
-  border-radius: 2px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.1);
-`
-
-const RatioBuy = styled.div<{ percent: number }>`
-  width: ${({ percent }) => percent}%;
-  background: #00c076;
-`
-
-const RatioSell = styled.div<{ percent: number }>`
-  width: ${({ percent }) => percent}%;
-  background: #ff4b55;
-`
-
-const ActionsWrapper = styled.div`
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-left: auto;
-`
-
-const ActionBtn = styled.button<{ isFav?: boolean }>`
-  background: ${({ isFav }) =>
-    isFav ? 'rgba(255, 184, 0, 0.1)' : 'rgba(255, 255, 255, 0.03)'};
-  border: 1px solid
-    ${({ isFav }) =>
-      isFav ? 'rgba(255, 184, 0, 0.25)' : 'rgba(255, 255, 255, 0.08)'};
-  border-radius: 8px;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: ${({ isFav }) => (isFav ? '#FFB800' : 'rgba(255, 255, 255, 0.5)')};
-  cursor: pointer;
-  transition: all 0.2s ease;
-
-  &:hover {
-    background: ${({ isFav }) =>
-      isFav ? 'rgba(255, 184, 0, 0.15)' : 'rgba(255, 255, 255, 0.08)'};
-    color: ${({ isFav }) => (isFav ? '#FFB800' : '#fff')};
-    border-color: ${({ isFav }) =>
-      isFav ? 'rgba(255, 184, 0, 0.4)' : 'rgba(255, 255, 255, 0.2)'};
+  span:first-child {
+    font-size: 11px;
+    color: ${C.muted};
+    white-space: nowrap;
+  }
+  span:last-child {
+    ${tabular};
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
   }
 `
 
+const Pressure = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+  > div:first-child {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 600;
+    ${tabular};
+  }
+`
+
+const Bar = styled.div`
+  height: 4px;
+  border-radius: 999px;
+  background: ${T.down};
+  overflow: hidden;
+  > div {
+    height: 100%;
+    background: ${T.up};
+    transition: width 300ms ease;
+  }
+`
+
+const Actions = styled.div`
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+`
+
+const Act = styled.button<{ $on?: boolean }>`
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid ${p => (p.$on ? 'rgba(254,146,63,0.45)' : T.line)};
+  background: ${p => (p.$on ? 'rgba(254,146,63,0.1)' : 'transparent')};
+  color: ${p => (p.$on ? C.warning : C.secondary)};
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    border-color 150ms ease,
+    color 150ms ease;
+  &:hover {
+    border-color: ${p => (p.$on ? C.warning : C.primary)};
+    color: ${p => (p.$on ? C.warning : C.text)};
+  }
+`
+
+type ModalKind = 'info' | 'share' | 'analytics' | null
+
+/** Price + 24h stats + pressure bar + actions. Rendered inside the pair bar. */
 const PriceHeader: React.FC = () => {
   const { ticker, orderbook, selectedPair, walletAddress } = useSpot()
   const { isFavorite, toggleFavorite } = useFavorites(walletAddress)
-  const [circulatingSupply, setCirculatingSupply] = useState(0)
-  const [showInfoModal, setShowInfoModal] = useState(false)
-  const [showShareModal, setShowShareModal] = useState(false)
-  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false)
-
-  const price = ticker?.lastPrice ?? 0
-  const change = ticker?.change24h ?? 0
-  const high = ticker?.high24h ?? 0
-  const low = ticker?.low24h ?? 0
-  const volume = ticker?.volume24h ?? 0
-  const turnover = ticker?.quoteVolume24h ?? 0
-  const [baseSymbol, quoteSymbol] = selectedPair.split('/')
-  const positive = change >= 0
-
-  const marketCap = circulatingSupply > 0 ? circulatingSupply * price : 0
-  const circulatingPct =
-    circulatingSupply > 0
-      ? Math.round((circulatingSupply / MAX_SUPPLY) * 100)
-      : 0
+  const [supply, setSupply] = useState(0)
+  const [modal, setModal] = useState<ModalKind>(null)
+  const [base, quote] = splitPair(selectedPair)
+  const isLunes = LUNES_BASES.includes(base)
 
   useEffect(() => {
+    if (!isLunes || !WLUNES_ADDRESS) return
     contractService
       .getTokenInfo(WLUNES_ADDRESS)
       .then(info => {
         if (info) {
           const raw = Number(info.totalSupply) || 0
-          setCirculatingSupply(raw / Math.pow(10, LUNES_DECIMALS))
+          setSupply(raw / Math.pow(10, LUNES_DECIMALS))
         }
       })
-      .catch(() => {})
-  }, [])
+      .catch(() => undefined)
+  }, [isLunes])
 
-  const bidVolume =
-    orderbook?.bids?.reduce(
-      (sum: number, b: OrderbookLevel) => sum + (Number(b.amount) || 0),
-      0
-    ) ?? 0
-  const askVolume =
-    orderbook?.asks?.reduce(
-      (sum: number, a: OrderbookLevel) => sum + (Number(a.amount) || 0),
-      0
-    ) ?? 0
-  const totalVolume = bidVolume + askVolume
-  const buyPercent =
-    totalVolume > 0 ? Math.round((bidVolume / totalVolume) * 100) : 0
-  const sellPercent = totalVolume > 0 ? 100 - buyPercent : 0
+  const price = ticker?.lastPrice ?? 0
+  const change = ticker?.change24h ?? 0
+  const volume = ticker?.volume24h ?? 0
+  const turnover = ticker?.quoteVolume24h || volume * price
+  const up = change >= 0
+  const marketCap = isLunes && supply > 0 ? supply * price : 0
+  const circPct =
+    isLunes && supply > 0 ? Math.round((supply / MAX_SUPPLY) * 100) : 0
 
-  const isFav = isFavorite(selectedPair)
+  const { buyPct, hasBook } = useMemo(() => {
+    const sum = (l?: Array<{ amount: number }>) =>
+      (l || []).slice(0, 20).reduce((s, x) => s + (Number(x?.amount) || 0), 0)
+    const b = sum(orderbook?.bids)
+    const a = sum(orderbook?.asks)
+    return {
+      buyPct: b + a > 0 ? Math.round((b / (b + a)) * 100) : 50,
+      hasBook: b + a > 0
+    }
+  }, [orderbook])
+
+  const stats: Array<[string, string]> = [
+    ['24h High', fmtPx(ticker?.high24h)],
+    ['24h Low', fmtPx(ticker?.low24h)],
+    ['24h Volume', volume > 0 ? `${fq(volume)} ${base}` : '—'],
+    ['24h Turnover', turnover > 0 ? `${fq(turnover)} ${quote}` : '—'],
+    ['Market cap', marketCap > 0 ? `$${fq(marketCap)}` : '—'],
+    ['Circulating', circPct > 0 ? `${circPct}%` : '—']
+  ]
+
+  const fav = isFavorite(selectedPair)
 
   return (
     <>
-      <Wrapper>
-        <MainPrice>
-          <PriceValue positive={positive}>
-            {price > 0 ? `$${formatPrice(price)}` : '--'}
-          </PriceValue>
-          <PriceSub positive={positive}>
-            {price > 0 ? `${positive ? '+' : ''}${change.toFixed(2)}%` : '--'}
-          </PriceSub>
-        </MainPrice>
+      <Price $up={up} aria-live="polite">
+        <b>
+          {price > 0 ? <AnimatedNumber text={fmtPx(price)} noFlash /> : '—'}
+        </b>
+        <small>
+          {price > 0 ? `${change > 0 ? '+' : ''}${change.toFixed(2)}%` : '—'}
+        </small>
+      </Price>
 
-        <Stat>
-          <StatLabel>24h High</StatLabel>
-          <StatValue>{high > 0 ? `$${formatPrice(high)}` : '--'}</StatValue>
+      {stats.map(([l, v]) => (
+        <Stat key={l}>
+          <span>{l}</span>
+          <span>{v}</span>
         </Stat>
+      ))}
 
-        <Stat>
-          <StatLabel>24h Low</StatLabel>
-          <StatValue>{low > 0 ? `$${formatPrice(low)}` : '--'}</StatValue>
-        </Stat>
+      <Pressure aria-label="Order book buy / sell pressure">
+        <div>
+          <span style={{ color: T.upText }}>
+            Buy {hasBook ? `${buyPct}%` : '—'}
+          </span>
+          <span style={{ color: T.downText }}>
+            {hasBook ? `${100 - buyPct}%` : '—'} Sell
+          </span>
+        </div>
+        <Bar>
+          <div style={{ width: `${buyPct}%` }} />
+        </Bar>
+      </Pressure>
 
-        <Stat>
-          <StatLabel>24h Volume</StatLabel>
-          <StatValue>
-            {volume > 0 ? `${formatVolume(volume)} ${baseSymbol}` : '--'}
-          </StatValue>
-        </Stat>
+      <Actions>
+        <Act
+          $on={fav}
+          title={fav ? 'Remove from favourites' : 'Add to favourites'}
+          aria-label={fav ? 'Remove from favourites' : 'Add to favourites'}
+          aria-pressed={fav}
+          onClick={() => toggleFavorite(selectedPair)}
+        >
+          <Star size={15} strokeWidth={1.75} fill={fav ? C.warning : 'none'} />
+        </Act>
+        <Act
+          title="Pair info"
+          aria-label="Pair info"
+          onClick={() => setModal('info')}
+        >
+          <Info size={15} strokeWidth={1.75} />
+        </Act>
+        <Act
+          title="Share market"
+          aria-label="Share market"
+          onClick={() => setModal('share')}
+        >
+          <Share2 size={15} strokeWidth={1.75} />
+        </Act>
+        <Act
+          title="Analytics"
+          aria-label="Analytics"
+          onClick={() => setModal('analytics')}
+        >
+          <ChartColumn size={15} strokeWidth={1.75} />
+        </Act>
+      </Actions>
 
-        <Stat>
-          <StatLabel>24h Turnover</StatLabel>
-          <StatValue>
-            {turnover > 0 ? `${formatVolume(turnover)} ${quoteSymbol}` : '--'}
-          </StatValue>
-        </Stat>
-
-        <Stat>
-          <StatLabel>Market Cap</StatLabel>
-          <StatValue>
-            {marketCap > 0 ? `$${formatVolume(marketCap)}` : '--'}
-          </StatValue>
-        </Stat>
-
-        <Stat>
-          <StatLabel>Circulating</StatLabel>
-          <StatValue>
-            {circulatingPct > 0 ? `${circulatingPct}% Unlocked` : '--'}
-          </StatValue>
-        </Stat>
-
-        <RatioWrapper>
-          <RatioLabels>
-            <span style={{ color: '#00C076' }}>
-              {totalVolume > 0 ? `Buy ${buyPercent}%` : 'Buy --'}
-            </span>
-            <span style={{ color: '#FF4B55' }}>
-              {totalVolume > 0 ? `${sellPercent}% Sell` : '-- Sell'}
-            </span>
-          </RatioLabels>
-          <RatioBar>
-            <RatioBuy percent={buyPercent} />
-            <RatioSell percent={sellPercent} />
-          </RatioBar>
-        </RatioWrapper>
-
-        <ActionsWrapper>
-          {/* ⭐ Favorite */}
-          <ActionBtn
-            title={isFav ? 'Remove from Favorites' : 'Add to Favorites'}
-            isFav={isFav}
-            onClick={() => toggleFavorite(selectedPair)}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill={isFav ? '#FFB800' : 'none'}
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-            </svg>
-          </ActionBtn>
-
-          {/* ℹ️ Pair Info */}
-          <ActionBtn title="Pair Info" onClick={() => setShowInfoModal(true)}>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="10"></circle>
-              <line x1="12" y1="16" x2="12" y2="12"></line>
-              <line x1="12" y1="8" x2="12.01" y2="8"></line>
-            </svg>
-          </ActionBtn>
-
-          {/* 🔗 Share */}
-          <ActionBtn
-            title="Share Market"
-            onClick={() => setShowShareModal(true)}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="18" cy="5" r="3"></circle>
-              <circle cx="6" cy="12" r="3"></circle>
-              <circle cx="18" cy="19" r="3"></circle>
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-            </svg>
-          </ActionBtn>
-
-          {/* 📊 Analytics */}
-          <ActionBtn
-            title="Analytics"
-            onClick={() => setShowAnalyticsModal(true)}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="18" y1="20" x2="18" y2="10"></line>
-              <line x1="12" y1="20" x2="12" y2="4"></line>
-              <line x1="6" y1="20" x2="6" y2="14"></line>
-            </svg>
-          </ActionBtn>
-        </ActionsWrapper>
-      </Wrapper>
-
-      {/* Modals */}
-      {showInfoModal && (
-        <PairInfoModal onClose={() => setShowInfoModal(false)} />
-      )}
-      {showShareModal && (
-        <ShareModal onClose={() => setShowShareModal(false)} />
-      )}
-      {showAnalyticsModal && (
-        <AnalyticsModal onClose={() => setShowAnalyticsModal(false)} />
-      )}
+      <PairInfoModal open={modal === 'info'} onClose={() => setModal(null)} />
+      <ShareModal open={modal === 'share'} onClose={() => setModal(null)} />
+      <AnalyticsModal
+        open={modal === 'analytics'}
+        onClose={() => setModal(null)}
+      />
     </>
   )
 }

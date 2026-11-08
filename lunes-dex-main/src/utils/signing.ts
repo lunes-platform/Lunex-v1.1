@@ -19,6 +19,53 @@ function canonicalOrderDecimal(value: string | undefined): string {
   return digits.slice(0, point) + '.' + digits.slice(point)
 }
 
+// ─── Signing context (FE-03) ─────────────────────────────────────
+// Every signed message is bound to the app domain and the chain genesis so a
+// signature made on sandbox/testnet can never be replayed on mainnet. The
+// API verifies against its own SIGNING_DOMAIN / LUNES_GENESIS_HASH.
+
+export type SigningContext = { domain: string; chain: string }
+
+let runtimeChainGenesis: string | null = null
+
+/**
+ * Sets the chain genesis at runtime (e.g. `api.genesisHash.toHex()` once the
+ * node connection is ready). REACT_APP_LUNES_GENESIS_HASH takes precedence.
+ */
+export function setSigningChainGenesis(hash: string | null | undefined) {
+  runtimeChainGenesis = hash ? hash.trim().toLowerCase() : null
+}
+
+// Vite replaces `process.env.REACT_APP_*` only when the variable is defined;
+// an undefined one would throw ReferenceError in the browser.
+function readEnvDomain(): string | undefined {
+  try {
+    return process.env.REACT_APP_SIGNING_DOMAIN
+  } catch {
+    return undefined
+  }
+}
+
+function readEnvGenesis(): string | undefined {
+  try {
+    return process.env.REACT_APP_LUNES_GENESIS_HASH
+  } catch {
+    return undefined
+  }
+}
+
+export function getSigningContext(): SigningContext {
+  const host =
+    typeof window !== 'undefined' && window.location
+      ? window.location.hostname
+      : ''
+  const domain = (readEnvDomain() || host || 'localhost').trim().toLowerCase()
+  const chain = (readEnvGenesis() || runtimeChainGenesis || '')
+    .trim()
+    .toLowerCase()
+  return { domain, chain }
+}
+
 export function buildSpotOrderSignMessage(input: {
   pairSymbol: string
   side: 'BUY' | 'SELL'
@@ -32,7 +79,8 @@ export function buildSpotOrderSignMessage(input: {
   expiresAt?: string | Date | null
 }) {
   const expiry = input.expiresAt ? new Date(input.expiresAt).getTime() : 0
-  return `lunex-order-v2:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp}:${input.timeInForce || 'GTC'}:${expiry}`
+  const { domain, chain } = getSigningContext()
+  return `lunex-order-v3:${domain}:${chain}:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp}:${input.timeInForce || 'GTC'}:${expiry}`
 }
 
 export function buildSpotCancelSignMessage(input: {
@@ -86,7 +134,13 @@ export function buildWalletActionMessage(input: {
     string | number | boolean | Array<string | number> | undefined | null
   >
 }) {
-  const lines = [`lunex-auth:${input.action}`, `address:${input.address}`]
+  const { domain, chain } = getSigningContext()
+  const lines = [
+    `lunex-auth:${input.action}`,
+    `domain:${domain}`,
+    `chain:${chain}`,
+    `address:${input.address}`
+  ]
 
   const orderedFields = Object.entries(input.fields ?? {})
     .filter(([, value]) => value !== undefined && value !== null)

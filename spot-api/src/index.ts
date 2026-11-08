@@ -20,6 +20,7 @@ import {
   redisHealthy as redisHealthyGauge,
   dbHealthy as dbHealthyGauge,
   pendingSettlements as pendingSettlementsGauge,
+  reconcileRequiredSettlements as reconcileRequiredSettlementsGauge,
   blockchainConnected as blockchainConnectedGauge,
   vaultTotalEquity,
   copytradeWalletContinuationsPending,
@@ -27,6 +28,12 @@ import {
 import { redisHealthy, disconnectRedis } from './utils/redis';
 import { vaultReconciliationService } from './services/vaultReconciliationService';
 import { collectProductionConfigErrors } from './utils/productionGuards';
+import { toExpressTrustProxy } from './utils/trustProxy';
+import {
+  buildCorsOptions,
+  buildHelmetOptions,
+  createHttpsEnforcer,
+} from './utils/httpSecurity';
 
 // Routes
 import pairsRouter from './routes/pairs';
@@ -52,11 +59,17 @@ import marketInfoRouter from './routes/marketInfo';
 import rewardsRouter from './routes/rewards';
 import balancesRouter from './routes/balances';
 import adminRouter from './routes/admin';
+import authRouter from './routes/auth';
+import feedbackRouter from './routes/feedback';
+import { attachReadSession } from './middleware/readSession';
 import { rewardScheduler } from './services/rewardScheduler';
 import { copytradeWalletContinuationScheduler } from './services/copytradeWalletContinuationScheduler';
 import { settlementService } from './services/settlementService';
 import { socialAnalyticsPipeline } from './services/socialAnalyticsPipeline';
-import { tradeSettlementService } from './services/tradeSettlementService';
+import {
+  tradeSettlementService,
+  PENDING_SETTLEMENT_STATUSES,
+} from './services/tradeSettlementService';
 import { marginService } from './services/marginService';
 import { rebalancerService } from './services/rebalancerService';
 import { strategyService } from './services/strategyService';
@@ -99,38 +112,29 @@ const app = express();
 app.disable('x-powered-by');
 
 // ─── Trust Proxy (required for rate limiting behind nginx/load balancer) ──
-if (config.trustProxy) {
-  app.set('trust proxy', 1);
+// Hop count or CIDR list (TRUST_PROXY); same semantics as the WS server.
+// Mandatory in production (productionGuards) so req.ip is the real client.
+if (config.trustProxy !== false) {
+  app.set('trust proxy', toExpressTrustProxy(config.trustProxy));
+}
+
+if (config.signing.acceptLegacy) {
+  log.warn(
+    { isProd: config.isProd },
+    '[SECURITY] SIGNING_ACCEPT_LEGACY is on — unbound lunex-auth / lunex-order-v2 signatures are accepted (deprecated)',
+  );
+}
+
+if (!config.signing.genesisHash) {
+  // The DEX binds v3 signatures to api.genesisHash, so with this unset every
+  // order/auth signed in the UI fails with "Invalid signature".
+  log.warn(
+    '[Signing] LUNES_GENESIS_HASH is empty — signatures from the DEX (bound to the chain genesis) will be rejected',
+  );
 }
 
 // ─── Security Headers ────────────────────────────────────────────
-app.use(
-  helmet({
-    hsts: config.isProd
-      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
-      : false,
-    frameguard: { action: 'deny' },
-    noSniff: true,
-    referrerPolicy: { policy: 'no-referrer' },
-    contentSecurityPolicy: config.isProd
-      ? {
-          directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'"],
-            imgSrc: ["'self'", 'data:', 'blob:'],
-            connectSrc: ["'self'", 'wss:', 'ws:'],
-            fontSrc: ["'self'"],
-            objectSrc: ["'none'"],
-            mediaSrc: ["'none'"],
-            frameSrc: ["'none'"],
-          },
-        }
-      : false,
-    crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-  }),
-);
+app.use(helmet(buildHelmetOptions(config.isProd)));
 
 // ─── Application Shield ──────────────────────────────────────────
 app.use(securityShield());
@@ -152,28 +156,10 @@ if (config.isProd && config.cors.allowedOrigins.length === 0) {
   process.exit(1);
 }
 
-const corsOptions: cors.CorsOptions = {
-  origin: (origin, callback) => {
-    const allowed = config.cors.allowedOrigins;
-
-    // Allow all origins in development for local DX.
-    if (!config.isProd) {
-      return callback(null, true);
-    }
-
-    // Allow requests with no origin (server-to-server, CLI, MCP)
-    // Only for non-strict routes — strict routes handled by middleware below
-    if (!origin) return callback(null, true);
-
-    if (allowed.includes(origin)) {
-      return callback(null, true);
-    }
-
-    callback(new Error('CORS: origin not allowed'));
-  },
-  credentials: true,
-  maxAge: 86400,
-};
+const corsOptions = buildCorsOptions({
+  isProd: config.isProd,
+  allowedOrigins: config.cors.allowedOrigins,
+});
 app.use(cors(corsOptions));
 
 // Strict CORS enforcement: reject no-origin on trading routes in production
@@ -188,10 +174,19 @@ if (config.isProd) {
         typeof signedQuery.signature === 'string' &&
         typeof signedQuery.nonce === 'string' &&
         signedQuery.timestamp !== undefined;
+      // Read-session bearer (validated by the route; never authorizes writes)
+      const hasReadSessionBearer =
+        typeof req.headers.authorization === 'string' &&
+        /^Bearer\s+lxs1\./i.test(req.headers.authorization);
       if (!origin) {
         // Allow authenticated server-to-server traffic (MCP/agents/CLI) even
         // without browser Origin header.
-        if (hasApiKey || hasSignedQueryAuth || isTrustedMcpClient) {
+        if (
+          hasApiKey ||
+          hasSignedQueryAuth ||
+          hasReadSessionBearer ||
+          isTrustedMcpClient
+        ) {
           return next();
         }
         return res.status(403).json({
@@ -231,13 +226,9 @@ app.use((req, res, next) => {
 });
 
 // ─── HTTPS Enforcement (production) ──────────────────────────────
+// Redirect target is PUBLIC_API_ORIGIN, never the Host header (BE-22).
 if (config.isProd) {
-  app.use((req, res, next) => {
-    if (req.headers['x-forwarded-proto'] !== 'https') {
-      return res.redirect(301, `https://${req.headers.host}${req.url}`);
-    }
-    next();
-  });
+  app.use(createHttpsEnforcer(config.publicApiOrigin));
 }
 
 // ─── HTTP Metrics Middleware ─────────────────────────────────────
@@ -291,8 +282,20 @@ const agentLimiter = rateLimit({
 app.use('/api/v1/agents', agentLimiter);
 app.use('/api/v1/execution', agentLimiter);
 
+// Read-session issuance / revocation (30 req/min per IP)
+const sessionLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Session rate limit exceeded' },
+});
+app.use('/api/v1/auth', sessionLimiter);
+
 // ─── API Routes ──────────────────────────────────────────────────
 app.use('/api/', paginationMiddleware());
+app.use('/api/', attachReadSession());
+app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/pairs', pairsRouter);
 app.use('/api/v1/orders', ordersRouter);
 app.use('/api/v1/trades', tradesRouter);
@@ -316,6 +319,8 @@ app.use('/api/v1/markets', marketInfoRouter);
 app.use('/api/v1/rewards', rewardsRouter);
 app.use('/api/v1/balances', balancesRouter);
 app.use('/api/v1/admin', adminRouter);
+// Beta feedback + client error telemetry (absolute paths below /api/v1).
+app.use('/api/v1', feedbackRouter);
 
 // ─── Health & Metrics ────────────────────────────────────────────
 app.get('/health', async (_req, res) => {
@@ -346,17 +351,32 @@ app.get('/health', async (_req, res) => {
     timestamp: new Date().toISOString(),
     db: dbOk ? 'connected' : 'disconnected',
     redis: redisOk ? 'connected' : 'unavailable',
+  });
+});
+
+// Margin price-feed health is operational detail: admin/internal only (BE-18).
+app.get('/health/details', requireAdminOrInternal, (_req, res) => {
+  res.json({
+    timestamp: new Date().toISOString(),
     marginPriceHealth: marginService.getPriceHealthSummary(),
   });
 });
 
 app.get('/metrics', requireAdminOrInternal, async (_req, res) => {
   try {
-    const [equity, pendingWallet, pendingSettlementsCount] = await Promise.all([
+    const [
+      equity,
+      pendingWallet,
+      pendingSettlementsCount,
+      reconcileRequiredCount,
+    ] = await Promise.all([
       prisma.copyVault.aggregate({ _sum: { totalEquity: true } }),
       copytradeService.countPendingWalletContinuations(),
       prisma.trade.count({
-        where: { settlementStatus: { in: ['PENDING', 'FAILED', 'SETTLING'] } },
+        where: { settlementStatus: { in: [...PENDING_SETTLEMENT_STATUSES] } },
+      }),
+      prisma.trade.count({
+        where: { settlementStatus: 'RECONCILE_REQUIRED' },
       }),
     ]);
 
@@ -365,6 +385,7 @@ app.get('/metrics', requireAdminOrInternal, async (_req, res) => {
     );
     copytradeWalletContinuationsPending.set(pendingWallet.count);
     pendingSettlementsGauge.set(pendingSettlementsCount);
+    reconcileRequiredSettlementsGauge.set(reconcileRequiredCount);
     dbHealthyGauge.set(1);
 
     try {

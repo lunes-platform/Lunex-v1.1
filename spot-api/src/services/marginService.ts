@@ -28,11 +28,15 @@ import { decimalToNumber } from '../utils/helpers';
 import { orderbookManager } from '../utils/orderbook';
 import { log } from '../utils/logger';
 import { ApiError } from '../middleware/errors';
+import { settlementService } from './settlementService';
 
 const DEFAULT_COLLATERAL_TOKEN = 'USDT';
 const MIN_LEVERAGE = 1;
 const MAX_LEVERAGE = 10;
-const MAINTENANCE_MARGIN_RATIO = 0.1;
+// 5% maintenance margin: lets 10x positions open with a 2.0 health factor
+// (min 1.25). Positions store their own maintenanceMargin at open time, so
+// changing this only affects new positions.
+const MAINTENANCE_MARGIN_RATIO = 0.05;
 const LIQUIDATION_PENALTY_RATIO = 0.025;
 const MIN_OPEN_POSITION_HEALTH_FACTOR = 1.25;
 const MAX_SAFE_INITIAL_LEVERAGE = Math.min(
@@ -458,6 +462,62 @@ async function getOrCreateMarginAccountWithClient(
   return account;
 }
 
+/**
+ * Proof-of-funds gate for margin collateral (BE-06).
+ *
+ * There is no on-chain margin custody (no margin contract, no custody
+ * address), and the spot vault is user-controlled on-chain, so the backend can
+ * neither verify a deposit transfer nor lock/debit vault funds for margin. The
+ * margin ledger is therefore an unproven journal: it is only allowed where no
+ * real funds exist — non-production with on-chain settlement disabled.
+ * Everywhere else collateral moves fail closed with 409, so no forged
+ * collateral or CONFIRMED transfer record can be created.
+ */
+function assertUnprovenCollateralAllowed(operation: 'deposit' | 'withdraw') {
+  if (config.isProd || settlementService.isEnabled()) {
+    throw new ApiError(
+      409,
+      'MARGIN_COLLATERAL_PROOF_REQUIRED',
+      `Margin collateral ${operation} is disabled: no on-chain margin custody exists to prove or release funds`,
+    );
+  }
+}
+
+/**
+ * Takes a row lock on the margin account for the rest of the transaction and
+ * returns a fresh read. Every balance-mutating path serializes on this lock,
+ * so balance checks are never made against a stale snapshot (lost update).
+ */
+async function lockMarginAccount(
+  client: Prisma.TransactionClient,
+  accountId: string,
+): Promise<MarginAccountRecord> {
+  await client.$queryRaw`SELECT "id" FROM "MarginAccount" WHERE "id" = ${accountId} FOR UPDATE`;
+  const fresh = (await client.marginAccount.findUnique({
+    where: { id: accountId },
+  })) as MarginAccountRecord | null;
+  if (!fresh) throw new Error('Margin account not found');
+  return fresh;
+}
+
+/**
+ * Conditional debit: decrements collateralAvailable only if the row still
+ * holds at least `amount`. Returns false when the guard fails.
+ */
+async function debitAvailableCollateral(
+  client: Prisma.TransactionClient,
+  accountId: string,
+  amount: string,
+  extra: Prisma.MarginAccountUpdateManyMutationInput = {},
+): Promise<boolean> {
+  const debit = new Decimal(amount);
+  const claimed = await client.marginAccount.updateMany({
+    where: { id: accountId, collateralAvailable: { gte: debit } },
+    data: { collateralAvailable: { decrement: debit }, ...extra },
+  });
+  return claimed.count === 1;
+}
+
 async function getOrCreateMarginAccount(address: string) {
   return getOrCreateMarginAccountWithClient(prisma, address);
 }
@@ -794,17 +854,20 @@ export const marginService = {
     const amount = parseFloat(input.amount);
     if (!Number.isFinite(amount) || amount <= 0)
       throw new Error('Collateral amount must be positive');
+    assertUnprovenCollateralAllowed('deposit');
 
     const updated = await prisma.$transaction(async (tx) => {
       const txAny = tx;
-      const account = await getOrCreateMarginAccountWithClient(
+      const created = await getOrCreateMarginAccountWithClient(
         txAny,
         input.address,
       );
+      const account = await lockMarginAccount(txAny, created.id);
+      // Atomic increment — never an absolute write from a prior read.
       const nextAccount = (await txAny.marginAccount.update({
         where: { id: account.id },
         data: {
-          collateralAvailable: account.collateralAvailable.plus(input.amount),
+          collateralAvailable: { increment: new Decimal(input.amount) },
         },
       })) as MarginAccountRecord;
 
@@ -844,13 +907,15 @@ export const marginService = {
     const amount = parseFloat(input.amount);
     if (!Number.isFinite(amount) || amount <= 0)
       throw new Error('Collateral amount must be positive');
+    assertUnprovenCollateralAllowed('withdraw');
 
     const updated = await prisma.$transaction(async (tx) => {
       const txAny = tx;
-      const account = await getOrCreateMarginAccountWithClient(
+      const created = await getOrCreateMarginAccountWithClient(
         txAny,
         input.address,
       );
+      const account = await lockMarginAccount(txAny, created.id);
       if (decimalToNumber(account.collateralAvailable) < amount) {
         throw new Error('Insufficient available collateral');
       }
@@ -866,11 +931,13 @@ export const marginService = {
         );
       }
 
-      const nextAccount = (await txAny.marginAccount.update({
+      // Conditional atomic debit: even if two withdrawals passed the checks
+      // above, only one can take the balance below the amount.
+      if (!(await debitAvailableCollateral(txAny, account.id, input.amount))) {
+        throw new Error('Insufficient available collateral');
+      }
+      const nextAccount = (await txAny.marginAccount.findUnique({
         where: { id: account.id },
-        data: {
-          collateralAvailable: account.collateralAvailable.minus(input.amount),
-        },
       })) as MarginAccountRecord;
 
       await txAny.marginCollateralTransfer.create({
@@ -947,10 +1014,11 @@ export const marginService = {
     const position = await prisma.$transaction(async (tx) => {
       const txAny = tx;
 
-      const account = await getOrCreateMarginAccountWithClient(
+      const created = await getOrCreateMarginAccountWithClient(
         txAny,
         input.address,
       );
+      const account = await lockMarginAccount(txAny, created.id);
       if (decimalToNumber(account.collateralAvailable) < collateralAmount) {
         throw new Error('Insufficient available collateral');
       }
@@ -987,17 +1055,16 @@ export const marginService = {
         quantity,
       );
 
-      await txAny.marginAccount.update({
-        where: { id: account.id },
-        data: {
-          collateralAvailable: account.collateralAvailable.minus(
-            input.collateralAmount,
-          ),
-          collateralLocked: account.collateralLocked.plus(
-            input.collateralAmount,
-          ),
+      // Conditional atomic move available → locked.
+      const moved = await debitAvailableCollateral(
+        txAny,
+        account.id,
+        input.collateralAmount,
+        {
+          collateralLocked: { increment: new Decimal(input.collateralAmount) },
         },
-      });
+      );
+      if (!moved) throw new Error('Insufficient available collateral');
 
       return (await txAny.marginPosition.create({
         data: {
@@ -1040,39 +1107,36 @@ export const marginService = {
         throw new Error('Not position owner');
       if (position.status !== 'OPEN') throw new Error('Position is not open');
 
+      const account = await lockMarginAccount(txAny, position.account.id);
       const refreshed = await refreshPositionWithClient(txAny, position);
-      const account = (await txAny.marginAccount.findUnique({
-        where: { id: position.account.id },
-      })) as MarginAccountRecord | null;
-      if (!account) throw new Error('Margin account not found');
       const netRelease = Math.max(
         refreshed.collateralAmount + refreshed.unrealizedPnl,
         0,
       );
 
-      await txAny.marginAccount.update({
-        where: { id: account.id },
-        data: {
-          collateralAvailable: account.collateralAvailable.plus(
-            netRelease.toFixed(18),
-          ),
-          collateralLocked: account.collateralLocked.minus(
-            position.collateralAmount.toString(),
-          ),
-          totalRealizedPnl: account.totalRealizedPnl.plus(
-            refreshed.unrealizedPnl.toFixed(18),
-          ),
-        },
-      });
-
-      await txAny.marginPosition.update({
-        where: { id: position.id },
+      // Atomic claim OPEN → CLOSED (same CAS as liquidation): two concurrent
+      // closes can both pass the status check above under READ COMMITTED;
+      // only the one that wins this transition releases collateral.
+      const claimed = await txAny.marginPosition.updateMany({
+        where: { id: position.id, status: 'OPEN' },
         data: {
           status: 'CLOSED',
           markPrice: toDecimal(refreshed.markPrice),
           unrealizedPnl: new Decimal('0'),
           realizedPnl: toDecimal(refreshed.unrealizedPnl),
           closedAt: new Date(),
+        },
+      });
+      if (claimed.count === 0) throw new Error('Position is not open');
+
+      await txAny.marginAccount.update({
+        where: { id: account.id },
+        data: {
+          collateralAvailable: { increment: toDecimal(netRelease) },
+          collateralLocked: {
+            decrement: new Decimal(position.collateralAmount.toString()),
+          },
+          totalRealizedPnl: { increment: toDecimal(refreshed.unrealizedPnl) },
         },
       });
     });
@@ -1099,10 +1163,7 @@ export const marginService = {
         throw new Error('Position is not liquidatable');
       }
 
-      const account = (await txAny.marginAccount.findUnique({
-        where: { id: position.account.id },
-      })) as MarginAccountRecord | null;
-      if (!account) throw new Error('Margin account not found');
+      const account = await lockMarginAccount(txAny, position.account.id);
       ownerAddress = account.address;
       const penaltyAmount = Math.min(
         refreshed.collateralAmount * LIQUIDATION_PENALTY_RATIO,
@@ -1133,18 +1194,18 @@ export const marginService = {
         throw new Error('Position already liquidated');
       }
 
+      // Atomic increments/decrements (BE-06): an absolute write computed from
+      // the earlier read would overwrite a concurrent deposit/withdraw/close.
       await txAny.marginAccount.update({
         where: { id: account.id },
         data: {
-          collateralAvailable: account.collateralAvailable.plus(
-            releasedCollateral.toFixed(18),
-          ),
-          collateralLocked: account.collateralLocked.minus(
-            position.collateralAmount.toString(),
-          ),
-          totalRealizedPnl: account.totalRealizedPnl.plus(
-            (refreshed.unrealizedPnl - penaltyAmount).toFixed(18),
-          ),
+          collateralAvailable: { increment: toDecimal(releasedCollateral) },
+          collateralLocked: {
+            decrement: new Decimal(position.collateralAmount.toString()),
+          },
+          totalRealizedPnl: {
+            increment: toDecimal(refreshed.unrealizedPnl - penaltyAmount),
+          },
         },
       });
 

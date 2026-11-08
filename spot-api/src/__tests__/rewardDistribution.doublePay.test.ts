@@ -50,6 +50,8 @@ describe('rewardDistributionService — no double-pay across reprocessing', () =
     jest.clearAllMocks();
     mockPrisma.userReward.create.mockResolvedValue({ id: 'ur-1' });
     mockPrisma.userReward.update.mockResolvedValue({});
+    // Payout status writes are guarded (CAS) updateMany calls.
+    mockPrisma.userReward.updateMany.mockResolvedValue({ count: 1 });
     mockPayout.transferNative.mockResolvedValue({
       success: true,
       txHash: '0xpaid',

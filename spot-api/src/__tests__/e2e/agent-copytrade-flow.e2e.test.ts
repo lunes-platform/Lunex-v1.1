@@ -50,6 +50,8 @@ jest.mock('../../db', () => ({
             walletAddress: 'agent-wallet-123',
             leader: {
               id: 'leader-1',
+              // Agents may only signal for their own leader (same wallet).
+              address: 'agent-wallet-123',
               vault: {
                 status: 'ACTIVE',
                 maxSlippageBps: 75,

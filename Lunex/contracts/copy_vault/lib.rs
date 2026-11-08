@@ -131,6 +131,9 @@ pub mod copy_vault {
         /// wnative is implicitly part of the equity (1:1) and must not
         /// enter the tracked list
         CannotTrackWnative,
+        /// Performance fee cannot be raised while depositors hold shares
+        /// (a raise would apply retroactively to capital already in)
+        FeeIncreaseWithDepositors,
     }
 
     // ─── Router interop (selectors + espelhos SCALE) ────────────
@@ -405,6 +408,17 @@ pub mod copy_vault {
         pub total: Balance,
     }
 
+    /// Large-withdrawal cooldown started (`request_withdrawal`). Declared
+    /// last so the indexes of the existing events stay stable.
+    #[ink(event)]
+    pub struct WithdrawalRequested {
+        #[ink(topic)]
+        pub depositor: AccountId,
+        pub shares: Balance,
+        pub unlock_at: Timestamp,
+        pub timestamp: Timestamp,
+    }
+
     // ─── Storage ────────────────────────────────────────────────
 
     #[ink(storage)]
@@ -606,7 +620,7 @@ pub mod copy_vault {
             }
 
             // Update state
-            let existing_shares = self.shares.get(&caller).unwrap_or(0);
+            let existing_shares = self.shares.get(caller).unwrap_or(0);
             let new_shares = existing_shares
                 .checked_add(shares_to_mint)
                 .ok_or(VaultError::Overflow)?;
@@ -618,7 +632,7 @@ pub mod copy_vault {
                     .ok_or(VaultError::Overflow)?;
             }
 
-            self.shares.insert(&caller, &new_shares);
+            self.shares.insert(caller, &new_shares);
             self.total_shares = self
                 .total_shares
                 .checked_add(shares_to_mint)
@@ -627,11 +641,11 @@ pub mod copy_vault {
             self.total_equity = current_balance;
 
             // Update cost basis (weighted average)
-            let existing_basis = self.cost_basis.get(&caller).unwrap_or(0);
+            let existing_basis = self.cost_basis.get(caller).unwrap_or(0);
             let new_basis = existing_basis
                 .checked_add(amount)
                 .ok_or(VaultError::Overflow)?;
-            self.cost_basis.insert(&caller, &new_basis);
+            self.cost_basis.insert(caller, &new_basis);
 
             // Update high water mark
             if self.total_equity > self.high_water_mark {
@@ -670,37 +684,35 @@ pub mod copy_vault {
             self.acquire_lock()?;
 
             let caller = self.env().caller();
-            let caller_shares = self.shares.get(&caller).unwrap_or(0);
+            let caller_shares = self.shares.get(caller).unwrap_or(0);
 
             if shares == 0 || shares > caller_shares {
                 self.release_lock();
                 return Err(VaultError::InsufficientShares);
             }
 
-            // Check cooldown for large withdrawals
+            // Large withdrawals need a matured `request_withdrawal` covering
+            // `shares`. ink! 4 reverts every write of a message returning
+            // `Err`, so the request can NOT be created here (it used to be,
+            // which made large withdrawals impossible on-chain).
             let is_large = self.is_large_withdrawal(shares);
             if is_large {
-                if let Some(request) = self.withdrawal_requests.get(&caller) {
-                    let now = self.env().block_timestamp();
-                    if now < request.requested_at + constants::COOLDOWN_PERIOD_MS {
-                        self.release_lock();
-                        return Err(VaultError::CooldownActive);
+                let matured = match self.withdrawal_requests.get(caller) {
+                    Some(request) => {
+                        let now = self.env().block_timestamp();
+                        let unlock_at = request
+                            .requested_at
+                            .saturating_add(constants::COOLDOWN_PERIOD_MS);
+                        now >= unlock_at && shares <= request.shares
                     }
-                    // Cooldown passed — proceed
-                    self.withdrawal_requests.remove(&caller);
-                } else {
-                    // No request yet — create one and return
-                    let now = self.env().block_timestamp();
-                    self.withdrawal_requests.insert(
-                        &caller,
-                        &WithdrawalRequest {
-                            shares,
-                            requested_at: now,
-                        },
-                    );
+                    None => false,
+                };
+                if !matured {
                     self.release_lock();
                     return Err(VaultError::CooldownActive);
                 }
+                // Consumed only if the withdrawal succeeds (Err reverts).
+                self.withdrawal_requests.remove(caller);
             }
 
             // Calculate proportional equity (ADR-002: equity completo;
@@ -726,7 +738,7 @@ pub mod copy_vault {
                 .ok_or(VaultError::SharePriceZero)?;
 
             // Calculate performance fee on profit
-            let basis = self.cost_basis.get(&caller).unwrap_or(0);
+            let basis = self.cost_basis.get(caller).unwrap_or(0);
             let basis_per_share = if caller_shares > 0 {
                 basis
                     .checked_div(caller_shares)
@@ -774,15 +786,13 @@ pub mod copy_vault {
                 .ok_or(VaultError::Overflow)?;
 
             if remaining_shares == 0 {
-                self.shares.remove(&caller);
-                self.cost_basis.remove(&caller);
+                self.shares.remove(caller);
+                self.cost_basis.remove(caller);
                 self.active_depositors = self.active_depositors.saturating_sub(1);
             } else {
-                self.shares.insert(&caller, &remaining_shares);
-                let remaining_basis = basis
-                    .checked_sub(cost_for_shares)
-                    .unwrap_or(0);
-                self.cost_basis.insert(&caller, &remaining_basis);
+                self.shares.insert(caller, &remaining_shares);
+                let remaining_basis = basis.saturating_sub(cost_for_shares);
+                self.cost_basis.insert(caller, &remaining_basis);
             }
 
             self.total_shares = self
@@ -844,11 +854,50 @@ pub mod copy_vault {
             Ok(net_payout)
         }
 
+        /// Start the 24h cooldown required for a large withdrawal (> 10% of
+        /// the vault shares). Returns the timestamp from which `withdraw`
+        /// accepts up to `shares`. Calling again replaces the request and
+        /// restarts the cooldown.
+        #[ink(message)]
+        pub fn request_withdrawal(&mut self, shares: Balance) -> Result<Timestamp, VaultError> {
+            let caller = self.env().caller();
+            let caller_shares = self.shares.get(caller).unwrap_or(0);
+            if shares == 0 || shares > caller_shares {
+                return Err(VaultError::InsufficientShares);
+            }
+
+            let now = self.env().block_timestamp();
+            let unlock_at = now
+                .checked_add(constants::COOLDOWN_PERIOD_MS)
+                .ok_or(VaultError::Overflow)?;
+            self.withdrawal_requests.insert(
+                caller,
+                &WithdrawalRequest {
+                    shares,
+                    requested_at: now,
+                },
+            );
+
+            self.env().emit_event(WithdrawalRequested {
+                depositor: caller,
+                shares,
+                unlock_at,
+                timestamp: now,
+            });
+            Ok(unlock_at)
+        }
+
+        /// Pending large-withdrawal cooldown request of `account`, if any.
+        #[ink(message)]
+        pub fn get_withdrawal_request(&self, account: AccountId) -> Option<WithdrawalRequest> {
+            self.withdrawal_requests.get(account)
+        }
+
         /// Request emergency withdrawal (time-locked, bypasses all restrictions)
         #[ink(message)]
         pub fn request_emergency_withdrawal(&mut self) -> Result<Timestamp, VaultError> {
             let caller = self.env().caller();
-            let caller_shares = self.shares.get(&caller).unwrap_or(0);
+            let caller_shares = self.shares.get(caller).unwrap_or(0);
 
             if caller_shares == 0 {
                 return Err(VaultError::InsufficientShares);
@@ -859,7 +908,7 @@ pub mod copy_vault {
                 .checked_add(constants::EMERGENCY_UNLOCK_DELAY_MS)
                 .ok_or(VaultError::Overflow)?;
 
-            self.emergency_unlocks.insert(&caller, &unlock_at);
+            self.emergency_unlocks.insert(caller, &unlock_at);
 
             self.env().emit_event(EmergencyWithdrawalRequested {
                 depositor: caller,
@@ -879,7 +928,7 @@ pub mod copy_vault {
             let caller = self.env().caller();
             let unlock_at = self
                 .emergency_unlocks
-                .get(&caller)
+                .get(caller)
                 .ok_or(VaultError::EmergencyNotUnlocked)?;
 
             let now = self.env().block_timestamp();
@@ -888,7 +937,7 @@ pub mod copy_vault {
                 return Err(VaultError::EmergencyNotUnlocked);
             }
 
-            let caller_shares = self.shares.get(&caller).unwrap_or(0);
+            let caller_shares = self.shares.get(caller).unwrap_or(0);
             if caller_shares == 0 {
                 self.release_lock();
                 return Err(VaultError::InsufficientShares);
@@ -928,9 +977,9 @@ pub mod copy_vault {
             }
 
             // Update state
-            self.shares.remove(&caller);
-            self.cost_basis.remove(&caller);
-            self.emergency_unlocks.remove(&caller);
+            self.shares.remove(caller);
+            self.cost_basis.remove(caller);
+            self.emergency_unlocks.remove(caller);
             self.active_depositors = self.active_depositors.saturating_sub(1);
 
             self.total_shares = self
@@ -1040,7 +1089,7 @@ pub mod copy_vault {
                 amount,
                 timestamp,
             };
-            self.trade_history.insert(&idx, &record);
+            self.trade_history.insert(idx, &record);
             self.trade_count = self
                 .trade_count
                 .checked_add(1)
@@ -1087,9 +1136,9 @@ pub mod copy_vault {
         #[ink(message)]
         pub fn swap_through_router(
             &mut self,
-            token_in:       AccountId,
-            token_out:      AccountId,
-            amount_in:      Balance,
+            token_in: AccountId,
+            token_out: AccountId,
+            amount_in: Balance,
             min_amount_out: Balance,
         ) -> Result<Balance, VaultError> {
             self.ensure_leader()?;
@@ -1216,11 +1265,7 @@ pub mod copy_vault {
             // script E2E `spot-api/scripts/e2e-copy-vault-swap.ts`.
             #[cfg(not(test))]
             let amount_out: Balance = {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
 
                 // 1) approve(router, amount_in) no token_in.
                 let approve_result = build_call::<ink::env::DefaultEnvironment>()
@@ -1257,23 +1302,19 @@ pub mod copy_vault {
                 };
 
                 // 3) swap_exact_tokens_for_tokens com path direto.
-                let mut path: Vec<AccountId> = Vec::with_capacity(2);
-                path.push(token_in);
-                path.push(token_out);
+                let path: Vec<AccountId> = ink::prelude::vec![token_in, token_out];
 
                 let swap_result = build_call::<ink::env::DefaultEnvironment>()
                     .call(router)
                     .gas_limit(0)
                     .transferred_value(0)
                     .exec_input(
-                        ExecutionInput::new(Selector::new(
-                            ROUTER_SWAP_EXACT_TOKENS_SELECTOR,
-                        ))
-                        .push_arg(amount_in)
-                        .push_arg(min_amount_out)
-                        .push_arg(path)
-                        .push_arg(self.env().account_id())
-                        .push_arg(deadline),
+                        ExecutionInput::new(Selector::new(ROUTER_SWAP_EXACT_TOKENS_SELECTOR))
+                            .push_arg(amount_in)
+                            .push_arg(min_amount_out)
+                            .push_arg(path)
+                            .push_arg(self.env().account_id())
+                            .push_arg(deadline),
                     )
                     .returns::<core::result::Result<Vec<Balance>, RouterErrorMirror>>()
                     .try_invoke();
@@ -1335,7 +1376,7 @@ pub mod copy_vault {
                 amount: amount_in,
                 timestamp,
             };
-            self.trade_history.insert(&idx, &record);
+            self.trade_history.insert(idx, &record);
             self.trade_count = self
                 .trade_count
                 .checked_add(1)
@@ -1384,10 +1425,7 @@ pub mod copy_vault {
 
             // Check drawdown circuit breaker
             if self.high_water_mark > 0 {
-                let drawdown = self
-                    .high_water_mark
-                    .checked_sub(current_equity)
-                    .unwrap_or(0);
+                let drawdown = self.high_water_mark.saturating_sub(current_equity);
                 let drawdown_bps = drawdown
                     .checked_mul(constants::BPS as u128)
                     .unwrap_or(0)
@@ -1399,7 +1437,7 @@ pub mod copy_vault {
 
                     self.env().emit_event(CircuitBreakerTriggered {
                         vault: self.env().account_id(),
-                        current_equity: current_equity,
+                        current_equity,
                         high_water_mark: self.high_water_mark,
                         drawdown_bps,
                         timestamp: self.env().block_timestamp(),
@@ -1462,12 +1500,17 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// Set performance fee (admin only, max 50%)
+        /// Set performance fee (admin only, max 50%). Raising it is only
+        /// allowed while no depositor holds shares, so a raise never applies
+        /// retroactively to capital already in the vault. Lowering is free.
         #[ink(message)]
         pub fn set_performance_fee(&mut self, new_fee_bps: u32) -> Result<(), VaultError> {
             self.ensure_admin()?;
             if new_fee_bps > constants::MAX_PERFORMANCE_FEE_BPS {
                 return Err(VaultError::FeeTooHigh);
+            }
+            if new_fee_bps > self.performance_fee_bps && self.total_shares > 0 {
+                return Err(VaultError::FeeIncreaseWithDepositors);
             }
 
             let old_fee = self.performance_fee_bps;
@@ -1557,7 +1600,7 @@ pub mod copy_vault {
         pub fn get_tracked_tokens(&self) -> Vec<AccountId> {
             let mut tokens = Vec::new();
             for i in 0..self.tracked_token_count {
-                if let Some(token) = self.tracked_tokens.get(&i) {
+                if let Some(token) = self.tracked_tokens.get(i) {
                     tokens.push(token);
                 }
             }
@@ -1579,6 +1622,7 @@ pub mod copy_vault {
         /// [(token, balance, valor_em_nativo)], total).
         /// Inclui wnative (1:1) quando o vault tem saldo. ERRO explícito
         /// se qualquer cotação falhar — nunca valuation parcial.
+        #[allow(clippy::type_complexity)]
         #[ink(message)]
         pub fn get_equity_breakdown(
             &self,
@@ -1598,7 +1642,7 @@ pub mod copy_vault {
             for i in 0..self.tracked_token_count {
                 let token = self
                     .tracked_tokens
-                    .get(&i)
+                    .get(i)
                     .ok_or(VaultError::ValuationUnavailable)?;
                 let balance = self.psp22_balance_of(token)?;
                 if balance == 0 {
@@ -1636,7 +1680,7 @@ pub mod copy_vault {
             &self,
             depositor: AccountId,
         ) -> Result<(Balance, Balance), VaultError> {
-            let shares = self.shares.get(&depositor).unwrap_or(0);
+            let shares = self.shares.get(depositor).unwrap_or(0);
             if shares == 0 || self.total_shares == 0 {
                 return Ok((0, 0));
             }
@@ -1650,6 +1694,7 @@ pub mod copy_vault {
         }
 
         /// Get vault stats
+        #[allow(clippy::type_complexity)]
         #[ink(message)]
         pub fn get_vault_stats(
             &self,
@@ -1698,15 +1743,11 @@ pub mod copy_vault {
                 return trades;
             }
 
-            let start = if self.trade_count > max {
-                self.trade_count - max
-            } else {
-                0
-            };
+            let start = self.trade_count.saturating_sub(max);
 
             for i in start..self.trade_count {
                 let idx = i % constants::MAX_TRADE_HISTORY;
-                if let Some(record) = self.trade_history.get(&idx) {
+                if let Some(record) = self.trade_history.get(idx) {
                     trades.push(record);
                 }
             }
@@ -1736,7 +1777,7 @@ pub mod copy_vault {
             for i in 0..self.tracked_token_count {
                 let token = self
                     .tracked_tokens
-                    .get(&i)
+                    .get(i)
                     .ok_or(VaultError::ValuationUnavailable)?;
                 let balance = self.psp22_balance_of(token)?;
                 if balance == 0 {
@@ -1753,9 +1794,7 @@ pub mod copy_vault {
 
         fn get_vault_equity_internal(&self) -> Result<Balance, VaultError> {
             let (native, tokens_value) = self.equity_split_internal()?;
-            native
-                .checked_add(tokens_value)
-                .ok_or(VaultError::Overflow)
+            native.checked_add(tokens_value).ok_or(VaultError::Overflow)
         }
 
         fn share_price_from_equity(&self, equity: Balance) -> Balance {
@@ -1787,7 +1826,7 @@ pub mod copy_vault {
         }
 
         fn is_tracked(&self, token: AccountId) -> bool {
-            self.tracked_token_index.contains(&token)
+            self.tracked_token_index.contains(token)
         }
 
         fn track_token_internal(&mut self, token: AccountId) -> Result<(), VaultError> {
@@ -1804,17 +1843,15 @@ pub mod copy_vault {
             // Mitigação v1 (ADR-002): par precisa existir e ter reserva
             // nativa mínima — encarece manipulação do preço da cota via
             // tokens ilíquidos.
-            let (_reserve_token, reserve_native) =
-                self.pair_reserves(token, wnative, factory)?;
+            let (_reserve_token, reserve_native) = self.pair_reserves(token, wnative, factory)?;
             if reserve_native < constants::MIN_TRACKING_RESERVE_NATIVE {
                 return Err(VaultError::InsufficientPairLiquidity);
             }
 
             let idx = self.tracked_token_count;
-            self.tracked_tokens.insert(&idx, &token);
-            self.tracked_token_index.insert(&token, &idx);
-            self.tracked_token_count =
-                idx.checked_add(1).ok_or(VaultError::Overflow)?;
+            self.tracked_tokens.insert(idx, &token);
+            self.tracked_token_index.insert(token, &idx);
+            self.tracked_token_count = idx.checked_add(1).ok_or(VaultError::Overflow)?;
 
             self.env().emit_event(TrackedTokenAdded {
                 token,
@@ -1826,7 +1863,7 @@ pub mod copy_vault {
         fn untrack_token_internal(&mut self, token: AccountId) -> Result<(), VaultError> {
             let idx = self
                 .tracked_token_index
-                .get(&token)
+                .get(token)
                 .ok_or(VaultError::TokenNotTracked)?;
             // Invariante 1: nunca des-rastrear com posição aberta.
             let balance = self.psp22_balance_of(token)?;
@@ -1842,13 +1879,13 @@ pub mod copy_vault {
             if idx != last {
                 let moved = self
                     .tracked_tokens
-                    .get(&last)
+                    .get(last)
                     .ok_or(VaultError::TokenNotTracked)?;
-                self.tracked_tokens.insert(&idx, &moved);
-                self.tracked_token_index.insert(&moved, &idx);
+                self.tracked_tokens.insert(idx, &moved);
+                self.tracked_token_index.insert(moved, &idx);
             }
-            self.tracked_tokens.remove(&last);
-            self.tracked_token_index.remove(&token);
+            self.tracked_tokens.remove(last);
+            self.tracked_token_index.remove(token);
             self.tracked_token_count = last;
 
             self.env().emit_event(TrackedTokenRemoved {
@@ -1869,11 +1906,7 @@ pub mod copy_vault {
         fn psp22_balance_of(&self, token: AccountId) -> Result<Balance, VaultError> {
             #[cfg(not(test))]
             {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
                 let result = build_call::<ink::env::DefaultEnvironment>()
                     .call(token)
                     .gas_limit(0)
@@ -1905,11 +1938,7 @@ pub mod copy_vault {
         ) -> Result<(Balance, Balance), VaultError> {
             #[cfg(not(test))]
             {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
                 let pair_result = build_call::<ink::env::DefaultEnvironment>()
                     .call(factory)
                     .gas_limit(0)
@@ -1967,28 +1996,21 @@ pub mod copy_vault {
             if token == wnative {
                 return Ok(amount);
             }
-            let (reserve_token, reserve_native) =
-                self.pair_reserves(token, wnative, factory)?;
+            let (reserve_token, reserve_native) = self.pair_reserves(token, wnative, factory)?;
 
             #[cfg(not(test))]
             {
-                use ink::env::call::{
-                    build_call,
-                    ExecutionInput,
-                    Selector,
-                };
+                use ink::env::call::{build_call, ExecutionInput, Selector};
                 let router = self.router.ok_or(VaultError::RouterNotConfigured)?;
                 let result = build_call::<ink::env::DefaultEnvironment>()
                     .call(router)
                     .gas_limit(0)
                     .transferred_value(0)
                     .exec_input(
-                        ExecutionInput::new(Selector::new(
-                            ROUTER_GET_AMOUNT_OUT_SELECTOR,
-                        ))
-                        .push_arg(amount)
-                        .push_arg(reserve_token)
-                        .push_arg(reserve_native),
+                        ExecutionInput::new(Selector::new(ROUTER_GET_AMOUNT_OUT_SELECTOR))
+                            .push_arg(amount)
+                            .push_arg(reserve_token)
+                            .push_arg(reserve_native),
                     )
                     .returns::<core::result::Result<Balance, RouterErrorMirror>>()
                     .try_invoke();
@@ -2078,14 +2100,8 @@ pub mod copy_vault {
     /// isolado por teste.
     #[cfg(test)]
     pub(crate) mod test_mocks {
-        use super::{
-            AccountId,
-            Balance,
-        };
-        use std::{
-            cell::RefCell,
-            collections::BTreeMap,
-        };
+        use super::{AccountId, Balance};
+        use std::{cell::RefCell, collections::BTreeMap};
 
         thread_local! {
             static PSP22_BALANCES: RefCell<BTreeMap<AccountId, Balance>> =
@@ -2113,7 +2129,8 @@ pub mod copy_vault {
             reserve_native: Balance,
         ) {
             PAIR_RESERVES.with(|m| {
-                m.borrow_mut().insert(token, (reserve_token, reserve_native));
+                m.borrow_mut()
+                    .insert(token, (reserve_token, reserve_native));
             });
         }
 
@@ -2152,7 +2169,10 @@ pub mod copy_vault {
             ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(account, balance);
         }
 
-        fn create_vault() -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+        fn create_vault() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
             let accounts = default_accounts();
             set_caller(accounts.alice); // alice = admin
             let vault = CopyVault::new(accounts.bob, 2000); // bob = leader, 20% fee
@@ -2213,13 +2233,15 @@ pub mod copy_vault {
             // Non-leader tries to trade
             set_caller(accounts.charlie);
             set_value(0);
-            let result = vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
+            let result =
+                vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
             assert_eq!(result, Err(VaultError::NotLeader));
 
             // Leader can trade
             set_caller(accounts.bob);
             set_value(0);
-            let result = vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
+            let result =
+                vault.execute_trade(b"LUNES/USDT".to_vec(), TradeSide::Buy, 10_000_000_000);
             assert!(result.is_ok());
         }
 
@@ -2336,9 +2358,9 @@ pub mod copy_vault {
             let (vault, _) = create_vault();
             let stats = vault.get_vault_stats().unwrap();
             assert_eq!(stats.3, 2000); // performance_fee_bps
-            assert_eq!(stats.4, 0);    // active_depositors
-            assert!(!stats.6);         // not paused
-            assert!(!stats.7);         // trading not halted
+            assert_eq!(stats.4, 0); // active_depositors
+            assert!(!stats.6); // not paused
+            assert!(!stats.7); // trading not halted
         }
 
         // ── swap_through_router (P0-2 fix) ──────────────────────
@@ -2360,10 +2382,7 @@ pub mod copy_vault {
                 PSP22_BALANCE_OF_SELECTOR,
                 ink::selector_bytes!("PSP22::balance_of"),
             );
-            assert_eq!(
-                FACTORY_GET_PAIR_SELECTOR,
-                ink::selector_bytes!("get_pair"),
-            );
+            assert_eq!(FACTORY_GET_PAIR_SELECTOR, ink::selector_bytes!("get_pair"),);
             assert_eq!(
                 PAIR_GET_RESERVES_SELECTOR,
                 ink::selector_bytes!("get_reserves"),
@@ -2394,11 +2413,10 @@ pub mod copy_vault {
             // Result<Vec<Balance>, RouterErrorMirror>
             let ok: core::result::Result<Vec<Balance>, RouterErrorMirror> =
                 Ok(ink::prelude::vec![5_000u128, 9_500u128]);
-            let decoded =
-                <core::result::Result<Vec<Balance>, RouterErrorMirror>>::decode(
-                    &mut ok.encode().as_slice(),
-                )
-                .unwrap();
+            let decoded = <core::result::Result<Vec<Balance>, RouterErrorMirror>>::decode(
+                &mut ok.encode().as_slice(),
+            )
+            .unwrap();
             assert_eq!(decoded.unwrap().last().copied(), Some(9_500u128));
         }
 
@@ -2417,8 +2435,10 @@ pub mod copy_vault {
         ///   - nativo: 100 LUNES (100e9)
         ///   - django: balance 50e9 @ rate 0.1 → valuation 5e9
         ///   - equity total: 105e9
-        fn setup_funded_vault_with_router(
-        ) -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+        fn setup_funded_vault_with_router() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
             let (mut vault, accounts) = create_vault();
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
 
@@ -2437,20 +2457,12 @@ pub mod copy_vault {
                 .unwrap();
 
             // django = token_in rastreado (rate 0.1 → valuation 5e9)
-            test_mocks::set_pair_reserves(
-                accounts.django,
-                100_000_000_000_000,
-                10_000_000_000_000,
-            );
+            test_mocks::set_pair_reserves(accounts.django, 100_000_000_000_000, 10_000_000_000_000);
             vault.add_tracked_token(accounts.django).unwrap();
             test_mocks::set_psp22_balance(accounts.django, 50_000_000_000);
 
             // eve = token_out com par líquido 1:1 (auto-track no swap)
-            test_mocks::set_pair_reserves(
-                accounts.eve,
-                1_000_000_000_000,
-                1_000_000_000_000,
-            );
+            test_mocks::set_pair_reserves(accounts.eve, 1_000_000_000_000, 1_000_000_000_000);
 
             (vault, accounts)
         }
@@ -2498,8 +2510,7 @@ pub mod copy_vault {
             let (mut vault, accounts) = setup_funded_vault_with_router();
 
             set_caller(accounts.bob);
-            let result =
-                vault.swap_through_router(accounts.django, accounts.eve, 0, 0);
+            let result = vault.swap_through_router(accounts.django, accounts.eve, 0, 0);
             assert_eq!(result, Err(VaultError::ZeroAmount));
             assert!(!vault.locked);
         }
@@ -2555,22 +2566,14 @@ pub mod copy_vault {
 
             set_caller(accounts.bob);
             // 50% do vault — estoura o cap de volume por bloco (40%)
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                50_000_000_000,
-                1,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, 50_000_000_000, 1);
             assert_eq!(result, Err(VaultError::BlockVolumeExceeded));
 
             // 25% do vault — passa no volume (40%) mas estoura o cap
             // por trade (20%)
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                25_000_000_000,
-                1,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, 25_000_000_000, 1);
             assert_eq!(result, Err(VaultError::TradeExceedsLimit));
             assert!(!vault.locked);
         }
@@ -2585,12 +2588,8 @@ pub mod copy_vault {
             // cross-contract call é mockado e retorna min_amount_out.
             let amount_in: Balance = 10_000_000_000;
             let min_out: Balance = 9_000_000_000;
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                amount_in,
-                min_out,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, amount_in, min_out);
             assert_eq!(result, Ok(min_out));
 
             // Trade registrado no histórico com pair = token_in||token_out
@@ -2616,8 +2615,10 @@ pub mod copy_vault {
         }
 
         /// Vault com infra de valuation configurada (sem depósito).
-        fn vault_with_infra(
-        ) -> (CopyVault, ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>) {
+        fn vault_with_infra() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
             let (mut vault, accounts) = create_vault();
             set_caller(accounts.alice);
             vault
@@ -2787,7 +2788,8 @@ pub mod copy_vault {
             let (vault, _) = {
                 let (mut v, a) = create_vault();
                 set_caller(a.alice);
-                v.set_valuation_infra(factory_addr(), wnative_addr()).unwrap();
+                v.set_valuation_infra(factory_addr(), wnative_addr())
+                    .unwrap();
                 (v, a)
             };
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
@@ -3025,12 +3027,8 @@ pub mod copy_vault {
 
             // token(0x99) não está na lista e não é wnative
             set_caller(accounts.bob);
-            let result = vault.swap_through_router(
-                token(0x99),
-                accounts.eve,
-                1_000_000_000,
-                900_000_000,
-            );
+            let result =
+                vault.swap_through_router(token(0x99), accounts.eve, 1_000_000_000, 900_000_000);
             assert_eq!(result, Err(VaultError::TokenNotTracked));
             assert!(!vault.locked);
         }
@@ -3041,12 +3039,8 @@ pub mod copy_vault {
 
             // django tem 50e9 mockado — pedir 60e9 falha ANTES dos caps
             set_caller(accounts.bob);
-            let result = vault.swap_through_router(
-                accounts.django,
-                accounts.eve,
-                60_000_000_000,
-                1,
-            );
+            let result =
+                vault.swap_through_router(accounts.django, accounts.eve, 60_000_000_000, 1);
             assert_eq!(result, Err(VaultError::InsufficientTokenBalance));
             assert!(!vault.locked);
         }
@@ -3058,12 +3052,7 @@ pub mod copy_vault {
             assert!(!vault.is_tracked(accounts.eve));
             set_caller(accounts.bob);
             vault
-                .swap_through_router(
-                    accounts.django,
-                    accounts.eve,
-                    10_000_000_000,
-                    9_000_000_000,
-                )
+                .swap_through_router(accounts.django, accounts.eve, 10_000_000_000, 9_000_000_000)
                 .unwrap();
 
             // Invariante 1: o ativo adquirido entrou na lista ANTES do
@@ -3118,10 +3107,138 @@ pub mod copy_vault {
 
             // E falha explícita quando a cotação some
             test_mocks::clear_pair_reserves(t);
+            assert_eq!(vault.sync_equity(), Err(VaultError::ValuationUnavailable),);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Large-withdrawal cooldown (fix: request must persist)
+        // ════════════════════════════════════════════════════════
+        //
+        // ink! 4 reverts ALL storage writes of a message that returns
+        // `Err` (ink_codegen dispatch: `is_result_err` ⇒ REVERT flag). The
+        // off-chain test env does not roll back, so these tests assert
+        // the on-chain invariant directly: an `Err` path must not write.
+
+        fn set_now(ms: u64) {
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(ms);
+        }
+
+        /// Charlie alone in the vault: ANY withdrawal is > 10% (large).
+        fn vault_with_single_depositor() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
+            let (mut vault, accounts) = create_vault();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_now(1_000);
+            set_caller(accounts.charlie);
+            set_value(100_000_000_000);
+            set_balance(contract_id, 100_000_000_000);
+            vault.deposit().unwrap();
+            set_value(0);
+            (vault, accounts)
+        }
+
+        #[ink::test]
+        fn test_large_withdraw_without_request_errs_without_writing() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
             assert_eq!(
-                vault.sync_equity(),
-                Err(VaultError::ValuationUnavailable),
+                vault.withdraw(50_000_000_000),
+                Err(VaultError::CooldownActive)
             );
+            // On-chain this write would be reverted anyway; the contract
+            // must not rely on it (it previously did → large withdrawals
+            // could never start their cooldown).
+            assert_eq!(vault.get_withdrawal_request(accounts.charlie), None);
+            assert!(!vault.locked);
+        }
+
+        #[ink::test]
+        fn test_request_withdrawal_persists_and_unlocks_after_cooldown() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_withdrawal(50_000_000_000).unwrap();
+            assert_eq!(unlock_at, 1_000 + constants::COOLDOWN_PERIOD_MS);
+            assert_eq!(
+                vault.get_withdrawal_request(accounts.charlie),
+                Some(WithdrawalRequest {
+                    shares: 50_000_000_000,
+                    requested_at: 1_000,
+                })
+            );
+
+            // Before the cooldown: rejected, request kept, shares intact.
+            set_now(unlock_at - 1);
+            assert_eq!(
+                vault.withdraw(50_000_000_000),
+                Err(VaultError::CooldownActive)
+            );
+            assert!(vault.get_withdrawal_request(accounts.charlie).is_some());
+
+            // After the cooldown: the large withdrawal goes through and
+            // consumes the request (no fee: no profit).
+            set_now(unlock_at);
+            assert_eq!(vault.withdraw(50_000_000_000), Ok(50_000_000_000));
+            assert_eq!(vault.get_withdrawal_request(accounts.charlie), None);
+            let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
+            assert_eq!(shares, 50_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_large_withdraw_cannot_exceed_requested_shares() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_withdrawal(20_000_000_000).unwrap();
+            set_now(unlock_at);
+            assert_eq!(
+                vault.withdraw(60_000_000_000),
+                Err(VaultError::CooldownActive)
+            );
+            assert!(vault.get_withdrawal_request(accounts.charlie).is_some());
+        }
+
+        #[ink::test]
+        fn test_request_withdrawal_validates_shares() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.charlie);
+            assert_eq!(
+                vault.request_withdrawal(0),
+                Err(VaultError::InsufficientShares)
+            );
+            assert_eq!(
+                vault.request_withdrawal(100_000_000_001),
+                Err(VaultError::InsufficientShares)
+            );
+            set_caller(accounts.django);
+            assert_eq!(
+                vault.request_withdrawal(1),
+                Err(VaultError::InsufficientShares)
+            );
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Performance fee is not retroactive (item 9 / BE-15)
+        // ════════════════════════════════════════════════════════
+
+        #[ink::test]
+        fn test_fee_increase_blocked_while_depositors_hold_shares() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.set_performance_fee(3000),
+                Err(VaultError::FeeIncreaseWithDepositors)
+            );
+            assert_eq!(vault.performance_fee_bps, 2000);
+
+            // Decreasing always allowed (benefits followers).
+            assert_eq!(vault.set_performance_fee(1000), Ok(()));
+            assert_eq!(vault.performance_fee_bps, 1000);
         }
     }
 }

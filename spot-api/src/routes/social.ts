@@ -6,6 +6,10 @@ import {
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 import prisma from '../db';
 import { z } from 'zod';
@@ -46,23 +50,24 @@ async function getVerifiedViewerAddress(
       : undefined;
   if (!viewerAddress) return undefined;
 
-  const parsed = z
-    .object({
+  const parsed = readAuthSchema(
+    req,
+    z.object({
       viewerAddress: z.string().min(8).max(128),
       nonce: z.string().min(8),
       timestamp: z.coerce.number().int().positive(),
       signature: z.string().min(8),
-    })
-    .safeParse({
-      ...req.query,
-      ...getSignedAuthInput(req),
-    });
+    }),
+  ).safeParse({
+    ...req.query,
+    ...getSignedAuthInput(req),
+  });
 
   // Signature fields are missing or malformed — serve public data without
   // the personalised isFollowing context rather than blocking the request.
   if (!parsed.success) return undefined;
 
-  const auth = await verifyWalletReadSignature({
+  const auth = await verifyWalletReadAccess(req, {
     action,
     address: parsed.data.viewerAddress,
     nonce: parsed.data.nonce,
@@ -189,23 +194,24 @@ router.get(
   '/following',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = z
-        .object({
+      const parsed = readAuthSchema(
+        req,
+        z.object({
           address: z.string().min(8).max(128),
           nonce: z.string().min(8),
           timestamp: z.coerce.number().int().positive(),
           signature: z.string().min(8),
-        })
-        .safeParse({
-          ...req.query,
-          ...getSignedAuthInput(req),
-        });
+        }),
+      ).safeParse({
+        ...req.query,
+        ...getSignedAuthInput(req),
+      });
       if (!parsed.success) {
         return res
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'social.following',
         address: parsed.data.address,
         nonce: parsed.data.nonce,

@@ -1,135 +1,205 @@
+/**
+ * Swap settings — inline panel under the card header (prototype "settings
+ * popover"): slippage 0.1 / 0.5 / 1% + custom, warning outside 0.1–1%, and
+ * the transaction deadline in minutes.
+ */
 import React, { useState } from 'react'
-//Styles
-import * as S from './styles'
-import * as B from 'components/bases'
-//Modal
-import Modal from 'components/modal'
-import slippageTolerance from './settingsDefaults'
+import styled from 'styled-components'
+import { AlertTriangle } from 'lucide-react'
+import { C, EASE_OUT, grotesk, tabular } from 'components/ui/kit'
+import { riseIn } from 'styles/motion'
 
-export type TransactionSettingProps = {
-  close: () => void
-  onSave: (slippage: number, deadlineMinutes: number) => void
-  currentSlippage?: number
-  currentDeadline?: number
+const PRESETS = [0.1, 0.5, 1]
+
+export const slippageWarning = (s: number) =>
+  s > 1
+    ? 'High slippage — your trade may be front-run and fill at a worse price.'
+    : s < 0.1
+      ? 'Very low slippage — the swap may fail if the price moves.'
+      : null
+
+const Box = styled.div`
+  background: ${C.surface};
+  border: 1px solid ${C.borderStrong};
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
+  animation: ${riseIn} 200ms ${EASE_OUT} both;
+`
+
+const Head = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  > strong {
+    ${grotesk};
+    font-weight: 600;
+    font-size: 14px;
+  }
+  > span {
+    font-size: 12px;
+    color: ${C.muted};
+  }
+`
+
+const Opts = styled.div`
+  display: flex;
+  gap: 6px;
+`
+
+const Opt = styled.button<{ $active: boolean }>`
+  ${grotesk};
+  flex: 1;
+  height: 38px;
+  border-radius: 10px;
+  border: none;
+  background: ${p => (p.$active ? C.primary : C.field)};
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  transition: background-color 150ms ease;
+  &:hover {
+    background: ${p => (p.$active ? C.primaryHover : C.borderStrong)};
+  }
+`
+
+const InputBox = styled.label<{ $active?: boolean; $w?: string }>`
+  flex: ${p => (p.$w ? 'none' : 1.2)};
+  width: ${p => p.$w ?? 'auto'};
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid ${p => (p.$active ? C.primary : C.borderStrong)};
+  background: ${C.bg};
+  padding: 0 10px;
+  &:focus-within {
+    border-color: ${C.primary};
+  }
+  input {
+    width: 100%;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #fff;
+    font-size: 14px;
+    text-align: right;
+    ${tabular};
+  }
+  span {
+    color: ${C.muted};
+    font-size: 13px;
+  }
+`
+
+const Warn = styled.div`
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.5;
+  color: ${C.warning};
+  svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+`
+
+type Props = {
+  slippage: number
+  deadline: number
+  onSlippage: (v: number) => void
+  onDeadline: (v: number) => void
 }
 
-const InfoIcon = () => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-  >
-    <circle cx="12" cy="12" r="10" />
-    <line x1="12" y1="16" x2="12" y2="12" />
-    <line x1="12" y1="8" x2="12.01" y2="8" />
-  </svg>
-)
+const SwapSettings: React.FC<Props> = ({
+  slippage,
+  deadline,
+  onSlippage,
+  onDeadline
+}) => {
+  const [custom, setCustom] = useState(
+    PRESETS.includes(slippage) ? '' : String(slippage)
+  )
+  const [dl, setDl] = useState(String(deadline))
+  const warn = slippageWarning(slippage)
 
-const TransactionSetting = ({
-  close,
-  onSave,
-  currentSlippage = 0.5,
-  currentDeadline = 20
-}: TransactionSettingProps) => {
-  const [selectedId, setSelectedId] = useState(() => {
-    const match = slippageTolerance.find(s => s.value === currentSlippage)
-    return match ? match.id : 3 // default to "Auto"
-  })
-  const [deadline, setDeadline] = useState(currentDeadline)
-
-  const selectedOption =
-    slippageTolerance.find(s => s.id === selectedId) || slippageTolerance[3]
-
-  const handleSelectSlippage = (item: (typeof slippageTolerance)[0]) => {
-    setSelectedId(item.id)
-    setDeadline(item.deadlineMinutes)
+  const onCustom = (raw: string) => {
+    const v = raw.replace(',', '.').replace(/[^0-9.]/g, '')
+    setCustom(v)
+    const n = Number(v)
+    if (v && Number.isFinite(n) && n > 0 && n < 50) onSlippage(n)
+    if (!v) onSlippage(0.5)
   }
 
-  const handleSave = () => {
-    onSave(selectedOption.value, deadline)
+  const onDl = (raw: string) => {
+    const v = raw.replace(/[^0-9]/g, '').slice(0, 4)
+    setDl(v)
+    const n = Number(v)
+    if (n >= 1 && n <= 4320) onDeadline(n)
   }
 
   return (
-    <Modal
-      width="592px"
-      height="386px"
-      justify="space-between"
-      closeX={close}
-      closeExternal={close}
-      arrowLeft
-      titleModal="Transaction Setting"
-    >
-      <S.LabelRow>
-        <B.Paragraph weight={700} colors={100} margin="0">
-          Slippage tolerance
-        </B.Paragraph>
-        <S.InfoWrapper>
-          <InfoIcon />
-          <S.TooltipText>
-            Your transaction will revert if the price changes unfavorably by
-            more than this percentage. Higher slippage = more likely to succeed,
-            but less price protection.
-          </S.TooltipText>
-        </S.InfoWrapper>
-      </S.LabelRow>
-
-      <S.Content>
-        {slippageTolerance.map(item => {
-          return (
-            <B.Button
-              key={item.id}
-              status={item.id === selectedId ? 'default' : 'transparent'}
-              onClick={() => handleSelectSlippage(item)}
-            >
-              {item.percentage}
-            </B.Button>
-          )
-        })}
-      </S.Content>
-
-      <S.LabelRow style={{ marginTop: '4px', marginBottom: '0' }}>
-        <B.Paragraph weight={700} colors={100} margin="0">
-          Transaction deadline
-        </B.Paragraph>
-        <S.InfoWrapper>
-          <InfoIcon />
-          <S.TooltipText>
-            Maximum time (in minutes) your transaction can remain pending before
-            it is automatically cancelled. Auto-synced when you select a
-            slippage preset.
-          </S.TooltipText>
-        </S.InfoWrapper>
-      </S.LabelRow>
-
-      <B.Input
-        type="number"
-        inputName=""
-        placeholder="Minutes"
-        value={String(deadline)}
-        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-          const v = parseInt(e.target.value, 10)
-          if (!isNaN(v) && v > 0) setDeadline(v)
-        }}
-      />
-
-      <B.Wrapper direction bg="transparent" justify="flex-end" margin="0 0 8px">
-        <B.Button
-          status="tertiary"
-          width="160px"
-          margin="0 16px 0 0"
-          onClick={close}
-        >
-          Cancel
-        </B.Button>
-        <B.Button width="160px" onClick={handleSave}>
-          Save
-        </B.Button>
-      </B.Wrapper>
-    </Modal>
+    <Box id="swap-settings">
+      <Head>
+        <strong>Slippage tolerance</strong>
+        <span>Max price change you accept</span>
+      </Head>
+      <Opts>
+        {PRESETS.map(v => (
+          <Opt
+            key={v}
+            $active={slippage === v && !custom}
+            aria-pressed={slippage === v && !custom}
+            onClick={() => {
+              setCustom('')
+              onSlippage(v)
+            }}
+          >
+            {v}%
+          </Opt>
+        ))}
+        <InputBox $active={!!custom}>
+          <input
+            value={custom}
+            onChange={e => onCustom(e.target.value)}
+            placeholder="Custom"
+            inputMode="decimal"
+            aria-label="Custom slippage"
+            data-bare=""
+          />
+          <span>%</span>
+        </InputBox>
+      </Opts>
+      {warn && (
+        <Warn role="status">
+          <AlertTriangle size={14} strokeWidth={2} />
+          {warn}
+        </Warn>
+      )}
+      <Head>
+        <strong>Transaction deadline</strong>
+        <InputBox $w="120px">
+          <input
+            value={dl}
+            onChange={e => onDl(e.target.value)}
+            onBlur={() => setDl(String(deadline))}
+            inputMode="numeric"
+            aria-label="Deadline in minutes"
+            data-bare=""
+          />
+          <span>min</span>
+        </InputBox>
+      </Head>
+    </Box>
   )
 }
 
-export default TransactionSetting
+export default SwapSettings

@@ -38,6 +38,12 @@ export const pendingSettlements = new Gauge({
   registers: [metricsRegistry],
 });
 
+export const reconcileRequiredSettlements = new Gauge({
+  name: 'lunex_settlements_reconcile_required',
+  help: 'Trades whose settle_trade outcome is unknown and awaits chain reconciliation (never auto-resubmitted)',
+  registers: [metricsRegistry],
+});
+
 export const blockchainConnected = new Gauge({
   name: 'lunex_blockchain_connected',
   help: '1 if settlement on-chain connectivity is ready, 0 otherwise',

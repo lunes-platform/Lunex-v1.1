@@ -3,7 +3,18 @@ import { config } from '../config';
 
 type JsonObject = Record<string, unknown>;
 
-const ERROR_DETAIL_KEYS = new Set(['details', 'stack', 'trace']);
+// Internal-only keys stripped from production error bodies: validation
+// internals, stacks and anything that can carry filesystem paths (BE-18).
+const ERROR_DETAIL_KEYS = new Set([
+  'details',
+  'stack',
+  'trace',
+  'path',
+  'filePath',
+  'file',
+  'cause',
+  'meta',
+]);
 
 function isJsonObject(value: unknown): value is JsonObject {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);

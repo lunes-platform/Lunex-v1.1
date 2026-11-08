@@ -126,6 +126,17 @@ const baseUrl =
 const backendOriginHeader = process.env.LUNEX_MCP_ORIGIN || '';
 const defaultLeaderApiKey = process.env.LUNEX_LEADER_API_KEY || '';
 const defaultAgentApiKey = process.env.LUNEX_AGENT_API_KEY || '';
+// FE-03: domain + chain genesis bound into every signed message. Must match
+// the API's SIGNING_DOMAIN / LUNES_GENESIS_HASH. When BOTH are unset the
+// deprecated unbound formats are produced (accepted only by APIs running
+// with SIGNING_ACCEPT_LEGACY=true).
+const signingDomain = (process.env.LUNEX_SIGNING_DOMAIN || '')
+  .trim()
+  .toLowerCase();
+const signingChain = (process.env.LUNEX_GENESIS_HASH || '')
+  .trim()
+  .toLowerCase();
+const signingBound = Boolean(signingDomain || signingChain);
 
 const resourceDefinitions = [
   {
@@ -197,7 +208,10 @@ function buildSpotOrderSignMessage(input: {
   expiresAt?: string;
 }) {
   const expiry = input.expiresAt ? new Date(input.expiresAt).getTime() : 0;
-  return `lunex-order-v2:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp}:${input.timeInForce || 'GTC'}:${expiry}`;
+  const prefix = signingBound
+    ? `lunex-order-v3:${signingDomain}:${signingChain}`
+    : 'lunex-order-v2';
+  return `${prefix}:${input.pairSymbol}:${input.side}:${input.type}:${canonicalOrderDecimal(input.price)}:${canonicalOrderDecimal(input.stopPrice)}:${canonicalOrderDecimal(input.amount)}:${input.nonce}:${input.timestamp}:${input.timeInForce || 'GTC'}:${expiry}`;
 }
 
 function buildSpotCancelSignMessage(input: {
@@ -294,8 +308,8 @@ function buildSpotTradingDocs() {
     '',
     '## Message formats',
     '',
-    '- Order: `lunex-order-v2:{pairSymbol}:{side}:{type}:{canonicalPrice}:{canonicalStop}:{canonicalAmount}:{nonce}:{timestamp}:{timeInForce||GTC}:{expiryUnixMs||0}`',
-    '- Cancel: wallet action `lunex-auth:orders.cancel` with fields `address`, `orderId`, `nonce`, and `timestamp`.',
+    '- Order: `lunex-order-v3:{domain}:{chainGenesis}:{pairSymbol}:{side}:{type}:{canonicalPrice}:{canonicalStop}:{canonicalAmount}:{nonce}:{timestamp}:{timeInForce||GTC}:{expiryUnixMs||0}` (legacy `lunex-order-v2:` without domain/chain when LUNEX_SIGNING_DOMAIN/LUNEX_GENESIS_HASH are unset)',
+    '- Cancel: wallet action `lunex-auth:orders.cancel` then `domain:` / `chain:` lines, then `address`, `orderId`, `nonce`, and `timestamp`.',
     '',
     '## Notes',
     '',
@@ -1255,6 +1269,124 @@ const toolDefinitions = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'submit_copytrade_vault_deposit',
+    description: scopedDescription(
+      'Journal a copytrade vault deposit AFTER the follower wallet signed CopyVault.deposit on the vault contract (vault.contractAddress) and the block is finalized. The API verifies the on-chain tx (signer, vault, amount, replay) before crediting; vaults without a contract reject deposits. This MCP never moves funds. If signature fields are omitted, returns the exact wallet-signing request (action copytrade.deposit).',
+    ),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        leaderId: { type: 'string', description: 'Leader UUID of the vault.' },
+        followerAddress: {
+          type: 'string',
+          description: 'Follower wallet that signed the on-chain deposit.',
+        },
+        token: {
+          type: 'string',
+          description: 'Vault collateral token (on-chain vaults use LUNES).',
+        },
+        amount: {
+          type: 'string',
+          description:
+            'Deposited amount in token units; must equal the on-chain amount.',
+        },
+        stopLossPct: {
+          type: 'number',
+          description:
+            'Optional follower stop-loss preference (1-100), saved on the follower position only.',
+        },
+        txHash: {
+          type: 'string',
+          description:
+            'Hash (0x + 32 bytes) of the CopyVault extrinsic the follower wallet signed on-chain.',
+        },
+        blockHash: {
+          type: 'string',
+          description:
+            'Hash (0x + 32 bytes) of the FINALIZED block that includes the extrinsic.',
+        },
+        nonce: {
+          type: 'string',
+          description:
+            'Optional wallet-signature nonce. If omitted, returns a signing request.',
+        },
+        timestamp: {
+          type: 'number',
+          description:
+            'Optional wallet-signature unix timestamp in milliseconds.',
+        },
+        signature: {
+          type: 'string',
+          description:
+            'Optional external wallet signature over the signing request message.',
+        },
+      },
+      required: [
+        'leaderId',
+        'followerAddress',
+        'token',
+        'amount',
+        'txHash',
+        'blockHash',
+      ],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'submit_copytrade_vault_withdrawal',
+    description: scopedDescription(
+      'Journal a copytrade vault withdrawal AFTER the follower wallet signed CopyVault.withdraw on the vault contract and the block is finalized. Amounts and fees are reconciled from the on-chain Withdrawn event. If signature fields are omitted, returns the exact wallet-signing request (action copytrade.withdraw).',
+    ),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        leaderId: { type: 'string', description: 'Leader UUID of the vault.' },
+        followerAddress: {
+          type: 'string',
+          description: 'Follower wallet that signed the on-chain withdrawal.',
+        },
+        shares: {
+          type: 'string',
+          description:
+            'Shares burned on-chain (must equal the on-chain amount).',
+        },
+        txHash: {
+          type: 'string',
+          description:
+            'Hash (0x + 32 bytes) of the CopyVault extrinsic the follower wallet signed on-chain.',
+        },
+        blockHash: {
+          type: 'string',
+          description:
+            'Hash (0x + 32 bytes) of the FINALIZED block that includes the extrinsic.',
+        },
+        nonce: {
+          type: 'string',
+          description:
+            'Optional wallet-signature nonce. If omitted, returns a signing request.',
+        },
+        timestamp: {
+          type: 'number',
+          description:
+            'Optional wallet-signature unix timestamp in milliseconds.',
+        },
+        signature: {
+          type: 'string',
+          description:
+            'Optional external wallet signature over the signing request message.',
+        },
+      },
+      required: [
+        'leaderId',
+        'followerAddress',
+        'shares',
+        'txHash',
+        'blockHash',
+      ],
+      additionalProperties: false,
+    },
+  },
   // ─── Agent Ecosystem Tools ──────────────────────────────────────
   {
     name: 'register_agent',
@@ -2053,6 +2185,25 @@ function getRequiredString(args: JsonObject, key: string): string {
   return value;
 }
 
+const TX_HASH_PATTERN = /^0x[0-9a-fA-F]{64}$/;
+
+// BE-02: proof of a follower-signed, finalized CopyVault extrinsic.
+function getVaultTxProof(args: JsonObject) {
+  const proof = {
+    txHash: getRequiredString(args, 'txHash'),
+    blockHash: getRequiredString(args, 'blockHash'),
+  };
+  for (const [key, value] of Object.entries(proof)) {
+    if (!TX_HASH_PATTERN.test(value)) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `${key} must be a 0x-prefixed 32-byte hash`,
+      );
+    }
+  }
+  return proof;
+}
+
 function getOptionalString(args: JsonObject, key: string): string | undefined {
   const value = args[key];
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
@@ -2186,7 +2337,13 @@ function buildWalletActionSignMessage(input: {
     string | number | boolean | Array<string | number> | undefined | null
   >;
 }) {
-  const lines = [`lunex-auth:${input.action}`, `address:${input.address}`];
+  const lines = [
+    `lunex-auth:${input.action}`,
+    ...(signingBound
+      ? [`domain:${signingDomain}`, `chain:${signingChain}`]
+      : []),
+    `address:${input.address}`,
+  ];
 
   const orderedFields = Object.entries(input.fields ?? {})
     .filter(([, value]) => value !== undefined && value !== null)
@@ -2999,6 +3156,85 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             txHash,
             amountOut,
             executionPrice,
+            nonce: signed.nonce,
+            timestamp: signed.timestamp,
+            signature: signed.signature,
+          }),
+        },
+      );
+      return textResult(data);
+    }
+    case 'submit_copytrade_vault_deposit': {
+      const leaderId = getRequiredString(args, 'leaderId');
+      const followerAddress = getRequiredString(args, 'followerAddress');
+      const token = getRequiredString(args, 'token');
+      const amount = getRequiredString(args, 'amount');
+      const stopLossPct = getOptionalNumber(args, 'stopLossPct');
+      const proof = getVaultTxProof(args);
+      const signed = getWalletSignatureArgs(args);
+      const fields = { leaderId, token, amount, stopLossPct, ...proof };
+
+      if (!signed.signature) {
+        return textResult(
+          buildWalletSigningRequest({
+            tool: 'submit_copytrade_vault_deposit',
+            action: 'copytrade.deposit',
+            address: followerAddress,
+            nonce: signed.nonce,
+            timestamp: signed.timestamp,
+            fields,
+            note: 'The follower wallet must have signed CopyVault.deposit on-chain first; txHash/blockHash identify that finalized extrinsic.',
+          }),
+        );
+      }
+
+      const data = await requestJson(
+        `/api/v1/copytrade/vaults/${encodeURIComponent(leaderId)}/deposit`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            followerAddress,
+            token,
+            amount,
+            stopLossPct,
+            ...proof,
+            nonce: signed.nonce,
+            timestamp: signed.timestamp,
+            signature: signed.signature,
+          }),
+        },
+      );
+      return textResult(data);
+    }
+    case 'submit_copytrade_vault_withdrawal': {
+      const leaderId = getRequiredString(args, 'leaderId');
+      const followerAddress = getRequiredString(args, 'followerAddress');
+      const shares = getRequiredString(args, 'shares');
+      const proof = getVaultTxProof(args);
+      const signed = getWalletSignatureArgs(args);
+
+      if (!signed.signature) {
+        return textResult(
+          buildWalletSigningRequest({
+            tool: 'submit_copytrade_vault_withdrawal',
+            action: 'copytrade.withdraw',
+            address: followerAddress,
+            nonce: signed.nonce,
+            timestamp: signed.timestamp,
+            fields: { leaderId, shares, ...proof },
+            note: 'The follower wallet must have signed CopyVault.withdraw on-chain first; txHash/blockHash identify that finalized extrinsic.',
+          }),
+        );
+      }
+
+      const data = await requestJson(
+        `/api/v1/copytrade/vaults/${encodeURIComponent(leaderId)}/withdraw`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            followerAddress,
+            shares,
+            ...proof,
             nonce: signed.nonce,
             timestamp: signed.timestamp,
             signature: signed.signature,

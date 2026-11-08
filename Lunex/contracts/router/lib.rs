@@ -2,6 +2,7 @@
 #![allow(unexpected_cfgs)] // ink! interno gera cfg conditions que não podem ser suprimidas de outra forma
 #![allow(clippy::cast_possible_truncation)]
 #![warn(clippy::arithmetic_side_effects)]
+#![allow(clippy::too_many_arguments)] // ink! message/constructor signatures are the ABI
 
 // ========================================
 // PSP22 ERROR TYPE (DEFINIDO LOCALMENTE)
@@ -432,6 +433,7 @@ pub mod router_contract {
     // ========================================
     mod constants {
         /// Minimum liquidity para cálculos (mesmo valor do Pair - PRODUÇÃO)
+        #[allow(dead_code)]
         pub const MINIMUM_LIQUIDITY: u128 = 1000;
 
         /// Fee para swaps (0.5% = 995/1000) - conforme Lunex DEX
@@ -994,12 +996,18 @@ pub mod router_contract {
         }
 
         /// Executa swaps sequenciais através do path
+        // Index arithmetic only: callers guarantee path.len() >= 2 and every
+        // index stays inside the loop range, so it cannot over/underflow.
+        #[allow(clippy::arithmetic_side_effects)]
         fn execute_swaps(
             &self,
-            amounts: &Vec<Balance>,
-            path: &Vec<AccountId>,
+            amounts: &[Balance],
+            path: &[AccountId],
             final_to: AccountId,
         ) -> Result<(), RouterError> {
+            if path.len() < 2 || amounts.len() != path.len() {
+                return Err(RouterError::InvalidPath);
+            }
             for i in 0..(path.len() - 1) {
                 let (input, output) = (path[i], path[i + 1]);
                 let (token_0, _) = self.sort_tokens(input, output);
@@ -1581,10 +1589,13 @@ pub mod router_contract {
         }
 
         /// Calcula todos os amounts de output para um path
+        // Index arithmetic only: callers guarantee path.len() >= 2 and every
+        // index stays inside the loop range, so it cannot over/underflow.
+        #[allow(clippy::arithmetic_side_effects)]
         fn get_amounts_out(
             &self,
             amount_in: Balance,
-            path: &Vec<AccountId>,
+            path: &[AccountId],
         ) -> Result<Vec<Balance>, RouterError> {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);
@@ -1616,10 +1627,13 @@ pub mod router_contract {
 
         /// Igual a get_amounts_out mas valida impacto de preço por hop
         /// Usado internamente nas funções de swap (não em views)
+        // Index arithmetic only: callers guarantee path.len() >= 2 and every
+        // index stays inside the loop range, so it cannot over/underflow.
+        #[allow(clippy::arithmetic_side_effects)]
         fn get_amounts_out_checked(
             &self,
             amount_in: Balance,
-            path: &Vec<AccountId>,
+            path: &[AccountId],
         ) -> Result<Vec<Balance>, RouterError> {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);
@@ -1666,10 +1680,13 @@ pub mod router_contract {
         }
 
         /// Calcula todos os amounts de input para um path (reverso)
+        // Index arithmetic only: callers guarantee path.len() >= 2 and every
+        // index stays inside the loop range, so it cannot over/underflow.
+        #[allow(clippy::arithmetic_side_effects)]
         fn get_amounts_in(
             &self,
             amount_out: Balance,
-            path: &Vec<AccountId>,
+            path: &[AccountId],
         ) -> Result<Vec<Balance>, RouterError> {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);

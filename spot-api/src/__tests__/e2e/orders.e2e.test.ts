@@ -44,6 +44,7 @@ jest.mock('../../services/settlementService', () => ({
 jest.mock('../../middleware/auth', () => ({
   ...jest.requireActual('../../middleware/auth'),
   verifyAddressSignature: jest.fn().mockResolvedValue(true),
+  verifySpotOrderSignature: jest.fn().mockResolvedValue('v3'),
   verifyWalletActionSignature: jest
     .fn()
     .mockResolvedValue({ ok: true, message: 'signed-action-message' }),

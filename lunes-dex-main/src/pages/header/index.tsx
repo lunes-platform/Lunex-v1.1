@@ -1,382 +1,233 @@
-import { useState, useEffect } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { useAppContext } from 'context/useContext'
-import { useSDK } from '../../context/SDKContext'
-import * as B from 'components/bases'
-import * as S from './styles'
-//Modals
-import * as M from './modals'
-import BalanceDropdown from './BalanceDropdown'
+import React, { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { Bell as BellIcon, ChevronDown, SlidersHorizontal } from 'lucide-react'
+import { short } from 'components/ui/kit'
 import { LunexLogo } from 'components/LunexLogo'
-import { prefetchRoute } from 'routers/prefetch'
+import { useNotifications } from 'components/feedback/ToastProvider'
+import { useSDK } from 'context/SDKContext'
+import { useTx } from 'context/TxContext'
+import { useIsMobile, useIsTablet } from 'hooks/useMediaQuery'
+import BalanceDropdown from './BalanceDropdown'
+import {
+  AccountPanel,
+  NotificationPanel,
+  SettingsMenu,
+  WalletModal
+} from './modals'
+import { OPEN_WALLET_EVENT } from './modals/wallets'
+import { MORE_NAV, PRIMARY_NAV, activePrimary, inMore, isActive } from './nav'
+import * as S from './styles'
 
-type NavItem = {
-  label: string
-  path: string
-  isActive: (pathname: string) => boolean
-}
+type Menu = 'more' | 'notif' | 'settings' | 'account' | null
 
-// Single source of truth for primary nav items (desktop + mobile drawer)
-const NAV_ITEMS: NavItem[] = [
-  {
-    label: 'Swap',
-    path: '/swap',
-    isActive: p => p === '/swap' || p === '/trade'
-  },
-  { label: 'Spot', path: '/spot', isActive: p => p === '/spot' },
-  {
-    label: 'Liquidity Pool',
-    path: '/pools',
-    isActive: p => p === '/pools' || p === '/pool' || p === '/liquidity'
-  },
-  {
-    label: 'Staking',
-    path: '/staking',
-    isActive: p => p === '/staking' || p === '/stake'
-  },
-  {
-    label: 'Social Trade',
-    path: '/social',
-    isActive: p => p.startsWith('/social')
-  },
-  {
-    label: 'Strategies',
-    path: '/strategies',
-    isActive: p => p.startsWith('/strategies')
-  },
-  { label: 'Agent', path: '/agent', isActive: p => p === '/agent' },
-  {
-    label: 'Rewards',
-    path: '/rewards',
-    isActive: p => p === '/rewards' || p === '/community'
-  },
-  {
-    label: 'Affiliates',
-    path: '/affiliates',
-    isActive: p => p === '/affiliates' || p === '/referral'
-  },
-  {
-    label: 'Governance',
-    path: '/governance',
-    isActive: p => p === '/governance'
-  },
-  {
-    label: 'Revenue',
-    path: '/protocol-stats',
-    isActive: p => p === '/protocol-stats'
-  },
-  { label: 'Docs', path: '/docs', isActive: p => p === '/docs' }
-]
-
-const Header = () => {
-  const { state } = useAppContext()
+const Header: React.FC = () => {
   const sdk = useSDK()
+  const tx = useTx()
+  const notifs = useNotifications()
   const navigate = useNavigate()
-  const location = useLocation()
-  const [modal, setModal] = useState('null')
-  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const { pathname } = useLocation()
+  const mobile = useIsMobile()
+  const tablet = useIsTablet()
+  const wide = !mobile && !tablet
 
-  // Formatar endereço para exibição
-  const formatAddress = (address: string) => {
-    return `${address.slice(0, 6)}...${address.slice(-4)}`
-  }
+  const [menu, setMenu] = useState<Menu>(null)
+  const [walletOpen, setWalletOpen] = useState(false)
+  const rootRef = useRef<HTMLElement>(null)
 
-  // Close mobile drawer on route change
+  const toggle = (m: Exclude<Menu, null>) =>
+    setMenu(cur => (cur === m ? null : m))
+  const close = () => setMenu(null)
+
+  // Close menus on route change.
   useEffect(() => {
-    setMobileNavOpen(false)
-  }, [location.pathname])
+    setMenu(null)
+  }, [pathname])
 
-  // Close mobile drawer on Escape
+  // Outside click + Esc.
   useEffect(() => {
-    if (!mobileNavOpen) return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMobileNavOpen(false)
+    if (!menu) return
+    const onDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node))
+        setMenu(null)
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [mobileNavOpen])
-
-  // Close connectWallet modal and open account when connection succeeds
-  useEffect(() => {
-    if (sdk.isConnected && modal === 'connectWallet') {
-      setModal('account')
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenu(null)
     }
-  }, [sdk.isConnected]) // eslint-disable-line react-hooks/exhaustive-deps
+    document.addEventListener('pointerdown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menu])
 
-  // Handler para conectar wallet — apenas delega ao SDK
-  // O modal fica aberto mostrando sdk.error em caso de falha
-  const handleConnectWallet = async (walletSource?: string) => {
-    await sdk.connectWallet(walletSource)
+  // Any screen can ask for the connect modal (see modals/wallets.ts).
+  useEffect(() => {
+    const open = () => {
+      setMenu(null)
+      setWalletOpen(true)
+    }
+    window.addEventListener(OPEN_WALLET_EVENT, open)
+    return () => window.removeEventListener(OPEN_WALLET_EVENT, open)
+  }, [])
+
+  // Account panel makes no sense once disconnected.
+  useEffect(() => {
+    if (!sdk.isConnected) setMenu(m => (m === 'account' ? null : m))
+  }, [sdk.isConnected])
+
+  const go = (to: string) => {
+    navigate(to)
+    setMenu(null)
   }
 
-  // Handler para desconectar
-  const handleDisconnect = () => {
-    sdk.disconnectWallet()
-    setModal('null')
-  }
+  const primary = activePrimary(pathname)
+  const moreActive = inMore(pathname)
+  const hasPending = tx.pendingCount > 0
+  const unread = notifs.unread
+  const connected = sdk.isConnected && !!sdk.walletAddress
 
   return (
     <>
-      <S.Header>
-        <S.HamburgerButton
-          type="button"
-          aria-label="Open navigation menu"
-          aria-expanded={mobileNavOpen}
-          onClick={() => setMobileNavOpen(true)}
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <line x1="3" y1="12" x2="21" y2="12" />
-            <line x1="3" y1="18" x2="21" y2="18" />
-          </svg>
-        </S.HamburgerButton>
+      <S.Header ref={rootRef}>
+        <S.LogoButton onClick={() => navigate('/')} aria-label="Lunex home">
+          <LunexLogo height="20px" />
+        </S.LogoButton>
 
-        <LunexLogo width="135px" navHome />
-
-        {/* Governance and Rewards - moved from TabBar to header */}
-        <S.NavLinks>
-          <S.NavLink
-            active={
-              location.pathname === '/swap' || location.pathname === '/trade'
-            }
-            onMouseEnter={() => prefetchRoute('/swap')}
-            onClick={() => navigate('/swap')}
-          >
-            Swap
-          </S.NavLink>
-          <S.NavLink
-            active={location.pathname === '/spot'}
-            onMouseEnter={() => prefetchRoute('/spot')}
-            onClick={() => navigate('/spot')}
-          >
-            Spot
-          </S.NavLink>
-          <S.NavLink
-            active={
-              location.pathname === '/pools' ||
-              location.pathname === '/pool' ||
-              location.pathname === '/liquidity'
-            }
-            onMouseEnter={() => prefetchRoute('/pools')}
-            onClick={() => navigate('/pools')}
-          >
-            Liquidity Pool
-          </S.NavLink>
-          <S.NavLink
-            active={
-              location.pathname === '/staking' || location.pathname === '/stake'
-            }
-            onMouseEnter={() => prefetchRoute('/staking')}
-            onClick={() => navigate('/staking')}
-          >
-            Staking
-          </S.NavLink>
-          <S.NavLink
-            active={location.pathname.startsWith('/social')}
-            onMouseEnter={() => prefetchRoute('/social')}
-            onClick={() => navigate('/social')}
-          >
-            Social Trade
-          </S.NavLink>
-          <S.NavLink
-            active={location.pathname.startsWith('/strategies')}
-            onMouseEnter={() => prefetchRoute('/strategies')}
-            onClick={() => navigate('/strategies')}
-          >
-            Strategies
-          </S.NavLink>
-          <S.NavLink
-            active={location.pathname === '/agent'}
-            onMouseEnter={() => prefetchRoute('/agent')}
-            onClick={() => navigate('/agent')}
-          >
-            Agent
-          </S.NavLink>
-          <S.NavLink
-            active={
-              location.pathname === '/rewards' ||
-              location.pathname === '/community'
-            }
-            onMouseEnter={() => prefetchRoute('/rewards')}
-            onClick={() => navigate('/rewards')}
-          >
-            Rewards
-          </S.NavLink>
-          <S.NavLink
-            active={
-              location.pathname === '/affiliates' ||
-              location.pathname === '/referral'
-            }
-            onMouseEnter={() => prefetchRoute('/affiliates')}
-            onClick={() => navigate('/affiliates')}
-          >
-            Affiliates
-          </S.NavLink>
-
-          <S.DropdownContainer>
-            <S.NavLink
-              active={['/governance', '/protocol-stats', '/docs'].includes(
-                location.pathname
-              )}
-            >
-              More
-              <svg
-                width="10"
-                height="6"
-                viewBox="0 0 10 6"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
+        {!mobile && (
+          <S.Nav aria-label="Primary">
+            {PRIMARY_NAV.map(n => (
+              <S.NavButton
+                key={n.key}
+                $active={primary === n.key}
+                aria-current={primary === n.key ? 'page' : undefined}
+                onClick={() => go(n.to)}
               >
-                <path
-                  d="M1 1L5 5L9 1"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </S.NavLink>
-            <S.DropdownMenu>
-              <S.DropdownContent>
-                <S.DropdownItem
-                  active={location.pathname === '/governance'}
-                  onMouseEnter={() => prefetchRoute('/governance')}
-                  onClick={() => navigate('/governance')}
+                {n.label}
+              </S.NavButton>
+            ))}
+            <S.Anchor>
+              <S.NavButton
+                $active={moreActive}
+                aria-haspopup="menu"
+                aria-expanded={menu === 'more'}
+                onClick={() => toggle('more')}
+                style={{ padding: '8px 12px' }}
+              >
+                More
+                <ChevronDown size={14} strokeWidth={2} />
+              </S.NavButton>
+              {menu === 'more' && (
+                <S.Popover
+                  $width={240}
+                  $align="left"
+                  $pad={6}
+                  role="menu"
+                  aria-label="More"
+                  style={{ gap: 2 }}
                 >
-                  Governance
-                </S.DropdownItem>
-                <S.DropdownItem
-                  active={location.pathname === '/protocol-stats'}
-                  onMouseEnter={() => prefetchRoute('/protocol-stats')}
-                  onClick={() => navigate('/protocol-stats')}
-                >
-                  Revenue
-                </S.DropdownItem>
-                <S.DropdownItem
-                  active={location.pathname === '/docs'}
-                  onMouseEnter={() => prefetchRoute('/docs')}
-                  onClick={() => navigate('/docs')}
-                >
-                  Docs
-                </S.DropdownItem>
-              </S.DropdownContent>
-            </S.DropdownMenu>
-          </S.DropdownContainer>
-        </S.NavLinks>
+                  {MORE_NAV.map(m => (
+                    <S.MenuItem
+                      key={m.key}
+                      role="menuitem"
+                      aria-current={isActive(m, pathname) ? 'page' : undefined}
+                      onClick={() => go(m.to)}
+                    >
+                      {m.label}
+                      <span>{m.note}</span>
+                    </S.MenuItem>
+                  ))}
+                </S.Popover>
+              )}
+            </S.Anchor>
+          </S.Nav>
+        )}
 
-        <S.Nav>
-          <B.Wrapper
-            direction
-            overflow
-            radius
-            bg="transparent"
-            width="240px"
-            height="40px"
-          >
-            <BalanceDropdown
-              onConnectRequest={() => setModal('connectWallet')}
-              onOpenWallet={() => setModal('account')}
-            />
-            <S.Status
-              style={{ fontSize: '13px' }}
-              isPending={!!state.selectedOption1 && !!state.selectedOption2}
-              onClick={() =>
-                sdk.isConnected
-                  ? setModal('account')
-                  : setModal('connectWallet')
-              }
+        <S.Right>
+          {hasPending && (
+            <S.PendingChip
+              onClick={tx.show}
+              aria-label={`${tx.pendingCount} pending transaction${tx.pendingCount > 1 ? 's' : ''} — show progress`}
             >
-              {!!state.selectedOption1 && !!state.selectedOption2
-                ? '1 Pending'
-                : sdk.isConnected && sdk.walletAddress
-                  ? formatAddress(sdk.walletAddress)
-                  : 'Connect wallet'}
-            </S.Status>
-          </B.Wrapper>
-          <img
-            src="/img/wallet.svg"
-            alt="Wallet"
-            style={{ cursor: 'pointer' }}
-            onClick={() =>
-              sdk.isConnected ? setModal('account') : setModal('connectWallet')
-            }
-          />
-          <img
-            src="/img/settings.svg"
-            alt="Settings"
-            style={{ cursor: 'pointer' }}
-            onClick={() => setModal(modal === 'settings' ? 'null' : 'settings')}
-          />
-        </S.Nav>
+              <S.ChipSpinner />
+              {tx.pendingCount} pending
+            </S.PendingChip>
+          )}
+
+          {wide && !hasPending && (
+            <S.NetChip aria-label="Network: Lunes">
+              <i aria-hidden />
+              Lunes
+            </S.NetChip>
+          )}
+
+          <S.Anchor>
+            <S.HeaderIconButton
+              $active={menu === 'notif'}
+              aria-label={
+                unread ? `Notifications, ${unread} unread` : 'Notifications'
+              }
+              aria-expanded={menu === 'notif'}
+              onClick={() => toggle('notif')}
+            >
+              <S.Bell key={notifs.bellRing} $ring={notifs.bellRing}>
+                <BellIcon size={18} strokeWidth={1.75} />
+              </S.Bell>
+              {unread > 0 && (
+                <S.CountBadge aria-hidden>
+                  {unread > 9 ? '9+' : unread}
+                </S.CountBadge>
+              )}
+            </S.HeaderIconButton>
+            {menu === 'notif' && <NotificationPanel onClose={close} />}
+          </S.Anchor>
+
+          <S.Anchor>
+            <S.HeaderIconButton
+              $active={menu === 'settings'}
+              aria-label="Settings"
+              aria-haspopup="menu"
+              aria-expanded={menu === 'settings'}
+              onClick={() => toggle('settings')}
+            >
+              <SlidersHorizontal size={18} strokeWidth={1.75} />
+            </S.HeaderIconButton>
+            {menu === 'settings' && <SettingsMenu onClose={close} />}
+          </S.Anchor>
+
+          {!connected ? (
+            <S.ConnectButton
+              onClick={() => {
+                setMenu(null)
+                setWalletOpen(true)
+              }}
+            >
+              {mobile ? 'Connect' : 'Connect wallet'}
+            </S.ConnectButton>
+          ) : (
+            <S.Anchor>
+              <S.AccountButton
+                $active={menu === 'account'}
+                aria-label={`Account ${short(sdk.walletAddress)}`}
+                aria-expanded={menu === 'account'}
+                onClick={() => toggle('account')}
+              >
+                <img src="/img/lunes-green.svg" alt="" />
+                {wide && <BalanceDropdown />}
+                {!mobile && (
+                  <>
+                    <span>{short(sdk.walletAddress)}</span>
+                    <ChevronDown size={14} strokeWidth={2} color="#8A8A8E" />
+                  </>
+                )}
+              </S.AccountButton>
+              {menu === 'account' && <AccountPanel onClose={close} />}
+            </S.Anchor>
+          )}
+        </S.Right>
       </S.Header>
 
-      {mobileNavOpen && (
-        <>
-          <S.MobileNavOverlay onClick={() => setMobileNavOpen(false)} />
-          <S.MobileNavDrawer aria-label="Main navigation">
-            <S.MobileNavHeader>
-              <LunexLogo width="120px" navHome />
-              <S.MobileNavClose
-                type="button"
-                aria-label="Close navigation menu"
-                onClick={() => setMobileNavOpen(false)}
-              >
-                ✕
-              </S.MobileNavClose>
-            </S.MobileNavHeader>
-            {NAV_ITEMS.map(item => (
-              <S.MobileNavLink
-                key={item.path}
-                active={item.isActive(location.pathname)}
-                onMouseEnter={() => prefetchRoute(item.path)}
-                onClick={() => {
-                  navigate(item.path)
-                  setMobileNavOpen(false)
-                }}
-              >
-                {item.label}
-              </S.MobileNavLink>
-            ))}
-          </S.MobileNavDrawer>
-        </>
-      )}
-
-      {modal === 'settings' && <M.Settings close={() => setModal('null')} />}
-
-      {modal === 'connectWallet' && (
-        <M.ModalConnectWallet
-          connectNetwork={(walletSource?: string) =>
-            handleConnectWallet(walletSource)
-          }
-          connectWallet={(walletSource?: string) =>
-            handleConnectWallet(walletSource)
-          }
-          close={() => setModal('null')}
-        />
-      )}
-
-      {modal === 'connecting' && (
-        <M.Connecting close={() => setModal('null')} />
-      )}
-
-      {modal === 'account' && (
-        <M.WalletModal
-          onClose={() => setModal('null')}
-          onDisconnect={handleDisconnect}
-        />
-      )}
-
-      {modal === 'statusTransaction' && (
-        <M.StatusTransaction close={() => setModal('null')} />
-      )}
+      <WalletModal open={walletOpen} onClose={() => setWalletOpen(false)} />
     </>
   )
 }

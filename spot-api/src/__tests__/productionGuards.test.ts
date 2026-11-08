@@ -4,6 +4,19 @@ const validProductionConfig = {
   isProd: true,
   nodeEnv: 'production',
   adminSecret: 'a'.repeat(32),
+  trustProxy: 1 as const,
+  publicApiOrigin: 'https://api.lunex.io',
+  signing: {
+    domain: 'lunex.lunes.io',
+    genesisHash: `0x${'ab'.repeat(32)}`,
+    acceptLegacy: false,
+  },
+  settlement: {
+    attestorSeed: `0x${'12'.repeat(32)}`,
+  },
+  session: {
+    secret: 's'.repeat(32),
+  },
   cors: {
     allowedOrigins: ['https://app.lunex.io'],
   },
@@ -44,6 +57,27 @@ const validProductionConfig = {
 describe('production startup guards', () => {
   it('returns no errors with a fully-valid production config', () => {
     expect(collectProductionConfigErrors(validProductionConfig)).toEqual([]);
+  });
+
+  it('requires a strong SESSION_SECRET distinct from ADMIN_SECRET', () => {
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        session: { secret: '' },
+      }),
+    ).toContain('SESSION_SECRET is required in production');
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        session: { secret: 'short' },
+      }),
+    ).toContain('SESSION_SECRET must be at least 32 characters in production');
+    expect(
+      collectProductionConfigErrors({
+        ...validProductionConfig,
+        session: { secret: validProductionConfig.adminSecret },
+      }),
+    ).toContain('SESSION_SECRET must differ from ADMIN_SECRET');
   });
 
   it('does not require settlement config outside production', () => {
@@ -208,10 +242,33 @@ describe('production startup guards', () => {
     );
   });
 
-  it('rejects NODE_ENV that is not exactly "production"', () => {
+  it('rejects NODE_ENV that is not exactly "production" (real config path)', () => {
+    // BE-12: build the config the way the server does. NODE_ENV=prod must
+    // not disable the guards (it used to yield isProd=false → no errors).
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'prod';
+    try {
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { config } = require('../config');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const guards = require('../utils/productionGuards');
+        expect(config.isProd).toBe(true);
+        const errors: string[] = guards.collectProductionConfigErrors(config);
+        expect(
+          errors.some((e) => e.includes('NODE_ENV must be exactly')),
+        ).toBe(true);
+      });
+    } finally {
+      process.env.NODE_ENV = previous;
+    }
+  });
+
+  it('rejects an unknown NODE_ENV even when isProd is false', () => {
     const errors = collectProductionConfigErrors({
       ...validProductionConfig,
-      nodeEnv: 'prod',
+      isProd: false,
+      nodeEnv: 'staging',
     });
     expect(errors.some((e) => e.includes('NODE_ENV must be exactly'))).toBe(
       true,

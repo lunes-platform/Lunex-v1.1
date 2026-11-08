@@ -38,6 +38,27 @@ const LogSchema = ValidateSchema.extend({
   source: z.string().optional(),
 });
 
+const positiveDecimalString = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^(?:\d+\.?\d*|\.\d+)$/, 'Must be a decimal number')
+  .refine((v) => Number(v) > 0, { message: 'Must be a positive number' });
+
+const LogIdParamsSchema = z.object({ logId: z.string().uuid() });
+
+// PATCH body (BE-10): strict — unknown keys rejected, money fields are
+// positive decimal strings, slippage is a bounded integer.
+const UpdateStatusSchema = z
+  .object({
+    status: z.enum(StatusValues),
+    orderId: z.string().uuid().optional(),
+    executedAmount: positiveDecimalString.optional(),
+    executionPrice: positiveDecimalString.optional(),
+    slippageBps: z.number().int().min(0).max(10_000).optional(),
+  })
+  .strict();
+
 const HistoryQuerySchema = z.object({
   strategyId: z.string().uuid().optional(),
   status: z.enum(StatusValues).optional(),
@@ -126,23 +147,22 @@ router.patch(
   '/:logId/status',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { status, orderId, executedAmount, executionPrice, slippageBps } =
-        req.body;
-      if (!status || !StatusValues.includes(status)) {
-        return res
-          .status(400)
-          .json({ error: `status must be one of: ${StatusValues.join(', ')}` });
+      const params = LogIdParamsSchema.safeParse(req.params);
+      const parsed = UpdateStatusSchema.safeParse(req.body);
+      if (!params.success || !parsed.success) {
+        return res.status(400).json({
+          error: 'Validation failed',
+          details: [
+            ...(params.success ? [] : params.error.issues),
+            ...(parsed.success ? [] : parsed.error.issues),
+          ],
+        });
       }
 
+      // Ownership enforced in the service (`where: { id, agentId }` → 404).
       const entry = await executionLayerService.updateExecutionStatus(
-        req.params.logId,
-        {
-          status,
-          orderId,
-          executedAmount,
-          executionPrice,
-          slippageBps,
-        },
+        params.data.logId,
+        { agentId: req.agent!.id, ...parsed.data },
       );
 
       res.json({ entry });

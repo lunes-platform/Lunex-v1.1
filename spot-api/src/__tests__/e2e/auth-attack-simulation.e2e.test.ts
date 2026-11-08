@@ -131,8 +131,10 @@ describe('Auth attack simulation E2E', () => {
       .post('/api/v1/copytrade/vaults/leader-1/deposit')
       .send({
         followerAddress: 'victim-wallet-address',
-        token: 'USDT',
+        token: 'LUNES',
         amount: '100',
+        txHash: `0x${'ab'.repeat(32)}`,
+        blockHash: `0x${'cd'.repeat(32)}`,
         ...signedBody,
       });
 
@@ -152,6 +154,8 @@ describe('Auth attack simulation E2E', () => {
       .send({
         followerAddress: 'follower-addr-123',
         shares: '50',
+        txHash: `0x${'ab'.repeat(32)}`,
+        blockHash: `0x${'cd'.repeat(32)}`,
         ...signedBody,
       });
 
@@ -375,6 +379,20 @@ describe('Auth attack simulation E2E', () => {
       permissions: ['READ_ONLY', 'TRADE_SPOT'],
       keyId: 'key-trade',
     } as unknown as Awaited<ReturnType<typeof agentService.verifyApiKey>>);
+    const parentExpiry = '2026-12-31T00:00:00.000Z';
+    agentServiceMock.getApiKeys.mockResolvedValueOnce([
+      {
+        id: 'key-trade',
+        label: 'trade',
+        prefix: 'lnx_abcd',
+        permissions: ['READ_ONLY', 'TRADE_SPOT'],
+        expiresAt: parentExpiry,
+        revokedAt: null,
+        lastUsedAt: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        isActive: true,
+      },
+    ] as Awaited<ReturnType<typeof agentService.getApiKeys>>);
 
     const res = await request(app)
       .post('/api/v1/agents/agent-1/api-keys')
@@ -385,9 +403,14 @@ describe('Auth attack simulation E2E', () => {
       });
 
     expect(res.status).toBe(201);
-    expect(agentServiceMock.createApiKey).toHaveBeenCalledWith('agent-1', {
-      label: 'readonly-child',
-      permissions: ['READ_ONLY'],
-    });
+    // BE-13: the child key is capped at the parent key's expiry.
+    expect(agentServiceMock.createApiKey).toHaveBeenCalledWith(
+      'agent-1',
+      {
+        label: 'readonly-child',
+        permissions: ['READ_ONLY'],
+      },
+      { maxExpiresAt: new Date(parentExpiry) },
+    );
   });
 });

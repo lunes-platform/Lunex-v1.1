@@ -1,21 +1,37 @@
 # =============================================================================
-# Lunex DEX — Testnet Stack (Public Lunes Testnet)
-# Domain: lunex-sandbox.lunes.io
+# Lunex DEX — Testnet Stack (Public Lunes Testnet) / community beta
+# Domain: ${TESTNET_DOMAIN} (default lunex-sandbox.lunes.io)
 #
 # Connects to the PUBLIC Lunes Testnet — no local blockchain node needed.
-# Use this for external testing and developer onboarding.
 #
 # Usage:
 #   docker compose -f docker/docker-compose.testnet.yml \
 #     --env-file docker/.env.testnet up -d
+#   # optional admin console (needs ../lunex-admin checked out next to docker/):
+#   docker compose -f docker/docker-compose.testnet.yml \
+#     --env-file docker/.env.testnet --profile admin up -d
 #
 # Environment file: docker/.env.testnet (copy from .env.testnet.example)
+#
+# Networks:
+#   testnet_internal  internal: true — DB/Redis/service-to-service, no egress
+#   testnet_egress    plain bridge, no published ports — ONLY for services that
+#                     must reach the public testnet RPC (api, faucet,
+#                     subquery-node). Without it `internal: true` blocks the
+#                     outbound wss:// connection and the stack never becomes
+#                     healthy (P0-6).
+#   testnet_public    nginx (80/443) + certbot
 # =============================================================================
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
 
 services:
 
   # ── PostgreSQL (testnet isolated DB) ──
   postgres:
+    <<: *hardening
     image: postgres:15-alpine
     restart: unless-stopped
     command:
@@ -42,11 +58,24 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Redis ──
+  # ── Redis (nonces, sessions, matching locks, faucet cooldowns) ──
+  # IN-04: nonces/sessions are security state, not cache. `noeviction` makes
+  # Redis refuse writes when full instead of silently evicting a nonce (which
+  # would re-open a signed-action replay window); AOF keeps them across
+  # restarts; requirepass closes the unauthenticated socket.
   redis:
+    <<: *hardening
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru --save ""
+    command: >-
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.testnet}
+      --maxmemory 128mb
+      --maxmemory-policy noeviction
+      --appendonly yes
+      --appendfsync everysec
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
     networks:
       - testnet_internal
     healthcheck:
@@ -59,6 +88,7 @@ services:
 
   # ── Spot API (testnet) ──
   api:
+    <<: *hardening
     build:
       context: ../spot-api
       dockerfile: ../docker/Dockerfile.api
@@ -73,17 +103,23 @@ services:
       DATABASE_URL: postgresql://${DB_USER:-lunex}:${DB_PASSWORD}@postgres:5432/lunex_testnet?schema=public
       PORT: 4000
       WS_PORT: 4001
-      # Connects to PUBLIC Lunes Testnet — no local node needed
+      # Connects to PUBLIC Lunes Testnet — needs testnet_egress
       LUNES_WS_URL: ${LUNES_TESTNET_WS_URL:-wss://testnet.lunes.io}
+      LUNES_GENESIS_HASH: ${TESTNET_GENESIS_HASH:?Set TESTNET_GENESIS_HASH in .env.testnet}
+      SIGNING_DOMAIN: ${TESTNET_DOMAIN:-lunex-sandbox.lunes.io}
+      PUBLIC_API_ORIGIN: ${PUBLIC_API_ORIGIN:-https://lunex-sandbox.lunes.io}
       RELAYER_SEED: ${RELAYER_SEED:?Set RELAYER_SEED in .env.testnet}
       BRIDGE_ADMIN_SEED: ${BRIDGE_ADMIN_SEED:?Set BRIDGE_ADMIN_SEED in .env.testnet}
-      REDIS_URL: redis://redis:6379
+      ATTESTOR_SEED: ${ATTESTOR_SEED:?Set ATTESTOR_SEED in .env.testnet}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
       MATCHING_LOCK_TTL_MS: ${MATCHING_LOCK_TTL_MS:-30000}
       MATCHING_LOCK_WAIT_MS: ${MATCHING_LOCK_WAIT_MS:-2000}
       MATCHING_LOCK_RETRY_MS: ${MATCHING_LOCK_RETRY_MS:-50}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://lunex-sandbox.lunes.io}
       ALLOWED_WS_ORIGINS: ${ALLOWED_WS_ORIGINS:-https://lunex-sandbox.lunes.io}
-      TRUST_PROXY: "true"
+      # 1 hop: nginx overwrites X-Forwarded-For with $remote_addr (IN-03).
+      # With Cloudflare in front + cloudflare-realip.conf, still 1 hop.
+      TRUST_PROXY: "1"
       SOCIAL_ANALYTICS_ENABLED: "true"
       SUBQUERY_ENDPOINT: "http://subquery-query:3000"
       SUBQUERY_ENABLED: "true"
@@ -100,8 +136,10 @@ services:
       STAKING_CONTRACT_METADATA_PATH: ${STAKING_CONTRACT_METADATA_PATH:-./abis/Staking.json}
       LISTING_MANAGER_CONTRACT_ADDRESS: ${TESTNET_LISTING_MANAGER_CONTRACT:-}
       ADMIN_SECRET: ${ADMIN_SECRET:?Set ADMIN_SECRET in .env.testnet}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env.testnet}
     networks:
       - testnet_internal
+      - testnet_egress
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/health || exit 1"]
       interval: 15s
@@ -110,24 +148,51 @@ services:
       start_period: 30s
 
   # ── Frontend DEX (testnet build) ──
+  # Every REACT_APP_* read by lunes-dex-main/src is passed here (Vite bakes
+  # them into the bundle at build time). Re-check with
+  #   grep -rhoE "REACT_APP_[A-Z0-9_]+" lunes-dex-main/src | sort -u
   frontend:
+    <<: *hardening
     build:
       context: ../lunes-dex-main
       dockerfile: ../docker/Dockerfile.frontend
       args:
         REACT_APP_NETWORK: testnet
         REACT_APP_SPOT_API_URL: ${TESTNET_SPOT_API_URL:?TESTNET_SPOT_API_URL is required}
+        REACT_APP_API_URL: ${TESTNET_SPOT_API_URL:?TESTNET_SPOT_API_URL is required}
+        REACT_APP_SPOT_WS_URL: ${TESTNET_SPOT_WS_URL:?TESTNET_SPOT_WS_URL is required}
+        REACT_APP_RPC_TESTNET: ${LUNES_TESTNET_WS_URL:-wss://testnet.lunes.io}
+        # Legacy: some code paths still read RPC_MAINNET on testnet builds.
         REACT_APP_RPC_MAINNET: ${LUNES_TESTNET_WS_URL:-wss://testnet.lunes.io}
+        REACT_APP_GENESIS_HASH: ${TESTNET_GENESIS_HASH:?Set TESTNET_GENESIS_HASH in .env.testnet}
+        REACT_APP_LUNES_GENESIS_HASH: ${TESTNET_GENESIS_HASH:?Set TESTNET_GENESIS_HASH in .env.testnet}
+        REACT_APP_WALLETCONNECT_PROJECT_ID: ${WALLETCONNECT_PROJECT_ID:-}
         REACT_APP_FACTORY_CONTRACT: ${TESTNET_FACTORY_CONTRACT:-}
         REACT_APP_ROUTER_CONTRACT: ${TESTNET_ROUTER_CONTRACT:-}
+        REACT_APP_WNATIVE_CONTRACT: ${TESTNET_WLUNES_ADDRESS:-}
         REACT_APP_STAKING_CONTRACT: ${TESTNET_STAKING_CONTRACT:-}
         REACT_APP_REWARDS_CONTRACT: ${TESTNET_REWARDS_CONTRACT:-}
+        REACT_APP_LISTING_MANAGER_CONTRACT: ${TESTNET_LISTING_MANAGER_CONTRACT:-}
+        REACT_APP_LISTING_FEE_TOKEN: ${TESTNET_LISTING_FEE_TOKEN:-}
+        REACT_APP_COPY_VAULT_CONTRACT: ${TESTNET_COPY_VAULT_CONTRACT:-}
+        REACT_APP_SPOT_SETTLEMENT_CONTRACT: ${TESTNET_SPOT_CONTRACT:-}
         REACT_APP_TOKEN_WLUNES: ${TESTNET_WLUNES_ADDRESS:-}
         REACT_APP_TOKEN_LUSDT: ${TESTNET_LUSDT_ADDRESS:-}
         REACT_APP_TOKEN_LBTC: ${TESTNET_LBTC_ADDRESS:-}
         REACT_APP_TOKEN_LETH: ${TESTNET_LETH_ADDRESS:-}
         REACT_APP_TOKEN_GMC: ${TESTNET_GMC_ADDRESS:-}
         REACT_APP_TOKEN_LUP: ${TESTNET_LUP_ADDRESS:-}
+        REACT_APP_FAUCET_URL: ${TESTNET_FAUCET_URL:-}
+        REACT_APP_TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+        REACT_APP_SENTRY_DSN: ${FRONTEND_SENTRY_DSN:-}
+        REACT_APP_MAINTENANCE: ${MAINTENANCE:-false}
+        REACT_APP_VERSION: ${FRONTEND_VERSION:-${IMAGE_TAG:-dev}}
+        REACT_APP_CHAIN_NAME: ${TESTNET_CHAIN_NAME:-Lunes Testnet}
+        REACT_APP_FEATURE_MARGIN: ${FEATURE_MARGIN:-false}
+        # Must equal the api SIGNING_DOMAIN (wallet signatures are bound to it).
+        REACT_APP_SIGNING_DOMAIN: ${TESTNET_DOMAIN:-lunex-sandbox.lunes.io}
+        REACT_APP_NATIVE_EXISTENTIAL_DEPOSIT_LUNES: ${NATIVE_EXISTENTIAL_DEPOSIT_LUNES:-}
+        REACT_APP_NATIVE_FEE_BUFFER_LUNES: ${NATIVE_FEE_BUFFER_LUNES:-}
         REACT_APP_ENABLE_STAKING: "true"
         REACT_APP_ENABLE_REWARDS: "true"
         REACT_APP_DEV_MODE: "false"
@@ -138,8 +203,13 @@ services:
     networks:
       - testnet_internal
 
-  # ── Admin Panel (testnet) ──
+  # ── Admin Panel (testnet) — OPTIONAL, profile `admin` ──
+  # lunex-admin is a separate, git-ignored repository (IN-09): it is NOT part
+  # of this checkout. Clone it to ../lunex-admin and start with
+  # `--profile admin`. nginx serves /admin only to LUNEX_ADMIN_ALLOW_CIDR.
   admin:
+    <<: *hardening
+    profiles: ["admin"]
     build:
       context: ../lunex-admin
       dockerfile: ../docker/Dockerfile.admin
@@ -165,8 +235,66 @@ services:
       retries: 5
       start_period: 30s
 
+  # ── Faucet (testnet tokens), routed by nginx at /faucet ──
+  # Env contract: faucet/.env.example. FAUCET_SEED and TURNSTILE_SECRET are
+  # required outside dev (the faucet refuses to start without them).
+  faucet:
+    <<: *hardening
+    build:
+      context: ../faucet
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      FAUCET_PORT: "3333"
+      LUNES_WS_URL: ${LUNES_TESTNET_WS_URL:-wss://testnet.lunes.io}
+      # Dedicated, funded testnet treasury (never //Alice, never a mainnet seed).
+      FAUCET_SEED: ${FAUCET_SEED:?Set FAUCET_SEED in .env.testnet}
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:?Set TURNSTILE_SECRET in .env.testnet}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      # nginx overwrites X-Forwarded-For with $remote_addr → exactly 1 hop.
+      TRUST_PROXY: "1"
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      FAUCET_REDIS_PREFIX: "faucet:"
+      FAUCET_CORS_ORIGINS: ${FAUCET_CORS_ORIGINS:-https://${TESTNET_DOMAIN:-lunex-sandbox.lunes.io}}
+      FAUCET_DRIP_AMOUNT: ${FAUCET_DRIP_AMOUNT:-1000000000000}
+      FAUCET_COOLDOWN_MINUTES: ${FAUCET_COOLDOWN_MINUTES:-300}
+      FAUCET_IP_MAX_PER_WINDOW: ${FAUCET_IP_MAX_PER_WINDOW:-3}
+      FAUCET_IP_WINDOW_MINUTES: ${FAUCET_IP_WINDOW_MINUTES:-1440}
+      # Community-beta sizing (assumption): ~250 active testers/day × ≤2 drips
+      # (address cooldown 300 min, IP cap 3/24h) ≈ 500 drips/day. At 10,000
+      # LUNES/drip that is ≤5M test-LUNES/day — fund FAUCET_SEED accordingly
+      # and lower this if the treasury is smaller (the faucet answers 429
+      # "daily limit" once reached, resetting at 00:00 UTC).
+      FAUCET_DAILY_LIMIT: ${FAUCET_DAILY_LIMIT:-500}
+      FAUCET_GLOBAL_RATE_PER_MINUTE: ${FAUCET_GLOBAL_RATE_PER_MINUTE:-20}
+      FAUCET_FINALIZE_TIMEOUT_MS: ${FAUCET_FINALIZE_TIMEOUT_MS:-120000}
+      FAUCET_TOKENS: ${FAUCET_TOKENS:-LUSDT,LBTC,LETH,GMC,LUP}
+      FAUCET_TOKEN_LUSDT_ADDRESS: ${TESTNET_LUSDT_ADDRESS:-}
+      FAUCET_TOKEN_LUSDT_AMOUNT: ${FAUCET_TOKEN_LUSDT_AMOUNT:-1000}
+      FAUCET_TOKEN_LBTC_ADDRESS: ${TESTNET_LBTC_ADDRESS:-}
+      FAUCET_TOKEN_LBTC_AMOUNT: ${FAUCET_TOKEN_LBTC_AMOUNT:-0.05}
+      FAUCET_TOKEN_LETH_ADDRESS: ${TESTNET_LETH_ADDRESS:-}
+      FAUCET_TOKEN_LETH_AMOUNT: ${FAUCET_TOKEN_LETH_AMOUNT:-1}
+      FAUCET_TOKEN_GMC_ADDRESS: ${TESTNET_GMC_ADDRESS:-}
+      FAUCET_TOKEN_GMC_AMOUNT: ${FAUCET_TOKEN_GMC_AMOUNT:-1000}
+      FAUCET_TOKEN_LUP_ADDRESS: ${TESTNET_LUP_ADDRESS:-}
+      FAUCET_TOKEN_LUP_AMOUNT: ${FAUCET_TOKEN_LUP_AMOUNT:-1000}
+      FAUCET_PUBLIC_WSS: ${LUNES_TESTNET_WS_URL:-wss://testnet.lunes.io}
+      FAUCET_PUBLIC_RPC: ${FAUCET_PUBLIC_RPC:-https://sandbox.lunes.io}
+    networks:
+      - testnet_internal
+      - testnet_egress
+
   # ── SubQuery Node (indexes Lunes Testnet events) ──
+  # Needs the public testnet RPC → testnet_egress. project.yaml must point at
+  # the testnet (subquery-node/entrypoint.sh renders it from
+  # project.template.yaml using the LUNES_* vars below).
   subquery-node:
+    <<: *hardening
     image: subquerynetwork/subql-node-substrate:v6.4.0
     restart: unless-stopped
     depends_on:
@@ -178,6 +306,9 @@ services:
       DB_DATABASE: lunex_testnet
       DB_HOST: postgres
       DB_PORT: "5432"
+      LUNES_WS_URL: ${LUNES_TESTNET_WS_URL:-wss://testnet.lunes.io}
+      LUNES_CHAIN_ID: ${TESTNET_GENESIS_HASH:?Set TESTNET_GENESIS_HASH in .env.testnet}
+      LUNES_START_BLOCK: ${TESTNET_SUBQUERY_START_BLOCK:-1}
     volumes:
       - ../subquery-node:/app
     command:
@@ -188,6 +319,7 @@ services:
       - --unfinalized-blocks=true
     networks:
       - testnet_internal
+      - testnet_egress
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/ready"]
       interval: 10s
@@ -195,8 +327,9 @@ services:
       retries: 10
       start_period: 60s
 
-  # ── SubQuery Query (GraphQL) ──
+  # ── SubQuery Query (GraphQL) — internal only, no playground (IN-02) ──
   subquery-query:
+    <<: *hardening
     image: subquerynetwork/subql-query:v2.13.1
     restart: unless-stopped
     depends_on:
@@ -211,30 +344,44 @@ services:
       PORT: "3000"
     command:
       - --name=lunex-subquery
-      - --playground
       - --indexer=http://subquery-node:3000
     networks:
       - testnet_internal
 
   # ── Nginx Reverse Proxy ──
+  # nginx.testnet.conf is a TEMPLATE rendered by the image entrypoint
+  # (envsubst, only ^LUNEX_ vars). The reload loop runs in the background and
+  # the entrypoint is exec'd explicitly so the template step still runs.
   nginx:
+    <<: *hardening
     image: nginx:1.25-alpine
     restart: unless-stopped
     depends_on:
       - api
       - frontend
-      - admin
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      NGINX_ENVSUBST_FILTER: "^LUNEX_"
+      LUNEX_TESTNET_DOMAIN: ${TESTNET_DOMAIN:-lunex-sandbox.lunes.io}
+      LUNEX_TESTNET_CERT_NAME: ${TESTNET_CERT_NAME:-lunex-sandbox.lunes.io}
+      LUNEX_TESTNET_RPC_WSS: ${LUNES_TESTNET_WS_URL:-wss://testnet.lunes.io}
+      LUNEX_ADMIN_ALLOW_CIDR: ${ADMIN_ALLOW_CIDR:-127.0.0.1/32}
+      LUNEX_CSP_EXTRA_CONNECT: ${CSP_EXTRA_CONNECT:-}
+      # Exact origin of REACT_APP_SENTRY_DSN's ingest host (empty = no Sentry).
+      LUNEX_CSP_SENTRY_ORIGIN: ${SENTRY_INGEST_ORIGIN:-}
+      # Origin of REACT_APP_FAUCET_URL when it is NOT same-origin (/faucet).
+      LUNEX_CSP_FAUCET_ORIGIN: ${TESTNET_FAUCET_ORIGIN:-}
     volumes:
-      - ./nginx.testnet.conf:/etc/nginx/conf.d/default.conf
-      - certbot-etc:/etc/letsencrypt
-      - certbot-var:/var/lib/letsencrypt
+      - ./nginx.testnet.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./snippets:/etc/nginx/snippets:ro
+      - certbot-etc:/etc/letsencrypt:ro
+      - certbot-var:/var/lib/letsencrypt:ro
     networks:
       - testnet_public
       - testnet_internal
-    command: '/bin/sh -c "while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g ''daemon off;''"'
+    command: '/bin/sh -c "(while :; do sleep 6h; nginx -s reload; done) & exec /docker-entrypoint.sh nginx -g ''daemon off;''"'
 
   # ── Certbot ──
   certbot:
@@ -250,6 +397,8 @@ services:
 
 networks:
   testnet_public:
+    driver: bridge
+  testnet_egress:
     driver: bridge
   testnet_internal:
     driver: bridge

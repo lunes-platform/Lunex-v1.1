@@ -1,1621 +1,565 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
-import styled, { css, keyframes } from 'styled-components'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import styled from 'styled-components'
 import { useSpot } from 'context/SpotContext'
 import { useSDK } from 'context/SDKContext'
-import { Tooltip } from 'components/bases/tooltip'
-import { calcFeeBreakdown, spotApi } from 'services/spotService'
-import type { FeeBreakdown, SpotBalance } from 'services/spotService'
+import { useTx } from 'context/TxContext'
+import { spotApi } from 'services/spotService'
+import { buildSpotOrderSignMessage } from '../../../utils/signing'
+import { Button, C, Notice } from 'components/ui/kit'
 import {
-  buildWalletActionMessage,
-  createSignedActionMetadata
-} from '../../../utils/signing'
+  Fade,
+  SideBtn,
+  SideSwitch,
+  T,
+  TField,
+  TInput,
+  TKV,
+  TLabel,
+  UnderlineTabs,
+  cleanNum,
+  fmtAmt,
+  fmtPx,
+  nf,
+  pxDec,
+  splitPair,
+  useTerminal
+} from '../terminal'
+import ConfirmOrderModal, { OrderKind, PendingOrder } from './ConfirmOrderModal'
 import MarginTab from './MarginTab'
+import { useSpotBalances } from './useSpotBalances'
+import { requestWalletConnect } from 'pages/header/modals/wallets'
+import { FEATURES } from '../../../config/contracts'
+import VaultPanel from '../Vault'
+import { useSettlementMode } from '../Vault/useSettlementMode'
+import { notifyVaultChanged } from '../Vault/vaultEvents'
 
-// ──────────────────── Constants ────────────────────
+// Display fallbacks only — the pair's makerFeeBps / takerFeeBps from
+// spot-api win when present; the backend computes the real fee.
+const DEFAULT_MAKER_FEE = 0.001
+const DEFAULT_TAKER_FEE = 0.0025
 
-const MIN_AMOUNT = 10
-const MAX_AMOUNT = 1000000
-const MIN_PRICE = 0.00001
-// Upper bound used purely as a sanity cap for the price input. The previous
-// value (1.0) wrongly capped realistic prices at "Max: 1" regardless of pair.
-// Real validation lives server-side; this only guards against fat-finger input.
-const MAX_PRICE = 1000000
-
-// ──────────────────── Helpers ────────────────────
-
-// Format a total value with thousand separators and 2 decimals.
-const formatTotal = (value: number): string =>
-  value.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })
-
-// Truncate a raw price input string to the pair's quote precision.
-const truncatePrice = (raw: string, decimals: number): string => {
-  if (raw === '' || raw === '-') return raw
-  const dot = raw.indexOf('.')
-  if (dot === -1) return raw
-  if (decimals <= 0) return raw.slice(0, dot)
-  return raw.slice(0, dot + 1 + decimals)
-}
-
-// Sanitize a raw amount input: strip leading minus (no negatives) and truncate
-// to the pair's base precision, mirroring the price field's behaviour.
-const sanitizeAmount = (raw: string, decimals: number): string => {
-  if (raw === '') return raw
-  // Drop any leading sign — amounts are always positive.
-  let value = raw.replace(/-/g, '')
-  const dot = value.indexOf('.')
-  if (dot === -1) return value
-  if (decimals <= 0) return value.slice(0, dot)
-  return value.slice(0, dot + 1 + decimals)
-}
-
-// ──────────────────── Animations ────────────────────
-
-const fadeIn = keyframes`
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-`
-
-const slideUp = keyframes`
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
-`
-
-// ──────────────────── Styled Components ────────────────────
-
-const Wrapper = styled.div`
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-`
-
-const Tabs = styled.div`
-  display: flex;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-`
-
-const Tab = styled.button<{ active?: boolean }>`
-  flex: 1;
-  padding: 10px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  transition: all 0.15s;
-  border-bottom: 2px solid
-    ${({ active }) => (active ? '#00C076' : 'transparent')};
-  color: ${({ active }) => (active ? '#ffffff' : 'rgba(255,255,255,0.4)')};
-  margin-bottom: -1px;
-
-  &:hover {
-    color: rgba(255, 255, 255, 0.8);
-  }
-`
-
-const Body = styled.div`
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex: 1;
-`
-
-const SideTabs = styled.div`
-  display: flex;
-  gap: 6px;
-`
-
-const SideBtn = styled.button<{ side: 'buy' | 'sell'; active?: boolean }>`
-  flex: 1;
-  padding: 8px;
-  border-radius: 8px;
-  border: none;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  ${({ side, active }) => css`
-    background: ${active
-      ? side === 'buy'
-        ? '#00C076'
-        : '#FF4B55'
-      : side === 'buy'
-        ? 'rgba(0,192,118,0.1)'
-        : 'rgba(255,75,85,0.1)'};
-    color: ${active ? '#ffffff' : side === 'buy' ? '#00C076' : '#FF4B55'};
-    border: 1px solid
-      ${side === 'buy' ? 'rgba(0,192,118,0.3)' : 'rgba(255,75,85,0.3)'};
-
-    &:hover {
-      background: ${side === 'buy' ? '#00C076' : '#FF4B55'};
-      color: #ffffff;
-    }
-  `}
-`
-
-const FieldLabel = styled.label`
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-  margin-bottom: 2px;
-  display: flex;
-  align-items: center;
-`
-
-const FieldWrapper = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-`
-
-const Input = styled.input<{ hasError?: boolean }>`
-  width: 100%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid
-    ${({ hasError }) =>
-      hasError ? 'rgba(255,75,85,0.6)' : 'rgba(255, 255, 255, 0.1)'};
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
-  color: #ffffff;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.15s;
-
-  &:focus {
-    border-color: ${({ hasError }) => (hasError ? '#FF4B55' : '#00C076')};
-  }
-
-  &::placeholder {
-    color: rgba(255, 255, 255, 0.2);
-  }
-`
-
-const InputWithSuffix = styled.div`
-  position: relative;
-  display: flex;
-  align-items: center;
-
-  input {
-    padding-right: 52px;
-  }
-`
-
-const Suffix = styled.span`
-  position: absolute;
-  right: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.35);
-  pointer-events: none;
-`
-
-const ErrorText = styled.span`
-  font-size: 10px;
-  color: #ff4b55;
-  animation: ${fadeIn} 0.2s ease;
-`
-
-const Slider = styled.input`
-  width: 100%;
-  accent-color: #00c076;
-  cursor: pointer;
-`
-
-const SliderLabels = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.3);
-  margin-top: -4px;
-`
-
-const PresetPct = styled.button`
-  background: none;
-  border: none;
-  padding: 2px 4px;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
-  cursor: pointer;
-  transition: color 0.15s;
-
-  &:hover {
-    color: #00c076;
-  }
-`
-
-const SubmitBtn = styled.button<{ side: 'buy' | 'sell'; disabled?: boolean }>`
-  width: 100%;
-  padding: 12px;
-  border-radius: 10px;
-  border: none;
-  font-size: 14px;
-  font-weight: 700;
-  cursor: ${({ disabled }) => (disabled ? 'not-allowed' : 'pointer')};
-  transition: all 0.2s;
-  background: ${({ side, disabled }) =>
-    disabled
-      ? 'rgba(255,255,255,0.08)'
-      : side === 'buy'
-        ? '#00C076'
-        : '#FF4B55'};
-  color: ${({ disabled }) => (disabled ? 'rgba(255,255,255,0.3)' : '#ffffff')};
-  letter-spacing: 0.3px;
-  margin-top: auto;
-
-  &:hover:not(:disabled) {
-    opacity: 0.9;
-    transform: translateY(-1px) scale(1.01);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  }
-
-  &:active:not(:disabled) {
-    transform: translateY(1px) scale(0.98);
-    box-shadow: none;
-    transition: all 0.1s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-`
-
-const AvailableRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-`
-
-const FeeRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
-  padding: 6px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-`
-
-const FeeValue = styled.span`
-  color: rgba(255, 255, 255, 0.5);
-`
-
-const SlippageWarning = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: rgba(255, 180, 0, 0.08);
-  border: 1px solid rgba(255, 180, 0, 0.2);
-  font-size: 11px;
-  color: rgba(255, 200, 80, 0.9);
-  animation: ${fadeIn} 0.25s ease;
-`
-
-const DisabledReason = styled.div`
-  font-size: 11px;
-  color: rgba(255, 200, 80, 0.9);
-  text-align: center;
-  margin-top: 6px;
-  animation: ${fadeIn} 0.2s ease;
-`
-
-const InfoBox = styled.div`
-  background: rgba(0, 192, 118, 0.06);
-  border: 1px solid rgba(0, 192, 118, 0.15);
-  border-radius: 8px;
-  padding: 8px 10px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-  line-height: 1.5;
-`
-
-const WarningBox = styled(InfoBox)`
-  background: rgba(255, 75, 85, 0.08);
-  border-color: rgba(255, 75, 85, 0.2);
-  color: rgba(255, 150, 155, 0.8);
-`
-
-// ──────────── Confirm Modal ────────────
-
-const ModalOverlay = styled.div`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: ${fadeIn} 0.2s ease;
-`
-
-const ModalCard = styled.div`
-  background: #1a1a1a;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 24px;
-  width: 340px;
-  max-width: 90vw;
-  animation: ${slideUp} 0.3s ease;
-`
-
-const ModalTitle = styled.h3`
-  margin: 0 0 16px;
-  font-size: 16px;
-  font-weight: 700;
-  color: #ffffff;
-`
-
-const ModalRow = styled.div`
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 0;
-  font-size: 13px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-`
-
-const ModalLabel = styled.span`
-  color: rgba(255, 255, 255, 0.5);
-`
-
-const ModalValue = styled.span`
-  color: #ffffff;
-  font-weight: 600;
-`
-
-const ModalFeeRow = styled(ModalRow)`
-  border-bottom: none;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 12px;
-`
-
-const FeeSplitGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px 12px;
-  margin-top: 8px;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 8px;
-`
-
-const FeeSplitItem = styled.div`
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
-
-  span:last-child {
-    color: rgba(255, 255, 255, 0.55);
-    font-weight: 600;
-  }
-`
-
-const ModalActions = styled.div`
-  display: flex;
-  gap: 10px;
-  margin-top: 20px;
-`
-
-const ModalCancelBtn = styled.button`
-  flex: 1;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: transparent;
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-`
-
-const ModalConfirmBtn = styled.button<{ side: 'buy' | 'sell' }>`
-  flex: 2;
-  padding: 10px;
-  border-radius: 10px;
-  border: none;
-  background: ${({ side }) => (side === 'buy' ? '#00C076' : '#FF4B55')};
-  color: #ffffff;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.15s;
-
-  &:hover {
-    opacity: 0.9;
-  }
-`
-
-// ──────────────────── Types ────────────────────
-
-type OrderTab = 'limit' | 'market' | 'stop' | 'stop-limit' | 'margin'
+type Tab = 'limit' | 'market' | 'stop' | 'stop-limit' | 'margin'
 type Side = 'buy' | 'sell'
 
-interface OrderData {
-  type: string
-  side: Side
-  price: number
-  stopPrice?: number
-  amount: number
-  total: number
-  fee: number
-  feeRate: number
-  feeBreakdown: FeeBreakdown
-  baseSymbol: string
-  quoteSymbol: string
-}
-
-// ──────────────────── Confirm Modal Component ────────────────────
-
-interface ConfirmModalProps {
-  order: OrderData
-  loading?: boolean
-  onConfirm: () => void
-  onCancel: () => void
-}
-
-const ConfirmOrderModal: React.FC<ConfirmModalProps> = ({
-  order,
-  loading,
-  onConfirm,
-  onCancel
-}) => (
-  <ModalOverlay onClick={onCancel}>
-    <ModalCard onClick={e => e.stopPropagation()}>
-      <ModalTitle>
-        {order.side === 'buy' ? '▲' : '▼'} Confirm {order.type}
-      </ModalTitle>
-
-      <ModalRow>
-        <ModalLabel>Type</ModalLabel>
-        <ModalValue>
-          {order.type} {order.side === 'buy' ? 'Buy' : 'Sell'}
-        </ModalValue>
-      </ModalRow>
-      {order.stopPrice ? (
-        <ModalRow>
-          <ModalLabel>Trigger</ModalLabel>
-          <ModalValue>
-            {order.stopPrice.toFixed(5)} {order.quoteSymbol}
-          </ModalValue>
-        </ModalRow>
-      ) : null}
-      <ModalRow>
-        <ModalLabel>{order.type === 'Stop' ? 'Estimate' : 'Price'}</ModalLabel>
-        <ModalValue>
-          {order.price.toFixed(5)} {order.quoteSymbol}
-        </ModalValue>
-      </ModalRow>
-      <ModalRow>
-        <ModalLabel>Amount</ModalLabel>
-        <ModalValue>
-          {order.amount.toLocaleString()} {order.baseSymbol}
-        </ModalValue>
-      </ModalRow>
-      <ModalRow>
-        <ModalLabel>Total</ModalLabel>
-        <ModalValue>
-          {formatTotal(order.total)} {order.quoteSymbol}
-        </ModalValue>
-      </ModalRow>
-      <ModalFeeRow>
-        <ModalLabel>Fee ({(order.feeRate * 100).toFixed(2)}%)</ModalLabel>
-        <ModalValue style={{ color: 'rgba(255,255,255,0.5)' }}>
-          ~{order.fee.toFixed(4)} {order.quoteSymbol}
-        </ModalValue>
-      </ModalFeeRow>
-      {order.fee > 0 && (
-        <FeeSplitGrid>
-          <FeeSplitItem>
-            <span>Team</span>
-            <span>{order.feeBreakdown.team.toFixed(4)}</span>
-          </FeeSplitItem>
-          <FeeSplitItem>
-            <span>Stakers</span>
-            <span>{order.feeBreakdown.stakers.toFixed(4)}</span>
-          </FeeSplitItem>
-          <FeeSplitItem>
-            <span>Affiliates</span>
-            <span>{order.feeBreakdown.affiliates.toFixed(4)}</span>
-          </FeeSplitItem>
-          {order.feeBreakdown.treasury > 0 && (
-            <FeeSplitItem>
-              <span>Treasury</span>
-              <span>{order.feeBreakdown.treasury.toFixed(4)}</span>
-            </FeeSplitItem>
-          )}
-        </FeeSplitGrid>
-      )}
-
-      <ModalActions>
-        <ModalCancelBtn onClick={onCancel} disabled={loading}>
-          Cancel
-        </ModalCancelBtn>
-        <ModalConfirmBtn
-          side={order.side}
-          onClick={onConfirm}
-          disabled={loading}
-        >
-          {loading
-            ? 'Processing...'
-            : order.side === 'buy'
-              ? '▲ Confirm Buy'
-              : '▼ Confirm Sell'}
-        </ModalConfirmBtn>
-      </ModalActions>
-    </ModalCard>
-  </ModalOverlay>
-)
-
-// ──────────────────── Sub-forms ────────────────────
-
-interface FormProps {
-  side: Side
-  onSubmit: (order: OrderData) => void
-  balanceUsdt?: number
-  balanceLunes?: number
-  marketPrice?: number | null
-  makerFee?: number | null
-  takerFee?: number | null
-  baseSymbol?: string
-  quoteSymbol?: string
-  priceDecimals?: number
-  amountDecimals?: number
-  walletConnected?: boolean
-  // Best opposite-side book levels, used to decide whether a limit order would
-  // cross (Taker) or rest (Maker) for the fee preview.
-  bestAsk?: number | null
-  bestBid?: number | null
-  // Price requested by clicking an order book row (token bumps on each click).
-  requestedPrice?: { value: number; token: number } | null
-}
-
-const UnavailableMarketData = () => (
-  <WarningBox>
-    Market data is unavailable for this pair. Orders are disabled until the live
-    ticker and fee schedule load.
-  </WarningBox>
-)
-
-export const MarketForm: React.FC<FormProps> = ({
-  side,
-  onSubmit,
-  balanceUsdt = 0,
-  balanceLunes = 0,
-  marketPrice,
-  takerFee,
-  baseSymbol = 'LUNES',
-  quoteSymbol = 'USDT',
-  amountDecimals = 0,
-  walletConnected = true
-}) => {
-  const [amount, setAmount] = useState('')
-  const [sliderVal, setSliderVal] = useState(0)
-  const numAmount = parseFloat(amount) || 0
-  const marketDataReady =
-    typeof marketPrice === 'number' &&
-    marketPrice > 0 &&
-    typeof takerFee === 'number'
-  const total = marketDataReady ? numAmount * marketPrice : 0
-  const fee = marketDataReady ? total * takerFee : 0
-
-  const amountError = useMemo(() => {
-    if (!marketDataReady) return 'Market data unavailable'
-    if (!amount) return ''
-    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} ${baseSymbol}`
-    if (numAmount > MAX_AMOUNT)
-      return `Max: ${MAX_AMOUNT.toLocaleString()} ${baseSymbol}`
-    if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
-    if (side === 'sell' && numAmount > balanceLunes)
-      return 'Insufficient balance'
-    return ''
-  }, [
-    amount,
-    numAmount,
-    total,
-    side,
-    balanceUsdt,
-    balanceLunes,
-    marketDataReady,
-    baseSymbol
-  ])
-
-  const isValid = marketDataReady && numAmount >= MIN_AMOUNT && !amountError
-
-  // Reason shown next to a disabled submit button so the user understands why.
-  const disabledReason = !walletConnected
-    ? 'Conecte a carteira'
-    : !marketDataReady
-      ? 'Market data unavailable'
-      : amountError === 'Insufficient balance'
-        ? 'Saldo insuficiente'
-        : ''
-
-  const handleSlider = (pct: number) => {
-    setSliderVal(pct)
-    if (!marketDataReady) return
-    const maxAmount =
-      side === 'buy' ? Math.floor(balanceUsdt / marketPrice) : balanceLunes
-    setAmount(String(Math.floor((maxAmount * pct) / 100)))
-  }
-
-  const handleSubmit = () => {
-    if (!isValid) return
-    if (!marketDataReady) return
-    onSubmit({
-      type: 'Market',
-      side,
-      price: marketPrice,
-      amount: numAmount,
-      total,
-      fee,
-      feeRate: takerFee,
-      feeBreakdown: calcFeeBreakdown(fee, false),
-      baseSymbol,
-      quoteSymbol
-    })
-  }
-
-  return (
-    <>
-      {!marketDataReady ? <UnavailableMarketData /> : null}
-      <SlippageWarning>
-        Market order — price may vary (slippage ~0.1-0.5%)
-      </SlippageWarning>
-      <FieldWrapper>
-        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00"
-            aria-label={`Amount in ${baseSymbol}`}
-            value={amount}
-            onChange={e =>
-              setAmount(sanitizeAmount(e.target.value, amountDecimals))
-            }
-            hasError={!!amountError}
-            min={0}
-            max={MAX_AMOUNT}
-            step={1}
-          />
-          <Suffix>{baseSymbol}</Suffix>
-        </InputWithSuffix>
-        {amountError && <ErrorText>{amountError}</ErrorText>}
-      </FieldWrapper>
-      <Slider
-        type="range"
-        aria-label="Amount percentage of available balance"
-        min={0}
-        max={100}
-        value={sliderVal}
-        onChange={e => handleSlider(Number(e.target.value))}
-      />
-      <SliderLabels>
-        {[0, 25, 50, 75, 100].map(pct => (
-          <PresetPct key={pct} onClick={() => handleSlider(pct)}>
-            {pct}%
-          </PresetPct>
-        ))}
-      </SliderLabels>
-      <FieldWrapper>
-        <FieldLabel>Total ({quoteSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="text"
-            aria-label={`Total in ${quoteSymbol}`}
-            value={total > 0 ? formatTotal(total) : ''}
-            placeholder="0.00"
-            readOnly
-          />
-          <Suffix>{quoteSymbol}</Suffix>
-        </InputWithSuffix>
-      </FieldWrapper>
-      <AvailableRow>
-        <span>Available</span>
-        <span>
-          {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
-            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
-        </span>
-      </AvailableRow>
-      {numAmount > 0 && (
-        <FeeRow>
-          <span>
-            Fee (Taker {((takerFee ?? 0) * 100).toFixed(2)}%)
-            <Tooltip
-              content={`Market execution fee (${((takerFee ?? 0) * 100).toFixed(
-                2
-              )}%). Deducted from total received.`}
-            />
-          </span>
-          <FeeValue>
-            ~{fee.toFixed(4)} {quoteSymbol}
-          </FeeValue>
-        </FeeRow>
-      )}
-      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-        {side === 'buy'
-          ? `▲ Buy ${baseSymbol} (Market)`
-          : `▼ Sell ${baseSymbol} (Market)`}
-      </SubmitBtn>
-      {!isValid && disabledReason ? (
-        <DisabledReason>{disabledReason}</DisabledReason>
-      ) : null}
-    </>
-  )
-}
-
-export const LimitForm: React.FC<FormProps> = ({
-  side,
-  onSubmit,
-  balanceUsdt = 0,
-  balanceLunes = 0,
-  marketPrice,
-  makerFee,
-  takerFee,
-  baseSymbol = 'LUNES',
-  quoteSymbol = 'USDT',
-  priceDecimals = 5,
-  amountDecimals = 0,
-  walletConnected = true,
-  bestAsk,
-  bestBid,
-  requestedPrice
-}) => {
-  const [price, setPrice] = useState('')
-  const [amount, setAmount] = useState('')
-  const [sliderVal, setSliderVal] = useState(0)
-  const numPrice = parseFloat(price) || 0
-  const numAmount = parseFloat(amount) || 0
-  const total = numPrice * numAmount
-
-  // A limit order crosses (and therefore pays the Taker fee) when its price
-  // would immediately match the best opposite-side book level: a buy at or
-  // above the best ask, or a sell at or below the best bid.
-  const crosses =
-    numPrice > 0 &&
-    ((side === 'buy' &&
-      typeof bestAsk === 'number' &&
-      bestAsk > 0 &&
-      numPrice >= bestAsk) ||
-      (side === 'sell' &&
-        typeof bestBid === 'number' &&
-        bestBid > 0 &&
-        numPrice <= bestBid))
-  const effectiveFeeRate = crosses
-    ? typeof takerFee === 'number'
-      ? takerFee
-      : makerFee
-    : makerFee
-  const feeDataReady = typeof effectiveFeeRate === 'number'
-  const fee = feeDataReady ? total * (effectiveFeeRate as number) : 0
-
-  // Fill the price field when a book row is clicked (token bumps each click).
-  useEffect(() => {
-    if (requestedPrice && requestedPrice.value > 0) {
-      setPrice(truncatePrice(String(requestedPrice.value), priceDecimals))
-    }
-  }, [requestedPrice, priceDecimals])
-
-  const priceError = useMemo(() => {
-    if (!price) return ''
-    if (numPrice < MIN_PRICE) return `Min: ${MIN_PRICE}`
-    if (numPrice > MAX_PRICE) return `Max: ${MAX_PRICE.toLocaleString()}`
-    return ''
-  }, [price, numPrice])
-
-  const amountError = useMemo(() => {
-    if (!amount) return ''
-    if (numAmount < MIN_AMOUNT) return `Min: ${MIN_AMOUNT} ${baseSymbol}`
-    if (numAmount > MAX_AMOUNT)
-      return `Max: ${MAX_AMOUNT.toLocaleString()} ${baseSymbol}`
-    if (side === 'buy' && total > balanceUsdt) return 'Insufficient balance'
-    if (side === 'sell' && numAmount > balanceLunes)
-      return 'Insufficient balance'
-    return ''
-  }, [amount, numAmount, total, side, balanceUsdt, balanceLunes, baseSymbol])
-
-  const isValid =
-    feeDataReady &&
-    numPrice >= MIN_PRICE &&
-    numAmount >= MIN_AMOUNT &&
-    !priceError &&
-    !amountError
-
-  const disabledReason = !walletConnected
-    ? 'Conecte a carteira'
-    : !feeDataReady
-      ? 'Market data unavailable'
-      : amountError === 'Insufficient balance'
-        ? 'Saldo insuficiente'
-        : ''
-
-  const handleSlider = (pct: number) => {
-    setSliderVal(pct)
-    const effectivePrice = numPrice || marketPrice
-    if (!effectivePrice || effectivePrice <= 0) return
-    const maxAmount =
-      side === 'buy' ? Math.floor(balanceUsdt / effectivePrice) : balanceLunes
-    setAmount(String(Math.floor((maxAmount * pct) / 100)))
-  }
-
-  const handleSubmit = () => {
-    if (!isValid) return
-    if (!feeDataReady) return
-    onSubmit({
-      type: 'Limit',
-      side,
-      price: numPrice,
-      amount: numAmount,
-      total,
-      fee,
-      feeRate: effectiveFeeRate as number,
-      feeBreakdown: calcFeeBreakdown(fee, !crosses),
-      baseSymbol,
-      quoteSymbol
-    })
-  }
-
-  return (
-    <>
-      {!feeDataReady ? <UnavailableMarketData /> : null}
-      <FieldWrapper>
-        <FieldLabel>Price ({quoteSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00000"
-            aria-label={`Price in ${quoteSymbol}`}
-            value={price}
-            onChange={e =>
-              setPrice(truncatePrice(e.target.value, priceDecimals))
-            }
-            hasError={!!priceError}
-            step={0.00001}
-            min={MIN_PRICE}
-            max={MAX_PRICE}
-          />
-          <Suffix>{quoteSymbol}</Suffix>
-        </InputWithSuffix>
-        {priceError && <ErrorText>{priceError}</ErrorText>}
-      </FieldWrapper>
-      <FieldWrapper>
-        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00"
-            aria-label={`Amount in ${baseSymbol}`}
-            value={amount}
-            onChange={e =>
-              setAmount(sanitizeAmount(e.target.value, amountDecimals))
-            }
-            hasError={!!amountError}
-            min={0}
-            max={MAX_AMOUNT}
-            step={1}
-          />
-          <Suffix>{baseSymbol}</Suffix>
-        </InputWithSuffix>
-        {amountError && <ErrorText>{amountError}</ErrorText>}
-      </FieldWrapper>
-      <Slider
-        type="range"
-        aria-label="Amount percentage of available balance"
-        min={0}
-        max={100}
-        value={sliderVal}
-        onChange={e => handleSlider(Number(e.target.value))}
-      />
-      <SliderLabels>
-        {[0, 25, 50, 75, 100].map(pct => (
-          <PresetPct key={pct} onClick={() => handleSlider(pct)}>
-            {pct}%
-          </PresetPct>
-        ))}
-      </SliderLabels>
-      <FieldWrapper>
-        <FieldLabel>Total ({quoteSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="text"
-            aria-label={`Total in ${quoteSymbol}`}
-            value={total > 0 ? formatTotal(total) : ''}
-            placeholder="0.00"
-            readOnly
-          />
-          <Suffix>{quoteSymbol}</Suffix>
-        </InputWithSuffix>
-      </FieldWrapper>
-      <AvailableRow>
-        <span>Available</span>
-        <span>
-          {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
-            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
-        </span>
-      </AvailableRow>
-      {total > 0 && (
-        <FeeRow>
-          <span>
-            Fee ({crosses ? 'Taker' : 'Maker'}{' '}
-            {((effectiveFeeRate ?? 0) * 100).toFixed(2)}%)
-            <Tooltip
-              content={
-                crosses
-                  ? `This limit order would cross the book and execute immediately, paying the Taker fee (${(
-                      (effectiveFeeRate ?? 0) * 100
-                    ).toFixed(2)}%).`
-                  : `Limit orders pay a lower Maker fee (${(
-                      (effectiveFeeRate ?? 0) * 100
-                    ).toFixed(2)}%) as they add liquidity to the book.`
-              }
-              position="top"
-            />
-          </span>
-          <FeeValue>
-            ~{fee.toFixed(4)} {quoteSymbol}
-          </FeeValue>
-        </FeeRow>
-      )}
-      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-        {side === 'buy'
-          ? `▲ Buy ${baseSymbol} (Limit)`
-          : `▼ Sell ${baseSymbol} (Limit)`}
-      </SubmitBtn>
-      {!isValid && disabledReason ? (
-        <DisabledReason>{disabledReason}</DisabledReason>
-      ) : null}
-    </>
-  )
-}
-
-export const StopForm: React.FC<FormProps> = ({
-  side,
-  onSubmit,
-  balanceUsdt = 0,
-  balanceLunes = 0,
-  marketPrice,
-  takerFee,
-  baseSymbol = 'LUNES',
-  quoteSymbol = 'USDT',
-  priceDecimals = 5,
-  amountDecimals = 0,
-  walletConnected = true,
-  requestedPrice
-}) => {
-  const [stopPrice, setStopPrice] = useState('')
-  const [amount, setAmount] = useState('')
-  const [sliderVal, setSliderVal] = useState(0)
-  const numStop = parseFloat(stopPrice) || 0
-  const numAmount = parseFloat(amount) || 0
-  const total = numStop * numAmount
-
-  useEffect(() => {
-    if (requestedPrice && requestedPrice.value > 0) {
-      setStopPrice(truncatePrice(String(requestedPrice.value), priceDecimals))
-    }
-  }, [requestedPrice, priceDecimals])
-  // Stop orders are armed by the user-supplied trigger price; they do not need a
-  // live market price to be placed (only the fee schedule must have loaded).
-  // Gating on `marketPrice > 0` wrongly disabled stop orders on freshly listed
-  // pairs that have no trades yet (empty ticker => lastPrice 0).
-  const feeDataReady = typeof takerFee === 'number'
-  const fee = feeDataReady ? total * takerFee : 0
-
-  const isValid =
-    feeDataReady && numStop >= MIN_PRICE && numAmount >= MIN_AMOUNT
-
-  const disabledReason = !walletConnected
-    ? 'Conecte a carteira'
-    : !feeDataReady
-      ? 'Market data unavailable'
-      : ''
-
-  const handleSlider = (pct: number) => {
-    setSliderVal(pct)
-    const effectivePrice = numStop || marketPrice
-    if (!effectivePrice || effectivePrice <= 0) return
-    const maxAmount =
-      side === 'buy' ? Math.floor(balanceUsdt / effectivePrice) : balanceLunes
-    setAmount(String(Math.floor((maxAmount * pct) / 100)))
-  }
-
-  const handleSubmit = () => {
-    if (!isValid) return
-    if (!feeDataReady) return
-    onSubmit({
-      type: 'Stop',
-      side,
-      price: numStop,
-      stopPrice: numStop,
-      amount: numAmount,
-      total,
-      fee,
-      feeRate: takerFee,
-      feeBreakdown: calcFeeBreakdown(fee, false),
-      baseSymbol,
-      quoteSymbol
-    })
-  }
-
-  return (
-    <>
-      {!feeDataReady ? <UnavailableMarketData /> : null}
-      <InfoBox>
-        When the market reaches the <strong>Stop Price</strong>, a market order
-        will be executed.
-      </InfoBox>
-      <FieldWrapper>
-        <FieldLabel>
-          Stop Price ({quoteSymbol})
-          <Tooltip
-            content="The trigger price to activate your market order."
-            position="right"
-          />
-        </FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00000"
-            aria-label={`Stop price in ${quoteSymbol}`}
-            value={stopPrice}
-            onChange={e =>
-              setStopPrice(truncatePrice(e.target.value, priceDecimals))
-            }
-            step={0.00001}
-            min={MIN_PRICE}
-            max={MAX_PRICE}
-          />
-          <Suffix>{quoteSymbol}</Suffix>
-        </InputWithSuffix>
-      </FieldWrapper>
-      <FieldWrapper>
-        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00"
-            aria-label={`Amount in ${baseSymbol}`}
-            value={amount}
-            onChange={e =>
-              setAmount(sanitizeAmount(e.target.value, amountDecimals))
-            }
-            min={0}
-            max={MAX_AMOUNT}
-            step={1}
-          />
-          <Suffix>{baseSymbol}</Suffix>
-        </InputWithSuffix>
-      </FieldWrapper>
-      <Slider
-        type="range"
-        aria-label="Amount percentage of available balance"
-        min={0}
-        max={100}
-        value={sliderVal}
-        onChange={e => handleSlider(Number(e.target.value))}
-      />
-      <SliderLabels>
-        {[0, 25, 50, 75, 100].map(pct => (
-          <PresetPct key={pct} onClick={() => handleSlider(pct)}>
-            {pct}%
-          </PresetPct>
-        ))}
-      </SliderLabels>
-      <AvailableRow>
-        <span>Available</span>
-        <span>
-          {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
-            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
-        </span>
-      </AvailableRow>
-      {total > 0 && (
-        <FeeRow>
-          <span>Fee (Taker {((takerFee ?? 0) * 100).toFixed(2)}%)</span>
-          <FeeValue>
-            ~{fee.toFixed(4)} {quoteSymbol}
-          </FeeValue>
-        </FeeRow>
-      )}
-      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-        {side === 'buy' ? '▲ Stop Buy' : '▼ Stop Sell'}
-      </SubmitBtn>
-      {!isValid && disabledReason ? (
-        <DisabledReason>{disabledReason}</DisabledReason>
-      ) : null}
-    </>
-  )
-}
-
-export const StopLimitForm: React.FC<FormProps> = ({
-  side,
-  onSubmit,
-  balanceUsdt = 0,
-  balanceLunes = 0,
-  makerFee,
-  baseSymbol = 'LUNES',
-  quoteSymbol = 'USDT',
-  priceDecimals = 5,
-  amountDecimals = 0,
-  walletConnected = true,
-  requestedPrice
-}) => {
-  const [stopPrice, setStopPrice] = useState('')
-  const [limitPrice, setLimitPrice] = useState('')
-  const [amount, setAmount] = useState('')
-  const [sliderVal, setSliderVal] = useState(0)
-  const numStop = parseFloat(stopPrice) || 0
-  const numLimit = parseFloat(limitPrice) || 0
-  const numAmount = parseFloat(amount) || 0
-  const total = numLimit * numAmount
-  const feeDataReady = typeof makerFee === 'number'
-  const fee = feeDataReady ? total * makerFee : 0
-
-  useEffect(() => {
-    if (requestedPrice && requestedPrice.value > 0) {
-      setLimitPrice(truncatePrice(String(requestedPrice.value), priceDecimals))
-    }
-  }, [requestedPrice, priceDecimals])
-
-  const isValid =
-    feeDataReady &&
-    numStop >= MIN_PRICE &&
-    numLimit >= MIN_PRICE &&
-    numAmount >= MIN_AMOUNT
-
-  const disabledReason = !walletConnected
-    ? 'Conecte a carteira'
-    : !feeDataReady
-      ? 'Market data unavailable'
-      : ''
-
-  const handleSlider = (pct: number) => {
-    setSliderVal(pct)
-    if (!numLimit || numLimit <= 0) return
-    const maxAmount =
-      side === 'buy' ? Math.floor(balanceUsdt / numLimit) : balanceLunes
-    setAmount(String(Math.floor((maxAmount * pct) / 100)))
-  }
-
-  const handleSubmit = () => {
-    if (!isValid) return
-    if (!feeDataReady) return
-    onSubmit({
-      type: 'Stop-Limit',
-      side,
-      price: numLimit,
-      stopPrice: numStop,
-      amount: numAmount,
-      total,
-      fee,
-      feeRate: makerFee,
-      feeBreakdown: calcFeeBreakdown(fee, true),
-      baseSymbol,
-      quoteSymbol
-    })
-  }
-
-  return (
-    <>
-      {!feeDataReady ? <UnavailableMarketData /> : null}
-      <InfoBox>
-        When the <strong>Stop Price</strong> is reached, a Limit order at the{' '}
-        <strong>Limit Price</strong> will be placed.
-      </InfoBox>
-      <FieldWrapper>
-        <FieldLabel>
-          Stop Price ({quoteSymbol})
-          <Tooltip
-            content="The trigger price to submit your Limit order to the book."
-            position="right"
-          />
-        </FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00000"
-            aria-label={`Stop price in ${quoteSymbol}`}
-            value={stopPrice}
-            onChange={e =>
-              setStopPrice(truncatePrice(e.target.value, priceDecimals))
-            }
-            step={0.00001}
-            min={MIN_PRICE}
-            max={MAX_PRICE}
-          />
-          <Suffix>{quoteSymbol}</Suffix>
-        </InputWithSuffix>
-      </FieldWrapper>
-      <FieldWrapper>
-        <FieldLabel>Limit Price ({quoteSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00000"
-            aria-label={`Limit price in ${quoteSymbol}`}
-            value={limitPrice}
-            onChange={e =>
-              setLimitPrice(truncatePrice(e.target.value, priceDecimals))
-            }
-            step={0.00001}
-            min={MIN_PRICE}
-            max={MAX_PRICE}
-          />
-          <Suffix>{quoteSymbol}</Suffix>
-        </InputWithSuffix>
-      </FieldWrapper>
-      <FieldWrapper>
-        <FieldLabel>Amount ({baseSymbol})</FieldLabel>
-        <InputWithSuffix>
-          <Input
-            type="number"
-            placeholder="0.00"
-            aria-label={`Amount in ${baseSymbol}`}
-            value={amount}
-            onChange={e =>
-              setAmount(sanitizeAmount(e.target.value, amountDecimals))
-            }
-            min={0}
-            max={MAX_AMOUNT}
-            step={1}
-          />
-          <Suffix>{baseSymbol}</Suffix>
-        </InputWithSuffix>
-      </FieldWrapper>
-      <Slider
-        type="range"
-        aria-label="Amount percentage of available balance"
-        min={0}
-        max={100}
-        value={sliderVal}
-        onChange={e => handleSlider(Number(e.target.value))}
-      />
-      <SliderLabels>
-        {[0, 25, 50, 75, 100].map(pct => (
-          <PresetPct key={pct} onClick={() => handleSlider(pct)}>
-            {pct}%
-          </PresetPct>
-        ))}
-      </SliderLabels>
-      <AvailableRow>
-        <span>Available</span>
-        <span>
-          {side === 'buy'
-            ? `${balanceUsdt.toFixed(2)} ${quoteSymbol}`
-            : `${balanceLunes.toLocaleString()} ${baseSymbol}`}
-        </span>
-      </AvailableRow>
-      {total > 0 && (
-        <FeeRow>
-          <span>Fee (Maker {((makerFee ?? 0) * 100).toFixed(2)}%)</span>
-          <FeeValue>
-            ~{fee.toFixed(4)} {quoteSymbol}
-          </FeeValue>
-        </FeeRow>
-      )}
-      <SubmitBtn side={side} disabled={!isValid} onClick={handleSubmit}>
-        {side === 'buy' ? '▲ Stop-Limit Buy' : '▼ Stop-Limit Sell'}
-      </SubmitBtn>
-      {!isValid && disabledReason ? (
-        <DisabledReason>{disabledReason}</DisabledReason>
-      ) : null}
-    </>
-  )
-}
-
-// ──────────────────── Main Component ────────────────────
-
-const ORDER_TABS: Array<{ key: OrderTab; label: string }> = [
-  { key: 'limit', label: 'Limit' },
-  { key: 'market', label: 'Market' },
-  { key: 'stop', label: 'Stop' },
-  { key: 'stop-limit', label: 'Stop-Limit' },
-  { key: 'margin', label: 'Margin' }
+// Margin is DB-only collateral (not backed by the spot vault): hidden for the
+// beta unless REACT_APP_FEATURE_MARGIN=true.
+const ALL_TABS: Array<[Tab, string]> = [
+  ['limit', 'Limit'],
+  ['market', 'Market'],
+  ['stop', 'Stop'],
+  ['stop-limit', 'Stop-Limit'],
+  ['margin', 'Margin']
 ]
+const TABS = FEATURES.MARGIN
+  ? ALL_TABS
+  : ALL_TABS.filter(([k]) => k !== 'margin')
+
+const KIND: Record<Exclude<Tab, 'margin'>, OrderKind> = {
+  limit: 'Limit',
+  market: 'Market',
+  stop: 'Stop',
+  'stop-limit': 'Stop-Limit'
+}
+
+const API_TYPE: Record<OrderKind, 'LIMIT' | 'MARKET' | 'STOP' | 'STOP_LIMIT'> =
+  {
+    Limit: 'LIMIT',
+    Market: 'MARKET',
+    Stop: 'STOP',
+    'Stop-Limit': 'STOP_LIMIT'
+  }
+
+// Same nonce shape as SpotContext.createOrder (ms timestamp + 3-digit counter)
+let nonceCounter = Date.now()
+const nextNonce = () => {
+  nonceCounter += 1
+  return `${Date.now()}${String(nonceCounter % 1000).padStart(3, '0')}`
+}
+
+/** Strip trailing zeros of a decimal string. */
+const numStr = (v: number, d: number) =>
+  v.toFixed(d).replace(/\.?0+$/, '') || '0'
+
+const Body = styled.div`
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`
+
+const FieldCol = styled.label`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+`
+
+const Pcts = styled.div`
+  display: flex;
+  gap: 6px;
+`
+
+const Pct = styled.button`
+  flex: 1;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid ${C.borderStrong};
+  background: transparent;
+  color: ${C.text};
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color 150ms ease;
+  &:hover:not(:disabled) {
+    border-color: ${C.primary};
+  }
+  &:disabled {
+    color: ${C.muted};
+    border-color: ${T.line};
+    cursor: not-allowed;
+  }
+`
+
+const Summary = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 2px;
+`
+
+const Cta = styled(Button)<{ $tone: 'buy' | 'sell' | 'primary' }>`
+  ${p =>
+    p.$tone === 'buy'
+      ? `background:${T.up};color:${T.bg};&:hover:not(:disabled){background:#1BB277;}`
+      : p.$tone === 'sell'
+        ? `background:${T.sell};color:#fff;&:hover:not(:disabled){background:#DB1D4E;}`
+        : ''}
+`
 
 const OrderForm: React.FC = () => {
-  const {
-    selectedPair,
-    pairs,
-    ticker,
-    orderbook,
-    createOrder,
-    isLoading,
-    error,
-    walletAddress,
-    selectedPrice
-  } = useSpot()
-  const {
-    walletAddress: sdkWalletAddress,
-    connectWallet,
-    signMessage
-  } = useSDK()
-  const [activeTab, setActiveTab] = useState<OrderTab>('limit')
+  const { selectedPair, pairs, ticker, orderbook, refreshOrders } = useSpot()
+  const { walletAddress, signMessage } = useSDK()
+  const tx = useTx()
+  const { picked, setHistoryTab } = useTerminal()
+
+  const [tab, setTab] = useState<Tab>('limit')
   const [side, setSide] = useState<Side>('buy')
-  const [pendingOrder, setPendingOrder] = useState<OrderData | null>(null)
-  const [submitStatus, setSubmitStatus] = useState<string | null>(null)
-  const [spotBalances, setSpotBalances] = useState<{
-    address: string
-    rows: SpotBalance[]
-  } | null>(null)
-  const [balancesLoading, setBalancesLoading] = useState(false)
-  const [balanceError, setBalanceError] = useState<string | null>(null)
+  const [price, setPrice] = useState('')
+  const [stop, setStop] = useState('')
+  const [amount, setAmount] = useState('')
+  const [pending, setPending] = useState<PendingOrder | null>(null)
+
+  const [base, quote] = splitPair(selectedPair)
+  const pair = useMemo(
+    () => pairs.find(p => p.symbol === selectedPair),
+    [pairs, selectedPair]
+  )
+  const balances = useSpotBalances(walletAddress, selectedPair, pair)
+  const settlement = useSettlementMode()
+
+  // Reset on pair change; prefill the limit price with the live price.
+  const prefill = useRef(true)
   useEffect(() => {
-    setSpotBalances(null)
-    setBalanceError(null)
-  }, [sdkWalletAddress])
-  const loadSpotBalances = useCallback(async () => {
-    if (!sdkWalletAddress) return
-    setBalancesLoading(true)
-    setBalanceError(null)
-    try {
-      const metadata = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action: 'balances.list',
-          address: sdkWalletAddress,
-          ...metadata
-        })
-      )
-      const data = await spotApi.getBalances(sdkWalletAddress, {
-        ...metadata,
-        signature
-      })
-      setSpotBalances({ address: sdkWalletAddress, rows: data.balances })
-    } catch (err) {
-      setBalanceError(
-        err instanceof Error ? err.message : 'Spot balances unavailable'
-      )
-    } finally {
-      setBalancesLoading(false)
+    setPrice('')
+    setStop('')
+    setAmount('')
+    prefill.current = true
+  }, [selectedPair])
+  const last = ticker?.symbol === selectedPair ? ticker.lastPrice : 0
+  useEffect(() => {
+    if (prefill.current && last > 0) {
+      prefill.current = false
+      setPrice(numStr(last, pxDec(last)))
     }
-  }, [sdkWalletAddress, signMessage])
-  const balancePair = pairs.find(p => p.symbol === selectedPair)
-  const available = (token: string | undefined, native?: boolean) => {
-    if (!token || spotBalances?.address !== sdkWalletAddress) return 0
-    const key = native ? '0x' + '00'.repeat(32) : token
-    return Math.max(
-      0,
-      Number(spotBalances.rows.find(b => b.token === key)?.available || '0')
-    )
+  }, [last])
+
+  // Book row click → price
+  useEffect(() => {
+    if (!picked) return
+    const v = numStr(picked.price, pxDec(picked.price))
+    prefill.current = false
+    if (tab === 'stop') setStop(v)
+    else {
+      setPrice(v)
+      if (tab === 'market' || tab === 'margin') setTab('limit')
+    }
+    // only react to a new pick
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked])
+
+  const isBuy = side === 'buy'
+  const isStopT = tab === 'stop' || tab === 'stop-limit'
+  const isMaker = tab === 'limit' || tab === 'stop-limit'
+  // Never submit on the display fallbacks: the pair's fee schedule must load.
+  const feeReady =
+    !!pair &&
+    Number.isFinite(pair.makerFeeBps) &&
+    Number.isFinite(pair.takerFeeBps)
+  const feeRate = isMaker
+    ? pair
+      ? pair.makerFeeBps / 10000
+      : DEFAULT_MAKER_FEE
+    : pair
+      ? pair.takerFeeBps / 10000
+      : DEFAULT_TAKER_FEE
+
+  const bestAsk = orderbook?.bestAsk ?? orderbook?.asks?.[0]?.price ?? 0
+  const bestBid = orderbook?.bestBid ?? orderbook?.bids?.[0]?.price ?? 0
+  const lp = parseFloat(price) || 0
+  const stp = parseFloat(stop) || 0
+  const amt = parseFloat(amount) || 0
+  const marketPx = (isBuy ? bestAsk : bestBid) || last
+  const execP = tab === 'market' ? marketPx : tab === 'stop' ? stp : lp
+  const total = execP * amt
+  const fee = total * feeRate
+  const dp = pxDec(execP || last)
+  const availQ = balances.quote
+  const availB = balances.base
+  const connected = !!walletAddress
+
+  const setPct = (p: number) => {
+    const px = execP || last
+    const q = isBuy
+      ? px > 0 && availQ
+        ? availQ / (px * (1 + feeRate))
+        : 0
+      : (availB ?? 0)
+    const v = (q * p) / 100
+    setAmount(v >= 100 ? String(Math.floor(v)) : numStr(v, 6))
   }
-  const balanceUsdt = available(
-    balancePair?.quoteToken,
-    balancePair?.isNativeQuote
-  )
-  const balanceLunes = available(
-    balancePair?.baseToken,
-    balancePair?.isNativeBase
-  )
 
-  const handleSubmit = useCallback((order: OrderData) => {
-    setPendingOrder(order)
-  }, [])
-
-  const handleConfirm = useCallback(async () => {
-    if (!pendingOrder) return
-    setSubmitStatus(null)
-
-    if (!sdkWalletAddress) {
-      await connectWallet()
-      return
-    }
-
-    const typeMap: Record<string, 'LIMIT' | 'MARKET' | 'STOP' | 'STOP_LIMIT'> =
-      {
-        Limit: 'LIMIT',
-        Market: 'MARKET',
-        Stop: 'STOP',
-        'Stop-Limit': 'STOP_LIMIT'
+  const cta = useMemo((): {
+    label: string
+    ok: boolean
+    tone: 'buy' | 'sell' | 'primary'
+    on?: () => void
+  } => {
+    if (!connected)
+      return {
+        label: 'Connect wallet',
+        ok: true,
+        tone: 'primary',
+        on: () => void requestWalletConnect()
       }
-    const orderType = typeMap[pendingOrder.type] || 'LIMIT'
-    const orderPrice =
-      orderType === 'LIMIT' || orderType === 'STOP_LIMIT'
-        ? pendingOrder.price.toString()
-        : undefined
-    const orderStopPrice =
-      orderType === 'STOP' || orderType === 'STOP_LIMIT'
-        ? pendingOrder.stopPrice?.toString()
-        : undefined
-
-    const success = await createOrder({
-      pairSymbol: selectedPair,
-      side: pendingOrder.side === 'buy' ? 'BUY' : 'SELL',
-      type: orderType,
-      price: orderPrice,
-      stopPrice: orderStopPrice,
-      amount: pendingOrder.amount.toString(),
-      signMessage
-    })
-
-    if (success) {
-      setSpotBalances(null)
-      setSubmitStatus(
-        orderType === 'STOP' || orderType === 'STOP_LIMIT'
-          ? 'Order armed successfully. It will trigger when the market reaches your stop price.'
-          : 'Order submitted successfully!'
-      )
+    if (!feeReady)
+      return { label: 'Market data is unavailable', ok: false, tone: 'primary' }
+    if (isStopT && stp <= 0)
+      return { label: 'Enter a stop price', ok: false, tone: 'primary' }
+    if ((tab === 'limit' || tab === 'stop-limit') && lp <= 0)
+      return { label: 'Enter a price', ok: false, tone: 'primary' }
+    if (amt <= 0)
+      return { label: 'Enter an amount', ok: false, tone: 'primary' }
+    if (tab === 'market' && marketPx <= 0)
+      return { label: 'No liquidity in the book', ok: false, tone: 'primary' }
+    if (
+      isBuy
+        ? availQ !== null && total + fee > availQ
+        : availB !== null && amt > availB
+    )
+      return {
+        label: `Insufficient ${isBuy ? quote : base}`,
+        ok: false,
+        tone: 'primary'
+      }
+    const kind = KIND[tab as Exclude<Tab, 'margin'>]
+    return {
+      label: `${isStopT ? 'Stop ' : ''}${isBuy ? 'Buy' : 'Sell'} ${base}`,
+      ok: true,
+      tone: isBuy ? 'buy' : 'sell',
+      on: () =>
+        setPending({
+          pair: selectedPair,
+          base,
+          quote,
+          type: kind,
+          side,
+          price: execP,
+          stop: isStopT ? stp : null,
+          amount: amt,
+          total,
+          fee,
+          feeRate,
+          isMaker,
+          dp
+        })
     }
-    setPendingOrder(null)
   }, [
-    pendingOrder,
-    sdkWalletAddress,
-    connectWallet,
-    createOrder,
+    connected,
+    feeReady,
+    isStopT,
+    stp,
+    tab,
+    lp,
+    amt,
+    marketPx,
+    isBuy,
+    availQ,
+    availB,
+    total,
+    fee,
+    quote,
+    base,
     selectedPair,
-    signMessage
+    side,
+    execP,
+    feeRate,
+    isMaker,
+    dp
   ])
 
-  const handleCancel = useCallback(() => {
-    setPendingOrder(null)
-  }, [])
+  const submit = useCallback(
+    (o: PendingOrder) => {
+      setPending(null)
+      if (!walletAddress) return
+      const type = API_TYPE[o.type]
+      const filled = o.type === 'Market'
+      const orderPrice =
+        type === 'LIMIT' || type === 'STOP_LIMIT' ? String(o.price) : undefined
+      const orderStop =
+        type === 'STOP' || type === 'STOP_LIMIT' ? String(o.stop) : undefined
+      const nonce = nextNonce()
+      const timestamp = Date.now()
+      let signature = ''
 
-  const liveMarketPrice =
-    typeof ticker?.lastPrice === 'number' && ticker.lastPrice > 0
-      ? ticker.lastPrice
-      : null
-  const activePair = pairs.find(p => p.symbol === selectedPair)
-  const makerFee = activePair ? activePair.makerFeeBps / 10000 : null
-  const takerFee = activePair ? activePair.takerFeeBps / 10000 : null
-  // Derive base/quote tickers from the selected pair symbol (e.g. "LBTC/LUSDT").
-  // Fall back to the pair's names, then to LUNES/USDT defaults.
-  const [symBase, symQuote] = selectedPair.split('/')
-  const baseSymbol = symBase || activePair?.baseName || 'LUNES'
-  const quoteSymbol = symQuote || activePair?.quoteName || 'USDT'
-  // Price precision: cap input to the pair's quote decimals (default 5).
-  const priceDecimals =
-    activePair && Number.isFinite(activePair.quoteDecimals)
-      ? Math.min(activePair.quoteDecimals, 8)
-      : 5
-  // Amount precision: cap input to the pair's base decimals (default 0 = whole
-  // units, matching the integer amounts used across the book/forms).
-  const amountDecimals =
-    activePair && Number.isFinite(activePair.baseDecimals)
-      ? Math.min(activePair.baseDecimals, 8)
-      : 0
-  // Best opposite-side levels from the live book, for Maker/Taker fee preview.
-  const bestAsk =
-    orderbook?.asks && orderbook.asks.length > 0
-      ? Math.min(
-          ...orderbook.asks
-            .filter((a): a is NonNullable<typeof a> => a != null)
-            .map(a => Number(a.price))
-            .filter(p => Number.isFinite(p) && p > 0)
-        )
-      : null
-  const bestBid =
-    orderbook?.bids && orderbook.bids.length > 0
-      ? Math.max(
-          ...orderbook.bids
-            .filter((b): b is NonNullable<typeof b> => b != null)
-            .map(b => Number(b.price))
-            .filter(p => Number.isFinite(p) && p > 0)
-        )
-      : null
-  const formProps = {
-    side,
-    onSubmit: handleSubmit,
-    balanceUsdt,
-    balanceLunes,
-    marketPrice: liveMarketPrice,
-    makerFee,
-    takerFee,
-    baseSymbol,
-    quoteSymbol,
-    priceDecimals,
-    amountDecimals,
-    walletConnected: !!walletAddress,
-    bestAsk: Number.isFinite(bestAsk as number) ? bestAsk : null,
-    bestBid: Number.isFinite(bestBid as number) ? bestBid : null,
-    requestedPrice: selectedPrice
-  }
-
-  const renderForm = () => {
-    switch (activeTab) {
-      case 'market':
-        return <MarketForm {...formProps} />
-      case 'stop':
-        return <StopForm {...formProps} />
-      case 'stop-limit':
-        return <StopLimitForm {...formProps} />
-      case 'margin':
-        return (
-          <MarginTab
-            side={side}
-            selectedPair={selectedPair}
-            walletAddress={sdkWalletAddress}
-            signMessage={signMessage}
-            connectWallet={connectWallet}
-          />
-        )
-      default:
-        return <LimitForm {...formProps} />
-    }
-  }
+      tx.run({
+        type: 'spot',
+        title: filled
+          ? 'Executing market order'
+          : o.stop
+            ? 'Arming stop order'
+            : 'Placing order',
+        summary: `${o.side === 'buy' ? 'Buy' : 'Sell'} ${fmtAmt(o.amount)} ${o.base} · ${o.pair}`,
+        actTitle: `Spot ${o.type.toLowerCase()} ${o.side} ${fmtAmt(o.amount)} ${o.base}`,
+        successTitle: filled
+          ? 'Market order sent'
+          : o.stop
+            ? 'Stop order armed'
+            : 'Order placed',
+        errorText: 'The orderbook did not accept the order.',
+        steps: [
+          {
+            label: 'Sign order in your wallet',
+            wallet: true,
+            run: async () => {
+              signature = await signMessage(
+                buildSpotOrderSignMessage({
+                  pairSymbol: o.pair,
+                  side: o.side === 'buy' ? 'BUY' : 'SELL',
+                  type,
+                  price: orderPrice,
+                  stopPrice: orderStop,
+                  amount: String(o.amount),
+                  nonce,
+                  timestamp
+                })
+              )
+            }
+          },
+          {
+            label: filled ? 'Matching on orderbook' : 'Posting to orderbook',
+            run: async () => {
+              await spotApi.createOrder({
+                pairSymbol: o.pair,
+                side: o.side === 'buy' ? 'BUY' : 'SELL',
+                type,
+                price: orderPrice,
+                stopPrice: orderStop,
+                amount: String(o.amount),
+                nonce,
+                timestamp,
+                signature,
+                makerAddress: walletAddress
+              })
+            }
+          }
+        ],
+        onSuccess: () => {
+          setAmount('')
+          setHistoryTab(filled ? 'trades' : 'open')
+          // refreshes this form AND the vault panel (locked amounts)
+          notifyVaultChanged()
+          void refreshOrders()
+        }
+      })
+    },
+    [walletAddress, tx, signMessage, setHistoryTab, refreshOrders]
+  )
 
   return (
-    <Wrapper>
-      <Tabs role="tablist" aria-label="Order type">
-        {ORDER_TABS.map(t => (
-          <Tab
-            key={t.key}
-            role="tab"
-            aria-selected={activeTab === t.key}
-            active={activeTab === t.key}
-            onClick={() => setActiveTab(t.key)}
-          >
-            {t.label}
-          </Tab>
-        ))}
-      </Tabs>
+    <>
+      <UnderlineTabs
+        ariaLabel="Order type"
+        items={TABS}
+        value={tab}
+        onChange={setTab}
+        spread
+      />
 
-      <Body>
-        <SideTabs role="tablist" aria-label="Order side">
-          <SideBtn
-            side="buy"
-            role="tab"
-            aria-selected={side === 'buy'}
-            active={side === 'buy'}
-            onClick={() => setSide('buy')}
-          >
-            Buy
-          </SideBtn>
-          <SideBtn
-            side="sell"
-            role="tab"
-            aria-selected={side === 'sell'}
-            active={side === 'sell'}
-            onClick={() => setSide('sell')}
-          >
-            Sell
-          </SideBtn>
-        </SideTabs>
+      {tab === 'margin' && FEATURES.MARGIN ? (
+        <Fade key="margin">
+          <MarginTab />
+        </Fade>
+      ) : (
+        <Fade key="spot">
+          <Body>
+            <SideSwitch role="tablist" aria-label="Side">
+              <SideBtn
+                role="tab"
+                aria-selected={isBuy}
+                $on={isBuy}
+                $side="buy"
+                onClick={() => setSide('buy')}
+              >
+                Buy
+              </SideBtn>
+              <SideBtn
+                role="tab"
+                aria-selected={!isBuy}
+                $on={!isBuy}
+                $side="sell"
+                onClick={() => setSide('sell')}
+              >
+                Sell
+              </SideBtn>
+            </SideSwitch>
 
-        {submitStatus ? <InfoBox>{submitStatus}</InfoBox> : null}
-        {error ? <WarningBox>{error}</WarningBox> : null}
-        {!walletAddress ? (
-          <WarningBox>
-            Connect your wallet to sign and submit Spot orders.
-          </WarningBox>
-        ) : null}
+            {isStopT && (
+              <Notice
+                $tone="primary"
+                style={{ fontSize: 12, padding: '10px 12px' }}
+              >
+                {tab === 'stop'
+                  ? 'When the market reaches the Stop Price, a market order is placed.'
+                  : 'When the Stop Price is reached, a limit order at the Limit Price is placed.'}
+              </Notice>
+            )}
 
-        {walletAddress && activeTab !== 'margin' ? (
-          <div>
-            <PresetPct
-              type="button"
-              onClick={loadSpotBalances}
-              disabled={balancesLoading}
+            {isStopT && (
+              <FieldCol>
+                <TLabel>Stop price ({quote})</TLabel>
+                <TField>
+                  <TInput
+                    value={stop}
+                    onChange={e => setStop(cleanNum(e.target.value))}
+                    placeholder="0"
+                    aria-label="Stop price"
+                  />
+                  <span>{quote}</span>
+                </TField>
+              </FieldCol>
+            )}
+
+            {(tab === 'limit' || tab === 'stop-limit') && (
+              <FieldCol>
+                <TLabel>
+                  {tab === 'stop-limit' ? 'Limit price' : 'Price'} ({quote})
+                </TLabel>
+                <TField>
+                  <TInput
+                    value={price}
+                    onChange={e => {
+                      prefill.current = false
+                      setPrice(cleanNum(e.target.value))
+                    }}
+                    placeholder="0"
+                    aria-label="Limit price"
+                  />
+                  <span>{quote}</span>
+                </TField>
+              </FieldCol>
+            )}
+
+            {tab === 'market' && (
+              <FieldCol as="div">
+                <TLabel>Price</TLabel>
+                <TField $readOnly>
+                  Best market price · ≈ {fmtPx(marketPx)}
+                </TField>
+              </FieldCol>
+            )}
+
+            <FieldCol>
+              <TLabel>Amount ({base})</TLabel>
+              <TField>
+                <TInput
+                  value={amount}
+                  onChange={e => setAmount(cleanNum(e.target.value))}
+                  placeholder="0"
+                  aria-label="Amount"
+                />
+                <span>{base}</span>
+              </TField>
+            </FieldCol>
+
+            <Pcts>
+              {[25, 50, 75, 100].map(p => (
+                <Pct key={p} disabled={!connected} onClick={() => setPct(p)}>
+                  {p === 100 ? 'Max' : `${p}%`}
+                </Pct>
+              ))}
+            </Pcts>
+
+            <Summary>
+              <TKV>
+                <span>Available</span>
+                <span>
+                  {!connected
+                    ? '—'
+                    : isBuy
+                      ? availQ === null
+                        ? '…'
+                        : `${fmtAmt(availQ)} ${quote}`
+                      : availB === null
+                        ? '…'
+                        : `${fmtAmt(availB)} ${base}`}
+                </span>
+              </TKV>
+              <TKV>
+                <span>Total</span>
+                <span>
+                  {amt > 0 && execP > 0 ? `${nf(total, 2)} ${quote}` : '—'}
+                </span>
+              </TKV>
+              <TKV>
+                <span>
+                  Fee ({isMaker ? 'maker' : 'taker'}{' '}
+                  {(feeRate * 100).toFixed(2)}%)
+                </span>
+                <span>
+                  {amt > 0 && execP > 0 ? `≈ ${fmtAmt(fee)} ${quote}` : '—'}
+                </span>
+              </TKV>
+            </Summary>
+
+            {settlement && !settlement.settlementEnabled && (
+              <Notice
+                $tone="warning"
+                role="status"
+                style={{ fontSize: 12, padding: '10px 12px' }}
+              >
+                Orders are not settled on chain in this environment.
+              </Notice>
+            )}
+
+            <Cta
+              size="lg"
+              block
+              $tone={cta.ok ? cta.tone : 'primary'}
+              disabled={!cta.ok}
+              onClick={cta.on}
             >
-              {balancesLoading
-                ? 'Loading Spot balances…'
-                : spotBalances?.address === sdkWalletAddress
-                  ? 'Refresh Spot balances'
-                  : 'Load Spot balances'}
-            </PresetPct>
-            {balanceError ? <WarningBox>{balanceError}</WarningBox> : null}
-          </div>
-        ) : null}
-        {renderForm()}
-      </Body>
-
-      {pendingOrder && (
-        <ConfirmOrderModal
-          order={pendingOrder}
-          loading={isLoading}
-          onConfirm={handleConfirm}
-          onCancel={handleCancel}
-        />
+              {cta.label}
+            </Cta>
+          </Body>
+        </Fade>
       )}
-    </Wrapper>
+
+      <VaultPanel />
+
+      <ConfirmOrderModal
+        order={pending}
+        onClose={() => setPending(null)}
+        onConfirm={submit}
+      />
+    </>
   )
 }
 

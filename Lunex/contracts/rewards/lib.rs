@@ -219,7 +219,7 @@ pub mod trading_rewards {
         /// Multiplicador para 8 casas decimais do LUNES
         pub const DECIMALS_8: Balance = 100_000_000;
 
-        /// Thresholds para tiers (em LUNES com 8 decimais)
+        // Thresholds para tiers (em LUNES com 8 decimais)
 
         pub const SILVER_THRESHOLD: Balance = 10_000 * DECIMALS_8; // 10k LUNES
         pub const GOLD_THRESHOLD: Balance = 50_000 * DECIMALS_8; // 50k LUNES
@@ -234,7 +234,7 @@ pub mod trading_rewards {
         /// Período de reset mensal (30 dias em segundos)
         pub const MONTHLY_RESET_PERIOD: Timestamp = 30 * 24 * 60 * 60;
 
-        /// === CONSTANTES ANTI-FRAUDE (valores padrão) ===
+        // === CONSTANTES ANTI-FRAUDE (valores padrão) ===
 
         /// Volume mínimo por trade (anti-spam) - padrão
         pub const DEFAULT_MIN_TRADE_VOLUME: Balance = 100 * DECIMALS_8; // 100 LUNES
@@ -248,7 +248,7 @@ pub mod trading_rewards {
         /// Período de reset diário (24 horas em segundos)
         pub const DAILY_RESET_PERIOD: Timestamp = 24 * 60 * 60;
 
-        /// === CONSTANTES DE ÉPOCA ===
+        // === CONSTANTES DE ÉPOCA ===
 
         /// Duração padrão de uma época (7 dias em segundos)
         pub const DEFAULT_EPOCH_DURATION: Timestamp = 7 * 24 * 60 * 60; // 1 semana
@@ -326,7 +326,7 @@ pub mod trading_rewards {
             }
 
             // 2. Verificar blacklist
-            if self.blacklisted_addresses.get(&trader).unwrap_or(false) {
+            if self.blacklisted_addresses.get(trader).unwrap_or(false) {
                 self.release_reentrancy_guard();
                 return Err(TradingRewardsError::SuspiciousAddress);
             }
@@ -334,12 +334,12 @@ pub mod trading_rewards {
             let current_time = Self::env().block_timestamp();
 
             // Busca ou cria posição do trader
-            let mut position = match self.trading_positions.get(&trader) {
+            let mut position = match self.trading_positions.get(trader) {
                 Some(pos) => pos,
                 None => {
                     // Adiciona ao mapeamento de traders ativos se novo (O(1) operation)
-                    if !self.active_traders.get(&trader).unwrap_or(false) {
-                        self.active_traders.insert(&trader, &true);
+                    if !self.active_traders.get(trader).unwrap_or(false) {
+                        self.active_traders.insert(trader, &true);
                         self.active_trader_count = self
                             .active_trader_count
                             .checked_add(1)
@@ -366,10 +366,7 @@ pub mod trading_rewards {
             // 3. Cooldown entre trades - usando parâmetro configurável
             if position.last_trade_timestamp > 0
                 && current_time > position.last_trade_timestamp
-                && current_time
-                    .checked_sub(position.last_trade_timestamp)
-                    .unwrap_or(0)
-                    < self.trade_cooldown
+                && current_time.saturating_sub(position.last_trade_timestamp) < self.trade_cooldown
             {
                 self.release_reentrancy_guard();
                 return Err(TradingRewardsError::TradeCooldownActive);
@@ -377,9 +374,7 @@ pub mod trading_rewards {
 
             // 4. Reset diário se necessário
             if current_time > position.last_daily_reset
-                && current_time
-                    .checked_sub(position.last_daily_reset)
-                    .unwrap_or(0)
+                && current_time.saturating_sub(position.last_daily_reset)
                     > constants::DAILY_RESET_PERIOD
             {
                 position.daily_volume = 0;
@@ -403,9 +398,7 @@ pub mod trading_rewards {
             // Reset mensal se necessário
             if position.last_trade_timestamp > 0
                 && current_time > position.last_trade_timestamp
-                && current_time
-                    .checked_sub(position.last_trade_timestamp)
-                    .unwrap_or(0)
+                && current_time.saturating_sub(position.last_trade_timestamp)
                     > constants::MONTHLY_RESET_PERIOD
             {
                 position.monthly_volume = 0;
@@ -448,24 +441,24 @@ pub mod trading_rewards {
                 let new_weight = self.calculate_tier_weight(new_tier, position.monthly_volume);
                 let _ = self.update_weight_cache(old_weight, new_weight);
             }
-            position.tier = new_tier.clone();
+            position.tier = new_tier;
 
             // Salva posição atualizada
-            self.trading_positions.insert(&trader, &position);
+            self.trading_positions.insert(trader, &position);
 
             // Emite eventos
             Self::env().emit_event(VolumeTracked {
-                trader: trader.clone(),
+                trader,
                 volume,
-                new_tier: new_tier.clone(),
+                new_tier,
                 timestamp: current_time,
             });
 
-            if old_tier != new_tier.clone() {
+            if old_tier != new_tier {
                 Self::env().emit_event(TierUpgraded {
                     trader,
-                    old_tier: old_tier.clone(),
-                    new_tier: new_tier.clone(),
+                    old_tier,
+                    new_tier,
                 });
             }
 
@@ -540,7 +533,7 @@ pub mod trading_rewards {
             let caller = Self::env().caller();
             let mut position = self
                 .trading_positions
-                .get(&caller)
+                .get(caller)
                 .ok_or(TradingRewardsError::NoRewardsToClaim)?;
 
             if position.pending_rewards == 0 {
@@ -554,10 +547,10 @@ pub mod trading_rewards {
                 .checked_add(amount)
                 .ok_or(TradingRewardsError::Overflow)?;
 
-            self.trading_positions.insert(&caller, &position);
+            self.trading_positions.insert(caller, &position);
 
             // Transfere LUNES para o usuário
-            if Self::env().transfer(caller.clone(), amount).is_err() {
+            if Self::env().transfer(caller, amount).is_err() {
                 return Err(TradingRewardsError::InsufficientBalance);
             }
 
@@ -573,14 +566,14 @@ pub mod trading_rewards {
         /// Visualiza posição de trading
         #[ink(message)]
         pub fn get_trading_position(&self, trader: AccountId) -> Option<TradingPosition> {
-            self.trading_positions.get(&trader)
+            self.trading_positions.get(trader)
         }
 
         /// Visualiza tier do trader
         #[ink(message)]
         pub fn get_trader_tier(&self, trader: AccountId) -> TradingTier {
             self.trading_positions
-                .get(&trader)
+                .get(trader)
                 .map(|p| p.tier)
                 .unwrap_or(TradingTier::Bronze)
         }
@@ -656,7 +649,7 @@ pub mod trading_rewards {
             Ok(())
         }
 
-        /// === FUNÇÕES DE CONFIGURAÇÃO ANTI-FRAUDE ===
+        // === FUNÇÕES DE CONFIGURAÇÃO ANTI-FRAUDE ===
 
         /// Define volume mínimo por trade (apenas admin)
         #[ink(message)]
@@ -714,7 +707,7 @@ pub mod trading_rewards {
             )
         }
 
-        /// === SISTEMA DE ÉPOCAS ===
+        // === SISTEMA DE ÉPOCAS ===
 
         /// Inicia uma nova época (apenas admin)
         #[ink(message)]
@@ -761,10 +754,10 @@ pub mod trading_rewards {
             }
 
             let current_time = Self::env().block_timestamp();
-            let epoch_rewards = self.epoch_rewards.get(&self.current_epoch).unwrap_or(0);
+            let epoch_rewards = self.epoch_rewards.get(self.current_epoch).unwrap_or(0);
             let active_traders = self
                 .epoch_active_traders
-                .get(&self.current_epoch)
+                .get(self.current_epoch)
                 .unwrap_or(0);
 
             Self::env().emit_event(EpochEnded {
@@ -813,7 +806,7 @@ pub mod trading_rewards {
             // Verifica se há rewards para esta época
             let reward_amount = self
                 .epoch_trader_rewards
-                .get(&(epoch_id, caller))
+                .get((epoch_id, caller))
                 .unwrap_or(0);
 
             if reward_amount == 0 {
@@ -822,10 +815,10 @@ pub mod trading_rewards {
             }
 
             // Remove rewards para evitar double-spend
-            self.epoch_trader_rewards.remove(&(epoch_id, caller));
+            self.epoch_trader_rewards.remove((epoch_id, caller));
 
             // Transfere LUNES para o usuário
-            if Self::env().transfer(caller.clone(), reward_amount).is_err() {
+            if Self::env().transfer(caller, reward_amount).is_err() {
                 self.release_reentrancy_guard();
                 return Err(TradingRewardsError::InsufficientBalance);
             }
@@ -843,7 +836,7 @@ pub mod trading_rewards {
         /// Obtém informações da época atual
         #[ink(message)]
         pub fn get_current_epoch_info(&self) -> (u32, Timestamp, Timestamp, Balance) {
-            let rewards = self.epoch_rewards.get(&self.current_epoch).unwrap_or(0);
+            let rewards = self.epoch_rewards.get(self.current_epoch).unwrap_or(0);
             (
                 self.current_epoch,
                 self.epoch_start_time,
@@ -856,11 +849,11 @@ pub mod trading_rewards {
         #[ink(message)]
         pub fn get_epoch_rewards(&self, epoch_id: u32, trader: AccountId) -> Balance {
             self.epoch_trader_rewards
-                .get(&(epoch_id, trader))
+                .get((epoch_id, trader))
                 .unwrap_or(0)
         }
 
-        /// === FUNÇÕES ANTI-FRAUDE ===
+        // === FUNÇÕES ANTI-FRAUDE ===
 
         /// Adiciona endereço à blacklist (apenas admin)
         #[ink(message)]
@@ -869,7 +862,7 @@ pub mod trading_rewards {
             if address == AccountId::from([0u8; 32]) {
                 return Err(TradingRewardsError::ZeroAddress);
             }
-            self.blacklisted_addresses.insert(&address, &true);
+            self.blacklisted_addresses.insert(address, &true);
             self.total_suspicious_flags = self
                 .total_suspicious_flags
                 .checked_add(1)
@@ -884,14 +877,14 @@ pub mod trading_rewards {
             address: AccountId,
         ) -> Result<(), TradingRewardsError> {
             self.ensure_admin()?;
-            self.blacklisted_addresses.remove(&address);
+            self.blacklisted_addresses.remove(address);
             Ok(())
         }
 
         /// Verifica se endereço está blacklisted
         #[ink(message)]
         pub fn is_blacklisted(&self, address: AccountId) -> bool {
-            self.blacklisted_addresses.get(&address).unwrap_or(false)
+            self.blacklisted_addresses.get(address).unwrap_or(false)
         }
 
         /// Obtém estatísticas de segurança
@@ -908,9 +901,9 @@ pub mod trading_rewards {
             flag: u8,
         ) -> Result<(), TradingRewardsError> {
             self.ensure_admin()?;
-            if let Some(mut position) = self.trading_positions.get(&address) {
+            if let Some(mut position) = self.trading_positions.get(address) {
                 position.suspicious_flags |= flag;
-                self.trading_positions.insert(&address, &position);
+                self.trading_positions.insert(address, &position);
 
                 // Se acumular muitas flags, blacklist automaticamente
                 if position.suspicious_flags >= constants::SUSPICIOUS_FLAG_BLACKLISTED {
@@ -920,7 +913,7 @@ pub mod trading_rewards {
             Ok(())
         }
 
-        /// === INTEGRAÇÃO COM STAKING ===
+        // === INTEGRAÇÃO COM STAKING ===
 
         /// Define o endereço do contrato de staking (apenas admin)
         #[ink(message)]
@@ -1011,11 +1004,7 @@ pub mod trading_rewards {
             const CACHE_VALIDITY_PERIOD: u64 = 300; // 5 minutos
 
             // Se cache é válido, usa valor cached
-            if current_time
-                .checked_sub(self.weight_cache_timestamp)
-                .unwrap_or(0)
-                < CACHE_VALIDITY_PERIOD
-            {
+            if current_time.saturating_sub(self.weight_cache_timestamp) < CACHE_VALIDITY_PERIOD {
                 return Ok(self.cached_total_weight);
             }
 

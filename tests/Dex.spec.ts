@@ -15,7 +15,9 @@ import { AccountId, Hash } from 'types-arguments/factory_contract';
 import { ApiPromise } from '@polkadot/api';
 import { KeyringPair } from '@polkadot/keyring/types';
 import { emit, revertedWith } from './testHelpers';
-import type { WeightV2 } from '@polkadot/types/interfaces';
+// Take the weight type from typechain's own query results: the root
+// @polkadot/types and the copy under @polkadot/api-contract are distinct types.
+type WeightV2 = Awaited<ReturnType<Factory['query']['feeTo']>>['gasRequired'];
 
 const zeroAddress = encodeAddress(
   '0x0000000000000000000000000000000000000000000000000000000000000000',
@@ -44,7 +46,18 @@ describe('Dex spec', () => {
   async function setup(): Promise<void> {
     ({ api, alice: deployer, bob: wallet } = globalThis.setup);
     pairFactory = new Pair_factory(api, deployer);
-    const pair = new Pair((await pairFactory.new()).address, deployer, api);
+    // Deployed only to read the pair code hash; its token addresses are unused.
+    const pair = new Pair(
+      (
+        await pairFactory.new(
+          deployer.address,
+          deployer.address,
+          wallet.address,
+        )
+      ).address,
+      deployer,
+      api,
+    );
     pairHash = pair.abi.info.source.wasmHash.toHex();
     factoryFactory = new Factory_factory(api, deployer);
     factory = new Factory(
@@ -59,20 +72,10 @@ describe('Dex spec', () => {
     const totalSupply = new BN(10000000);
 
     const tokenAaddress = (
-      await tokenFactory.new(
-        totalSupply,
-        'TOKEN_A' as unknown as string[],
-        'TKNA' as unknown as string[],
-        18,
-      )
+      await tokenFactory.new('TOKEN_A', 'TKNA', 18, totalSupply)
     ).address;
     const tokenBaddress = (
-      await tokenFactory.new(
-        totalSupply,
-        'TOKEN_B' as unknown as string[],
-        'TKNB' as unknown as string[],
-        18,
-      )
+      await tokenFactory.new('TOKEN_B', 'TKNB', 18, totalSupply)
     ).address;
     const [token0Address, token1Address] =
       tokenAaddress > tokenBaddress
@@ -84,7 +87,11 @@ describe('Dex spec', () => {
 
   async function setupRouter(): Promise<void> {
     wnativeFactory = new Wnative_factory(api, deployer);
-    wnative = new Wnative((await wnativeFactory.new()).address, deployer, api);
+    wnative = new Wnative(
+      (await wnativeFactory.new('Wrapped LUNES', 'WLUNES', 8)).address,
+      deployer,
+      api,
+    );
     routerFactory = new Router_factory(api, deployer);
     router = new Router(
       (await routerFactory.new(factory.address, wnative.address)).address,
@@ -105,7 +112,7 @@ describe('Dex spec', () => {
     expect((await factory.query.feeTo()).value.ok).toBe(zeroAddress);
     revertedWith(
       await factory.query.setFeeTo(token0.address),
-      'callerIsNotFeeSetter',
+      'CallerIsNotFeeSetter',
     );
     ({ gasRequired } = await factory
       .withSigner(wallet)
@@ -120,7 +127,7 @@ describe('Dex spec', () => {
     expect((await factory.query.feeToSetter()).value.ok).toBe(wallet.address);
     revertedWith(
       await factory.query.setFeeToSetter(token0.address),
-      'callerIsNotFeeSetter',
+      'CallerIsNotFeeSetter',
     );
     ({ gasRequired } = await factory
       .withSigner(wallet)
@@ -147,7 +154,7 @@ describe('Dex spec', () => {
       token0: token0.address,
       token1: token1.address,
       pair: expectedAddress,
-      pairLen: 1,
+      length: 1,
     });
     expect((await factory.query.allPairsLength()).value.ok).toBe(1);
   });
@@ -254,6 +261,14 @@ describe('Dex spec', () => {
   it('can add liqudity via router', async () => {
     await setupRouter();
     const deadline = '111111111111111111';
+    // The router no longer creates pairs on first deposit; the factory must.
+    ({ gasRequired } = await factory.query.createPair(
+      token0.address,
+      wnative.address,
+    ));
+    await factory.tx.createPair(token0.address, wnative.address, {
+      gasLimit: gasRequired,
+    });
     ({ gasRequired } = await token0.query.approve(router.address, 10000));
     await token0.tx.approve(router.address, 10000, {
       gasLimit: gasRequired,
@@ -286,7 +301,22 @@ describe('Dex spec', () => {
 
   it('can swapExactNativeForTokens via router', async () => {
     const deadline = '111111111111111111';
-    const { gasRequired } = await router.query.swapExactNativeForTokens(
+    // 10000 in against the 10000/10000 pool is a 50% price impact, over the
+    // router's default 5% per-hop cap.
+    revertedWith(
+      await router.query.swapExactNativeForTokens(
+        1000,
+        [wnative.address, token0.address],
+        wallet.address,
+        deadline,
+        { value: 10000 },
+      ),
+      'priceImpactTooHigh',
+    );
+    // Lift the cap so the remaining specs exercise the plain AMM math.
+    ({ gasRequired } = await router.query.setMaxPriceImpactBps(0));
+    await router.tx.setMaxPriceImpactBps(0, { gasLimit: gasRequired });
+    ({ gasRequired } = await router.query.swapExactNativeForTokens(
       1000,
       [wnative.address, token0.address],
       wallet.address,
@@ -294,7 +324,7 @@ describe('Dex spec', () => {
       {
         value: 10000,
       },
-    );
+    ));
     await router.tx.swapExactNativeForTokens(
       1000,
       [wnative.address, token0.address],
@@ -307,27 +337,30 @@ describe('Dex spec', () => {
     );
   });
 
-  it('can swapNativeForExactTokens via router', async () => {
+  // The router no longer has swapNativeForExactTokens; cover the reverse
+  // native leg it does expose instead.
+  it('can swapExactTokensForNative via router', async () => {
     const deadline = '111111111111111111';
-    const { gasRequired } = await router.query.swapNativeForExactTokens(
+    ({ gasRequired } = await token0.query.approve(router.address, 1000));
+    await token0.tx.approve(router.address, 1000, { gasLimit: gasRequired });
+    const balance = await getBalance(wallet.address);
+    ({ gasRequired } = await router.query.swapExactTokensForNative(
       1000,
-      [wnative.address, token0.address],
+      1,
+      [token0.address, wnative.address],
       wallet.address,
       deadline,
-      {
-        value: 10000,
-      },
-    );
-    await router.tx.swapNativeForExactTokens(
+    ));
+    await router.tx.swapExactTokensForNative(
       1000,
-      [wnative.address, token0.address],
+      1,
+      [token0.address, wnative.address],
       wallet.address,
       deadline,
-      {
-        gasLimit: gasRequired,
-        value: 10000,
-      },
+      { gasLimit: gasRequired },
     );
+    const afterBalance = await getBalance(wallet.address);
+    expect(afterBalance.gt(balance)).toBe(true);
   });
 
   it('can swapExactTokensForTokens via router', async () => {

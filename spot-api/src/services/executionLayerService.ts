@@ -1,6 +1,7 @@
 import prisma from '../db';
 import { Prisma } from '@prisma/client';
 import { log } from '../utils/logger';
+import { ApiError } from '../middleware/errors';
 import type { OrderSide, ExecutionStatus } from '@prisma/client';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -283,9 +284,15 @@ export const executionLayerService = {
 
   // ── Update execution status after fill ─────────────────────────
 
+  /**
+   * Ownership-scoped update (BE-10): the write is filtered by
+   * `{ id, agentId }`, so an agent can never touch another agent's log. A
+   * foreign or unknown id yields 404 (indistinguishable, no existence leak).
+   */
   async updateExecutionStatus(
     logId: string,
     update: {
+      agentId: string;
       status: ExecutionStatus;
       orderId?: string;
       executedAmount?: string;
@@ -293,8 +300,8 @@ export const executionLayerService = {
       slippageBps?: number;
     },
   ) {
-    return prisma.executionLog.update({
-      where: { id: logId },
+    const result = await prisma.executionLog.updateMany({
+      where: { id: logId, agentId: update.agentId },
       data: {
         status: update.status,
         orderId: update.orderId ?? undefined,
@@ -302,6 +309,12 @@ export const executionLayerService = {
         price: update.executionPrice ?? undefined,
         slippageBps: update.slippageBps ?? undefined,
       },
+    });
+    if (result.count === 0) {
+      throw ApiError.notFound('Execution log not found');
+    }
+    return prisma.executionLog.findFirst({
+      where: { id: logId, agentId: update.agentId },
     });
   },
 

@@ -372,9 +372,9 @@ async function main() {
     if (round === 1 && staking && stakingHasStake) {
       const t = traders[4]
       try {
-        // stake(duration) é payable — envia LUNES nativo. duration em BLOCOS:
-        // MIN_DURATION = 7*24*60*30 = 302400 (7 dias). Usamos 30 dias.
-        const STAKE_DURATION = 30 * 24 * 60 * 30 // 1_296_000 blocos
+        // stake(duration) é payable — envia LUNES nativo. duration em
+        // MILISSEGUNDOS (block_timestamp): MIN_DURATION = 7 dias, MAX = 365 dias.
+        const STAKE_DURATION = 30 * 24 * 60 * 60 * 1000 // 30 dias em ms
         await sendContract(api, t.pair, staking, 'stake', [STAKE_DURATION], NATIVE(10))
         t.stakes++; stats.stakes++
         ok(`${t.name} stake 10 LUNES`)

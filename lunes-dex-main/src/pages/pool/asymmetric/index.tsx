@@ -1,478 +1,60 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import styled from 'styled-components'
-import { Zap, LayoutGrid, Triangle, Bot } from 'lucide-react'
-import PageLayout from '../../../components/layout'
-import TradeSubNav from '../../../components/tradeSubNav'
+import { useNavigate } from 'react-router-dom'
+import { ArrowLeft, RefreshCw } from 'lucide-react'
+import {
+  C,
+  Page,
+  H1,
+  Sub,
+  Button,
+  LinkButton,
+  Badge,
+  Notice,
+  SkeletonLine,
+  grotesk,
+  tabular
+} from '../../../components/ui/kit'
 import CurveChart, {
-  CurveParams,
-  simulateLiquidity
+  CurveSide,
+  GAMMA_LABELS
 } from '../../../components/asymmetric/CurveChart'
 import StrategyCards, {
-  StrategyTemplate
+  PRESETS,
+  Preset,
+  PresetId
 } from '../../../components/asymmetric/StrategyCards'
-import AgentDelegationPanel from '../../../components/asymmetric/AgentDelegationPanel'
+import {
+  ApiKeyDialog,
+  DEFAULT_GUARDRAILS,
+  DelegationCard,
+  Guardrails,
+  enforceDelegation,
+  useAiAgents
+} from '../../../components/asymmetric/AgentDelegationPanel'
 import { useSDK } from '../../../context/SDKContext'
+import { useTx } from '../../../context/TxContext'
 import { useAsymmetricDeploy } from '../../../hooks/useAsymmetricDeploy'
+import { usePools } from '../../../hooks/usePools'
 import {
   AsymmetricClient,
   RebalanceLog,
   StrategyStatus
 } from '../../../sdk/AsymmetricClient'
 import {
-  buildWalletActionMessage,
-  createSignedActionMetadata
-} from '../../../utils/signing'
-import { Button } from '../../../components/bases'
+  ReadSessionRequiredError,
+  requireReadAuth
+} from '../../../services/sessionService'
+import { useReadSession } from '../../../hooks/useReadSession'
+import { ReadSessionPrompt } from '../../../components/session/ReadSessionPrompt'
+import { openWalletModal } from '../../header/modals/wallets'
+import { fmt, usd } from '../format'
 
-// ─── Tabs ─────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────
 
-type Tab = 'strategies' | 'builder' | 'delegate'
-
-// ─── Styled ───────────────────────────────────────────────────────
-
-const TabBar = styled.div`
-  display: flex;
-  gap: 4px;
-  background: ${({ theme }) => theme.colors.themeColors[600]};
-  border-radius: 12px;
-  padding: 4px;
-`
-
-const TabButton = styled.button<{ active: boolean }>`
-  flex: 1;
-  padding: 10px 12px;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 600;
-  font-size: 13px;
-  transition: all 0.18s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: ${({ active, theme }) =>
-    active ? theme.colors.themeColors[800] : 'transparent'};
-  color: ${({ active, theme }) =>
-    active ? theme.colors.themeColors[100] : theme.colors.themeColors[200]};
-  &:hover {
-    background: ${({ active, theme }) =>
-      active ? theme.colors.themeColors[800] : theme.colors.themeColors[400]};
-  }
-`
-
-const PageHeader = styled.div`
-  padding: 24px 0 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-`
-
-const PageTitle = styled.h1`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 800;
-  font-size: 22px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  margin: 0 0 4px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-`
-
-const PageSubtitle = styled.p`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  margin: 0;
-  text-align: left;
-`
-
-const SectionTitle = styled.h3`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 14px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  margin: 0 0 12px;
-`
-
-const SelectedCard = styled.div`
-  padding: 14px 18px;
-  border-radius: 12px;
-  background: ${({ theme }) => theme.colors.themeColors[500]};
-  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  display: flex;
-  align-items: center;
-  gap: 10px;
-`
-
-const SliderGroup = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[600]};
-  border-radius: 16px;
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-`
-
-const SliderRow = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`
-
-const SliderLabel = styled.span`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  min-width: 170px;
-`
-
-const Slider = styled.input`
-  flex: 1;
-  -webkit-appearance: none;
-  height: 4px;
-  border-radius: 2px;
-  background: ${({ theme }) => theme.colors.themeColors[400]};
-  outline: none;
-  &::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: ${({ theme }) => theme.colors.primary[500]};
-    cursor: pointer;
-    box-shadow: 0 0 0 3px rgba(108, 56, 255, 0.25);
-  }
-`
-
-const SliderValue = styled.span`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 14px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  min-width: 28px;
-  text-align: right;
-`
-
-const SliderHint = styled.span`
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-`
-
-const SubSectionTitle = styled.h4`
-  font-family: 'Space Grotesk', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin: 0;
-`
-
-// ─── Deploy Modal Styled ──────────────────────────────────────────
-
-const DeployOverlay = styled.div`
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  backdrop-filter: blur(4px);
-`
-
-const DeployModal = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[500]};
-  border-radius: 16px;
-  padding: 28px;
-  width: 100%;
-  max-width: 480px;
-  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  position: relative;
-`
-
-const DeployModalTitle = styled.h2`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 18px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  margin: 0;
-`
-
-const DeployModalNote = styled.p`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  line-height: 1.6;
-  margin: 0;
-`
-
-const StatusBox = styled.div<{ variant: 'success' | 'error' | 'loading' }>`
-  padding: 12px 16px;
-  border-radius: 10px;
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  background: ${({ variant }) =>
-    variant === 'success'
-      ? 'rgba(52,211,153,0.1)'
-      : variant === 'error'
-        ? 'rgba(248,113,113,0.1)'
-        : 'rgba(255,255,255,0.05)'};
-  border: 1px solid
-    ${({ variant }) =>
-      variant === 'success'
-        ? 'rgba(52,211,153,0.3)'
-        : variant === 'error'
-          ? 'rgba(248,113,113,0.3)'
-          : 'rgba(255,255,255,0.1)'};
-  color: ${({ variant }) =>
-    variant === 'success'
-      ? '#34d399'
-      : variant === 'error'
-        ? '#f87171'
-        : '#9ca3af'};
-`
-
-const TxHashLink = styled.code`
-  display: block;
-  font-size: 11px;
-  word-break: break-all;
-  margin-top: 6px;
-  opacity: 0.7;
-`
-
-const RowButtons = styled.div`
-  display: flex;
-  gap: 10px;
-`
-
-const DelegateCard = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[600]};
-  border-radius: 16px;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  align-items: flex-start;
-`
-
-const DelegateTitle = styled.h3`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 16px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  margin: 0;
-`
-
-const DelegateDescription = styled.p`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  line-height: 1.7;
-  margin: 0;
-`
-
-const FeatureList = styled.ul`
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-`
-
-const FeatureItem = styled.li`
-  font-family: 'Inter', sans-serif;
-  font-size: 13px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  &::before {
-    content: '✓';
-    color: #34d399;
-    font-weight: 700;
-  }
-`
-
-// ─── Simulation Panel for Live Preview ─────────────────────────────
-
-const LivePreview = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[500]};
-  border-radius: 12px;
-  padding: 14px 18px;
-`
-
-const PreviewGrid = styled.div`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 16px;
-`
-
-const PreviewItem = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-`
-
-const PreviewKey = styled.span`
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-`
-
-const PreviewVal = styled.span<{ color?: string }>`
-  font-family: 'Space Grotesk', sans-serif;
-  font-weight: 700;
-  font-size: 14px;
-  color: ${({ color, theme }) => color || theme.colors.themeColors[100]};
-`
-
-const StatusPanel = styled.div`
-  margin-top: 20px;
-  background: ${({ theme }) => theme.colors.themeColors[600]};
-  border-radius: 16px;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`
-
-const StatusRow = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-`
-
-const StatusBadge = styled.span<{ variant: 'ok' | 'warn' | 'neutral' }>`
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
-  color: ${({ variant }) =>
-    variant === 'ok' ? '#34d399' : variant === 'warn' ? '#f59e0b' : '#cbd5e1'};
-  background: ${({ variant }) =>
-    variant === 'ok'
-      ? 'rgba(52, 211, 153, 0.15)'
-      : variant === 'warn'
-        ? 'rgba(245, 158, 11, 0.15)'
-        : 'rgba(203, 213, 225, 0.12)'};
-  border: 1px solid
-    ${({ variant }) =>
-      variant === 'ok'
-        ? 'rgba(52, 211, 153, 0.3)'
-        : variant === 'warn'
-          ? 'rgba(245, 158, 11, 0.3)'
-          : 'rgba(203, 213, 225, 0.25)'};
-`
-
-const StatusGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 14px;
-`
-
-const StatusCell = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-`
-
-const StatusKey = styled.span`
-  font-family: 'Inter', sans-serif;
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-`
-
-const StatusValue = styled.span`
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  word-break: break-word;
-`
-
-const StrategySelect = styled.select`
-  border-radius: 10px;
-  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
-  background: ${({ theme }) => theme.colors.themeColors[700]};
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-  padding: 8px 10px;
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
-  font-size: 12px;
-  min-width: 220px;
-`
-
-const LogsContainer = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-`
-
-const LogLine = styled.div`
-  background: ${({ theme }) => theme.colors.themeColors[500]};
-  border: 1px solid ${({ theme }) => theme.colors.themeColors[400]};
-  border-radius: 10px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-`
-
-const LogLineTitle = styled.div`
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  color: ${({ theme }) => theme.colors.themeColors[100]};
-`
-
-const LogLineMeta = styled.code`
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
-  font-size: 11px;
-  color: ${({ theme }) => theme.colors.themeColors[200]};
-  word-break: break-word;
-`
-
-// ─── Component ────────────────────────────────────────────────────
-
-const GAMMA_LABELS = [
-  '',
-  'Linear',
-  'Moderate',
-  'Balanced',
-  'Aggressive',
-  'Extreme'
-]
-
-const defaultBuy: CurveParams = {
-  k: 1000,
-  L: 0,
-  c: 0.5,
-  x0: 10000,
-  gamma: 3,
-  feeT: 0.003,
-  interestR: 0
-}
-const defaultSell: CurveParams = {
-  k: 500,
-  L: 0,
-  c: 0.5,
-  x0: 8000,
-  gamma: 2,
-  feeT: 0.003,
-  interestR: 0
-}
+const BASE_TOKEN = process.env.REACT_APP_TOKEN_WLUNES || ''
+const QUOTE_TOKEN = process.env.REACT_APP_TOKEN_LUSDT || ''
+const PAIR_LABEL = 'WLUNES/LUSDT'
 
 const ASYMMETRIC_API_BASE = (() => {
   const base =
@@ -481,849 +63,709 @@ const ASYMMETRIC_API_BASE = (() => {
   return `${base.replace(/\/$/, '')}/api/v1/asymmetric`
 })()
 
+const DEFAULT = PRESETS[0]
+
+// ─── Styled ───────────────────────────────────────────────────────
+
+const Back = styled(LinkButton)`
+  align-self: flex-start;
+  color: ${C.muted};
+  font-size: 14px;
+  font-weight: 500;
+  padding: 4px 0;
+  &:hover {
+    color: #fff;
+  }
+`
+
+const Split = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+`
+
+const Controls = styled.div`
+  flex: 1 1 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+`
+
+const Card = styled.div`
+  border: 1px solid ${C.border};
+  border-radius: 16px;
+  background: ${C.surface};
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+`
+
+const CardTitle = styled.span<{ $color?: string }>`
+  ${grotesk};
+  font-weight: 600;
+  font-size: 15px;
+  color: ${p => p.$color ?? '#fff'};
+`
+
+const Ctl = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  > div:first-child {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    span:first-child {
+      color: ${C.muted};
+    }
+    span:last-child {
+      font-weight: 600;
+      ${tabular};
+    }
+  }
+  input[type='range'] {
+    width: 100%;
+    accent-color: ${C.primary};
+  }
+`
+
+const GammaBtn = styled.button<{ $on: boolean }>`
+  flex: 1;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: ${p => (p.$on ? C.primary : C.field)};
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+`
+
+const SumRow = styled.div<{ $first: boolean }>`
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: ${p => (p.$first ? 'none' : `1px solid ${C.border}`)};
+  font-size: 13px;
+  > span:first-child {
+    color: ${C.muted};
+  }
+  > span:last-child {
+    font-weight: 500;
+    text-align: right;
+    ${tabular};
+  }
+`
+
+const StatusGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 8px;
+`
+
+const Cell = styled.div`
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: ${C.bg};
+  border: 1px solid ${C.border};
+  min-width: 0;
+  small {
+    display: block;
+    font-size: 11px;
+    color: ${C.muted};
+    margin-bottom: 4px;
+  }
+  span {
+    font-size: 13px;
+    font-weight: 600;
+    word-break: break-all;
+    ${tabular};
+  }
+`
+
+const Select = styled.select`
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid ${C.borderStrong};
+  background: ${C.bg};
+  color: #fff;
+  font-size: 13px;
+  min-width: 0;
+  flex: 1;
+`
+
+const Log = styled.div`
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: ${C.bg};
+  border: 1px solid ${C.border};
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  b {
+    font-size: 13px;
+  }
+  code {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+    font-size: 11px;
+    color: ${C.muted};
+    word-break: break-word;
+  }
+`
+
+// ─── Page ─────────────────────────────────────────────────────────
+
+type SideKey = 'buy' | 'sell'
+
 const AsymmetricPool: React.FC = () => {
-  const { isConnected, connectWallet, walletAddress, signMessage } = useSDK()
-  const {
-    state: deployState,
-    deploy,
-    reset: resetDeploy
-  } = useAsymmetricDeploy()
-  const asymmetricClient = useMemo(
-    () => new AsymmetricClient(ASYMMETRIC_API_BASE),
-    []
-  )
+  const navigate = useNavigate()
+  const tx = useTx()
+  const { isConnected, walletAddress, signMessage } = useSDK()
+  const { createDeployment } = useAsymmetricDeploy()
+  const { prices } = usePools()
+  const agents = useAiAgents()
+  const client = useMemo(() => new AsymmetricClient(ASYMMETRIC_API_BASE), [])
 
-  const [activeTab, setActiveTab] = useState<Tab>('strategies')
-  const [selectedTemplate, setSelectedTemplate] =
-    useState<StrategyTemplate | null>(null)
-  const [showDelegate, setShowDelegate] = useState(false)
-  const [showDeployModal, setShowDeployModal] = useState(false)
-  const [lastDeployedStrategy, setLastDeployedStrategy] = useState<{
-    strategyId?: string
-    pairAddress?: string
-  }>({})
+  const [preset, setPreset] = useState<PresetId | null>(DEFAULT.id)
+  const [buy, setBuy] = useState<CurveSide>({ ...DEFAULT.buy })
+  const [sell, setSell] = useState<CurveSide>({ ...DEFAULT.sell })
+  const [delegate, setDelegate] = useState(false)
+  const [agentId, setAgentId] = useState<string | null>(null)
+  const [guardrails, setGuardrails] = useState<Guardrails>(DEFAULT_GUARDRAILS)
+  const [apiKey, setApiKey] = useState<string | null>(null)
 
-  // Builder state
-  const [buyParams, setBuyParams] = useState<CurveParams>(defaultBuy)
-  const [sellParams, setSellParams] = useState<CurveParams>(defaultSell)
-  const [strategies, setStrategies] = useState<StrategyStatus[]>([])
-  const [selectedStrategyId, setSelectedStrategyId] = useState('')
-  const [selectedStrategyStatus, setSelectedStrategyStatus] =
-    useState<StrategyStatus | null>(null)
-  const [strategyLogs, setStrategyLogs] = useState<RebalanceLog[]>([])
+  // Your strategies (backend + on-chain status)
+  const [strategies, setStrategies] = useState<StrategyStatus[] | null>(null)
+  const [selectedId, setSelectedId] = useState('')
+  const [status, setStatus] = useState<StrategyStatus | null>(null)
+  const [logs, setLogs] = useState<RebalanceLog[]>([])
+  const [listLoading, setListLoading] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
 
-  // Live preview of liquidity at the mid-point
-  const midLiqPreview = useMemo(() => {
-    const midBuy = simulateLiquidity(buyParams.x0 * 0.3, buyParams)
-    const midSell = simulateLiquidity(sellParams.x0 * 0.3, sellParams)
-    return { midBuy, midSell }
-  }, [buyParams, sellParams])
+  useEffect(() => {
+    if (!agentId && agents.length) setAgentId(agents[0].id)
+  }, [agents, agentId])
 
-  const buildSignedReadAuth = useCallback(
-    async (
-      action: string,
-      fields?: Record<
-        string,
-        string | number | boolean | Array<string | number> | undefined | null
-      >
-    ) => {
-      if (!walletAddress) throw new Error('Wallet not connected')
-      const metadata = createSignedActionMetadata()
-      const signature = await signMessage(
-        buildWalletActionMessage({
-          action,
-          address: walletAddress,
-          nonce: metadata.nonce,
-          timestamp: metadata.timestamp,
-          fields
-        })
-      )
+  const activePreset: Preset | undefined = PRESETS.find(p => p.id === preset)
+  const feeBps = activePreset?.feeBps ?? 30
+  const agentName = agents.find(a => a.id === agentId)?.name ?? 'AI agent'
+  const capital = buy.x0 + sell.x0
 
-      return {
-        nonce: metadata.nonce,
-        timestamp: metadata.timestamp,
-        signature
+  const setSide = (side: SideKey, patch: Partial<CurveSide>) => {
+    setPreset(null)
+    if (side === 'buy') setBuy(c => ({ ...c, ...patch }))
+    else setSell(c => ({ ...c, ...patch }))
+  }
+
+  const pickPreset = (p: Preset) => {
+    setPreset(p.id)
+    setBuy({ ...p.buy })
+    setSell({ ...p.sell })
+  }
+
+  // ── Private reads of the wallet's strategies (read session) ───
+  // No wallet prompt: without a session the panel shows "Sign in".
+  const { hasSession } = useReadSession()
+  const [needsSignIn, setNeedsSignIn] = useState(false)
+
+  const loadStrategies = useCallback(
+    async (prefer?: string | null) => {
+      if (!walletAddress) return
+      setListLoading(true)
+      setStatusError(null)
+      try {
+        const auth = requireReadAuth(walletAddress)
+        setNeedsSignIn(false)
+        const list = await client.listStrategies(walletAddress, auth)
+        setStrategies(list)
+        const next =
+          (prefer && list.find(s => s.id === prefer)?.id) ||
+          (list.some(s => s.id === selectedId) ? selectedId : list[0]?.id) ||
+          ''
+        setSelectedId(next)
+      } catch (err: unknown) {
+        if (err instanceof ReadSessionRequiredError) {
+          setNeedsSignIn(true)
+          return
+        }
+        setStatusError(
+          err instanceof Error ? err.message : 'Failed to list strategies'
+        )
+      } finally {
+        setListLoading(false)
       }
     },
-    [walletAddress, signMessage]
+    [walletAddress, client, selectedId]
   )
 
-  const loadStrategies = useCallback(async () => {
-    if (!walletAddress) return
-
-    const auth = await buildSignedReadAuth('asymmetric.strategies.list')
-    const list = await asymmetricClient.listStrategies(walletAddress, auth)
-    setStrategies(list)
-    if (list.length === 0) {
-      setSelectedStrategyId('')
-      setSelectedStrategyStatus(null)
-      setStrategyLogs([])
-      return
-    }
-
-    if (
-      lastDeployedStrategy.strategyId &&
-      list.some(s => s.id === lastDeployedStrategy.strategyId)
-    ) {
-      setSelectedStrategyId(lastDeployedStrategy.strategyId)
-      return
-    }
-
-    if (selectedStrategyId && list.some(s => s.id === selectedStrategyId)) {
-      return
-    }
-
-    setSelectedStrategyId(list[0].id)
-  }, [
-    walletAddress,
-    buildSignedReadAuth,
-    asymmetricClient,
-    selectedStrategyId,
-    lastDeployedStrategy.strategyId
-  ])
-
-  const loadStrategyDetails = useCallback(
-    async (strategyId: string) => {
-      if (!walletAddress) return
+  const loadDetails = useCallback(
+    async (id: string) => {
+      if (!walletAddress || !id) return
       setStatusLoading(true)
       setStatusError(null)
       try {
-        const [statusAuth, logsAuth] = await Promise.all([
-          buildSignedReadAuth('asymmetric.strategy.read', { strategyId }),
-          buildSignedReadAuth('asymmetric.strategy.logs', {
-            strategyId,
-            limit: 10
-          })
+        const auth = requireReadAuth(walletAddress)
+        const [s, l] = await Promise.all([
+          client.getStrategyStatus(id, walletAddress, auth),
+          client.getRebalanceLogs(id, walletAddress, auth, 10)
         ])
-
-        const [status, logs] = await Promise.all([
-          asymmetricClient.getStrategyStatus(
-            strategyId,
-            walletAddress,
-            statusAuth
-          ),
-          asymmetricClient.getRebalanceLogs(
-            strategyId,
-            walletAddress,
-            logsAuth,
-            10
-          )
-        ])
-
-        setSelectedStrategyStatus(status)
-        setStrategyLogs(logs)
-      } catch (err: any) {
-        setStatusError(err?.message || 'Failed to load strategy status')
+        setStatus(s)
+        setLogs(l)
+      } catch (err: unknown) {
+        if (err instanceof ReadSessionRequiredError) {
+          setNeedsSignIn(true)
+          return
+        }
+        setStatusError(
+          err instanceof Error ? err.message : 'Failed to load strategy status'
+        )
       } finally {
         setStatusLoading(false)
       }
     },
-    [walletAddress, buildSignedReadAuth, asymmetricClient]
+    [walletAddress, client]
   )
 
   useEffect(() => {
-    if (!isConnected || !walletAddress || activeTab !== 'strategies') return
-    void loadStrategies().catch((err: any) => {
-      setStatusError(err?.message || 'Failed to list asymmetric strategies')
-    })
-  }, [isConnected, walletAddress, activeTab, loadStrategies])
+    if (selectedId && strategies) void loadDetails(selectedId)
+    else setStatus(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
 
   useEffect(() => {
-    if (!isConnected || !walletAddress || activeTab !== 'strategies') return
-    if (!selectedStrategyId) return
-    void loadStrategyDetails(selectedStrategyId)
-  }, [
-    isConnected,
-    walletAddress,
-    activeTab,
-    selectedStrategyId,
-    loadStrategyDetails
-  ])
+    setStrategies(null)
+    setSelectedId('')
+    setStatus(null)
+  }, [walletAddress])
 
-  const handleSelectTemplate = (t: StrategyTemplate) => {
-    setSelectedTemplate(t)
-    setBuyParams({
-      ...defaultBuy,
-      ...t.buyParams
-    })
-    setSellParams({
-      ...defaultSell,
-      ...t.sellParams
-    })
-    setActiveTab('builder')
-  }
-
-  const handleDeploy = async () => {
-    // Guard: prevent double-submit — if a deploy is already in progress, bail early.
-    if (
-      deployState.step !== 'idle' &&
-      deployState.step !== 'done' &&
-      deployState.step !== 'error'
-    ) {
-      return
-    }
-    const result = await deploy({
-      baseToken: process.env.REACT_APP_TOKEN_WLUNES || '',
-      quoteToken: process.env.REACT_APP_TOKEN_LUSDT || '',
-      buyGamma: buyParams.gamma,
-      buyMaxCapacity: buyParams.x0.toString(),
-      buyFeeBps: Math.round(buyParams.feeT * 10000),
-      sellGamma: sellParams.gamma,
-      sellMaxCapacity: sellParams.x0.toString(),
-      sellFeeBps: Math.round(sellParams.feeT * 10000),
-      initialBuyK: buyParams.k.toString(),
-      initialSellK: sellParams.k.toString(),
+  // ── Deploy (4-step tx) ────────────────────────────────────────
+  const deploy = () => {
+    if (!walletAddress) return
+    const b = { ...buy }
+    const s = { ...sell }
+    const d = delegate
+    const rails = { ...guardrails }
+    const dep = createDeployment({
+      baseToken: BASE_TOKEN,
+      quoteToken: QUOTE_TOKEN,
+      buyGamma: b.g,
+      buyMaxCapacity: String(b.x0),
+      buyFeeBps: feeBps,
+      sellGamma: s.g,
+      sellMaxCapacity: String(s.x0),
+      sellFeeBps: feeBps,
+      initialBuyK: String(b.k),
+      // Deploy exactly the k shown in the preview (halving was removed in 628d44b).
+      initialSellK: String(s.k),
       pairSymbol: 'WLUNES-LUSDT',
       autoRebalance: true,
-      profitTargetBps: selectedTemplate?.profitTargetBps ?? 300
+      profitTargetBps: activePreset?.profitTargetBps ?? 300
     })
+    let key: string | null = null
 
-    setLastDeployedStrategy({
-      strategyId: result?.strategyId,
-      pairAddress: result?.contractAddress
+    tx.run({
+      type: 'liquidity',
+      title: 'Deploying strategy',
+      summary: `${PAIR_LABEL} · buy γ${b.g} / sell γ${s.g}`,
+      actTitle: `Deploy asymmetric · ${PAIR_LABEL}`,
+      successTitle: 'Strategy deployed',
+      steps: [
+        {
+          label: 'Sign contract deployment',
+          wallet: true,
+          run: () => dep.instantiate()
+        },
+        {
+          label: 'Seed buy & sell curves',
+          wallet: true,
+          run: () => dep.seed()
+        },
+        {
+          label: 'Sign strategy registration' + (d ? ' + delegation' : ''),
+          wallet: true,
+          run: async ({ advance }) => {
+            const r = await dep.register()
+            if (d) {
+              if (!r.strategyId || !r.contractAddress) {
+                throw new Error('Strategy registered without an ID')
+              }
+              const res = await enforceDelegation({
+                walletAddress,
+                signMessage,
+                strategyId: r.strategyId,
+                pairAddress: r.contractAddress,
+                guardrails: rails
+              })
+              key = res.apiKey
+            }
+            advance()
+            return r.txHash ?? undefined
+          }
+        },
+        { label: 'Waiting for block confirmation' }
+      ],
+      onSuccess: () => {
+        if (key) setApiKey(key)
+        const id = dep.result().strategyId
+        if (strategies) void loadStrategies(id)
+      }
     })
   }
 
-  const liveState = selectedStrategyStatus?.liveState
-  const persistedConfig =
-    selectedStrategyStatus?.persistedConfig || selectedStrategyStatus
-  const delegation = selectedStrategyStatus?.delegation || {
-    agentManaged: selectedStrategyStatus?.agentManaged ?? false,
-    delegatedToRelayer: liveState?.delegatedToRelayer ?? false,
-    managerAddress: liveState?.managerAddress ?? null,
-    relayerAddress: liveState?.relayerAddress ?? null
+  // Delegate an already-deployed strategy
+  const delegateExisting = (s: StrategyStatus) => {
+    if (!walletAddress) return
+    const rails = { ...guardrails }
+    let key: string | null = null
+    tx.run({
+      type: 'liquidity',
+      title: 'Delegating strategy',
+      summary: `${agentName} · γ${rails.gammaMin}–γ${rails.gammaMax}`,
+      actTitle: `Delegate strategy · ${PAIR_LABEL}`,
+      successTitle: 'Delegation enforced on-chain',
+      steps: [
+        {
+          label: 'Sign agent key + set manager',
+          wallet: true,
+          run: async () => {
+            const res = await enforceDelegation({
+              walletAddress,
+              signMessage,
+              strategyId: s.id,
+              pairAddress: s.pairAddress,
+              guardrails: rails
+            })
+            key = res.apiKey
+            return res.txHash
+          }
+        },
+        { label: 'Waiting for block confirmation' }
+      ],
+      onSuccess: () => {
+        if (key) setApiKey(key)
+        void loadDetails(s.id)
+      }
+    })
+  }
+
+  const ctl = (side: SideKey, c: CurveSide) => (
+    <Card key={side}>
+      <CardTitle $color={side === 'buy' ? C.successText : C.criticalText2}>
+        {side === 'buy' ? 'Buy curve' : 'Sell curve'}
+      </CardTitle>
+      <Ctl>
+        <div>
+          <span>Base liquidity (k)</span>
+          <span>{fmt(c.k)} LUSDT</span>
+        </div>
+        <input
+          type="range"
+          min={100}
+          max={5000}
+          step={100}
+          value={c.k}
+          onChange={e => setSide(side, { k: +e.target.value })}
+          aria-label={`${side} base liquidity`}
+        />
+      </Ctl>
+      <Ctl>
+        <div>
+          <span>Max capacity</span>
+          <span>{fmt(c.x0)} LUSDT</span>
+        </div>
+        <input
+          type="range"
+          min={1000}
+          max={50000}
+          step={1000}
+          value={c.x0}
+          onChange={e => setSide(side, { x0: +e.target.value })}
+          aria-label={`${side} max capacity`}
+        />
+      </Ctl>
+      <Ctl>
+        <span style={{ fontSize: 13, color: C.muted }}>
+          Curvature · {GAMMA_LABELS[c.g]}
+        </span>
+        <div style={{ display: 'flex', gap: 4 }} role="radiogroup">
+          {[1, 2, 3, 4, 5].map(g => (
+            <GammaBtn
+              key={g}
+              role="radio"
+              aria-checked={c.g === g}
+              aria-label={`γ${g} ${GAMMA_LABELS[g]}`}
+              $on={c.g === g}
+              onClick={() => setSide(side, { g })}
+            >
+              γ{g}
+            </GammaBtn>
+          ))}
+        </div>
+      </Ctl>
+    </Card>
+  )
+
+  const summary: [string, string, string?][] = [
+    ['Pair', 'WLUNES / LUSDT'],
+    [
+      'Buy curve',
+      `k ${fmt(buy.k)} · cap ${fmt(buy.x0)} · γ${buy.g} ${GAMMA_LABELS[buy.g]}`,
+      C.successText
+    ],
+    [
+      'Sell curve',
+      `k ${fmt(sell.k)} · cap ${fmt(sell.x0)} · γ${sell.g} ${GAMMA_LABELS[sell.g]}`,
+      C.criticalText2
+    ],
+    ['Fee target', (feeBps / 100).toFixed(2) + '%'],
+    ['Capital range', usd(capital)],
+    [
+      'Management',
+      delegate
+        ? `Delegated to ${agentName} · γ${guardrails.gammaMin}–γ${guardrails.gammaMax}`
+        : 'Manual'
+    ]
+  ]
+
+  let cta: { label: string; ok: boolean; on?: () => void }
+  if (!isConnected || !walletAddress)
+    cta = { label: 'Connect wallet', ok: true, on: openWalletModal }
+  else if (!BASE_TOKEN || !QUOTE_TOKEN)
+    cta = { label: 'Pair tokens not configured', ok: false }
+  else if (delegate && !agentId) cta = { label: 'Pick an AI agent', ok: false }
+  else cta = { label: 'Deploy asymmetric strategy', ok: true, on: deploy }
+
+  const live = status?.liveState
+  const cfg = status?.persistedConfig || status
+  const deleg = status?.delegation || {
+    agentManaged: status?.agentManaged ?? false,
+    delegatedToRelayer: live?.delegatedToRelayer ?? false,
+    managerAddress: live?.managerAddress ?? null,
+    relayerAddress: live?.relayerAddress ?? null
   }
 
   return (
-    <PageLayout maxWidth="680px">
-      <TradeSubNav active="pool" />
+    <Page $max={1080} style={{ gap: 16 }}>
+      <Back onClick={() => navigate('/pool')}>
+        <ArrowLeft size={16} strokeWidth={2} />
+        Liquidity
+      </Back>
+      <div>
+        <H1>Asymmetric liquidity · Pro mode</H1>
+        <Sub style={{ fontSize: 15 }}>
+          Deploy separate buy and sell curves inside the ranges you choose.
+          Managed by you or delegated to an AI agent.
+        </Sub>
+      </div>
 
-      <PageHeader>
-        <PageTitle>
-          <Zap size={24} strokeWidth={2} style={{ color: 'currentColor' }} />
-          Asymmetric Liquidity
-        </PageTitle>
-        <PageSubtitle>
-          Parametric curves for advanced liquidity providers — human or
-          AI-managed.
-        </PageSubtitle>
-      </PageHeader>
+      <StrategyCards selected={preset} onSelect={pickPreset} />
 
-      <TabBar>
-        <TabButton
-          active={activeTab === 'strategies'}
-          onClick={() => setActiveTab('strategies')}
+      <Split>
+        <CurveChart
+          buy={buy}
+          sell={sell}
+          pairLabel={PAIR_LABEL}
+          price={prices.WLUNES}
+        />
+        <Controls>
+          {ctl('buy', buy)}
+          {ctl('sell', sell)}
+        </Controls>
+      </Split>
+
+      <DelegationCard
+        enabled={delegate}
+        onToggle={() => setDelegate(v => !v)}
+        agents={agents}
+        agentId={agentId}
+        onAgent={setAgentId}
+        guardrails={guardrails}
+        onGuardrails={setGuardrails}
+      />
+
+      <Card style={{ gap: 2 }}>
+        <CardTitle style={{ marginBottom: 6 }}>Deployment summary</CardTitle>
+        {summary.map(([k, v, color], i) => (
+          <SumRow key={k} $first={i === 0}>
+            <span>{k}</span>
+            <span style={{ color: color ?? '#fff' }}>{v}</span>
+          </SumRow>
+        ))}
+      </Card>
+
+      <Button
+        size="xl"
+        block
+        disabled={!cta.ok}
+        onClick={cta.on}
+        style={{ height: 52 }}
+      >
+        {cta.label}
+      </Button>
+
+      {/* ── Your strategies (persisted config + live on-chain state) ── */}
+      <Card>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap'
+          }}
         >
-          <LayoutGrid
-            size={16}
-            strokeWidth={2}
-            style={{ color: 'currentColor' }}
-          />
-          Templates
-        </TabButton>
-        <TabButton
-          active={activeTab === 'builder'}
-          onClick={() => setActiveTab('builder')}
-        >
-          <Triangle
-            size={16}
-            strokeWidth={2}
-            style={{ color: 'currentColor' }}
-          />
-          Builder Pro
-        </TabButton>
-        <TabButton
-          active={activeTab === 'delegate'}
-          onClick={() => setActiveTab('delegate')}
-        >
-          <Bot size={16} strokeWidth={2} style={{ color: 'currentColor' }} />
-          Delegate AI
-        </TabButton>
-      </TabBar>
-
-      {/* ── Strategies Tab ─────────────────────────────────────────── */}
-      {activeTab === 'strategies' && (
-        <>
-          <SectionTitle>Pick a Strategy — One Click to Configure</SectionTitle>
-          <StrategyCards
-            selected={selectedTemplate?.id ?? null}
-            onSelect={handleSelectTemplate}
-          />
-
-          {selectedTemplate && (
-            <SelectedCard>
-              <span>{selectedTemplate.icon}</span>
-              <span>
-                <strong>{selectedTemplate.name}</strong> selected — edit it in
-                the Builder Pro tab
-              </span>
-            </SelectedCard>
+          <div>
+            <CardTitle>Your strategies</CardTitle>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>
+              Persisted config, live curve state and audit logs. Loading asks
+              for a signature.
+            </div>
+          </div>
+          {isConnected && walletAddress && (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={listLoading}
+              onClick={() => void loadStrategies()}
+            >
+              <RefreshCw size={14} />
+              {strategies ? 'Refresh' : 'Load strategies'}
+            </Button>
           )}
+        </div>
 
-          <StatusPanel>
-            <StatusRow>
-              <SectionTitle style={{ margin: 0 }}>
-                Operational Status (Backend + On-chain)
-              </SectionTitle>
-              <Button
-                status="secondary"
-                width="auto"
-                style={{ padding: '0 14px', minWidth: 'auto' }}
-                onClick={() => {
-                  void loadStrategies()
-                  if (selectedStrategyId) {
-                    void loadStrategyDetails(selectedStrategyId)
-                  }
-                }}
+        {!isConnected || !walletAddress ? (
+          <span style={{ fontSize: 13, color: C.muted }}>
+            Connect your wallet to see your deployed strategies.
+          </span>
+        ) : listLoading ? (
+          <SkeletonLine $h={40} />
+        ) : needsSignIn && !hasSession ? (
+          <ReadSessionPrompt
+            compact
+            message="Sign in to see your deployed strategies"
+            onSignedIn={() => void loadStrategies()}
+          />
+        ) : statusError ? (
+          <Notice $tone="critical">{statusError}</Notice>
+        ) : strategies && strategies.length === 0 ? (
+          <span style={{ fontSize: 13, color: C.muted }}>
+            No registered asymmetric strategy for this wallet yet.
+          </span>
+        ) : strategies && strategies.length > 0 ? (
+          <>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <Select
+                value={selectedId}
+                onChange={e => setSelectedId(e.target.value)}
+                aria-label="Strategy"
               >
-                Refresh
-              </Button>
-            </StatusRow>
-
-            {!isConnected && (
-              <StatusValue>
-                Connect your wallet to load persisted config, live curve state
-                and audit logs.
-              </StatusValue>
-            )}
-
-            {isConnected && statusError && (
-              <StatusValue>{statusError}</StatusValue>
-            )}
-
-            {isConnected && !statusError && strategies.length === 0 && (
-              <StatusValue>
-                No registered asymmetric strategy found for this wallet.
-              </StatusValue>
-            )}
-
-            {isConnected && strategies.length > 0 && (
+                {strategies.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.id}
+                  </option>
+                ))}
+              </Select>
+              <Badge
+                $tone={
+                  statusLoading
+                    ? 'neutral'
+                    : live?.available
+                      ? 'success'
+                      : 'warning'
+                }
+              >
+                {statusLoading
+                  ? 'Loading…'
+                  : live?.available
+                    ? 'Live'
+                    : `Live unavailable${live?.reason ? ` (${live.reason})` : ''}`}
+              </Badge>
+            </div>
+            {status && (
               <>
-                <StatusRow>
-                  <StrategySelect
-                    value={selectedStrategyId}
-                    onChange={e => setSelectedStrategyId(e.target.value)}
-                  >
-                    {strategies.map(strategy => (
-                      <option key={strategy.id} value={strategy.id}>
-                        {strategy.id}
-                      </option>
-                    ))}
-                  </StrategySelect>
-
-                  <StatusBadge
-                    variant={
-                      statusLoading
-                        ? 'neutral'
-                        : liveState?.available
-                          ? 'ok'
-                          : 'warn'
-                    }
-                  >
-                    {statusLoading
-                      ? 'Loading...'
-                      : liveState?.available
-                        ? 'Live State Available'
-                        : `Live Unavailable${
-                            liveState?.reason ? ` (${liveState.reason})` : ''
-                          }`}
-                  </StatusBadge>
-                </StatusRow>
-
-                {selectedStrategyStatus && (
-                  <>
-                    <StatusGrid>
-                      <StatusCell>
-                        <StatusKey>Persisted Status</StatusKey>
-                        <StatusValue>{persistedConfig?.status}</StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Auto Rebalance</StatusKey>
-                        <StatusValue>
-                          {persistedConfig?.isAutoRebalance
-                            ? 'Enabled'
-                            : 'Disabled'}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Pending Amount</StatusKey>
-                        <StatusValue>
-                          {persistedConfig?.pendingRebalanceAmount || '0'}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Retry Count</StatusKey>
-                        <StatusValue>
-                          {persistedConfig?.retryCount ?? 0}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Agent Managed</StatusKey>
-                        <StatusValue>
-                          {delegation.agentManaged ? 'Yes' : 'No'}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Delegated To Relayer</StatusKey>
-                        <StatusValue>
-                          {delegation.delegatedToRelayer ? 'Yes' : 'No'}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Manager</StatusKey>
-                        <StatusValue>
-                          {delegation.managerAddress || 'Not configured'}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Relayer</StatusKey>
-                        <StatusValue>
-                          {delegation.relayerAddress || 'Unavailable'}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Live Buy Capacity</StatusKey>
-                        <StatusValue>
-                          {liveState?.buyCurve
-                            ? `${liveState.buyCurve.currentVolume.toFixed(2)} / ${liveState.buyCurve.maxCapacity.toFixed(2)}`
-                            : 'Unavailable'}
-                        </StatusValue>
-                      </StatusCell>
-                      <StatusCell>
-                        <StatusKey>Live Sell Capacity</StatusKey>
-                        <StatusValue>
-                          {liveState?.sellCurve
-                            ? `${liveState.sellCurve.currentVolume.toFixed(2)} / ${liveState.sellCurve.maxCapacity.toFixed(2)}`
-                            : 'Unavailable'}
-                        </StatusValue>
-                      </StatusCell>
-                    </StatusGrid>
-
-                    <SectionTitle style={{ margin: '4px 0 0' }}>
-                      Recent Audit Logs
-                    </SectionTitle>
-                    {strategyLogs.length === 0 ? (
-                      <StatusValue>
-                        No logs available yet for this strategy.
-                      </StatusValue>
-                    ) : (
-                      <LogsContainer>
-                        {strategyLogs.map(logEntry => (
-                          <LogLine key={logEntry.id}>
-                            <LogLineTitle>
-                              {logEntry.trigger} • {logEntry.status} •{' '}
-                              {logEntry.side}
-                            </LogLineTitle>
-                            <LogLineMeta>
-                              acquired={logEntry.acquiredAmount} newCapacity=
-                              {logEntry.newCapacity} tx=
-                              {logEntry.txHash || 'n/a'} at {logEntry.createdAt}
-                            </LogLineMeta>
-                          </LogLine>
-                        ))}
-                      </LogsContainer>
-                    )}
-                  </>
+                <StatusGrid>
+                  {(
+                    [
+                      ['Status', cfg?.status],
+                      [
+                        'Auto rebalance',
+                        cfg?.isAutoRebalance ? 'Enabled' : 'Disabled'
+                      ],
+                      ['Pending amount', cfg?.pendingRebalanceAmount || '0'],
+                      ['Retry count', String(cfg?.retryCount ?? 0)],
+                      ['Agent managed', deleg.agentManaged ? 'Yes' : 'No'],
+                      [
+                        'Delegated to relayer',
+                        deleg.delegatedToRelayer ? 'Yes' : 'No'
+                      ],
+                      ['Manager', deleg.managerAddress || 'Not configured'],
+                      ['Relayer', deleg.relayerAddress || 'Unavailable'],
+                      [
+                        'Live buy capacity',
+                        live?.buyCurve
+                          ? `${live.buyCurve.currentVolume.toFixed(2)} / ${live.buyCurve.maxCapacity.toFixed(2)}`
+                          : 'Unavailable'
+                      ],
+                      [
+                        'Live sell capacity',
+                        live?.sellCurve
+                          ? `${live.sellCurve.currentVolume.toFixed(2)} / ${live.sellCurve.maxCapacity.toFixed(2)}`
+                          : 'Unavailable'
+                      ]
+                    ] as [string, string | undefined][]
+                  ).map(([k, v]) => (
+                    <Cell key={k}>
+                      <small>{k}</small>
+                      <span>{v ?? '—'}</span>
+                    </Cell>
+                  ))}
+                </StatusGrid>
+                {!deleg.delegatedToRelayer && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => delegateExisting(status)}
+                    >
+                      Delegate with current guardrails
+                    </Button>
+                  </div>
+                )}
+                <CardTitle style={{ fontSize: 14 }}>
+                  Recent audit logs
+                </CardTitle>
+                {logs.length === 0 ? (
+                  <span style={{ fontSize: 13, color: C.muted }}>
+                    No logs yet for this strategy.
+                  </span>
+                ) : (
+                  logs.map(l => (
+                    <Log key={l.id}>
+                      <b>
+                        {l.trigger} · {l.status} · {l.side}
+                      </b>
+                      <code>
+                        acquired={l.acquiredAmount} newCapacity={l.newCapacity}{' '}
+                        tx={l.txHash || 'n/a'} at {l.createdAt}
+                      </code>
+                    </Log>
+                  ))
                 )}
               </>
             )}
-          </StatusPanel>
-        </>
-      )}
+          </>
+        ) : null}
+      </Card>
 
-      {/* ── Builder Pro Tab ────────────────────────────────────────── */}
-      {activeTab === 'builder' && (
-        <>
-          <CurveChart
-            buyParams={buyParams}
-            sellParams={sellParams}
-            label={
-              selectedTemplate ? (
-                <div
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  {selectedTemplate.icon} {selectedTemplate.name}
-                </div>
-              ) : (
-                'Custom Curve'
-              )
-            }
-            interactive
-            onGammaChange={(side: 'buy' | 'sell', newGamma: number) => {
-              const gamma = Math.round(Math.max(1, Math.min(5, newGamma)))
-              if (side === 'buy')
-                setBuyParams((p: CurveParams) => ({ ...p, gamma }))
-              else setSellParams((p: CurveParams) => ({ ...p, gamma }))
-            }}
-          />
-
-          <LivePreview>
-            <PreviewGrid>
-              <PreviewItem>
-                <PreviewKey>Buy Liquidity @ 30%</PreviewKey>
-                <PreviewVal color="#34d399">
-                  {midLiqPreview.midBuy.toFixed(2)}
-                </PreviewVal>
-              </PreviewItem>
-              <PreviewItem>
-                <PreviewKey>Sell Liquidity @ 30%</PreviewKey>
-                <PreviewVal color="#f87171">
-                  {midLiqPreview.midSell.toFixed(2)}
-                </PreviewVal>
-              </PreviewItem>
-              <PreviewItem>
-                <PreviewKey>Buy γ style</PreviewKey>
-                <PreviewVal>{GAMMA_LABELS[buyParams.gamma]}</PreviewVal>
-              </PreviewItem>
-              <PreviewItem>
-                <PreviewKey>Sell γ style</PreviewKey>
-                <PreviewVal>{GAMMA_LABELS[sellParams.gamma]}</PreviewVal>
-              </PreviewItem>
-            </PreviewGrid>
-          </LivePreview>
-
-          {/* Buy Curve Controls */}
-          <SubSectionTitle>Buy Curve Parameters</SubSectionTitle>
-          <SliderGroup>
-            <SliderRow>
-              <SliderLabel>
-                Curvature γ{' '}
-                <SliderHint>({GAMMA_LABELS[buyParams.gamma]})</SliderHint>
-              </SliderLabel>
-              <Slider
-                type="range"
-                min={1}
-                max={5}
-                step={1}
-                value={buyParams.gamma}
-                onChange={e =>
-                  setBuyParams((p: CurveParams) => ({
-                    ...p,
-                    gamma: Number(e.target.value)
-                  }))
-                }
-              />
-              <SliderValue>{buyParams.gamma}</SliderValue>
-            </SliderRow>
-
-            <SliderRow>
-              <SliderLabel>Max Capacity (LUSDT)</SliderLabel>
-              <Slider
-                type="range"
-                min={1000}
-                max={50000}
-                step={1000}
-                value={buyParams.x0}
-                onChange={e =>
-                  setBuyParams((p: CurveParams) => ({
-                    ...p,
-                    x0: Number(e.target.value)
-                  }))
-                }
-              />
-              <SliderValue>{(buyParams.x0 / 1000).toFixed(0)}k</SliderValue>
-            </SliderRow>
-
-            <SliderRow>
-              <SliderLabel>Fee Target (bps)</SliderLabel>
-              <Slider
-                type="range"
-                min={1}
-                max={100}
-                step={1}
-                value={Math.round(buyParams.feeT * 10000)}
-                onChange={e =>
-                  setBuyParams((p: CurveParams) => ({
-                    ...p,
-                    feeT: Number(e.target.value) / 10000
-                  }))
-                }
-              />
-              <SliderValue>{Math.round(buyParams.feeT * 10000)}</SliderValue>
-            </SliderRow>
-          </SliderGroup>
-
-          {/* Sell Curve Controls */}
-          <SubSectionTitle>Sell Curve Parameters</SubSectionTitle>
-          <SliderGroup>
-            <SliderRow>
-              <SliderLabel>
-                Curvature γ{' '}
-                <SliderHint>({GAMMA_LABELS[sellParams.gamma]})</SliderHint>
-              </SliderLabel>
-              <Slider
-                type="range"
-                min={1}
-                max={5}
-                step={1}
-                value={sellParams.gamma}
-                onChange={e =>
-                  setSellParams((p: CurveParams) => ({
-                    ...p,
-                    gamma: Number(e.target.value)
-                  }))
-                }
-              />
-              <SliderValue>{sellParams.gamma}</SliderValue>
-            </SliderRow>
-
-            <SliderRow>
-              <SliderLabel>Max Capacity (LUNES)</SliderLabel>
-              <Slider
-                type="range"
-                min={1000}
-                max={50000}
-                step={1000}
-                value={sellParams.x0}
-                onChange={e =>
-                  setSellParams((p: CurveParams) => ({
-                    ...p,
-                    x0: Number(e.target.value)
-                  }))
-                }
-              />
-              <SliderValue>{(sellParams.x0 / 1000).toFixed(0)}k</SliderValue>
-            </SliderRow>
-
-            <SliderRow>
-              <SliderLabel>Fee Target (bps)</SliderLabel>
-              <Slider
-                type="range"
-                min={1}
-                max={100}
-                step={1}
-                value={Math.round(sellParams.feeT * 10000)}
-                onChange={e =>
-                  setSellParams((p: CurveParams) => ({
-                    ...p,
-                    feeT: Number(e.target.value) / 10000
-                  }))
-                }
-              />
-              <SliderValue>{Math.round(sellParams.feeT * 10000)}</SliderValue>
-            </SliderRow>
-          </SliderGroup>
-
-          {!isConnected ? (
-            <Button onClick={() => connectWallet()}>
-              Connect Wallet to Deploy
-            </Button>
-          ) : (
-            <Button
-              disabled={
-                deployState.step !== 'idle' &&
-                deployState.step !== 'done' &&
-                deployState.step !== 'error'
-              }
-              onClick={() => {
-                resetDeploy()
-                setShowDeployModal(true)
-              }}
-            >
-              Deploy Asymmetric Strategy
-            </Button>
-          )}
-        </>
-      )}
-
-      {/* ── Delegate Tab ───────────────────────────────────────────── */}
-      {activeTab === 'delegate' && (
-        <>
-          <DelegateCard>
-            <DelegateTitle>
-              <Bot size={20} style={{ color: 'currentColor' }} />
-              AI Agent Delegation
-            </DelegateTitle>
-            <DelegateDescription>
-              Generate a restricted API Key that gives an AI agent (OpenClaw,
-              Phidata, or any MCP-compatible orchestrator) permission to
-              dynamically adjust your curve parameters — without ever being able
-              to withdraw your funds.
-            </DelegateDescription>
-
-            <FeatureList>
-              <FeatureItem>
-                Agent can only call update_curve_parameters()
-              </FeatureItem>
-              <FeatureItem>
-                You set γ guardrails — agent can&apos;t exceed your limits
-              </FeatureItem>
-              <FeatureItem>Key expires in 90 days — auto-renewable</FeatureItem>
-              <FeatureItem>
-                All actions logged in AsymmetricRebalanceLog
-              </FeatureItem>
-            </FeatureList>
-
-            <Button onClick={() => setShowDelegate(true)}>
-              Generate Restricted API Key
-            </Button>
-          </DelegateCard>
-        </>
-      )}
-
-      {/* Modals */}
-      {showDelegate && (
-        <AgentDelegationPanel
-          onClose={() => setShowDelegate(false)}
-          strategyId={lastDeployedStrategy.strategyId}
-          pairAddress={lastDeployedStrategy.pairAddress}
-        />
-      )}
-
-      {showDeployModal && (
-        <DeployOverlay
-          onClick={e =>
-            e.target === e.currentTarget &&
-            deployState.step === 'idle' &&
-            setShowDeployModal(false)
-          }
-        >
-          <DeployModal>
-            {(deployState.step === 'idle' || deployState.step === 'error') && (
-              <button
-                onClick={() => setShowDeployModal(false)}
-                style={{
-                  width: '40px',
-                  height: '40px',
-                  fontSize: '20px',
-                  cursor: 'pointer',
-                  color: 'inherit',
-                  border: 'none',
-                  background: 'transparent',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'absolute',
-                  top: '8px',
-                  right: '8px',
-                  transition: 'transform 0.3s ease-in-out, color 0.2s ease'
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.transform = 'rotate(-180deg)'
-                  e.currentTarget.style.color = '#6C38FE'
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.transform = 'rotate(0deg)'
-                  e.currentTarget.style.color = 'inherit'
-                }}
-              >
-                ✕
-              </button>
-            )}
-
-            <DeployModalTitle>Deploy Asymmetric Strategy</DeployModalTitle>
-
-            {deployState.step === 'idle' && (
-              <>
-                <DeployModalNote>
-                  Your wallet will sign <strong>2 transactions</strong>:<br />
-                  1. Instantiate the AsymmetricPair contract (you become the
-                  owner)
-                  <br />
-                  2. Seed initial liquidity — buy k ={' '}
-                  <strong>{buyParams.k}</strong>, sell k ={' '}
-                  <strong>{sellParams.k}</strong>
-                </DeployModalNote>
-                <RowButtons>
-                  <Button
-                    style={{ flex: 1 }}
-                    disabled={
-                      deployState.step !== 'idle' &&
-                      deployState.step !== 'done' &&
-                      deployState.step !== 'error'
-                    }
-                    onClick={handleDeploy}
-                  >
-                    Confirm & Deploy
-                  </Button>
-                  <Button
-                    status="secondary"
-                    width="auto"
-                    style={{ padding: '0 24px', minWidth: '120px' }}
-                    onClick={() => setShowDeployModal(false)}
-                  >
-                    Cancel
-                  </Button>
-                </RowButtons>
-              </>
-            )}
-
-            {deployState.step === 'fetching' && (
-              <StatusBox variant="loading">
-                Fetching verified contract bundle...
-              </StatusBox>
-            )}
-            {deployState.step === 'instantiating' && (
-              <StatusBox variant="loading">
-                Step 1/2 — Instantiating contract on-chain...
-                <br />
-                <span style={{ fontSize: '11px', opacity: 0.7 }}>
-                  Sign the transaction in your wallet
-                </span>
-              </StatusBox>
-            )}
-            {deployState.step === 'deploying' && (
-              <StatusBox variant="loading">
-                Step 2/2 — Seeding initial liquidity...
-                <br />
-                <span style={{ fontSize: '11px', opacity: 0.7 }}>
-                  Sign the second transaction in your wallet
-                </span>
-              </StatusBox>
-            )}
-            {deployState.step === 'registering' && (
-              <StatusBox variant="loading">
-                Registering strategy on backend...
-              </StatusBox>
-            )}
-
-            {deployState.step === 'done' && (
-              <>
-                <StatusBox variant="success">
-                  ✓ Strategy deployed successfully!
-                  <TxHashLink>{deployState.contractAddress}</TxHashLink>
-                  <TxHashLink style={{ opacity: 0.5 }}>
-                    {deployState.txHash}
-                  </TxHashLink>
-                </StatusBox>
-                <Button
-                  onClick={() => {
-                    setShowDeployModal(false)
-                    resetDeploy()
-                  }}
-                >
-                  Close
-                </Button>
-              </>
-            )}
-
-            {deployState.step === 'error' && (
-              <>
-                <StatusBox variant="error">{deployState.error}</StatusBox>
-                <RowButtons>
-                  <Button style={{ flex: 1 }} onClick={handleDeploy}>
-                    Try Again
-                  </Button>
-                  <Button
-                    status="secondary"
-                    width="auto"
-                    style={{ padding: '0 24px', minWidth: '120px' }}
-                    onClick={() => {
-                      setShowDeployModal(false)
-                      resetDeploy()
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </RowButtons>
-              </>
-            )}
-          </DeployModal>
-        </DeployOverlay>
-      )}
-    </PageLayout>
+      <ApiKeyDialog apiKey={apiKey} onClose={() => setApiKey(null)} />
+    </Page>
   )
 }
 

@@ -11,6 +11,7 @@
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
 #![allow(unexpected_cfgs)]
 #![warn(clippy::arithmetic_side_effects)]
+#![allow(clippy::too_many_arguments)] // ink! message/constructor signatures are the ABI
 
 #[ink::contract]
 mod liquidity_lock {
@@ -25,30 +26,35 @@ mod liquidity_lock {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
     pub struct LockRecord {
-        pub owner:            AccountId,
-        pub pair_address:     AccountId,
-        pub lp_token:         AccountId,
-        pub lp_amount:        Balance,
-        pub lunes_amount:     Balance,
-        pub token_amount:     Balance,
+        pub owner: AccountId,
+        pub pair_address: AccountId,
+        pub lp_token: AccountId,
+        pub lp_amount: Balance,
+        pub lunes_amount: Balance,
+        pub token_amount: Balance,
         pub unlock_timestamp: Timestamp,
-        pub tier:             u8,
-        pub withdrawn:        bool,
+        pub tier: u8,
+        pub withdrawn: bool,
     }
 
     // ── Storage ──────────────────────────────────────────────────────
 
     #[ink(storage)]
     pub struct LiquidityLock {
-        admin:       AccountId,
+        admin: AccountId,
         /// Authorised callers that may create locks (ListingManager address)
-        manager:     AccountId,
-        next_id:     LockId,
-        locks:       Mapping<LockId, LockRecord>,
+        manager: AccountId,
+        next_id: LockId,
+        locks: Mapping<LockId, LockRecord>,
         /// owner → list of their lock IDs (stored as serialised vec via a
         /// counter + separate mapping for gas efficiency)
         owner_count: Mapping<AccountId, u64>,
-        owner_lock:  Mapping<(AccountId, u64), LockId>,
+        owner_lock: Mapping<(AccountId, u64), LockId>,
+        /// lp_token → LP amount currently held for active (not withdrawn) locks
+        locked_total: Mapping<AccountId, Balance>,
+        /// Once the manager is set it can never change again: a new manager
+        /// could create fake locks over other owners' LP and drain them.
+        manager_frozen: bool,
     }
 
     // ── Events ───────────────────────────────────────────────────────
@@ -56,20 +62,20 @@ mod liquidity_lock {
     #[ink(event)]
     pub struct LiquidityLocked {
         #[ink(topic)]
-        pub lock_id:          LockId,
+        pub lock_id: LockId,
         #[ink(topic)]
-        pub owner:            AccountId,
-        pub pair_address:     AccountId,
-        pub lp_amount:        Balance,
+        pub owner: AccountId,
+        pub pair_address: AccountId,
+        pub lp_amount: Balance,
         pub unlock_timestamp: Timestamp,
-        pub tier:             u8,
+        pub tier: u8,
     }
 
     #[ink(event)]
     pub struct ManagerChanged {
         pub old_manager: AccountId,
         pub new_manager: AccountId,
-        pub changed_by:  AccountId,
+        pub changed_by: AccountId,
     }
 
     #[ink(event)]
@@ -77,7 +83,7 @@ mod liquidity_lock {
         #[ink(topic)]
         pub lock_id: LockId,
         #[ink(topic)]
-        pub owner:   AccountId,
+        pub owner: AccountId,
         pub lp_amount: Balance,
     }
 
@@ -94,6 +100,11 @@ mod liquidity_lock {
         InvalidTier,
         /// Cross-contract PSP22 transfer failed (used by withdraw)
         TransferFailed,
+        /// Manager was already set once and is frozen
+        ManagerFrozen,
+        /// This contract does not hold the LP tokens the lock claims
+        LpNotReceived,
+        Overflow,
     }
 
     pub type Result<T> = core::result::Result<T, Error>;
@@ -104,22 +115,29 @@ mod liquidity_lock {
         #[ink(constructor)]
         pub fn new(manager: AccountId) -> Self {
             Self {
-                admin:       Self::env().caller(),
+                admin: Self::env().caller(),
                 manager,
-                next_id:     0,
-                locks:       Mapping::default(),
+                next_id: 0,
+                locks: Mapping::default(),
                 owner_count: Mapping::default(),
-                owner_lock:  Mapping::default(),
+                owner_lock: Mapping::default(),
+                locked_total: Mapping::default(),
+                manager_frozen: false,
             }
         }
 
         // ── Admin ─────────────────────────────────────────────────
 
+        /// One-shot: wires the ListingManager after deployment, then freezes.
         #[ink(message)]
         pub fn set_manager(&mut self, new_manager: AccountId) -> Result<()> {
             self.ensure_admin()?;
+            if self.manager_frozen {
+                return Err(Error::ManagerFrozen);
+            }
             let old_manager = self.manager;
             self.manager = new_manager;
+            self.manager_frozen = true;
             self.env().emit_event(ManagerChanged {
                 old_manager,
                 new_manager,
@@ -130,19 +148,21 @@ mod liquidity_lock {
 
         // ── Core: create lock ─────────────────────────────────────
 
-        /// Called by ListingManager after LP tokens have been transferred here.
-        /// `lp_token` is the PSP22 address of the LP pair token.
+        /// Called by ListingManager after LP tokens have been transferred here
+        /// (same transaction). `lp_token` is the PSP22 address of the LP pair
+        /// token. Fails unless this contract's LP balance covers every active
+        /// lock of that token plus this one.
         #[ink(message)]
         pub fn create_lock(
             &mut self,
-            owner:            AccountId,
-            pair_address:     AccountId,
-            lp_token:         AccountId,
-            lp_amount:        Balance,
-            lunes_amount:     Balance,
-            token_amount:     Balance,
+            owner: AccountId,
+            pair_address: AccountId,
+            lp_token: AccountId,
+            lp_amount: Balance,
+            lunes_amount: Balance,
+            token_amount: Balance,
             lock_duration_ms: u64,
-            tier:             u8,
+            tier: u8,
         ) -> Result<LockId> {
             self.ensure_manager()?;
 
@@ -153,10 +173,17 @@ mod liquidity_lock {
                 return Err(Error::InvalidTier);
             }
 
-            let now            = self.env().block_timestamp();
-            let unlock_ts      = now.saturating_add(lock_duration_ms);
-            let lock_id        = self.next_id;
-            self.next_id       = lock_id.saturating_add(1);
+            let held = self.locked_total.get(lp_token).unwrap_or(0);
+            let new_total = held.checked_add(lp_amount).ok_or(Error::Overflow)?;
+            if Self::lp_balance(lp_token, self.env().account_id())? < new_total {
+                return Err(Error::LpNotReceived);
+            }
+            self.locked_total.insert(lp_token, &new_total);
+
+            let now = self.env().block_timestamp();
+            let unlock_ts = now.saturating_add(lock_duration_ms);
+            let lock_id = self.next_id;
+            self.next_id = lock_id.saturating_add(1);
 
             let record = LockRecord {
                 owner,
@@ -211,6 +238,9 @@ mod liquidity_lock {
             // re-enter via the PSP22 callback and double-withdraw.
             record.withdrawn = true;
             self.locks.insert(lock_id, &record);
+            let held = self.locked_total.get(record.lp_token).unwrap_or(0);
+            self.locked_total
+                .insert(record.lp_token, &held.saturating_sub(record.lp_amount));
 
             // Interactions: cross-contract PSP22 transfer of the LP tokens
             // back to the owner. The contract holds the LP tokens (received
@@ -235,14 +265,15 @@ mod liquidity_lock {
                         .push_arg(record.lp_amount)
                         .push_arg(ink::prelude::vec::Vec::<u8>::new()), // data
                     )
-                    .returns::<ink::MessageResult<core::result::Result<(), u8>>>()
+                    // try_invoke already wraps the LangError layer; only the
+                    // Ok(()) byte of the PSP22 result is decoded.
+                    .returns::<core::result::Result<(), u8>>()
                     .try_invoke();
 
-                let transferred = matches!(transfer_result, Ok(Ok(Ok(Ok(())))));
+                let transferred = matches!(transfer_result, Ok(Ok(Ok(()))));
                 if !transferred {
-                    // Rollback on failure so retry can succeed.
-                    record.withdrawn = false;
-                    self.locks.insert(lock_id, &record);
+                    // Err reverts all state of this message (ink! 4), so the
+                    // withdrawn flag / locked_total are rolled back.
                     return Err(Error::TransferFailed);
                 }
             }
@@ -276,10 +307,7 @@ mod liquidity_lock {
         #[ink(message)]
         pub fn is_locked(&self, lock_id: LockId) -> bool {
             match self.locks.get(lock_id) {
-                Some(r) => {
-                    !r.withdrawn
-                        && self.env().block_timestamp() < r.unlock_timestamp
-                }
+                Some(r) => !r.withdrawn && self.env().block_timestamp() < r.unlock_timestamp,
                 None => false,
             }
         }
@@ -301,6 +329,31 @@ mod liquidity_lock {
                 return Err(Error::Unauthorized);
             }
             Ok(())
+        }
+
+        /// PSP22 balance_of(owner) on `token`. Skipped under unit tests (no
+        /// contract runtime): returns u128::MAX so lock accounting is testable.
+        #[cfg(not(test))]
+        fn lp_balance(token: AccountId, owner: AccountId) -> Result<Balance> {
+            ink::env::call::build_call::<ink::env::DefaultEnvironment>()
+                .call(token)
+                .gas_limit(0)
+                .transferred_value(0)
+                .exec_input(
+                    ink::env::call::ExecutionInput::new(ink::env::call::Selector::new(
+                        ink::selector_bytes!("PSP22::balance_of"),
+                    ))
+                    .push_arg(owner),
+                )
+                .returns::<Balance>()
+                .try_invoke()
+                .map_err(|_| Error::LpNotReceived)?
+                .map_err(|_| Error::LpNotReceived)
+        }
+
+        #[cfg(test)]
+        fn lp_balance(_token: AccountId, _owner: AccountId) -> Result<Balance> {
+            Ok(Balance::MAX)
         }
 
         fn ensure_manager(&self) -> Result<()> {
@@ -406,7 +459,16 @@ mod liquidity_lock {
 
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             let lock_id = contract
-                .create_lock(accounts.bob, accounts.charlie, accounts.django, 1_000, 500, 500, 0, 1)
+                .create_lock(
+                    accounts.bob,
+                    accounts.charlie,
+                    accounts.django,
+                    1_000,
+                    500,
+                    500,
+                    0,
+                    1,
+                )
                 .unwrap();
 
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
@@ -416,18 +478,82 @@ mod liquidity_lock {
         }
 
         #[ink::test]
+        fn manager_is_one_shot() {
+            let accounts = default_accounts();
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
+            let mut contract = LiquidityLock::new(accounts.alice);
+            contract.set_manager(accounts.bob).unwrap();
+            assert_eq!(contract.manager(), accounts.bob);
+            assert_eq!(
+                contract.set_manager(accounts.alice),
+                Err(Error::ManagerFrozen)
+            );
+            assert_eq!(contract.manager(), accounts.bob);
+        }
+
+        #[ink::test]
+        fn locked_total_tracks_locks_and_withdrawals() {
+            let accounts = default_accounts();
+            let mut contract = LiquidityLock::new(accounts.alice);
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
+            contract
+                .create_lock(
+                    accounts.bob,
+                    accounts.charlie,
+                    accounts.django,
+                    1_000,
+                    1,
+                    1,
+                    0,
+                    1,
+                )
+                .unwrap();
+            contract
+                .create_lock(
+                    accounts.eve,
+                    accounts.charlie,
+                    accounts.django,
+                    500,
+                    1,
+                    1,
+                    0,
+                    1,
+                )
+                .unwrap();
+            assert_eq!(contract.locked_total.get(accounts.django), Some(1_500));
+
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
+            contract.withdraw(0).unwrap();
+            assert_eq!(contract.locked_total.get(accounts.django), Some(500));
+        }
+
+        #[ink::test]
         fn invalid_tier_rejected() {
             let accounts = default_accounts();
             let mut contract = LiquidityLock::new(accounts.alice);
 
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             let result = contract.create_lock(
-                accounts.bob, accounts.charlie, accounts.django, 1_000, 500, 500, 0, 0,
+                accounts.bob,
+                accounts.charlie,
+                accounts.django,
+                1_000,
+                500,
+                500,
+                0,
+                0,
             );
             assert_eq!(result, Err(Error::InvalidTier));
 
             let result2 = contract.create_lock(
-                accounts.bob, accounts.charlie, accounts.django, 1_000, 500, 500, 0, 4,
+                accounts.bob,
+                accounts.charlie,
+                accounts.django,
+                1_000,
+                500,
+                500,
+                0,
+                4,
             );
             assert_eq!(result2, Err(Error::InvalidTier));
         }

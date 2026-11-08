@@ -40,9 +40,9 @@ mod complete_staking_rewards_integration_tests {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum EarlyAdopterTier {
         None,
-        Top1000,  // +10% por 1 mês
-        Top500,   // +25% por 2 meses
-        Top100,   // +50% por 3 meses
+        Top1000, // +10% por 1 mês
+        Top500,  // +25% por 2 meses
+        Top100,  // +50% por 3 meses
     }
 
     /// Mock do trading rewards com anti-fraude
@@ -104,8 +104,15 @@ mod complete_staking_rewards_integration_tests {
             }
         }
 
-        pub fn stake(&mut self, user: String, amount: u128, duration: u64, current_time: u64) -> Result<(), String> {
-            if amount < 100_000_000_000 { // MIN_STAKE = 1000 LUNES
+        pub fn stake(
+            &mut self,
+            user: String,
+            amount: u128,
+            duration: u64,
+            current_time: u64,
+        ) -> Result<(), String> {
+            if amount < 100_000_000_000 {
+                // MIN_STAKE = 1000 LUNES
                 return Err("Minimum stake not met".to_string());
             }
 
@@ -143,18 +150,30 @@ mod complete_staking_rewards_integration_tests {
         }
 
         pub fn determine_early_adopter_tier(&mut self) -> EarlyAdopterTier {
-            let top_100 = *self.early_adopter_counts.get(&EarlyAdopterTier::Top100).unwrap_or(&0);
-            let top_500 = *self.early_adopter_counts.get(&EarlyAdopterTier::Top500).unwrap_or(&0);
-            let top_1000 = *self.early_adopter_counts.get(&EarlyAdopterTier::Top1000).unwrap_or(&0);
+            let top_100 = *self
+                .early_adopter_counts
+                .get(&EarlyAdopterTier::Top100)
+                .unwrap_or(&0);
+            let top_500 = *self
+                .early_adopter_counts
+                .get(&EarlyAdopterTier::Top500)
+                .unwrap_or(&0);
+            let top_1000 = *self
+                .early_adopter_counts
+                .get(&EarlyAdopterTier::Top1000)
+                .unwrap_or(&0);
 
             if top_100 < 100 {
-                self.early_adopter_counts.insert(EarlyAdopterTier::Top100, top_100 + 1);
+                self.early_adopter_counts
+                    .insert(EarlyAdopterTier::Top100, top_100 + 1);
                 EarlyAdopterTier::Top100
             } else if top_500 < 500 {
-                self.early_adopter_counts.insert(EarlyAdopterTier::Top500, top_500 + 1);
+                self.early_adopter_counts
+                    .insert(EarlyAdopterTier::Top500, top_500 + 1);
                 EarlyAdopterTier::Top500
             } else if top_1000 < 1000 {
-                self.early_adopter_counts.insert(EarlyAdopterTier::Top1000, top_1000 + 1);
+                self.early_adopter_counts
+                    .insert(EarlyAdopterTier::Top1000, top_1000 + 1);
                 EarlyAdopterTier::Top1000
             } else {
                 EarlyAdopterTier::None
@@ -177,7 +196,9 @@ mod complete_staking_rewards_integration_tests {
 
             let amount_to_distribute = self.trading_rewards_pool;
             // Collect weights first (immutable phase) then apply rewards (mutable phase)
-            let user_weights: Vec<(String, u128)> = self.stakers.iter()
+            let user_weights: Vec<(String, u128)> = self
+                .stakers
+                .iter()
                 .filter(|(_, p)| p.active)
                 .map(|(u, p)| (u.clone(), self.calculate_staker_weight(p)))
                 .collect();
@@ -193,7 +214,8 @@ mod complete_staking_rewards_integration_tests {
         }
 
         pub fn calculate_total_weight(&self) -> u128 {
-            self.stakers.values()
+            self.stakers
+                .values()
                 .filter(|p| p.active)
                 .map(|p| self.calculate_staker_weight(p))
                 .sum()
@@ -208,19 +230,22 @@ mod complete_staking_rewards_integration_tests {
             };
 
             let quantity_multiplier = self.get_quantity_multiplier(position.amount);
-            
+
             position.amount * tier_multiplier * quantity_multiplier / 10000
         }
 
         pub fn get_quantity_multiplier(&self, amount: u128) -> u128 {
-            if amount >= 250_000_000_000_000 {      // 2.5M+ LUNES
-                13000  // 1.3x
-            } else if amount >= 75_000_000_000_000 { // 750k+ LUNES
-                12000  // 1.2x
-            } else if amount >= 15_000_000_000_000 { // 150k+ LUNES
-                11000  // 1.1x
+            if amount >= 250_000_000_000_000 {
+                // 2.5M+ LUNES
+                13000 // 1.3x
+            } else if amount >= 75_000_000_000_000 {
+                // 750k+ LUNES
+                12000 // 1.2x
+            } else if amount >= 15_000_000_000_000 {
+                // 150k+ LUNES
+                11000 // 1.1x
             } else {
-                10000  // 1.0x (< 150k LUNES)
+                10000 // 1.0x (< 150k LUNES)
             }
         }
 
@@ -228,11 +253,13 @@ mod complete_staking_rewards_integration_tests {
             if let Some(position) = self.stakers.get_mut(user) {
                 if position.active {
                     position.governance_participation += 1;
-                    
+
                     // Bônus a cada 8 votos
                     if position.governance_participation % 8 == 0 {
                         let current_bonus = *self.governance_bonuses.get(user).unwrap_or(&0);
-                        self.governance_bonuses.insert(user.to_string(), current_bonus + 20_000_000_000); // 200 LUNES
+                        self.governance_bonuses
+                            .insert(user.to_string(), current_bonus + 20_000_000_000);
+                        // 200 LUNES
                     }
                 }
             }
@@ -253,9 +280,15 @@ mod complete_staking_rewards_integration_tests {
             }
         }
 
-        pub fn track_volume(&mut self, trader: String, volume: u128, current_time: u64) -> Result<(), String> {
+        pub fn track_volume(
+            &mut self,
+            trader: String,
+            volume: u128,
+            current_time: u64,
+        ) -> Result<(), String> {
             // Validações anti-fraude
-            if volume < 100_000_000_000 { // MIN_TRADE_VOLUME = 1000 LUNES
+            if volume < 100_000_000_000 {
+                // MIN_TRADE_VOLUME = 1000 LUNES
                 return Err("Volume too small".to_string());
             }
 
@@ -265,36 +298,46 @@ mod complete_staking_rewards_integration_tests {
 
             // Cooldown check
             if let Some(last_trade) = self.last_trades.get(&trader) {
-                if current_time - last_trade < 60 { // TRADE_COOLDOWN = 1 minuto
+                if current_time - last_trade < 60 {
+                    // TRADE_COOLDOWN = 1 minuto
                     return Err("Trade cooldown active".to_string());
                 }
             }
 
             // Daily limit check
-            let (daily_vol, reset_time) = *self.daily_volumes.get(&trader).unwrap_or(&(0, current_time));
+            let (daily_vol, reset_time) = *self
+                .daily_volumes
+                .get(&trader)
+                .unwrap_or(&(0, current_time));
             let mut current_daily = daily_vol;
-            
+
             // Reset diário
-            if current_time - reset_time > 86400 { // 24 horas
+            if current_time - reset_time > 86400 {
+                // 24 horas
                 current_daily = 0;
             }
 
-            if current_daily + volume >= 100_000_000_000_000 { // MAX_DAILY = 1M LUNES
+            if current_daily + volume >= 100_000_000_000_000 {
+                // MAX_DAILY = 1M LUNES
                 return Err("Daily limit exceeded".to_string());
             }
 
             // Atualiza trader
-            let mut profile = self.traders.get(&trader).cloned().unwrap_or_else(|| TraderProfile {
-                monthly_volume: 0,
-                total_volume: 0,
-                daily_volume: current_daily,
-                tier: TradingTier::Bronze,
-                pending_rewards: 0,
-                claimed_rewards: 0,
-                trade_count: 0,
-                suspicious_flags: 0,
-                last_trade_time: current_time,
-            });
+            let mut profile = self
+                .traders
+                .get(&trader)
+                .cloned()
+                .unwrap_or_else(|| TraderProfile {
+                    monthly_volume: 0,
+                    total_volume: 0,
+                    daily_volume: current_daily,
+                    tier: TradingTier::Bronze,
+                    pending_rewards: 0,
+                    claimed_rewards: 0,
+                    trade_count: 0,
+                    suspicious_flags: 0,
+                    last_trade_time: current_time,
+                });
 
             profile.total_volume += volume;
             profile.monthly_volume += volume;
@@ -305,17 +348,21 @@ mod complete_staking_rewards_integration_tests {
 
             self.traders.insert(trader.clone(), profile);
             self.last_trades.insert(trader.clone(), current_time);
-            self.daily_volumes.insert(trader, (current_daily + volume, current_time));
+            self.daily_volumes
+                .insert(trader, (current_daily + volume, current_time));
 
             Ok(())
         }
 
         pub fn calculate_trading_tier(&self, monthly_volume: u128) -> TradingTier {
-            if monthly_volume >= 20_000_000_000_000 {  // 200k LUNES
+            if monthly_volume >= 20_000_000_000_000 {
+                // 200k LUNES
                 TradingTier::Platinum
-            } else if monthly_volume >= 5_000_000_000_000 { // 50k LUNES
+            } else if monthly_volume >= 5_000_000_000_000 {
+                // 50k LUNES
                 TradingTier::Gold
-            } else if monthly_volume >= 1_000_000_000_000 { // 10k LUNES
+            } else if monthly_volume >= 1_000_000_000_000 {
+                // 10k LUNES
                 TradingTier::Silver
             } else {
                 TradingTier::Bronze
@@ -343,12 +390,14 @@ mod complete_staking_rewards_integration_tests {
 
         pub fn simulate_fee_collection(&mut self, total_fee: u128) {
             self.total_fees_collected += total_fee;
-            
+
             // Nova distribuição: 60% LPs, 15% Protocol, 15% Trading, 10% Staking
             let rewards_allocation = total_fee * 25 / 100; // 15% Trading + 10% Staking
-            
-            let (trading_amount, staking_amount) = self.trading_rewards.receive_fee_allocation(rewards_allocation);
-            
+
+            let (trading_amount, staking_amount) = self
+                .trading_rewards
+                .receive_fee_allocation(rewards_allocation);
+
             // Envia staking amount para o contrato de staking
             self.staking.fund_staking_rewards(staking_amount);
         }
@@ -361,12 +410,12 @@ mod complete_staking_rewards_integration_tests {
     #[test]
     fn test_complete_staking_rewards_system() {
         let mut system = CompleteLunexSystem::new();
-        
+
         println!("🚀 INICIANDO TESTE COMPLETO DO SISTEMA DE PREMIAÇÃO");
-        
+
         // === FASE 1: SETUP INICIAL ===
         println!("\n📋 FASE 1: Setup Inicial");
-        
+
         // Early adopters fazem stake
         let early_adopters = vec![
             ("alice", 50_000_000_000_000, 200 * 24 * 60 * 30), // 500k LUNES, 200 dias (Platinum)
@@ -375,10 +424,14 @@ mod complete_staking_rewards_integration_tests {
         ];
 
         for (user, amount, duration) in early_adopters {
-            system.staking.stake(user.to_string(), amount, duration, system.current_time).unwrap();
-            println!("✅ {} staked {} LUNES for {} days - Tier: {:?}, Early: {:?}", 
-                user, 
-                amount / 100_000_000, 
+            system
+                .staking
+                .stake(user.to_string(), amount, duration, system.current_time)
+                .unwrap();
+            println!(
+                "✅ {} staked {} LUNES for {} days - Tier: {:?}, Early: {:?}",
+                user,
+                amount / 100_000_000,
                 duration / (24 * 60 * 30),
                 system.staking.stakers[user].tier,
                 system.staking.stakers[user].early_adopter_tier
@@ -387,49 +440,68 @@ mod complete_staking_rewards_integration_tests {
 
         // === FASE 2: ATIVIDADE DE TRADING ===
         println!("\n📈 FASE 2: Simulando Atividade de Trading");
-        
+
         system.advance_time(60); // Aguarda cooldown
-        
+
         // Alice (whale trader)
         for i in 0..10 {
             system.advance_time(70); // Aguarda cooldown entre trades
             let volume = 5_000_000_000_000; // 50k LUNES por trade
-            system.trading_rewards.track_volume("alice".to_string(), volume, system.current_time).unwrap();
-            
+            system
+                .trading_rewards
+                .track_volume("alice".to_string(), volume, system.current_time)
+                .unwrap();
+
             // Simula fees: 0.5% do volume
             let fee = volume * 5 / 1000;
             system.simulate_fee_collection(fee);
         }
-        
+
         // Bob (regular trader)
         for i in 0..5 {
             system.advance_time(70);
             let volume = 2_000_000_000_000; // 20k LUNES por trade
-            system.trading_rewards.track_volume("bob".to_string(), volume, system.current_time).unwrap();
-            
+            system
+                .trading_rewards
+                .track_volume("bob".to_string(), volume, system.current_time)
+                .unwrap();
+
             let fee = volume * 5 / 1000;
             system.simulate_fee_collection(fee);
         }
-        
+
         // Charlie (small trader)
         for i in 0..3 {
             system.advance_time(70);
             let volume = 500_000_000_000; // 5k LUNES por trade
-            system.trading_rewards.track_volume("charlie".to_string(), volume, system.current_time).unwrap();
-            
+            system
+                .trading_rewards
+                .track_volume("charlie".to_string(), volume, system.current_time)
+                .unwrap();
+
             let fee = volume * 5 / 1000;
             system.simulate_fee_collection(fee);
         }
 
-        println!("💰 Total de fees coletadas: {} LUNES", system.total_fees_collected / 100_000_000);
-        println!("📊 Trading rewards pool: {} LUNES", system.trading_rewards.rewards_pool / 100_000_000);
-        println!("🎁 Staking rewards pool: {} LUNES", system.staking.trading_rewards_pool / 100_000_000);
+        println!(
+            "💰 Total de fees coletadas: {} LUNES",
+            system.total_fees_collected / 100_000_000
+        );
+        println!(
+            "📊 Trading rewards pool: {} LUNES",
+            system.trading_rewards.rewards_pool / 100_000_000
+        );
+        println!(
+            "🎁 Staking rewards pool: {} LUNES",
+            system.staking.trading_rewards_pool / 100_000_000
+        );
 
         // === FASE 3: VERIFICAÇÃO DE TIERS ===
         println!("\n🏆 FASE 3: Verificação de Tiers de Trading");
-        
+
         for (user, profile) in &system.trading_rewards.traders {
-            println!("👤 {}: Volume mensal: {} LUNES, Tier: {:?}, Trades: {}", 
+            println!(
+                "👤 {}: Volume mensal: {} LUNES, Tier: {:?}, Trades: {}",
                 user,
                 profile.monthly_volume / 100_000_000,
                 profile.tier,
@@ -439,9 +511,12 @@ mod complete_staking_rewards_integration_tests {
 
         // === FASE 4: DISTRIBUIÇÃO DE REWARDS ===
         println!("\n💎 FASE 4: Distribuição de Trading Rewards para Stakers");
-        
-        system.staking.distribute_trading_rewards(system.current_time).unwrap();
-        
+
+        system
+            .staking
+            .distribute_trading_rewards(system.current_time)
+            .unwrap();
+
         for (user, position) in &system.staking.stakers {
             let base_apy = match position.tier {
                 StakingTier::Bronze => 8,
@@ -449,7 +524,7 @@ mod complete_staking_rewards_integration_tests {
                 StakingTier::Gold => 12,
                 StakingTier::Platinum => 15,
             };
-            
+
             println!("💰 {}: Staked: {} LUNES, Tier: {:?} ({}% APY), Trading Rewards: {} LUNES, Early: {:?}", 
                 user,
                 position.amount / 100_000_000,
@@ -462,55 +537,88 @@ mod complete_staking_rewards_integration_tests {
 
         // === FASE 5: GOVERNANÇA ===
         println!("\n🗳️ FASE 5: Participação na Governança");
-        
+
         // Simula votações
         for i in 0..10 {
             system.staking.record_vote("alice").unwrap();
             system.staking.record_vote("bob").unwrap();
-            if i < 5 { // Charlie participa menos
+            if i < 5 {
+                // Charlie participa menos
                 system.staking.record_vote("charlie").unwrap();
             }
         }
 
         for (user, bonus) in &system.staking.governance_bonuses {
-            println!("🏛️ {}: Bônus de governança: {} LUNES", user, bonus / 100_000_000);
+            println!(
+                "🏛️ {}: Bônus de governança: {} LUNES",
+                user,
+                bonus / 100_000_000
+            );
         }
 
         // === FASE 6: TESTE ANTI-FRAUDE ===
         println!("\n🛡️ FASE 6: Teste de Medidas Anti-Fraude");
-        
+
         // Tentativa de spam (volume muito baixo)
         system.advance_time(70);
-        let spam_result = system.trading_rewards.track_volume("spammer".to_string(), 1_000_000_000, system.current_time); // 10 LUNES
+        let spam_result = system.trading_rewards.track_volume(
+            "spammer".to_string(),
+            1_000_000_000,
+            system.current_time,
+        ); // 10 LUNES
         assert!(spam_result.is_err());
         println!("❌ Spam bloqueado: {}", spam_result.unwrap_err());
-        
+
         // Tentativa de trade muito rápido (cooldown)
         // alice faz um trade válido, depois tenta de novo em 10s
-        system.trading_rewards.track_volume("alice".to_string(), 1_000_000_000_000, system.current_time).unwrap();
+        system
+            .trading_rewards
+            .track_volume("alice".to_string(), 1_000_000_000_000, system.current_time)
+            .unwrap();
         system.advance_time(10); // Apenas 10 segundos
-        let cooldown_result = system.trading_rewards.track_volume("alice".to_string(), 1_000_000_000_000, system.current_time);
+        let cooldown_result = system.trading_rewards.track_volume(
+            "alice".to_string(),
+            1_000_000_000_000,
+            system.current_time,
+        );
         assert!(cooldown_result.is_err());
         println!("❌ Cooldown ativo: {}", cooldown_result.unwrap_err());
 
         // === FASE 7: RESULTADOS FINAIS ===
         println!("\n📊 RESUMO FINAL DO SISTEMA");
         println!("{}", "=".repeat(50));
-        
-        println!("💰 Total de fees coletadas: {} LUNES", system.total_fees_collected / 100_000_000);
-        println!("📈 Total staked: {} LUNES", system.staking.total_staked / 100_000_000);
-        println!("🎁 Trading rewards distribuídas para stakers: {} LUNES", 
-            system.staking.stakers.values().map(|p| p.pending_rewards).sum::<u128>() / 100_000_000);
-        
+
+        println!(
+            "💰 Total de fees coletadas: {} LUNES",
+            system.total_fees_collected / 100_000_000
+        );
+        println!(
+            "📈 Total staked: {} LUNES",
+            system.staking.total_staked / 100_000_000
+        );
+        println!(
+            "🎁 Trading rewards distribuídas para stakers: {} LUNES",
+            system
+                .staking
+                .stakers
+                .values()
+                .map(|p| p.pending_rewards)
+                .sum::<u128>()
+                / 100_000_000
+        );
+
         let total_governance_bonus: u128 = system.staking.governance_bonuses.values().sum();
-        println!("🏛️ Total bônus de governança: {} LUNES", total_governance_bonus / 100_000_000);
-        
+        println!(
+            "🏛️ Total bônus de governança: {} LUNES",
+            total_governance_bonus / 100_000_000
+        );
+
         // Verificações de integridade
         assert!(system.staking.total_staked > 0);
         assert!(system.staking.trading_rewards_pool == 0); // Pool foi distribuído
         assert!(system.trading_rewards.rewards_pool > 0); // Sobrou para traders
         assert!(total_governance_bonus > 0); // Bônus foram gerados
-        
+
         println!("\n✅ TESTE COMPLETO PASSOU! SISTEMA FUNCIONANDO PERFEITAMENTE!");
         println!("🚀 A Lunex DEX está pronta para revolucionar o DeFi!");
     }
@@ -518,35 +626,54 @@ mod complete_staking_rewards_integration_tests {
     #[test]
     fn test_anti_fraud_comprehensive() {
         let mut system = CompleteLunexSystem::new();
-        
+
         println!("🛡️ TESTE ABRANGENTE DE MEDIDAS ANTI-FRAUDE");
-        
+
         // 1. Volume mínimo
-        assert!(system.trading_rewards.track_volume("user1".to_string(), 50_000_000_000, system.current_time).is_err());
-        
+        assert!(system
+            .trading_rewards
+            .track_volume("user1".to_string(), 50_000_000_000, system.current_time)
+            .is_err());
+
         // 2. Cooldown
-        system.trading_rewards.track_volume("user2".to_string(), 1_000_000_000_000, system.current_time).unwrap();
-        assert!(system.trading_rewards.track_volume("user2".to_string(), 1_000_000_000_000, system.current_time + 30).is_err());
-        
+        system
+            .trading_rewards
+            .track_volume("user2".to_string(), 1_000_000_000_000, system.current_time)
+            .unwrap();
+        assert!(system
+            .trading_rewards
+            .track_volume(
+                "user2".to_string(),
+                1_000_000_000_000,
+                system.current_time + 30
+            )
+            .is_err());
+
         // 3. Limite diário
         system.advance_time(70);
         let large_volume = 50_000_000_000_000; // 500k LUNES
-        system.trading_rewards.track_volume("whale".to_string(), large_volume, system.current_time).unwrap();
+        system
+            .trading_rewards
+            .track_volume("whale".to_string(), large_volume, system.current_time)
+            .unwrap();
         system.advance_time(70);
-        assert!(system.trading_rewards.track_volume("whale".to_string(), large_volume, system.current_time).is_err());
-        
+        assert!(system
+            .trading_rewards
+            .track_volume("whale".to_string(), large_volume, system.current_time)
+            .is_err());
+
         println!("✅ Todas as medidas anti-fraude funcionando corretamente!");
     }
 
     #[test]
     fn test_staking_tiers_and_multipliers() {
         let mut staking = MockStakingContract::new("admin".to_string());
-        
+
         // Testa diferentes durações
         let test_cases = vec![
-            (20 * 24 * 60 * 30, StakingTier::Bronze),   // 20 dias
-            (50 * 24 * 60 * 30, StakingTier::Silver),   // 50 dias
-            (120 * 24 * 60 * 30, StakingTier::Gold),    // 120 dias
+            (20 * 24 * 60 * 30, StakingTier::Bronze),    // 20 dias
+            (50 * 24 * 60 * 30, StakingTier::Silver),    // 50 dias
+            (120 * 24 * 60 * 30, StakingTier::Gold),     // 120 dias
             (200 * 24 * 60 * 30, StakingTier::Platinum), // 200 dias
         ];
 
@@ -555,7 +682,7 @@ mod complete_staking_rewards_integration_tests {
             assert_eq!(tier, expected_tier);
             println!("✅ {} dias = {:?}", duration / (24 * 60 * 30), tier);
         }
-        
+
         // Testa multiplicadores de quantidade
         let amount_tests = vec![
             (5_000_000_000_000, 10000),   // 50k LUNES = 1.0x
@@ -567,7 +694,11 @@ mod complete_staking_rewards_integration_tests {
         for (amount, expected_multiplier) in amount_tests {
             let multiplier = staking.get_quantity_multiplier(amount);
             assert_eq!(multiplier, expected_multiplier);
-            println!("✅ {} LUNES = {}x multiplier", amount / 100_000_000, multiplier as f64 / 10000.0);
+            println!(
+                "✅ {} LUNES = {}x multiplier",
+                amount / 100_000_000,
+                multiplier as f64 / 10000.0
+            );
         }
     }
 }
@@ -576,7 +707,7 @@ mod complete_staking_rewards_integration_tests {
 pub fn run_all_tests() {
     println!("🚀 EXECUTANDO TODOS OS TESTES DO SISTEMA LUNEX DEX");
     println!("{}", "=".repeat(60));
-    
+
     // Os testes serão executados automaticamente pelo cargo test
     // Esta função serve como documentação
 }

@@ -7,6 +7,10 @@ import {
   verifyWalletActionSignature,
   verifyWalletReadSignature,
 } from '../middleware/auth';
+import {
+  readAuthSchema,
+  verifyWalletReadAccess,
+} from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
 
 const router = Router();
@@ -51,6 +55,14 @@ const CreateApiKeySchema = z.object({
 const CreateApiKeyBootstrapSchema = CreateApiKeySchema.extend({
   walletAddress: z.string().min(8).max(128),
 }).merge(SignedWalletActionSchema);
+
+// BE-13: owner-wallet signed key management (works even when an attacker
+// holds a leaked API key — no API key is accepted on these routes).
+const WalletRevokeAllSchema = z
+  .object({ walletAddress: z.string().min(8).max(128) })
+  .merge(SignedWalletActionSchema);
+
+const WalletRotateApiKeySchema = CreateApiKeyBootstrapSchema;
 
 const RecordStakeSchema = z.object({
   amount: z.coerce.number().positive(),
@@ -148,7 +160,7 @@ router.get(
   '/by-wallet/:address',
   async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const parsed = SignedWalletActionSchema.safeParse({
+      const parsed = readAuthSchema(req, SignedWalletActionSchema).safeParse({
         ...req.query,
         ...getSignedAuthInput(req),
       });
@@ -157,7 +169,7 @@ router.get(
           .status(400)
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
-      const auth = await verifyWalletReadSignature({
+      const auth = await verifyWalletReadAccess(req, {
         action: 'agents.by-wallet',
         address: req.params.address,
         nonce: parsed.data.nonce,
@@ -193,7 +205,8 @@ router.get(
 
 router.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const agent = await agentService.getAgentProfile(req.params.id);
+    // BE-11: public view, no owner wallet.
+    const agent = await agentService.getPublicAgentProfile(req.params.id);
     res.json({ agent });
   } catch (err) {
     next(err);
@@ -208,6 +221,7 @@ router.post(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       let parsedData: z.infer<typeof CreateApiKeySchema>;
+      let maxExpiresAt: Date | undefined;
 
       if (req.agent) {
         if (!ensureAgentScope(req, res)) return;
@@ -225,6 +239,16 @@ router.post(
               'Cannot create API key with permissions outside authenticated key scope',
           });
         }
+        // BE-13: a child key never outlives the key that minted it.
+        const parentKey = (await agentService.getApiKeys(req.params.id)).find(
+          (key) => key.id === req.agent!.keyId,
+        );
+        if (!parentKey) {
+          return res
+            .status(401)
+            .json({ error: 'Authenticated API key not found' });
+        }
+        maxExpiresAt = new Date(parentKey.expiresAt);
         parsedData = parsed.data;
       } else {
         const parsed = CreateApiKeyBootstrapSchema.safeParse(req.body);
@@ -245,6 +269,7 @@ router.post(
           return res.status(403).json({
             error:
               'Existing API keys require authenticated agent key management',
+            hint: 'The owner wallet can sign POST /agents/:id/api-keys/rotate or /revoke-all',
           });
         }
         const auth = await verifyWalletActionSignature({
@@ -264,7 +289,97 @@ router.post(
         parsedData = parsed.data;
       }
 
-      const result = await agentService.createApiKey(req.params.id, parsedData);
+      const result = await agentService.createApiKey(
+        req.params.id,
+        parsedData,
+        { maxExpiresAt },
+      );
+      res.status(201).json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * BE-13 — emergency revoke, signed by the agent's OWNER WALLET. Works while a
+ * leaked key is still active (no API key is involved), so the owner can
+ * always lock an attacker out.
+ */
+router.post(
+  '/:id/api-keys/revoke-all',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = WalletRevokeAllSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+      const agent = await agentService.getAgentProfile(req.params.id);
+      if (agent.walletAddress !== parsed.data.walletAddress) {
+        return res
+          .status(403)
+          .json({ error: 'Wallet signature does not match target agent' });
+      }
+      const auth = await verifyWalletActionSignature({
+        action: 'agents.revoke-all-api-keys',
+        address: parsed.data.walletAddress,
+        nonce: parsed.data.nonce,
+        timestamp: parsed.data.timestamp,
+        signature: parsed.data.signature,
+        fields: { agentId: req.params.id },
+      });
+      if (!auth.ok) return res.status(401).json({ error: auth.error });
+
+      const result = await agentService.revokeAllApiKeys(req.params.id);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * BE-13 — rotation signed by the OWNER WALLET: revokes every key, then issues
+ * a single new one (returned once).
+ */
+router.post(
+  '/:id/api-keys/rotate',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = WalletRotateApiKeySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res
+          .status(400)
+          .json({ error: 'Validation failed', details: parsed.error.issues });
+      }
+      const agent = await agentService.getAgentProfile(req.params.id);
+      if (agent.walletAddress !== parsed.data.walletAddress) {
+        return res
+          .status(403)
+          .json({ error: 'Wallet signature does not match target agent' });
+      }
+      const auth = await verifyWalletActionSignature({
+        action: 'agents.rotate-api-key',
+        address: parsed.data.walletAddress,
+        nonce: parsed.data.nonce,
+        timestamp: parsed.data.timestamp,
+        signature: parsed.data.signature,
+        fields: {
+          agentId: req.params.id,
+          label: parsed.data.label,
+          permissions: parsed.data.permissions,
+          expiresInDays: parsed.data.expiresInDays,
+        },
+      });
+      if (!auth.ok) return res.status(401).json({ error: auth.error });
+
+      const result = await agentService.rotateApiKey(req.params.id, {
+        label: parsed.data.label,
+        permissions: parsed.data.permissions,
+        expiresInDays: parsed.data.expiresInDays,
+      });
       res.status(201).json(result);
     } catch (err) {
       next(err);
@@ -278,7 +393,10 @@ router.delete(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       if (!ensureAgentScope(req, res)) return;
-      await agentService.revokeApiKey(req.params.id, req.params.keyId);
+      await agentService.revokeApiKey(req.params.id, req.params.keyId, {
+        actorKeyId: req.agent!.keyId,
+        actorPermissions: req.agent!.permissions,
+      });
       res.json({ revoked: true });
     } catch (err) {
       next(err);

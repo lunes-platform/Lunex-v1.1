@@ -15,6 +15,7 @@ import { ApiPromise, WsProvider } from '@polkadot/api';
 import { ContractPromise } from '@polkadot/api-contract';
 import { config } from '../config';
 import { log } from '../utils/logger';
+import { dryRunGasLimit } from '../utils/contractGas';
 import type { StakeChainVerifier } from './agentService';
 
 // LUNES has 8 decimals (matches rewardPayoutService).
@@ -99,8 +100,10 @@ class StakingChainVerifier implements StakeChainVerifier {
       this.getStakeKey
     ];
 
+    // Explicit WeightV2: Lunes pallet-contracts rejects the `-1` sentinel
+    // with OutOfGas, which made every stake verification fail closed.
     const { result, output } = await queryMethod(walletAddress, {
-      gasLimit: -1,
+      gasLimit: dryRunGasLimit(this.api),
       storageDepositLimit: null,
     });
 

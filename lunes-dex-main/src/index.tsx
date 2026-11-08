@@ -6,7 +6,6 @@ import { ThemeProvider } from 'styled-components'
 import theme from 'theme'
 import { AppProvider } from './context/useContext'
 import { SDKProvider } from './context/SDKContext'
-import { ToastProvider } from './components/feedback/ToastProvider'
 
 if (import.meta.env.PROD) {
   const noop = () => undefined
@@ -23,9 +22,7 @@ root.render(
     <ThemeProvider theme={theme}>
       <SDKProvider>
         <AppProvider>
-          <ToastProvider>
-            <App />
-          </ToastProvider>
+          <App />
           <GlobalStyles />
         </AppProvider>
       </SDKProvider>
