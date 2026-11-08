@@ -960,8 +960,8 @@ pub mod router_contract {
                 return Err(RouterError::ExcessiveInputAmount);
             }
 
-            // Calcular amounts necessários (reverso)
-            let amounts = self.get_amounts_in(amount_out, &path)?;
+            // Calcular amounts necessários (reverso, com verificação de price impact)
+            let amounts = self.get_amounts_in_checked(amount_out, &path)?;
 
             // Validar slippage protection
             if amounts[0] > amount_in_max {
@@ -1266,17 +1266,18 @@ pub mod router_contract {
             }
             self.validate_path(&path)?;
 
-            // Wrap native para WNATIVE
-            WNativeRef::deposit(self.wnative, amount_in)
-                .map_err(|_| RouterError::InsufficientOutputAmount)?;
-
-            // Executar swap (com verificação de price impact)
+            // Calcular amounts (com verificação de price impact) antes do wrap,
+            // para rejeitar o trade sem nenhuma chamada cross-contract
             let amounts = self.get_amounts_out_checked(amount_in, &path)?;
             let final_amount = *amounts.last().ok_or(RouterError::InvalidPath)?;
 
             if final_amount < amount_out_min {
                 return Err(RouterError::InsufficientOutputAmount);
             }
+
+            // Wrap native para WNATIVE
+            WNativeRef::deposit(self.wnative, amount_in)
+                .map_err(|_| RouterError::InsufficientOutputAmount)?;
 
             // Transferir WNATIVE para o primeiro par
             let pair = FactoryRef::get_pair(self.factory, path[0], path[1])
@@ -1342,8 +1343,8 @@ pub mod router_contract {
                 return Err(RouterError::InsufficientOutputAmount);
             }
 
-            // Calcular amounts
-            let amounts = self.get_amounts_out(amount_in, &path)?;
+            // Calcular amounts (com verificação de price impact)
+            let amounts = self.get_amounts_out_checked(amount_in, &path)?;
             let final_amount = *amounts.last().ok_or(RouterError::InvalidPath)?;
 
             if final_amount < amount_out_min {
@@ -1580,46 +1581,64 @@ pub mod router_contract {
                 .ok_or(RouterError::ExcessiveInputAmount)
         }
 
-        /// Calcula todos os amounts de output para um path
-        fn get_amounts_out(
+        /// Retorna (reserve_in, reserve_out) do par input/output, orientado pelo sentido do hop
+        fn hop_reserves(
             &self,
-            amount_in: Balance,
-            path: &Vec<AccountId>,
-        ) -> Result<Vec<Balance>, RouterError> {
-            if path.len() < 2 {
-                return Err(RouterError::InvalidPath);
+            input: AccountId,
+            output: AccountId,
+        ) -> Result<(Balance, Balance), RouterError> {
+            // Off-chain não há cross-contract calls: testes injetam reserves aqui
+            #[cfg(test)]
+            if let Some(reserves) = tests::mock_reserves(input, output) {
+                return Ok(reserves);
             }
 
-            let mut amounts = vec![amount_in];
+            let pair = FactoryRef::get_pair(self.factory, input, output)
+                .map_err(|_| RouterError::PairNotExists)?;
 
-            for i in 0..(path.len() - 1) {
-                let pair = FactoryRef::get_pair(self.factory, path[i], path[i + 1])
-                    .map_err(|_| RouterError::PairNotExists)?;
+            let (reserve_0, reserve_1, _) =
+                PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
 
-                let (reserve_0, reserve_1, _) =
-                    PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
-
-                let (token_0, _) = self.sort_tokens(path[i], path[i + 1]);
-                let (reserve_in, reserve_out) = if path[i] == token_0 {
-                    (reserve_0, reserve_1)
-                } else {
-                    (reserve_1, reserve_0)
-                };
-
-                let amount_out =
-                    self.get_amount_out_internal(amounts[i], reserve_in, reserve_out)?;
-                amounts.push(amount_out);
+            let (token_0, _) = self.sort_tokens(input, output);
+            if input == token_0 {
+                Ok((reserve_0, reserve_1))
+            } else {
+                Ok((reserve_1, reserve_0))
             }
-
-            Ok(amounts)
         }
 
-        /// Igual a get_amounts_out mas valida impacto de preço por hop
-        /// Usado internamente nas funções de swap (não em views)
+        /// Rejeita o hop se o impacto de preço exceder `max_price_impact_bps` (0 = desabilitado)
+        /// impact = amount_in * 10000 / (reserve_in + amount_in)
+        fn ensure_price_impact(
+            &self,
+            amount_in: Balance,
+            reserve_in: Balance,
+        ) -> Result<(), RouterError> {
+            if self.max_price_impact_bps == 0 || reserve_in == 0 {
+                return Ok(());
+            }
+
+            let impact = amount_in
+                .checked_mul(10_000)
+                .ok_or(RouterError::Overflow)?
+                .checked_div(
+                    reserve_in
+                        .checked_add(amount_in)
+                        .ok_or(RouterError::Overflow)?,
+                )
+                .ok_or(RouterError::Overflow)?;
+            if impact > u128::from(self.max_price_impact_bps) {
+                return Err(RouterError::PriceImpactTooHigh);
+            }
+            Ok(())
+        }
+
+        /// Calcula todos os amounts de output para um path, validando impacto de preço por hop
+        /// Usado internamente nas funções de swap exact-in (views ficam sem o cap)
         fn get_amounts_out_checked(
             &self,
             amount_in: Balance,
-            path: &Vec<AccountId>,
+            path: &[AccountId],
         ) -> Result<Vec<Balance>, RouterError> {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);
@@ -1627,75 +1646,44 @@ pub mod router_contract {
 
             let mut amounts = vec![amount_in];
 
-            for i in 0..(path.len() - 1) {
-                let pair = FactoryRef::get_pair(self.factory, path[i], path[i + 1])
-                    .map_err(|_| RouterError::PairNotExists)?;
+            for hop in path.windows(2) {
+                let (reserve_in, reserve_out) = self.hop_reserves(hop[0], hop[1])?;
+                let hop_in = *amounts.last().ok_or(RouterError::InvalidPath)?;
 
-                let (reserve_0, reserve_1, _) =
-                    PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
+                self.ensure_price_impact(hop_in, reserve_in)?;
 
-                let (token_0, _) = self.sort_tokens(path[i], path[i + 1]);
-                let (reserve_in, reserve_out) = if path[i] == token_0 {
-                    (reserve_0, reserve_1)
-                } else {
-                    (reserve_1, reserve_0)
-                };
-
-                // Verificação de impacto de preço: impact = amount_in * 10000 / (reserve_in + amount_in)
-                if self.max_price_impact_bps > 0 && reserve_in > 0 {
-                    let impact = amounts[i]
-                        .checked_mul(10_000)
-                        .ok_or(RouterError::Overflow)?
-                        .checked_div(
-                            reserve_in
-                                .checked_add(amounts[i])
-                                .ok_or(RouterError::Overflow)?,
-                        )
-                        .ok_or(RouterError::Overflow)?;
-                    if impact > self.max_price_impact_bps as u128 {
-                        return Err(RouterError::PriceImpactTooHigh);
-                    }
-                }
-
-                let amount_out =
-                    self.get_amount_out_internal(amounts[i], reserve_in, reserve_out)?;
-                amounts.push(amount_out);
+                amounts.push(self.get_amount_out_internal(hop_in, reserve_in, reserve_out)?);
             }
 
             Ok(amounts)
         }
 
-        /// Calcula todos os amounts de input para um path (reverso)
-        fn get_amounts_in(
+        /// Calcula todos os amounts de input para um path (reverso), validando impacto de
+        /// preço por hop a partir do input derivado de cada hop
+        /// Usado internamente nas funções de swap exact-out (views ficam sem o cap)
+        fn get_amounts_in_checked(
             &self,
             amount_out: Balance,
-            path: &Vec<AccountId>,
+            path: &[AccountId],
         ) -> Result<Vec<Balance>, RouterError> {
             if path.len() < 2 {
                 return Err(RouterError::InvalidPath);
             }
 
-            let mut amounts = vec![0; path.len()];
-            amounts[path.len() - 1] = amount_out;
+            // Construído do último hop para o primeiro e invertido no final
+            let mut amounts = vec![amount_out];
 
-            for i in (1..path.len()).rev() {
-                let pair = FactoryRef::get_pair(self.factory, path[i - 1], path[i])
-                    .map_err(|_| RouterError::PairNotExists)?;
+            for hop in path.windows(2).rev() {
+                let (reserve_in, reserve_out) = self.hop_reserves(hop[0], hop[1])?;
+                let hop_out = *amounts.last().ok_or(RouterError::InvalidPath)?;
+                let hop_in = self.get_amount_in_internal(hop_out, reserve_in, reserve_out)?;
 
-                let (reserve_0, reserve_1, _) =
-                    PairRef::get_reserves(pair).map_err(|_| RouterError::PairNotExists)?;
+                self.ensure_price_impact(hop_in, reserve_in)?;
 
-                let (token_0, _) = self.sort_tokens(path[i - 1], path[i]);
-                let (reserve_in, reserve_out) = if path[i - 1] == token_0 {
-                    (reserve_0, reserve_1)
-                } else {
-                    (reserve_1, reserve_0)
-                };
-
-                amounts[i - 1] =
-                    self.get_amount_in_internal(amounts[i], reserve_in, reserve_out)?;
+                amounts.push(hop_in);
             }
 
+            amounts.reverse();
             Ok(amounts)
         }
     }
@@ -2585,6 +2573,259 @@ pub mod router_contract {
             // ~30.15 USDC = 30_150_000 (6 decimais)
             assert!(amount_in > 30_000_000); // Mais que 30 USDC
             assert!(amount_in < 32_000_000); // Menos que 32 USDC
+        }
+
+        // ========================================
+        // TESTES DE PRICE IMPACT POR CAMINHO DE SWAP
+        // ========================================
+        // Reserves são injetadas via `mock_reserves` (seam em `hop_reserves`).
+        // Trades pequenos param no slippage check logo após o cálculo dos amounts,
+        // provando que passaram pelo guard antes de qualquer transfer cross-contract.
+
+        use std::cell::RefCell;
+
+        thread_local! {
+            static MOCK_POOLS: RefCell<Vec<(AccountId, AccountId, Balance, Balance)>> =
+                const { RefCell::new(Vec::new()) };
+        }
+
+        /// Reserves (reserve_in, reserve_out) do pool mockado input/output, se houver
+        pub(super) fn mock_reserves(
+            input: AccountId,
+            output: AccountId,
+        ) -> Option<(Balance, Balance)> {
+            MOCK_POOLS.with(|pools| {
+                pools
+                    .borrow()
+                    .iter()
+                    .find_map(|&(a, b, reserve_a, reserve_b)| {
+                        if a == input && b == output {
+                            Some((reserve_a, reserve_b))
+                        } else if a == output && b == input {
+                            Some((reserve_b, reserve_a))
+                        } else {
+                            None
+                        }
+                    })
+            })
+        }
+
+        fn set_mock_pool(
+            token_a: AccountId,
+            token_b: AccountId,
+            reserve_a: Balance,
+            reserve_b: Balance,
+        ) {
+            MOCK_POOLS.with(|pools| {
+                pools
+                    .borrow_mut()
+                    .push((token_a, token_b, reserve_a, reserve_b))
+            });
+        }
+
+        const POOL_RESERVE: Balance = 1_000_000;
+        /// ~9 bps de impacto em um pool de 1_000_000
+        const SMALL_TRADE: Balance = 1_000;
+        /// ~909 bps de impacto (exact-in) / ~1004 bps (exact-out) — acima do cap de 500
+        const LARGE_TRADE: Balance = 100_000;
+
+        /// Router com factory=bob, wnative=charlie e pools django/eve e django/wnative
+        fn setup_impact_router() -> RouterContract {
+            let accounts = default_accounts();
+            set_sender(accounts.alice);
+            set_timestamp(1000);
+            MOCK_POOLS.with(|pools| pools.borrow_mut().clear());
+            set_mock_pool(accounts.django, accounts.eve, POOL_RESERVE, POOL_RESERVE);
+            set_mock_pool(
+                accounts.django,
+                accounts.charlie,
+                POOL_RESERVE,
+                POOL_RESERVE,
+            );
+            RouterContract::new(accounts.bob, accounts.charlie)
+        }
+
+        #[ink::test]
+        fn test_exact_tokens_for_tokens_rejects_high_price_impact() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            let path = vec![accounts.django, accounts.eve];
+
+            let result =
+                router.swap_exact_tokens_for_tokens(LARGE_TRADE, 0, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::PriceImpactTooHigh));
+        }
+
+        #[ink::test]
+        fn test_exact_tokens_for_tokens_small_trade_passes_impact_check() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            let path = vec![accounts.django, accounts.eve];
+
+            let result = router.swap_exact_tokens_for_tokens(
+                SMALL_TRADE,
+                Balance::MAX, // força parada no slippage check, após o guard
+                path,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::InsufficientOutputAmount));
+        }
+
+        #[ink::test]
+        fn test_tokens_for_exact_tokens_rejects_high_price_impact() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            let path = vec![accounts.django, accounts.eve];
+
+            let result = router.swap_tokens_for_exact_tokens(
+                LARGE_TRADE,
+                Balance::MAX,
+                path,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::PriceImpactTooHigh));
+        }
+
+        #[ink::test]
+        fn test_tokens_for_exact_tokens_small_trade_passes_impact_check() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            let path = vec![accounts.django, accounts.eve];
+
+            let result = router.swap_tokens_for_exact_tokens(
+                SMALL_TRADE,
+                1, // força parada no slippage check, após o guard
+                path,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::ExcessiveInputAmount));
+        }
+
+        #[ink::test]
+        fn test_tokens_for_exact_tokens_checks_every_hop() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            // Hop final (eve -> frank) é profundo; o impacto alto está no primeiro hop,
+            // calculado a partir do input derivado em ordem reversa
+            set_mock_pool(
+                accounts.eve,
+                accounts.frank,
+                1_000_000_000_000,
+                1_000_000_000_000,
+            );
+            let path = vec![accounts.django, accounts.eve, accounts.frank];
+
+            let result = router.swap_tokens_for_exact_tokens(
+                LARGE_TRADE,
+                Balance::MAX,
+                path,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::PriceImpactTooHigh));
+        }
+
+        #[ink::test]
+        fn test_tokens_for_exact_tokens_cap_disabled_skips_impact_check() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            assert_eq!(router.set_max_price_impact_bps(0), Ok(()));
+            let path = vec![accounts.django, accounts.eve];
+
+            let result =
+                router.swap_tokens_for_exact_tokens(LARGE_TRADE, 1, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::ExcessiveInputAmount));
+        }
+
+        #[ink::test]
+        fn test_exact_native_for_tokens_rejects_high_price_impact() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            set_value_transferred(LARGE_TRADE);
+            let path = vec![accounts.charlie, accounts.django];
+
+            let result = router.swap_exact_native_for_tokens(0, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::PriceImpactTooHigh));
+        }
+
+        #[ink::test]
+        fn test_exact_native_for_tokens_small_trade_passes_impact_check() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            set_value_transferred(SMALL_TRADE);
+            let path = vec![accounts.charlie, accounts.django];
+
+            let result =
+                router.swap_exact_native_for_tokens(Balance::MAX, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::InsufficientOutputAmount));
+        }
+
+        #[ink::test]
+        fn test_exact_tokens_for_native_rejects_high_price_impact() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            let path = vec![accounts.django, accounts.charlie];
+
+            let result =
+                router.swap_exact_tokens_for_native(LARGE_TRADE, 0, path, accounts.alice, 2000);
+
+            assert_eq!(result, Err(RouterError::PriceImpactTooHigh));
+        }
+
+        #[ink::test]
+        fn test_exact_tokens_for_native_small_trade_passes_impact_check() {
+            let accounts = default_accounts();
+            let mut router = setup_impact_router();
+            let path = vec![accounts.django, accounts.charlie];
+
+            let result = router.swap_exact_tokens_for_native(
+                SMALL_TRADE,
+                Balance::MAX,
+                path,
+                accounts.alice,
+                2000,
+            );
+
+            assert_eq!(result, Err(RouterError::InsufficientOutputAmount));
+        }
+
+        #[ink::test]
+        fn test_amounts_in_checked_matches_view_for_small_trade() {
+            let accounts = default_accounts();
+            let router = setup_impact_router();
+            let path = vec![accounts.django, accounts.eve];
+
+            let expected_in = router
+                .get_amount_in(SMALL_TRADE, POOL_RESERVE, POOL_RESERVE)
+                .unwrap();
+            let amounts = router.get_amounts_in_checked(SMALL_TRADE, &path);
+
+            assert_eq!(amounts, Ok(vec![expected_in, SMALL_TRADE]));
+        }
+
+        #[ink::test]
+        fn test_view_functions_stay_unchecked() {
+            let accounts = default_accounts();
+            let router = RouterContract::new(accounts.bob, accounts.charlie);
+
+            // Views servem para cotação: nunca aplicam o cap de impacto
+            assert!(router
+                .get_amount_out(LARGE_TRADE, POOL_RESERVE, POOL_RESERVE)
+                .is_ok());
+            assert!(router
+                .get_amount_in(LARGE_TRADE, POOL_RESERVE, POOL_RESERVE)
+                .is_ok());
         }
     }
 }
