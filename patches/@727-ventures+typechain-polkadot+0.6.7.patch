@@ -1,0 +1,42 @@
+diff --git a/node_modules/@727-ventures/typechain-polkadot/src/generators/data.ts b/node_modules/@727-ventures/typechain-polkadot/src/generators/data.ts
+index 4e29018..17a2d01 100644
+--- a/node_modules/@727-ventures/typechain-polkadot/src/generators/data.ts
++++ b/node_modules/@727-ventures/typechain-polkadot/src/generators/data.ts
+@@ -29,7 +29,8 @@ import {TypechainPlugin} from "../types/interfaces";
+ 
+ const generateForMetaTemplate = Handlebars.compile(readTemplate("data"));
+ 
+-export const FILE = (tsTypes : TypeInfo[]) => generateForMetaTemplate({tsTypes});
++// Drop the entries the template skips first, so its `@last` comma logic holds.
++export const FILE = (tsTypes : TypeInfo[]) => generateForMetaTemplate({tsTypes: tsTypes.filter((t) => t.tsArgType.length)});
+ 
+ /**
+  * generates a data.json file
+diff --git a/node_modules/@727-ventures/typechain-polkadot/src/generators/event-data.ts b/node_modules/@727-ventures/typechain-polkadot/src/generators/event-data.ts
+index f5f906e..3a0bef6 100644
+--- a/node_modules/@727-ventures/typechain-polkadot/src/generators/event-data.ts
++++ b/node_modules/@727-ventures/typechain-polkadot/src/generators/event-data.ts
+@@ -29,7 +29,8 @@ import {TypechainPlugin} from "../types/interfaces";
+ 
+ const generateForMetaTemplate = Handlebars.compile(readTemplate("event-data"));
+ 
+-export const FILE = (tsTypes : TypeInfo[]) => generateForMetaTemplate({tsTypes});
++// Drop the entries the template skips first, so its `@last` comma logic holds.
++export const FILE = (tsTypes : TypeInfo[]) => generateForMetaTemplate({tsTypes: tsTypes.filter((t) => t.tsArgType.length)});
+ 
+ /**
+  * generates a data.json file
+diff --git a/node_modules/@727-ventures/typechain-polkadot/src/templates/raw/shared/utils.ts b/node_modules/@727-ventures/typechain-polkadot/src/templates/raw/shared/utils.ts
+index 9dba401..175055e 100644
+--- a/node_modules/@727-ventures/typechain-polkadot/src/templates/raw/shared/utils.ts
++++ b/node_modules/@727-ventures/typechain-polkadot/src/templates/raw/shared/utils.ts
+@@ -22,7 +22,8 @@ export function decodeEvents(events: any[], contract: ContractPromise, fileName:
+ 	}).map((record: any) => {
+ 		const [address, data] = record.event.data;
+ 
+-		const {args, event} = contract.abi.decodeEvent(data);
++		// @polkadot/api-contract >= 10.10 decodes from the whole EventRecord.
++		const {args, event} = contract.abi.decodeEvent(record);
+ 
+ 		let _event: Record < string, any > = {};
+ 

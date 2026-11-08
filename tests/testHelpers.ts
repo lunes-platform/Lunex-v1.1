@@ -40,6 +40,9 @@ export function revertedWith(
   }
   if (typeof errorTitle === 'object') {
     expect(result.value).toHaveProperty('err', errorTitle);
+  } else if (typeof result.value.err === 'string') {
+    // Unit error variants decode to their bare variant name.
+    expect(result.value.err).toBe(errorTitle);
   } else {
     expect(result.value.err).toHaveProperty(errorTitle);
   }
