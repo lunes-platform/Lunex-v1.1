@@ -319,13 +319,18 @@ pub mod factory {
             self.register_pair(token_0, token_1, pair_address);
 
             // Emitir evento para indexadores/UIs
-            // Use ink::env::emit_event to avoid ambiguity with pair_contract's EmitEvent impl
-            ink::env::emit_event::<ink::env::DefaultEnvironment, PairCreated>(PairCreated {
-                token_0,
-                token_1,
-                pair: pair_address,
-                length: self.all_pairs_len,
-            });
+            // Name the contract in EmitEvent to pick this contract's impl over
+            // pair_contract's. Calling ink::env::emit_event directly skips the
+            // event-enum index byte, so metadata-based decoders can't read it.
+            ink::codegen::EmitEvent::<FactoryContract>::emit_event(
+                self.env(),
+                PairCreated {
+                    token_0,
+                    token_1,
+                    pair: pair_address,
+                    length: self.all_pairs_len,
+                },
+            );
 
             Ok(pair_address)
         }
