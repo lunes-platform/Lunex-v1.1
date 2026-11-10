@@ -27,11 +27,16 @@ jest.mock('@polkadot/util-crypto', () => ({
   cryptoWaitReady: jest.fn(async () => true),
 }));
 
+const mockFindMetaError = jest.fn();
+
 jest.mock('@polkadot/api', () => ({
   ApiPromise: {
     create: jest.fn(async () => ({
       isReady: Promise.resolve(),
-      registry: { createType: jest.fn(() => ({})) },
+      registry: {
+        createType: jest.fn(() => ({})),
+        findMetaError: mockFindMetaError,
+      },
     })),
   },
   WsProvider: jest.fn(),
@@ -63,6 +68,8 @@ jest.mock('../../utils/finalizedTx', () => ({
 
 import type { ContractPromise } from '@polkadot/api-contract';
 import { waitForFinalizedTx } from '../../utils/finalizedTx';
+import { TxTimeoutError } from '../../utils/txWithTimeout';
+import { log } from '../../utils/logger';
 import {
   emergencyService,
   resolveMethodKey,
@@ -159,4 +166,198 @@ describe('emergencyService pause flow', () => {
     expect(result.txHash).toBe('0xreverted');
     expect(result.error).toMatch(/not confirmed/);
   });
+});
+
+type StatusCallback = (result: Record<string, unknown>) => void;
+type SendFn = (callback: StatusCallback) => Promise<unknown>;
+
+// Simulates the pool accepting the extrinsic: one status callback, then the
+// subscription stays open (finality never arrives within the window).
+function broadcastOnly(hash: string) {
+  signAndSend.mockImplementation(
+    async (_signer: unknown, callback: StatusCallback) => {
+      callback({
+        status: { isBroadcast: true },
+        txHash: { toHex: () => hash },
+      });
+      return () => undefined;
+    },
+  );
+}
+
+describe('emergencyService ambiguous outcome (broadcast, not finalized)', () => {
+  beforeEach(() => {
+    chain.paused = false;
+    tx.pause.mockClear();
+    tx.unpause.mockClear();
+    waitMock.mockReset();
+    signAndSend.mockReset();
+    (log.error as jest.Mock).mockClear();
+  });
+
+  it.each([
+    ['pause', false, true],
+    ['unpause', true, false],
+  ] as const)(
+    '%s timing out after broadcast re-reads is_paused and reports pending with the tx hash',
+    async (action, before, after) => {
+      chain.paused = before;
+      broadcastOnly('0xpending');
+      waitMock.mockImplementation(async (label: string, send: SendFn) => {
+        await send(() => undefined);
+        // The extrinsic lands in a best block; finality stalls.
+        chain.paused = after;
+        throw new TxTimeoutError(label, 60_000);
+      });
+
+      const result =
+        action === 'pause'
+          ? await emergencyService.pauseSpot()
+          : await emergencyService.unpauseSpot();
+
+      expect(result).toEqual({
+        component: 'spot_settlement',
+        available: true,
+        paused: after,
+        pending: true,
+        txHash: '0xpending',
+        error: expect.stringMatching(
+          new RegExp(
+            `spot_settlement\\.${action} broadcast but not finalized.*re-check`,
+          ),
+        ),
+      });
+      expect(log.error).toHaveBeenCalledWith(
+        expect.objectContaining({ action, txHash: '0xpending' }),
+        expect.any(String),
+      );
+    },
+  );
+
+  it('reports the state actually read, even when it is still the old one', async () => {
+    broadcastOnly('0xslow');
+    waitMock.mockImplementation(async (label: string, send: SendFn) => {
+      await send(() => undefined);
+      throw new TxTimeoutError(label, 60_000);
+    });
+    const result = await emergencyService.pauseSpot();
+    expect(result.pending).toBe(true);
+    expect(result.paused).toBe(false);
+    expect(result.txHash).toBe('0xslow');
+  });
+
+  it('treats a timeout as pending even if no status callback arrived', async () => {
+    waitMock.mockRejectedValue(
+      new TxTimeoutError('spot_settlement.pause', 60_000),
+    );
+    const result = await emergencyService.pauseSpot();
+    expect(result.pending).toBe(true);
+    expect(result.paused).toBe(false);
+    expect(result.txHash).toBeUndefined();
+  });
+
+  it('treats a non-timeout failure after broadcast as pending', async () => {
+    broadcastOnly('0xws');
+    waitMock.mockImplementation(async (_label: string, send: SendFn) => {
+      await send(() => undefined);
+      throw new Error('WebSocket is not connected');
+    });
+    const result = await emergencyService.pauseSpot();
+    expect(result.pending).toBe(true);
+    expect(result.txHash).toBe('0xws');
+    expect(result.error).toMatch(/WebSocket is not connected/);
+  });
+
+  it('a failure before broadcast stays a plain failure (no pending)', async () => {
+    waitMock.mockRejectedValue(new Error('1010: Invalid Transaction'));
+    const result = await emergencyService.pauseSpot();
+    expect(result.pending).toBeUndefined();
+    expect(result.paused).toBeNull();
+    expect(result.error).toBe('1010: Invalid Transaction');
+  });
+});
+
+describe('emergencyService on-chain rejection', () => {
+  beforeEach(() => {
+    chain.paused = true;
+    tx.pause.mockClear();
+    tx.unpause.mockClear();
+    waitMock.mockReset();
+    signAndSend.mockReset();
+    mockFindMetaError.mockReset();
+  });
+
+  it('unpause signed by a non-owner returns the decoded on-chain error, not pending', async () => {
+    const { waitForFinalizedTx: realWait } = jest.requireActual(
+      '../../utils/finalizedTx',
+    );
+    waitMock.mockImplementation(realWait);
+    mockFindMetaError.mockReturnValue({
+      section: 'contracts',
+      name: 'ContractReverted',
+    });
+    signAndSend.mockImplementation(
+      async (_signer: unknown, callback: StatusCallback) => {
+        callback({
+          status: { isInBlock: true },
+          txHash: { toHex: () => '0xrev' },
+          dispatchError: {
+            isModule: true,
+            asModule: { index: 8, error: '0x0b000000' },
+            toString: () => '{"module":{"index":8,"error":"0x0b000000"}}',
+          },
+        });
+        return () => undefined;
+      },
+    );
+
+    const result = await emergencyService.unpauseSpot();
+
+    expect(tx.unpause).toHaveBeenCalledTimes(1);
+    expect(result.pending).toBeUndefined();
+    expect(result.available).toBe(true);
+    expect(result.txHash).toBe('0xrev');
+    expect(result.error).toMatch(
+      /^spot_settlement\.unpause rejected on-chain: contracts\.ContractReverted/,
+    );
+    expect(result.error).toMatch(/owner/);
+    expect(result.paused).not.toBe(false);
+  });
+});
+
+describe('first call on a fresh service instance (jest.isolateModules)', () => {
+  // A module singleton would let an earlier test resolve the method keys and
+  // hide a regression where the key is read before initialize().
+  it.each(['pause', 'unpause'] as const)(
+    'the first %s after a restart sends the message',
+    async (action) => {
+      chain.paused = action === 'unpause';
+      tx.pause.mockClear();
+      tx.unpause.mockClear();
+      let fresh: typeof emergencyService | undefined;
+      let freshWait: jest.Mock | undefined;
+      jest.isolateModules(() => {
+        fresh = require('../../services/emergencyService').emergencyService;
+        freshWait = require('../../utils/finalizedTx').waitForFinalizedTx;
+      });
+      expect(fresh).not.toBe(emergencyService);
+      freshWait!.mockImplementation(async () => {
+        chain.paused = action === 'pause';
+        return '0xfirst';
+      });
+
+      const result =
+        action === 'pause'
+          ? await fresh!.pauseSpot()
+          : await fresh!.unpauseSpot();
+
+      expect(tx[action]).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        component: 'spot_settlement',
+        available: true,
+        paused: action === 'pause',
+        txHash: '0xfirst',
+      });
+    },
+  );
 });

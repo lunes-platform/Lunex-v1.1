@@ -6,6 +6,7 @@ import * as path from 'path';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import { waitForFinalizedTx } from '../utils/finalizedTx';
+import { TxTimeoutError } from '../utils/txWithTimeout';
 
 /**
  * Emergency controls — wraps the on-chain pause/unpause messages of
@@ -44,6 +45,9 @@ export type EmergencyComponentStatus = {
   paused: boolean | null;
   txHash?: string;
   error?: string;
+  // Broadcast but not finalized: `paused` is the state read afterwards and
+  // the outcome must be re-checked (the tx may still land).
+  pending?: boolean;
 };
 
 export type EmergencyActionResult = {
@@ -239,10 +243,16 @@ class EmergencyService {
       };
     }
 
+    // Filled from the status callbacks: any status means the pool accepted
+    // the extrinsic, so a later failure no longer proves it will not land.
+    let broadcastHash: string | undefined;
+    let rejectedOnChain: string | undefined;
+
     try {
+      const api = this.api;
       const txFn = (this.spotContract.tx as any)[methodKey];
       const tx = txFn({
-        gasLimit: this.api.registry.createType('WeightV2', {
+        gasLimit: api.registry.createType('WeightV2', {
           refTime: 30_000_000_000n,
           proofSize: 1_000_000n,
         }),
@@ -251,7 +261,20 @@ class EmergencyService {
 
       const txHash = await waitForFinalizedTx(
         `spot_settlement.${action}`,
-        (callback) => tx.signAndSend(this.relayer!, callback),
+        (callback) =>
+          tx.signAndSend(
+            this.relayer!,
+            (status: Parameters<typeof callback>[0]) => {
+              broadcastHash ??= status.txHash?.toHex?.();
+              if (status.dispatchError) {
+                rejectedOnChain = describeDispatchError(
+                  api,
+                  status.dispatchError,
+                );
+              }
+              callback(status);
+            },
+          ),
         60_000,
       );
 
@@ -285,7 +308,57 @@ class EmergencyService {
         paused: expected,
         txHash,
       };
-    } catch (err) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+
+      if (rejectedOnChain) {
+        // Included and dispatch-failed: a definite failure, not ambiguous.
+        log.error(
+          { err, action, txHash: broadcastHash, rejectedOnChain },
+          '[Emergency] spot_settlement tx rejected on-chain',
+        );
+        const ownerHint =
+          action === 'unpause'
+            ? ' (unpause requires the contract owner key; this API signs with the relayer key)'
+            : '';
+        return {
+          component: 'spot_settlement',
+          available: true,
+          paused: null,
+          txHash: broadcastHash,
+          error: `spot_settlement.${action} rejected on-chain: ${rejectedOnChain}${ownerHint}`,
+        };
+      }
+
+      if (err instanceof TxTimeoutError || broadcastHash !== undefined) {
+        // The signed extrinsic may still be included (BE-07): reconcile
+        // against the chain and say the outcome is pending.
+        const observed = await this.querySpotPaused(true);
+        log.error(
+          {
+            err,
+            action,
+            txHash: broadcastHash,
+            observed: observed.paused,
+          },
+          '[Emergency] spot_settlement tx broadcast but not finalized — outcome pending',
+        );
+        const readError = observed.error
+          ? `; is_paused read failed: ${observed.error}`
+          : '';
+        return {
+          component: 'spot_settlement',
+          available: true,
+          paused: observed.paused,
+          pending: true,
+          txHash: broadcastHash,
+          error:
+            `spot_settlement.${action} broadcast but not finalized (${message}) ` +
+            `— outcome pending, re-check GET /admin/emergency/status ` +
+            `(is_paused=${String(observed.paused)}${readError})`,
+        };
+      }
+
       log.error(
         { err, action },
         '[Emergency] spot_settlement state change failed',
@@ -294,10 +367,36 @@ class EmergencyService {
         component: 'spot_settlement',
         available: true,
         paused: null,
-        error: (err as Error).message,
+        error: message,
       };
     }
   }
+}
+
+type DispatchErrorLike = {
+  isModule?: boolean;
+  asModule?: unknown;
+  toString(): string;
+};
+
+/** `contracts.ContractReverted` instead of the raw `{"module":...}` blob. */
+function describeDispatchError(
+  api: ApiPromise,
+  dispatchError: DispatchErrorLike,
+) {
+  if (dispatchError.isModule) {
+    try {
+      const meta = api.registry.findMetaError(
+        dispatchError.asModule as Parameters<
+          ApiPromise['registry']['findMetaError']
+        >[0],
+      );
+      return `${meta.section}.${meta.name}`;
+    } catch {
+      // fall through to the raw representation
+    }
+  }
+  return dispatchError.toString();
 }
 
 export const emergencyService = new EmergencyService();
