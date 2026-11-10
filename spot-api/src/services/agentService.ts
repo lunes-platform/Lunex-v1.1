@@ -1,6 +1,14 @@
 import { randomBytes, createHash } from 'crypto';
 import prisma from '../db';
 import { ApiError } from '../middleware/errors';
+import { walletRiskService } from './walletRiskService';
+import {
+  accountAddressFilter,
+  accountAddressVariants,
+  decodeAccountId,
+  isSameAccount,
+  toCanonicalAddress,
+} from '../utils/validation';
 import type {
   AgentType,
   AgentApiKeyPermission,
@@ -112,10 +120,33 @@ export const agentService = {
     strategyDescription?: string;
     linkLeaderId?: string;
   }) {
-    const existing = await prisma.agent.findUnique({
-      where: { walletAddress: input.walletAddress },
+    // M-09: new rows are stored canonical, so one key is one agent. The
+    // duplicate check also covers legacy rows under the raw string sent and
+    // its 42/57 forms. Undecodable input (never past the signed route) is
+    // kept as given.
+    const walletAddress =
+      toCanonicalAddress(input.walletAddress) ?? input.walletAddress;
+    const existing = await prisma.agent.findFirst({
+      where: {
+        walletAddress: {
+          in: [
+            ...new Set([
+              walletAddress,
+              ...accountAddressVariants(input.walletAddress),
+            ]),
+          ],
+        },
+      },
     });
-    if (existing) {
+    // Legacy rows in hex or another prefix are not among the variants:
+    // registration is rare, so decode the stored rows and compare accounts.
+    const legacyDuplicate =
+      !existing &&
+      decodeAccountId(input.walletAddress) !== null &&
+      (await prisma.agent.findMany({ select: { walletAddress: true } })).some(
+        (row) => isSameAccount(row.walletAddress, walletAddress),
+      );
+    if (existing || legacyDuplicate) {
       throw new Error('Agent already registered with this wallet address');
     }
 
@@ -128,7 +159,7 @@ export const agentService = {
         select: { address: true },
       });
       if (!leader) throw ApiError.notFound('Leader not found');
-      if (leader.address !== input.walletAddress) {
+      if (!isSameAccount(leader.address, walletAddress)) {
         throw ApiError.forbidden(
           'Agent wallet must own the linked leader profile',
         );
@@ -137,7 +168,7 @@ export const agentService = {
 
     const agent = await prisma.agent.create({
       data: {
-        walletAddress: input.walletAddress,
+        walletAddress,
         agentType: input.agentType,
         framework: input.framework || null,
         strategyDescription: input.strategyDescription || null,
@@ -167,6 +198,8 @@ export const agentService = {
     const agent = await prisma.agent.findUnique({ where: { id: agentId } });
     if (!agent) throw new Error('Agent not found');
     if (agent.isBanned) throw new Error('Agent is banned');
+    // A wallet ban covers the agent whatever encoding its row holds (M-09).
+    await walletRiskService.assertWalletCanAct(agent.walletAddress);
 
     const activeKeys = await prisma.agentApiKey.count({
       where: { agentId, revokedAt: null, expiresAt: { gt: new Date() } },
@@ -273,6 +306,14 @@ export const agentService = {
     if (key.revokedAt) return null;
     if (key.expiresAt < new Date()) return null;
     if (!key.agent.isActive || key.agent.isBanned) return null;
+    // Wallet ban by account, even if this Agent row was never flagged
+    // (stored as hex / another prefix). Fails closed like isBanned.
+    try {
+      await walletRiskService.assertWalletCanAct(key.agent.walletAddress);
+    } catch (err: unknown) {
+      if (err instanceof ApiError && err.statusCode === 403) return null;
+      throw err;
+    }
 
     await prisma.agentApiKey.update({
       where: { id: key.id },
@@ -306,8 +347,9 @@ export const agentService = {
   },
 
   async getAgentByWallet(walletAddress: string) {
-    const agent = await prisma.agent.findUnique({
-      where: { walletAddress },
+    // Canonical rows plus legacy rows under the string presented (M-09).
+    const agent = await prisma.agent.findFirst({
+      where: { walletAddress: accountAddressFilter(walletAddress) },
       include: { leader: true, stakes: { where: { status: 'STAKED' } } },
     });
     if (!agent) return null;
@@ -579,6 +621,6 @@ function formatAgent(agent: AgentWithRelations) {
 function formatPublicAgent(agent: AgentWithRelations) {
   const { walletAddress, ...rest } = formatAgent(agent);
   const isLeaderOwnWallet =
-    agent.leader != null && agent.leader.address === walletAddress;
+    agent.leader != null && isSameAccount(agent.leader.address, walletAddress);
   return isLeaderOwnWallet ? { ...rest, walletAddress } : rest;
 }

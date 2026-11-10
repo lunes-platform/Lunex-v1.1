@@ -3,6 +3,7 @@ import { orderService } from '../services/orderService';
 import {
   CreateOrderSchema,
   CancelOrderSchema,
+  signedAddressFor,
   ss58Address,
 } from '../utils/validation';
 import {
@@ -115,6 +116,11 @@ router.delete(
       const auth = await verifyWalletActionSignature({
         action: 'orders.cancel',
         address: parsed.data.makerAddress,
+        // The schema canonicalized the field; the wallet signed it as sent.
+        signedAddress: signedAddressFor(
+          req.body?.makerAddress,
+          parsed.data.makerAddress,
+        ),
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,
@@ -157,7 +163,12 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const auth = await verifyWalletReadAccess(req, {
       action: 'orders.list',
-      address: parsed.data.makerAddress,
+      // As sent: the signed `address:` line may be hex or another prefix.
+      // Read auth canonicalizes it for the nonce and session match.
+      address: signedAddressFor(
+        req.query.makerAddress,
+        parsed.data.makerAddress,
+      ),
       nonce: parsed.data.nonce,
       timestamp: parsed.data.timestamp,
       signature: parsed.data.signature,

@@ -4,9 +4,11 @@ import request from 'supertest';
 const mockPrisma = {
   $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   agent: {
+    findMany: jest.fn(),
     updateMany: jest.fn(),
   },
   bannedWallet: {
+    findMany: jest.fn(),
     upsert: jest.fn(),
     deleteMany: jest.fn(),
   },
@@ -36,6 +38,7 @@ import adminRouter from '../../routes/admin';
 // Valid SS58 (M-09: undecodable admin input is 400) and its prefix-57 form.
 const WALLET = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
 const WALLET_57 = '6mfqoTMHrMeVMyKwjqomUjVomPMJ4AjdCm1VReFtk7Be8wqr';
+const OTHER_WALLET = '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty';
 
 const app = express();
 app.use(express.json());
@@ -44,6 +47,13 @@ app.use('/api/v1/admin', adminRouter);
 describe('Admin wallet risk API', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Agents are matched by decoded account (any stored encoding), then
+    // updated by id. Another account's agent must not be touched.
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { id: 'agent-57', walletAddress: WALLET_57 },
+      { id: 'agent-other', walletAddress: OTHER_WALLET },
+    ]);
+    mockPrisma.bannedWallet.findMany.mockResolvedValue([]);
     mockPrisma.agent.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.bannedWallet.upsert.mockResolvedValue({
       id: 'ban-1',
@@ -79,7 +89,7 @@ describe('Admin wallet risk API', () => {
       },
     });
     expect(mockPrisma.agent.updateMany).toHaveBeenCalledWith({
-      where: { walletAddress: { in: [WALLET, WALLET_57] } },
+      where: { id: { in: ['agent-57'] } },
       data: { isBanned: true, banReason: 'market abuse' },
     });
   });
@@ -98,7 +108,7 @@ describe('Admin wallet risk API', () => {
       where: { address: { in: [WALLET, WALLET_57] } },
     });
     expect(mockPrisma.agent.updateMany).toHaveBeenCalledWith({
-      where: { walletAddress: { in: [WALLET, WALLET_57] } },
+      where: { id: { in: ['agent-57'] } },
       data: { isBanned: false, banReason: null },
     });
   });

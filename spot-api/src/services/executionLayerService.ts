@@ -2,6 +2,7 @@ import prisma from '../db';
 import { Prisma } from '@prisma/client';
 import { log } from '../utils/logger';
 import { ApiError } from '../middleware/errors';
+import { accountAddressFilter } from '../utils/validation';
 import type { OrderSide, ExecutionStatus } from '@prisma/client';
 
 // ─── Types ───────────────────────────────────────────────────────
@@ -74,6 +75,7 @@ export const executionLayerService = {
     const agent = await prisma.agent.findUnique({
       where: { id: agentId },
       select: {
+        walletAddress: true,
         isActive: true,
         isBanned: true,
         banReason: true,
@@ -136,12 +138,11 @@ export const executionLayerService = {
     }
 
     // ── 4. Open orders count ───────────────────────────────────
+    // M-09: orders are stored under the canonical maker; legacy rows keep
+    // the agent's raw string. Count both, or the cap never binds.
     const openOrderCount = await prisma.order.count({
       where: {
-        makerAddress: (await prisma.agent.findUnique({
-          where: { id: agentId },
-          select: { walletAddress: true },
-        }))!.walletAddress,
+        makerAddress: accountAddressFilter(agent.walletAddress),
         status: { in: ['OPEN', 'PARTIAL'] },
       },
     });

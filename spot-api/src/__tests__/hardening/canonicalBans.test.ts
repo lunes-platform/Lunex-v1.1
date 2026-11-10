@@ -5,6 +5,7 @@
  */
 type BanRow = { address: string; reason: string; bannedBy: string };
 type AgentRow = {
+  id?: string;
   walletAddress: string;
   isBanned: boolean;
   banReason: string | null;
@@ -14,10 +15,17 @@ type StringFilter = string | { in: string[] } | undefined;
 const bans: BanRow[] = [];
 const agents: AgentRow[] = [];
 
-function matches(value: string, filter: StringFilter) {
+function matches(value: string | undefined, filter: StringFilter) {
   if (filter === undefined) return true;
+  if (value === undefined) return false;
   if (typeof filter === 'string') return value === filter;
   return filter.in.includes(value);
+}
+
+// Rows pushed without an id get a stable one (updates go by id).
+function withId(row: AgentRow, index: number) {
+  if (!row.id) row.id = `agent-${index}`;
+  return row;
 }
 
 const mockPrisma = {
@@ -30,6 +38,11 @@ const mockPrisma = {
     findFirst: jest.fn(
       async ({ where }: { where: { address?: StringFilter } }) =>
         bans.find((row) => matches(row.address, where.address)) ?? null,
+    ),
+    findMany: jest.fn(async (args?: { where?: { address?: StringFilter } }) =>
+      bans
+        .filter((row) => matches(row.address, args?.where?.address))
+        .map((row) => ({ ...row })),
     ),
     upsert: jest.fn(
       async ({
@@ -77,17 +90,35 @@ const mockPrisma = {
             (where.isBanned === undefined || row.isBanned === where.isBanned),
         ) ?? null,
     ),
+    findMany: jest.fn(
+      async (args?: {
+        where?: { walletAddress?: StringFilter; isBanned?: boolean };
+      }) =>
+        agents
+          .map(withId)
+          .filter(
+            (row) =>
+              matches(row.walletAddress, args?.where?.walletAddress) &&
+              (args?.where?.isBanned === undefined ||
+                row.isBanned === args.where.isBanned),
+          )
+          .map((row) => ({ ...row })),
+    ),
     updateMany: jest.fn(
       async ({
         where,
         data,
       }: {
-        where: { walletAddress?: StringFilter };
+        where: { walletAddress?: StringFilter; id?: StringFilter };
         data: Partial<AgentRow>;
       }) => {
-        const hit = agents.filter((row) =>
-          matches(row.walletAddress, where.walletAddress),
-        );
+        const hit = agents
+          .map(withId)
+          .filter(
+            (row) =>
+              matches(row.walletAddress, where.walletAddress) &&
+              matches(row.id, where.id),
+          );
         hit.forEach((row) => Object.assign(row, data));
         return { count: hit.length };
       },
@@ -110,6 +141,8 @@ jest.mock('../../config', () => ({
 
 import express from 'express';
 import request from 'supertest';
+import { u8aToHex } from '@polkadot/util';
+import { decodeAddress, encodeAddress } from '@polkadot/util-crypto';
 import adminRouter from '../../routes/admin';
 import { walletRiskService } from '../../services/walletRiskService';
 
@@ -228,4 +261,107 @@ describe('undecodable admin input', () => {
     expect(res.status).toBe(400);
     expect(mockPrisma.bannedWallet.deleteMany).not.toHaveBeenCalled();
   });
+});
+
+// ─── M-09 third pass: hex and other prefixes, not only 42 <-> 57 ─────
+// Alice's key as lower/upper-case hex and Polkadot prefix 0.
+const ALICE_HEX = u8aToHex(decodeAddress(GENERIC));
+const ALICE_HEX_UPPER = `0x${ALICE_HEX.slice(2).toUpperCase()}`;
+const ALICE_PREFIX_0 = encodeAddress(decodeAddress(GENERIC), 0);
+const OTHER_HEX = u8aToHex(decodeAddress(OTHER));
+
+const STORED_FORMS: Array<[string, string]> = [
+  ['lower-case hex', ALICE_HEX],
+  ['upper-case hex', ALICE_HEX_UPPER],
+  ['prefix 0', ALICE_PREFIX_0],
+];
+
+describe('agents stored in hex or another prefix are flagged by account', () => {
+  it.each(STORED_FORMS)(
+    'ban via 42 and via 57 flags an agent stored as %s',
+    async (_label, stored) => {
+      for (const bannedAs of [GENERIC, LUNES]) {
+        agents.length = 0;
+        bans.length = 0;
+        agents.push({
+          walletAddress: stored,
+          isBanned: false,
+          banReason: null,
+        });
+        agents.push({
+          walletAddress: OTHER_HEX,
+          isBanned: false,
+          banReason: null,
+        });
+        await walletRiskService.banWallet(bannedAs, 'sybil', 'admin-1');
+        expect(agents[0]).toMatchObject({ isBanned: true, banReason: 'sybil' });
+        expect(agents[1]).toMatchObject({ isBanned: false, banReason: null });
+      }
+    },
+  );
+
+  it.each(STORED_FORMS)(
+    'unban via 42 and via 57 un-flags an agent stored as %s',
+    async (_label, stored) => {
+      for (const unbanAs of [GENERIC, LUNES]) {
+        agents.length = 0;
+        agents.push({ walletAddress: stored, isBanned: true, banReason: 'x' });
+        agents.push({
+          walletAddress: OTHER_HEX,
+          isBanned: true,
+          banReason: 'y',
+        });
+        await walletRiskService.unbanWallet(unbanAs);
+        expect(agents[0]).toMatchObject({ isBanned: false, banReason: null });
+        expect(agents[1]).toMatchObject({ isBanned: true, banReason: 'y' });
+      }
+    },
+  );
+});
+
+describe('legacy BannedWallet / Agent rows in hex or another prefix', () => {
+  it.each(STORED_FORMS)(
+    'a BannedWallet row stored as %s blocks every encoding',
+    async (_label, stored) => {
+      bans.length = 0;
+      bans.push({ address: stored, reason: 'legacy', bannedBy: 'admin-0' });
+      for (const actingAs of [GENERIC, LUNES, ALICE_HEX, ALICE_PREFIX_0]) {
+        await expect(
+          walletRiskService.assertWalletCanAct(actingAs),
+        ).rejects.toThrow('Wallet is banned: legacy');
+      }
+      await expect(
+        walletRiskService.assertWalletCanAct(OTHER),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it.each(STORED_FORMS)(
+    'a banned (slashed) Agent row stored as %s blocks the 42 form',
+    async (_label, stored) => {
+      agents.length = 0;
+      agents.push({
+        walletAddress: stored,
+        isBanned: true,
+        banReason: 'slash',
+      });
+      await expect(
+        walletRiskService.assertWalletCanAct(GENERIC),
+      ).rejects.toThrow('Wallet is banned: slash');
+    },
+  );
+
+  it.each(STORED_FORMS)(
+    'unban removes a legacy BannedWallet row stored as %s',
+    async (_label, stored) => {
+      bans.length = 0;
+      bans.push({ address: stored, reason: 'legacy', bannedBy: 'admin-0' });
+      bans.push({ address: OTHER_HEX, reason: 'keep', bannedBy: 'admin-0' });
+      await walletRiskService.unbanWallet(LUNES);
+      expect(bans.map((row) => row.address)).toEqual([OTHER_HEX]);
+      await expect(
+        walletRiskService.assertWalletCanAct(GENERIC),
+      ).resolves.toBeUndefined();
+    },
+  );
 });

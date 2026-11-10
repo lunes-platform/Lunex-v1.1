@@ -4,6 +4,7 @@ import {
   parsePairSymbol,
   RetryTradeSettlementsSchema,
   TradeSettlementQuerySchema,
+  signedAddressFor,
   ss58Address,
 } from '../utils/validation';
 import { getSignedAuthInput } from '../middleware/auth';
@@ -123,7 +124,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
     const auth = await verifyWalletReadAccess(req, {
       action: 'trades.list',
-      address: parsed.data.address,
+      // As sent: the signed `address:` line may be hex or another prefix.
+      // Read auth canonicalizes it for the nonce and session match.
+      address: signedAddressFor(req.query.address, parsed.data.address),
       nonce: parsed.data.nonce,
       timestamp: parsed.data.timestamp,
       signature: parsed.data.signature,

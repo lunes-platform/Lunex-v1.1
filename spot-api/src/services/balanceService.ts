@@ -29,6 +29,11 @@ import {
   quoteReserveUnits,
   spotUnitsToDecimal,
 } from '../utils/spotReservation';
+import {
+  accountAddressFilter,
+  isSameAccount,
+  toCanonicalAddress,
+} from '../utils/validation';
 
 const RESERVING_ORDER_STATUSES = [
   'OPEN',
@@ -82,9 +87,12 @@ async function computeLockedByToken(
   address: string,
   token?: string,
 ): Promise<Map<string, Decimal>> {
+  // M-09: one account in any encoding — canonical rows (post-fix) plus
+  // legacy rows under the string given.
+  const account = accountAddressFilter(address);
   const orders = await prisma.order.findMany({
     where: {
-      makerAddress: address,
+      makerAddress: account,
       status: { in: [...RESERVING_ORDER_STATUSES] },
     },
     include: { pair: true },
@@ -107,7 +115,7 @@ async function computeLockedByToken(
     const trades = await prisma.trade.findMany({
       where: {
         settlementStatus: { in: [...UNSETTLED_TRADE_STATUSES] },
-        OR: [{ makerAddress: address }, { takerAddress: address }],
+        OR: [{ makerAddress: account }, { takerAddress: account }],
       },
       include: { pair: true },
     });
@@ -117,13 +125,13 @@ async function computeLockedByToken(
         trade.side === 'BUY' ? trade.takerAddress : trade.makerAddress;
       const seller =
         trade.side === 'BUY' ? trade.makerAddress : trade.takerAddress;
-      if (seller === address) {
+      if (isSameAccount(seller, address)) {
         add(
           spotAssetKey(trade.pair.baseToken, trade.pair.isNativeBase),
           new Decimal(trade.amount.toString()),
         );
       }
-      if (buyer === address) {
+      if (isSameAccount(buyer, address)) {
         // Same conservative bound as a resting BUY: principal + max fee.
         add(
           spotAssetKey(trade.pair.quoteToken, trade.pair.isNativeQuote),
@@ -215,7 +223,7 @@ export async function getBalances(
         .filter(([key]) => !token || key === token)
         .map(async ([key, asset]) => {
           const units = await settlementService.getVaultBalance(
-            address,
+            toCanonicalAddress(address) ?? address,
             asset.address,
             asset.native,
           );
@@ -235,17 +243,22 @@ export async function getBalances(
 
   const [ledgerRows, lockedByToken] = await Promise.all([
     prisma.userBalance.findMany({
-      where: token ? { address, token } : { address },
+      where: token
+        ? { address: accountAddressFilter(address), token }
+        : { address: accountAddressFilter(address) },
     }),
     computeLockedByToken(address, token),
   ]);
 
   const totals = new Map<string, Decimal>();
   for (const row of ledgerRows) {
-    // total = available + locked recorded on the ledger row.
+    // total = available + locked recorded on the ledger row; an account
+    // with rows in two encodings (pre-migration) sums them.
     totals.set(
       row.token,
-      new Decimal(row.available.toString()).plus(row.locked.toString()),
+      (totals.get(row.token) ?? new Decimal(0))
+        .plus(row.available.toString())
+        .plus(row.locked.toString()),
     );
   }
 

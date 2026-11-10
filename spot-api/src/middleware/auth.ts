@@ -5,6 +5,7 @@ import { log } from '../utils/logger';
 import { walletRiskService } from '../services/walletRiskService';
 import {
   accountAddressVariants,
+  isSameAccount,
   toCanonicalAddress,
 } from '../utils/validation';
 
@@ -297,12 +298,24 @@ export function buildLegacyWalletActionMessage(input: WalletActionMessageInput) 
 }
 
 async function verifyWalletMessage(
-  input: WalletActionMessageInput & { signature: string },
+  input: WalletActionMessageInput & {
+    signature: string;
+    signedAddress?: string;
+  },
 ): Promise<{ format: 'bound' | 'legacy'; message: string } | null> {
-  const { signature, ...messageInput } = input;
+  const { signature, signedAddress, ...messageInput } = input;
   // Request schemas hand auth the canonical form, while the wallet signed the
-  // `address:` line in whatever prefix it displays (M-09): try each encoding.
-  for (const address of accountAddressVariants(input.address)) {
+  // `address:` line in whatever encoding it uses (M-09): try the string as
+  // sent (only if it is the same account), then 42/57. The key is always
+  // the claimed account's, so no line can admit another account.
+  const candidates = [
+    ...(signedAddress !== undefined &&
+    isSameAccount(signedAddress, input.address)
+      ? [signedAddress]
+      : []),
+    ...accountAddressVariants(input.address),
+  ];
+  for (const address of new Set(candidates)) {
     const bound = buildWalletActionMessage({ ...messageInput, address });
     if (await verifyAddressSignature(bound, signature, input.address)) {
       return { format: 'bound', message: bound };
@@ -356,6 +369,8 @@ export async function verifyWalletActionSignature(input: {
   nonce: string;
   timestamp: number | string;
   signature: string;
+  /** Address string exactly as the client sent (and signed) it. */
+  signedAddress?: string;
   fields?: Record<
     string,
     string | number | boolean | Array<string | number> | undefined | null
@@ -441,6 +456,7 @@ export async function verifyWalletActionSignature(input: {
     timestamp,
     fields: input.fields,
     signature: input.signature,
+    signedAddress: input.signedAddress,
   });
   if (!verified) {
     log.warn(
@@ -496,6 +512,8 @@ export async function verifyWalletReadSignature(input: {
   nonce: string;
   timestamp: number | string;
   signature: string;
+  /** Address string exactly as the client sent (and signed) it. */
+  signedAddress?: string;
   fields?: Record<
     string,
     string | number | boolean | Array<string | number> | undefined | null
@@ -581,6 +599,7 @@ export async function verifyWalletReadSignature(input: {
     timestamp,
     fields: input.fields,
     signature: input.signature,
+    signedAddress: input.signedAddress,
   });
   if (!verified) {
     log.warn(

@@ -26,6 +26,7 @@
 import prisma from '../db';
 import { orderbookManager, MatchResult } from '../utils/orderbook';
 import {
+  accountAddressFilter,
   CreateOrderInput,
   isSameAccount,
   toCanonicalAddress,
@@ -570,7 +571,10 @@ export const orderService = {
     limit = 50,
     offset = 0,
   ) {
-    const where: Prisma.OrderWhereInput = { makerAddress };
+    // M-09: canonical rows plus legacy rows under the string given.
+    const where: Prisma.OrderWhereInput = {
+      makerAddress: accountAddressFilter(makerAddress),
+    };
     if (status) where.status = status as OrderStatus;
 
     const orders = await prisma.order.findMany({

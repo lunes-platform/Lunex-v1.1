@@ -12,6 +12,7 @@ import {
   verifyWalletReadAccess,
 } from '../middleware/readSession';
 import { requireAdmin } from '../middleware/adminGuard';
+import { isSameAccount } from '../utils/validation';
 
 const router = Router();
 
@@ -259,7 +260,8 @@ router.post(
           });
         }
         const agent = await agentService.getAgentProfile(req.params.id);
-        if (agent.walletAddress !== parsed.data.walletAddress) {
+        // M-09: stored canonical, presented in any encoding of the key.
+        if (!isSameAccount(agent.walletAddress, parsed.data.walletAddress)) {
           return res
             .status(403)
             .json({ error: 'Wallet signature does not match target agent' });
@@ -317,7 +319,8 @@ router.post(
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
       const agent = await agentService.getAgentProfile(req.params.id);
-      if (agent.walletAddress !== parsed.data.walletAddress) {
+      // M-09: stored canonical, presented in any encoding of the key.
+      if (!isSameAccount(agent.walletAddress, parsed.data.walletAddress)) {
         return res
           .status(403)
           .json({ error: 'Wallet signature does not match target agent' });
@@ -355,7 +358,8 @@ router.post(
           .json({ error: 'Validation failed', details: parsed.error.issues });
       }
       const agent = await agentService.getAgentProfile(req.params.id);
-      if (agent.walletAddress !== parsed.data.walletAddress) {
+      // M-09: stored canonical, presented in any encoding of the key.
+      if (!isSameAccount(agent.walletAddress, parsed.data.walletAddress)) {
         return res
           .status(403)
           .json({ error: 'Wallet signature does not match target agent' });

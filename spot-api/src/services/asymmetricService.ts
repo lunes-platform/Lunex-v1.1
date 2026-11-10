@@ -6,6 +6,7 @@ import type {
 } from '@prisma/client';
 import prisma from '../db';
 import { log } from '../utils/logger';
+import { accountAddressFilter, isSameAccount } from '../utils/validation';
 
 // ─── Constants ──────────────────────────────────────────────────
 
@@ -297,14 +298,20 @@ export const asymmetricService = {
     if (new Decimal(input.buyK).lte(0))
       throw new Error('buyK must be positive');
 
-    const existing = await prisma.asymmetricStrategy.findFirst({
+    // One account per pair whatever encoding each row was stored in (M-09):
+    // rows are scoped by pair, so the account match runs in memory.
+    const pairStrategies = await prisma.asymmetricStrategy.findMany({
       where: {
-        userAddress: input.userAddress,
         pairAddress: input.pairAddress,
         status: { not: 'SUSPENDED_ERROR' },
       },
+      select: { userAddress: true },
     });
-    if (existing)
+    if (
+      pairStrategies.some((row) =>
+        isSameAccount(row.userAddress, input.userAddress),
+      )
+    )
       throw new Error('Active strategy already exists for this pair');
 
     const strategy = await prisma.asymmetricStrategy.create({
@@ -336,7 +343,8 @@ export const asymmetricService = {
 
   async getStrategyForUser(strategyId: string, userAddress: string) {
     const strategy = await getRequiredStrategy(strategyId);
-    if (strategy.userAddress !== userAddress) throw new Error('Unauthorized');
+    if (!isSameAccount(strategy.userAddress, userAddress))
+      throw new Error('Unauthorized');
     return strategy;
   },
 
@@ -346,7 +354,8 @@ export const asymmetricService = {
     walletAddress: string,
   ) {
     const strategy = await getRequiredStrategy(strategyId);
-    if (strategy.userAddress !== walletAddress) throw new Error('Unauthorized');
+    if (!isSameAccount(strategy.userAddress, walletAddress))
+      throw new Error('Unauthorized');
     if (strategy.agentId !== agentId)
       throw new Error('Strategy is not linked to the authenticated agent');
     return strategy;
@@ -359,7 +368,8 @@ export const asymmetricService = {
     pairAddress?: string,
   ) {
     const strategy = await getRequiredStrategy(strategyId);
-    if (strategy.userAddress !== walletAddress) throw new Error('Unauthorized');
+    if (!isSameAccount(strategy.userAddress, walletAddress))
+      throw new Error('Unauthorized');
     if (strategy.agentId && strategy.agentId !== agentId) {
       throw new Error('Strategy already linked to another agent');
     }
@@ -389,7 +399,7 @@ export const asymmetricService = {
     userAddress: string,
   ): Promise<StrategyStatusOutput[]> {
     const strategies = await prisma.asymmetricStrategy.findMany({
-      where: { userAddress },
+      where: { userAddress: accountAddressFilter(userAddress) },
       orderBy: { createdAt: 'desc' },
     });
     return strategies.map(formatStrategy);

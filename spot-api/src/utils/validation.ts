@@ -54,10 +54,35 @@ export function accountAddressVariants(address: string): string[] {
   ];
 }
 
+/**
+ * Prisma string filter for every row of an account: `{ in: variants }`, or
+ * plain equality when the input is undecodable (legacy raw rows). Rows in an
+ * encoding outside the variants (hex/other prefix, not the input) need the
+ * data migration.
+ */
+export function accountAddressFilter(
+  address: string,
+): string | { in: string[] } {
+  const variants = accountAddressVariants(address);
+  return variants.length === 1 ? variants[0] : { in: variants };
+}
+
 /** Same account id (any SS58 prefix); plain string equality if undecodable. */
 export function isSameAccount(a: string, b: string): boolean {
   const left = toCanonicalAddress(a);
   return left !== null ? left === toCanonicalAddress(b) : a === b;
+}
+
+/**
+ * The address string the client wrote in the `address:` line it signed: the
+ * raw request field (hex, any SS58 prefix) when it is the same account as
+ * the canonical one, otherwise the canonical address. Only rebuilds the
+ * signed message; identity stays canonical.
+ */
+export function signedAddressFor(raw: unknown, canonical: string): string {
+  return typeof raw === 'string' && isSameAccount(raw, canonical)
+    ? raw
+    : canonical;
 }
 
 /**
