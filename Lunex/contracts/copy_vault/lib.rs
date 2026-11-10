@@ -47,6 +47,13 @@
 ///    momento do pagamento, e nunca mais que a liquidez nativa
 ///    disponível (`InsufficientNativeLiquidity` caso contrário).
 /// 5. `tracked_token_count <= MAX_TRACKED_TOKENS` sempre.
+/// 6. (A-02) `total_shares == 0 || total_shares >= MINIMUM_SHARES`: o
+///    1º depósito minta MINIMUM_SHARES dead shares para o `AccountId`
+///    zero, que nunca são queimadas. "Sem depositantes" passa a ser
+///    `total_shares <= MINIMUM_SHARES` (ver `depositor_shares`).
+/// 7. (A-01) router e factory/wnative só mudam pelo admin do protocolo
+///    e sem depositantes; o `amount_out` do swap é o delta de
+///    `balance_of(vault)` do token_out, nunca o retorno do router.
 
 #[ink::contract]
 pub mod copy_vault {
@@ -134,6 +141,10 @@ pub mod copy_vault {
         /// Performance fee cannot be raised while depositors hold shares
         /// (a raise would apply retroactively to capital already in)
         FeeIncreaseWithDepositors,
+        /// Router / valuation infra cannot change while depositors hold
+        /// shares (their funds would be approved to / priced by the new
+        /// contracts without their consent)
+        ConfigChangeWithDepositors,
     }
 
     // ─── Router interop (selectors + espelhos SCALE) ────────────
@@ -297,6 +308,13 @@ pub mod copy_vault {
         /// do lado nativo no par token<>wnative para o token poder ser
         /// rastreado (10 LUNES = 10 * 10^8).
         pub const MIN_TRACKING_RESERVE_NATIVE: Balance = 1_000_000_000;
+
+        /// A-02: dead shares mintadas para o `AccountId` zero no 1º
+        /// depósito e nunca queimadas (mesmo valor do
+        /// `MINIMUM_LIQUIDITY` de pair/router). Mantém `total_shares`
+        /// em 0 ou >= este piso, o que torna o ataque de inflação do
+        /// primeiro depositante (1 share + doação) não lucrativo.
+        pub const MINIMUM_SHARES: Balance = 1_000;
     }
 
     // ─── Events ─────────────────────────────────────────────────
@@ -416,6 +434,23 @@ pub mod copy_vault {
         pub depositor: AccountId,
         pub shares: Balance,
         pub unlock_at: Timestamp,
+        pub timestamp: Timestamp,
+    }
+
+    /// A-01: router trocado pelo admin (só sem depositantes). Declarado
+    /// depois dos existentes para manter os índices estáveis.
+    #[ink(event)]
+    pub struct RouterChanged {
+        pub old_router: Option<AccountId>,
+        pub new_router: AccountId,
+        pub timestamp: Timestamp,
+    }
+
+    /// A-01: factory/wnative trocados pelo admin (só sem depositantes).
+    #[ink(event)]
+    pub struct ValuationInfraChanged {
+        pub factory: AccountId,
+        pub wnative: AccountId,
         pub timestamp: Timestamp,
     }
 
@@ -597,10 +632,23 @@ pub mod copy_vault {
                 return Err(VaultError::BelowMinimumDeposit);
             }
 
+            // A-02: no 1º depósito, MINIMUM_SHARES vão para o AccountId
+            // zero (dead shares, nunca queimadas). Assim `total_shares`
+            // nunca volta a ficar entre 0 e o piso, e inflar o preço da
+            // cota via doação custa ao atacante ~toda a doação.
+            let dead_shares = if self.total_shares == 0 {
+                constants::MINIMUM_SHARES
+            } else {
+                0
+            };
+
             // Calculate shares to mint
             let shares_to_mint = if self.total_shares == 0 {
-                // First deposit: 1:1 shares
+                // First deposit: 1:1 shares, minus the dead shares
+                // (amount >= MIN_DEPOSIT > MINIMUM_SHARES)
                 amount
+                    .checked_sub(dead_shares)
+                    .ok_or(VaultError::Overflow)?
             } else {
                 // shares = amount * total_shares / total_equity
                 if equity_before_deposit == 0 {
@@ -633,9 +681,14 @@ pub mod copy_vault {
             }
 
             self.shares.insert(caller, &new_shares);
+            if dead_shares > 0 {
+                self.shares.insert(AccountId::from([0u8; 32]), &dead_shares);
+            }
             self.total_shares = self
                 .total_shares
                 .checked_add(shares_to_mint)
+                .ok_or(VaultError::Overflow)?
+                .checked_add(dead_shares)
                 .ok_or(VaultError::Overflow)?;
 
             self.total_equity = current_balance;
@@ -1123,14 +1176,16 @@ pub mod copy_vault {
         ///      `Router::swap_exact_tokens_for_tokens(amount_in,
         ///      amount_out_min, path, to, deadline)` with
         ///      `path = [token_in, token_out]` and `to = self`,
-        ///   3. Receives the actual `amount_out` (last element of the
-        ///      returned `Vec<Balance>`),
-        ///   4. Updates `total_equity` from on-chain state — never from a
+        ///   3. Resets the router allowance on `token_in` to 0,
+        ///   4. Measures the actual `amount_out` as the delta of the
+        ///      vault's `balance_of(token_out)` before/after the swap —
+        ///      the router's returned `Vec<Balance>` is NOT trusted (A-01),
+        ///   5. Updates `total_equity` from on-chain state — never from a
         ///      parameter provided by the leader.
         ///
-        /// Slippage protection is enforced via `min_amount_out`: if the
-        /// router returns less than that, the call reverts and the vault
-        /// state is unchanged.
+        /// Slippage protection is enforced via `min_amount_out` on that
+        /// balance delta: if the vault received less, the call reverts
+        /// and the vault state is unchanged.
         ///
         /// Requires: leader, not paused, trading active, router configured.
         #[ink(message)]
@@ -1260,32 +1315,28 @@ pub mod copy_vault {
             // em `token_in` e SÓ ENTÃO executa o swap. `to = self` para
             // o token de saída ser creditado ao vault, não ao leader.
             //
+            // A-01: o amount_out efetivo é o DELTA de balance_of(vault)
+            // em token_out (antes/depois), nunca o `amounts.last()` que o
+            // router devolve — um router malicioso pode mentir no retorno.
+            let token_out_before = match self.psp22_balance_of(token_out) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.release_lock();
+                    return Err(e);
+                }
+            };
+
             // Bypassed under unit-test cfg — there is no router contract in
             // the ink test env. O caminho real é provado on-chain pelo
             // script E2E `spot-api/scripts/e2e-copy-vault-swap.ts`.
             #[cfg(not(test))]
-            let amount_out: Balance = {
+            {
                 use ink::env::call::{build_call, ExecutionInput, Selector};
 
                 // 1) approve(router, amount_in) no token_in.
-                let approve_result = build_call::<ink::env::DefaultEnvironment>()
-                    .call(token_in)
-                    .gas_limit(0)
-                    .transferred_value(0)
-                    .exec_input(
-                        ExecutionInput::new(Selector::new(PSP22_APPROVE_SELECTOR))
-                            .push_arg(router)
-                            .push_arg(amount_in),
-                    )
-                    .returns::<core::result::Result<(), Psp22ErrorMirror>>()
-                    .try_invoke();
-
-                match approve_result {
-                    Ok(Ok(Ok(()))) => {}
-                    _ => {
-                        self.release_lock();
-                        return Err(VaultError::TokenApproveFailed);
-                    }
+                if let Err(e) = self.psp22_approve(token_in, router, amount_in) {
+                    self.release_lock();
+                    return Err(e);
                 }
 
                 // 2) Deadline relativo ao timestamp on-chain do bloco.
@@ -1319,26 +1370,38 @@ pub mod copy_vault {
                     .returns::<core::result::Result<Vec<Balance>, RouterErrorMirror>>()
                     .try_invoke();
 
-                // amounts[i] = quantidade em cada hop; o último elemento
-                // é o amount_out efetivamente creditado ao vault.
-                match swap_result {
-                    Ok(Ok(Ok(amounts))) => match amounts.last().copied() {
-                        Some(out) => out,
-                        None => {
-                            self.release_lock();
-                            return Err(VaultError::SwapFailed);
-                        }
-                    },
-                    _ => {
-                        self.release_lock();
-                        return Err(VaultError::SwapFailed);
-                    }
+                // O valor retornado (amounts) é ignorado de propósito: o
+                // que conta é o delta de saldo medido abaixo.
+                if !matches!(swap_result, Ok(Ok(Ok(_)))) {
+                    self.release_lock();
+                    return Err(VaultError::SwapFailed);
+                }
+
+                // 4) A-01: zera a allowance remanescente do router.
+                if let Err(e) = self.psp22_approve(token_in, router, 0) {
+                    self.release_lock();
+                    return Err(e);
+                }
+            }
+            #[cfg(test)]
+            {
+                let _ = router; // usado apenas no caminho cfg(not(test))
+                test_mocks::simulate_router_swap(token_out, min_amount_out);
+            }
+
+            let token_out_after = match self.psp22_balance_of(token_out) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.release_lock();
+                    return Err(e);
                 }
             };
-            #[cfg(test)]
-            let amount_out: Balance = {
-                let _ = router; // usado apenas no caminho cfg(not(test))
-                min_amount_out // deterministic for tests
+            let amount_out = match token_out_after.checked_sub(token_out_before) {
+                Some(delta) => delta,
+                None => {
+                    self.release_lock();
+                    return Err(VaultError::SwapFailed);
+                }
             };
 
             if amount_out < min_amount_out {
@@ -1509,7 +1572,8 @@ pub mod copy_vault {
             if new_fee_bps > constants::MAX_PERFORMANCE_FEE_BPS {
                 return Err(VaultError::FeeTooHigh);
             }
-            if new_fee_bps > self.performance_fee_bps && self.total_shares > 0 {
+            // Dead shares (A-02) não são depositantes.
+            if new_fee_bps > self.performance_fee_bps && self.depositor_shares() > 0 {
                 return Err(VaultError::FeeIncreaseWithDepositors);
             }
 
@@ -1536,12 +1600,24 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// Configure the Router contract used for real on-chain swaps
-        /// (admin only). Must be set before `swap_through_router` is callable.
+        /// Configure the Router contract used for real on-chain swaps.
+        /// Must be set before `swap_through_router` is callable.
+        ///
+        /// A-01: protocol admin only (NOT the leader) and only while no
+        /// depositor holds shares — the router receives `approve` over
+        /// vault funds and prices the NAV, so swapping it under live
+        /// deposits would let a malicious router drain them.
         #[ink(message)]
         pub fn set_router(&mut self, router: AccountId) -> Result<(), VaultError> {
-            self.ensure_admin()?;
+            self.ensure_protocol_admin()?;
+            self.ensure_no_depositors()?;
+            let old_router = self.router;
             self.router = Some(router);
+            self.env().emit_event(RouterChanged {
+                old_router,
+                new_router: router,
+                timestamp: self.env().block_timestamp(),
+            });
             Ok(())
         }
 
@@ -1556,17 +1632,26 @@ pub mod copy_vault {
         // ════════════════════════════════════════════════════════
 
         /// Configura a infra de valuation (factory + wnative) usada na
-        /// cotação on-chain do equity (admin/leader). Deve ser chamada
-        /// antes de qualquer swap/tracking.
+        /// cotação on-chain do equity. Deve ser chamada antes de
+        /// qualquer swap/tracking.
+        ///
+        /// A-01: só o admin do protocolo (NÃO o leader) e só sem
+        /// depositantes — uma factory falsa torna o NAV arbitrário.
         #[ink(message)]
         pub fn set_valuation_infra(
             &mut self,
             factory: AccountId,
             wnative: AccountId,
         ) -> Result<(), VaultError> {
-            self.ensure_admin()?;
+            self.ensure_protocol_admin()?;
+            self.ensure_no_depositors()?;
             self.factory = Some(factory);
             self.wnative = Some(wnative);
+            self.env().emit_event(ValuationInfraChanged {
+                factory,
+                wnative,
+                timestamp: self.env().block_timestamp(),
+            });
             Ok(())
         }
 
@@ -1928,6 +2013,33 @@ pub mod copy_vault {
             }
         }
 
+        /// PSP22::approve(spender, value) no `token`, em nome do vault.
+        /// Usado no swap real (approve antes, reset para 0 depois).
+        #[cfg(not(test))]
+        fn psp22_approve(
+            &self,
+            token: AccountId,
+            spender: AccountId,
+            value: Balance,
+        ) -> Result<(), VaultError> {
+            use ink::env::call::{build_call, ExecutionInput, Selector};
+            let result = build_call::<ink::env::DefaultEnvironment>()
+                .call(token)
+                .gas_limit(0)
+                .transferred_value(0)
+                .exec_input(
+                    ExecutionInput::new(Selector::new(PSP22_APPROVE_SELECTOR))
+                        .push_arg(spender)
+                        .push_arg(value),
+                )
+                .returns::<core::result::Result<(), Psp22ErrorMirror>>()
+                .try_invoke();
+            match result {
+                Ok(Ok(Ok(()))) => Ok(()),
+                _ => Err(VaultError::TokenApproveFailed),
+            }
+        }
+
         /// Reservas (reserve_token, reserve_native) do par
         /// token<>wnative resolvido via factory.
         fn pair_reserves(
@@ -2064,6 +2176,28 @@ pub mod copy_vault {
             Ok(())
         }
 
+        /// A-01: admin do protocolo apenas — o leader NÃO passa.
+        fn ensure_protocol_admin(&self) -> Result<(), VaultError> {
+            if self.env().caller() != self.admin {
+                return Err(VaultError::NotAdmin);
+            }
+            Ok(())
+        }
+
+        /// A-01: config sensível só muda sem shares de depositantes.
+        fn ensure_no_depositors(&self) -> Result<(), VaultError> {
+            if self.depositor_shares() > 0 {
+                return Err(VaultError::ConfigChangeWithDepositors);
+            }
+            Ok(())
+        }
+
+        /// Shares de depositantes reais: `total_shares` menos as dead
+        /// shares (A-02). `total_shares` é sempre 0 ou >= MINIMUM_SHARES.
+        fn depositor_shares(&self) -> Balance {
+            self.total_shares.saturating_sub(constants::MINIMUM_SHARES)
+        }
+
         fn ensure_not_paused(&self) -> Result<(), VaultError> {
             if self.paused {
                 return Err(VaultError::VaultPaused);
@@ -2108,6 +2242,21 @@ pub mod copy_vault {
                 RefCell::new(BTreeMap::new());
             static PAIR_RESERVES: RefCell<BTreeMap<AccountId, (Balance, Balance)>> =
                 RefCell::new(BTreeMap::new());
+            static ROUTER_SWAP_CREDIT: RefCell<Option<Balance>> = RefCell::new(None);
+        }
+
+        /// Quanto o router simulado credita de token_out ao vault no
+        /// próximo swap (default: `min_amount_out`). Permite simular um
+        /// router que reporta sucesso mas entrega menos.
+        pub fn set_router_swap_credit(credit: Balance) {
+            ROUTER_SWAP_CREDIT.with(|c| *c.borrow_mut() = Some(credit));
+        }
+
+        /// Router simulado: credita token_out no saldo PSP22 mockado do
+        /// vault (o swap real é provado no E2E).
+        pub fn simulate_router_swap(token_out: AccountId, default_credit: Balance) {
+            let credit = ROUTER_SWAP_CREDIT.with(|c| c.borrow().unwrap_or(default_credit));
+            set_psp22_balance(token_out, psp22_balance(token_out).saturating_add(credit));
         }
 
         /// Saldo PSP22 do vault em `token` (default: 0).
@@ -2201,11 +2350,21 @@ pub mod copy_vault {
             set_balance(contract_id, 100_000_000_000);
 
             let shares = vault.deposit().unwrap();
-            assert_eq!(shares, 100_000_000_000); // First deposit: 1:1
+            // First deposit: 1:1 minus the dead shares (A-02)
+            assert_eq!(shares, 100_000_000_000 - constants::MINIMUM_SHARES);
 
             let (depositor_shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
-            assert_eq!(depositor_shares, 100_000_000_000);
+            assert_eq!(
+                depositor_shares,
+                100_000_000_000 - constants::MINIMUM_SHARES
+            );
             assert_eq!(vault.active_depositors, 1);
+            // Dead shares travadas no AccountId zero; total = 1:1
+            assert_eq!(
+                vault.shares.get(AccountId::from([0u8; 32])),
+                Some(constants::MINIMUM_SHARES)
+            );
+            assert_eq!(vault.total_shares, 100_000_000_000);
         }
 
         #[ink::test]
@@ -2442,19 +2601,23 @@ pub mod copy_vault {
             let (mut vault, accounts) = create_vault();
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
 
-            // Charlie deposita 1000 LUNES
-            set_caller(accounts.charlie);
-            set_value(100_000_000_000);
-            set_balance(contract_id, 100_000_000_000);
-            vault.deposit().unwrap();
-
-            // Admin configura router + infra de valuation (ADR-002)
+            // Admin configura router + infra de valuation (ADR-002) ANTES
+            // de qualquer depósito (A-01: proibido com depositantes)
             set_caller(accounts.alice);
             set_value(0);
             vault.set_router(accounts.frank).unwrap();
             vault
                 .set_valuation_infra(factory_addr(), wnative_addr())
                 .unwrap();
+
+            // Charlie deposita 1000 LUNES
+            set_caller(accounts.charlie);
+            set_value(100_000_000_000);
+            set_balance(contract_id, 100_000_000_000);
+            vault.deposit().unwrap();
+
+            set_caller(accounts.alice);
+            set_value(0);
 
             // django = token_in rastreado (rate 0.1 → valuation 5e9)
             test_mocks::set_pair_reserves(accounts.django, 100_000_000_000_000, 10_000_000_000_000);
@@ -2879,11 +3042,15 @@ pub mod copy_vault {
             let (mut vault, accounts) = vault_with_infra();
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
 
-            // 1º depósito: 100 LUNES → 100e9 shares (1:1)
+            // 1º depósito: 100 LUNES → 100e9 shares (1:1), das quais
+            // MINIMUM_SHARES são dead shares (A-02)
             set_caller(accounts.charlie);
             set_value(100_000_000_000);
             set_balance(contract_id, 100_000_000_000);
-            assert_eq!(vault.deposit(), Ok(100_000_000_000));
+            assert_eq!(
+                vault.deposit(),
+                Ok(100_000_000_000 - constants::MINIMUM_SHARES)
+            );
 
             // Vault adquire token valendo 100e9 em nativo (rate 1.0)
             set_caller(accounts.alice);
@@ -2934,7 +3101,7 @@ pub mod copy_vault {
 
             // Shares intactas após a falha explícita
             let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
-            assert_eq!(shares, 100_000_000_000);
+            assert_eq!(shares, 100_000_000_000 - constants::MINIMUM_SHARES);
         }
 
         #[ink::test]
@@ -2962,7 +3129,7 @@ pub mod copy_vault {
             assert_eq!(result, Ok(45_000_000_000));
 
             let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
-            assert_eq!(shares, 95_000_000_000);
+            assert_eq!(shares, 95_000_000_000 - constants::MINIMUM_SHARES);
         }
 
         #[ink::test]
@@ -3001,14 +3168,16 @@ pub mod copy_vault {
             let (mut vault, accounts) = create_vault();
             let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
 
+            // Router antes do depósito (A-01: proibido com depositantes)
+            set_caller(accounts.alice);
+            set_value(0);
+            vault.set_router(accounts.frank).unwrap();
+
             set_caller(accounts.charlie);
             set_value(100_000_000_000);
             set_balance(contract_id, 100_000_000_000);
             vault.deposit().unwrap();
-
-            set_caller(accounts.alice);
             set_value(0);
-            vault.set_router(accounts.frank).unwrap();
 
             set_caller(accounts.bob);
             let result = vault.swap_through_router(
@@ -3184,7 +3353,7 @@ pub mod copy_vault {
             assert_eq!(vault.withdraw(50_000_000_000), Ok(50_000_000_000));
             assert_eq!(vault.get_withdrawal_request(accounts.charlie), None);
             let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
-            assert_eq!(shares, 50_000_000_000);
+            assert_eq!(shares, 50_000_000_000 - constants::MINIMUM_SHARES);
         }
 
         #[ink::test]
@@ -3239,6 +3408,209 @@ pub mod copy_vault {
             // Decreasing always allowed (benefits followers).
             assert_eq!(vault.set_performance_fee(1000), Ok(()));
             assert_eq!(vault.performance_fee_bps, 1000);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // A-01 — router / valuation infra fora do alcance do leader
+        // ════════════════════════════════════════════════════════
+
+        #[ink::test]
+        fn test_leader_cannot_set_router_or_valuation_infra() {
+            let (mut vault, accounts) = create_vault();
+
+            // Sem depositantes: o leader já não é admin do protocolo.
+            set_caller(accounts.bob);
+            assert_eq!(vault.set_router(accounts.frank), Err(VaultError::NotAdmin));
+            assert_eq!(
+                vault.set_valuation_infra(factory_addr(), wnative_addr()),
+                Err(VaultError::NotAdmin)
+            );
+
+            // Com depósito ativo: idem (era Ok — leader trocava o router
+            // por um malicioso e drenava via approve/transfer_from).
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_caller(accounts.charlie);
+            set_value(100_000_000_000);
+            set_balance(contract_id, 100_000_000_000);
+            vault.deposit().unwrap();
+            set_value(0);
+
+            set_caller(accounts.bob);
+            assert_eq!(vault.set_router(accounts.frank), Err(VaultError::NotAdmin));
+            assert_eq!(
+                vault.set_valuation_infra(factory_addr(), wnative_addr()),
+                Err(VaultError::NotAdmin)
+            );
+            assert_eq!(vault.router_address(), None);
+            assert_eq!(vault.get_valuation_infra(), (None, None));
+        }
+
+        #[ink::test]
+        fn test_admin_cannot_change_router_or_infra_with_depositors() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.set_router(accounts.frank),
+                Err(VaultError::ConfigChangeWithDepositors)
+            );
+            assert_eq!(
+                vault.set_valuation_infra(factory_addr(), wnative_addr()),
+                Err(VaultError::ConfigChangeWithDepositors)
+            );
+            assert_eq!(vault.router_address(), None);
+            assert_eq!(vault.get_valuation_infra(), (None, None));
+        }
+
+        #[ink::test]
+        fn test_admin_can_change_router_and_infra_without_depositors() {
+            let (mut vault, accounts) = create_vault();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+
+            // total_shares == 0: admin configura, e cada mudança emite
+            // evento (mesmo padrão de PerformanceFeeChanged).
+            set_caller(accounts.alice);
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.set_router(accounts.frank), Ok(()));
+            assert_eq!(
+                vault.set_valuation_infra(factory_addr(), wnative_addr()),
+                Ok(())
+            );
+            assert_eq!(ink::env::test::recorded_events().count(), events_before + 2);
+            assert_eq!(vault.router_address(), Some(accounts.frank));
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(factory_addr()), Some(wnative_addr()))
+            );
+
+            // Depois que o último depositante sai (só restam as dead
+            // shares), o admin volta a poder trocar o router.
+            set_now(1_000);
+            set_caller(accounts.charlie);
+            set_value(100_000_000_000);
+            set_balance(contract_id, 100_000_000_000);
+            let minted = vault.deposit().unwrap();
+            set_value(0);
+            let unlock_at = vault.request_withdrawal(minted).unwrap();
+            set_now(unlock_at);
+            vault.withdraw(minted).unwrap();
+
+            set_caller(accounts.alice);
+            assert_eq!(vault.set_router(accounts.django), Ok(()));
+            assert_eq!(vault.router_address(), Some(accounts.django));
+        }
+
+        /// O min_amount_out vale sobre o delta REAL de balance_of(vault)
+        /// do token_out, não sobre o `amounts.last()` que o router
+        /// devolve.
+        #[ink::test]
+        fn test_swap_slippage_measured_on_balance_delta() {
+            let (mut vault, accounts) = setup_funded_vault_with_router();
+
+            // Router "reporta" sucesso mas credita 1 unidade a menos.
+            test_mocks::set_router_swap_credit(9_000_000_000 - 1);
+            set_caller(accounts.bob);
+            let result = vault.swap_through_router(
+                accounts.django,
+                accounts.eve,
+                10_000_000_000,
+                9_000_000_000,
+            );
+            assert_eq!(result, Err(VaultError::SlippageExceeded));
+            assert!(!vault.locked);
+        }
+
+        #[ink::test]
+        fn test_swap_returns_actual_balance_delta() {
+            let (mut vault, accounts) = setup_funded_vault_with_router();
+
+            test_mocks::set_router_swap_credit(9_000_000_123);
+            set_caller(accounts.bob);
+            let result = vault.swap_through_router(
+                accounts.django,
+                accounts.eve,
+                10_000_000_000,
+                9_000_000_000,
+            );
+            assert_eq!(result, Ok(9_000_000_123));
+            assert_eq!(test_mocks::psp22_balance(accounts.eve), 9_000_000_123);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // A-02 — inflação do primeiro depositante (dead shares)
+        // ════════════════════════════════════════════════════════
+
+        #[ink::test]
+        fn first_depositor_inflation_is_unprofitable() {
+            let (mut vault, accounts) = create_vault();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_now(1_000);
+
+            // 1) Atacante (django) é o primeiro depositante, com o mínimo.
+            set_caller(accounts.django);
+            set_value(constants::MIN_DEPOSIT);
+            set_balance(contract_id, constants::MIN_DEPOSIT);
+            let attacker_minted = vault.deposit().unwrap();
+            set_value(0);
+
+            // 2) Reduz a própria posição a 1 share (saque grande ⇒
+            // request + cooldown de 24h).
+            let burn = attacker_minted - 1;
+            let unlock_at = vault.request_withdrawal(burn).unwrap();
+            set_now(unlock_at);
+            let attacker_out = vault.withdraw(burn).unwrap();
+            let native_after_burn = constants::MIN_DEPOSIT - attacker_out;
+            set_balance(contract_id, native_after_burn);
+
+            // 3) Doação direta D em nativo (entra no NAV).
+            let donation: Balance = 100_000_000_000; // 1000 LUNES
+            set_balance(contract_id, native_after_burn + donation);
+
+            // 4) Vítima (charlie) deposita V = 1,9·D.
+            let victim_deposit: Balance = donation * 19 / 10;
+            set_caller(accounts.charlie);
+            set_value(victim_deposit);
+            set_balance(contract_id, native_after_burn + donation + victim_deposit);
+            vault.deposit().unwrap();
+            set_value(0);
+
+            // Vítima resgata >= 99,9% do que depositou.
+            let (_, victim_value) = vault.get_depositor_info(accounts.charlie).unwrap();
+            assert!(
+                victim_value >= victim_deposit * 999 / 1000,
+                "victim redeemable {} < 99.9% of {}",
+                victim_value,
+                victim_deposit
+            );
+
+            // E o atacante sai no prejuízo.
+            let (_, attacker_value) = vault.get_depositor_info(accounts.django).unwrap();
+            assert!(attacker_out + attacker_value < constants::MIN_DEPOSIT + donation);
+        }
+
+        #[ink::test]
+        fn test_withdraw_keeps_total_shares_zero_or_above_floor() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            // Único depositante reduz a posição a 1 share.
+            set_caller(accounts.charlie);
+            let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
+            let unlock_at = vault.request_withdrawal(shares - 1).unwrap();
+            set_now(unlock_at);
+            vault.withdraw(shares - 1).unwrap();
+            assert!(
+                vault.total_shares == 0 || vault.total_shares >= constants::MINIMUM_SHARES,
+                "total_shares {} below floor",
+                vault.total_shares
+            );
+
+            // As dead shares não prendem ninguém: ele sai por completo
+            // e só o piso fica no vault.
+            let unlock_at = vault.request_withdrawal(1).unwrap();
+            set_now(unlock_at);
+            vault.withdraw(1).unwrap();
+            assert_eq!(vault.get_depositor_info(accounts.charlie), Ok((0, 0)));
+            assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
         }
     }
 }
