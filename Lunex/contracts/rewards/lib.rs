@@ -30,6 +30,9 @@ pub mod trading_rewards {
         pub claimed_rewards: Balance,
         pub trade_count: u32,
         pub suspicious_flags: u8,
+        /// Início da janela mensal corrente de `monthly_volume` (ms). O reset
+        /// mensal é ancorado aqui, não no último trade.
+        pub monthly_window_start: Timestamp,
     }
 
     /// Tiers de trading baseados em volume
@@ -79,6 +82,10 @@ pub mod trading_rewards {
         /// A época atual tem peso de trading: só pode ser fechada por
         /// `distribute_rewards` (fechar sem rewards confiscaria o peso)
         EpochHasPendingWeight,
+        /// A operação exige um trader atualmente em blacklist
+        NotBlacklisted,
+        /// A época atual ainda não atingiu `epoch_start_time + epoch_duration`
+        EpochNotFinished,
     }
 
     /// Eventos emitidos pelo contrato
@@ -170,6 +177,19 @@ pub mod trading_rewards {
         #[ink(topic)]
         pub to: AccountId,
         pub amount: Balance,
+        pub timestamp: Timestamp,
+    }
+
+    /// Peso de um trader em blacklist anulado pelo admin. Época aberta: o
+    /// peso sai do total da época. Época fechada: a fração do trader volta de
+    /// `reserved_rewards` para `rewards_pool` (`returned_to_pool`).
+    #[ink(event)]
+    pub struct BlacklistedWeightVoided {
+        #[ink(topic)]
+        pub trader: AccountId,
+        pub epoch_id: u32,
+        pub weight: Balance,
+        pub returned_to_pool: Balance,
         pub timestamp: Timestamp,
     }
 
@@ -429,6 +449,7 @@ pub mod trading_rewards {
                             claimed_rewards: 0,
                             trade_count: 0,
                             suspicious_flags: constants::SUSPICIOUS_FLAG_NONE,
+                            monthly_window_start: current_time,
                         },
                         true,
                     )
@@ -437,9 +458,9 @@ pub mod trading_rewards {
 
             // === MAIS VALIDAÇÕES ANTI-FRAUDE ===
 
-            // 3. Cooldown entre trades - usando parâmetro configurável
+            // 3. Cooldown entre trades - usando parâmetro configurável.
+            // Mesmo timestamp (mesmo bloco) está DENTRO do cooldown: diferença 0.
             if position.last_trade_timestamp > 0
-                && current_time > position.last_trade_timestamp
                 && current_time.saturating_sub(position.last_trade_timestamp) < self.trade_cooldown
             {
                 return Err(TradingRewardsError::TradeCooldownActive);
@@ -464,13 +485,15 @@ pub mod trading_rewards {
                 return Err(TradingRewardsError::DailyLimitExceeded);
             }
 
-            // Reset mensal se necessário
-            if position.last_trade_timestamp > 0
-                && current_time > position.last_trade_timestamp
-                && current_time.saturating_sub(position.last_trade_timestamp)
+            // Reset mensal ancorado no início da janela (mesmo padrão do reset
+            // diário): sem isso, quem opera ao menos a cada 30 dias acumularia
+            // volume vitalício e manteria o tier (que multiplica o peso)
+            if current_time > position.monthly_window_start
+                && current_time.saturating_sub(position.monthly_window_start)
                     > constants::MONTHLY_RESET_PERIOD
             {
                 position.monthly_volume = 0;
+                position.monthly_window_start = current_time;
             }
 
             let old_tier = position.tier;
@@ -617,7 +640,18 @@ pub mod trading_rewards {
                 return Err(TradingRewardsError::NoActiveTraders);
             }
 
+            // A época só fecha após `epoch_duration`: impede fechar uma época
+            // logo após abri-la com um pool irrisório (zerando as frações).
+            // Nenhuma mudança de estado em caso de falha.
             let current_time = Self::env().block_timestamp();
+            let epoch_end = self
+                .epoch_start_time
+                .checked_add(self.epoch_duration)
+                .ok_or(TradingRewardsError::Overflow)?;
+            if current_time < epoch_end {
+                return Err(TradingRewardsError::EpochNotFinished);
+            }
+
             let amount_to_distribute = self.rewards_pool;
             let traders_count = self.epoch_active_traders.get(epoch).unwrap_or(0);
 
@@ -1145,6 +1179,117 @@ pub mod trading_rewards {
             Ok(())
         }
 
+        /// Remove o contrato de staking (apenas admin). Saída de emergência
+        /// quando o staking está pausado ou com ABI incompatível (toda
+        /// `receive_fee_allocation` reverteria): a partir daí 100% vai para o
+        /// `rewards_pool`. Idempotente. Sem evento (o setter também não emite).
+        #[ink(message)]
+        pub fn clear_staking_contract(&mut self) -> Result<(), TradingRewardsError> {
+            self.ensure_admin()?;
+            self.staking_contract = None;
+            Ok(())
+        }
+
+        /// Anula o peso de um trader ATUALMENTE em blacklist numa época
+        /// (apenas admin). Retorna o peso anulado (0 = nada a anular, sem
+        /// mudança de estado).
+        ///
+        /// - Época aberta (`epoch_id == current_epoch`): o peso sai de
+        ///   `epoch_total_weight` e o trader sai de `epoch_active_traders`.
+        /// - Época fechada (`epoch_id < current_epoch`): a fração do trader
+        ///   (mesma conta do claim) sai de `reserved_rewards` e volta para o
+        ///   `rewards_pool` (próxima distribuição). O total da época fechada
+        ///   não muda, então as frações dos demais ficam intactas.
+        ///
+        /// A entrada de peso é removida, então um claim posterior (após
+        /// unblacklist) dessa época paga 0.
+        #[ink(message)]
+        pub fn void_blacklisted_weight(
+            &mut self,
+            trader: AccountId,
+            epoch_id: u32,
+        ) -> Result<Balance, TradingRewardsError> {
+            self.ensure_admin()?;
+            // Único ponto de acquire e único ponto de release (Ok e Err)
+            self.acquire_reentrancy_guard()?;
+            let result = self.void_blacklisted_weight_inner(trader, epoch_id);
+            self.release_reentrancy_guard();
+            result
+        }
+
+        fn void_blacklisted_weight_inner(
+            &mut self,
+            trader: AccountId,
+            epoch_id: u32,
+        ) -> Result<Balance, TradingRewardsError> {
+            if !self.blacklisted_addresses.get(trader).unwrap_or(false) {
+                return Err(TradingRewardsError::NotBlacklisted);
+            }
+
+            let weight = self
+                .epoch_trader_weight
+                .get((epoch_id, trader))
+                .unwrap_or(0);
+            if weight == 0 {
+                return Ok(0);
+            }
+
+            let current_epoch = self.current_epoch;
+            let returned_to_pool = match epoch_id.cmp(&current_epoch) {
+                core::cmp::Ordering::Equal => {
+                    // Todo o cálculo checked antes das escritas
+                    let new_total = self
+                        .epoch_total_weight
+                        .get(epoch_id)
+                        .unwrap_or(0)
+                        .checked_sub(weight)
+                        .ok_or(TradingRewardsError::Overflow)?;
+                    let new_active = self
+                        .epoch_active_traders
+                        .get(epoch_id)
+                        .unwrap_or(0)
+                        .checked_sub(1)
+                        .ok_or(TradingRewardsError::Overflow)?;
+
+                    self.epoch_trader_weight.remove((epoch_id, trader));
+                    self.epoch_total_weight.insert(epoch_id, &new_total);
+                    self.epoch_active_traders.insert(epoch_id, &new_active);
+                    0
+                }
+                core::cmp::Ordering::Less => {
+                    // Mesma conta do claim (`take_epoch_reward`)
+                    let share = self.epoch_share(epoch_id, weight)?;
+                    let new_reserved = self
+                        .reserved_rewards
+                        .checked_sub(share)
+                        .ok_or(TradingRewardsError::Overflow)?;
+                    let new_pool = self
+                        .rewards_pool
+                        .checked_add(share)
+                        .ok_or(TradingRewardsError::Overflow)?;
+
+                    self.epoch_trader_weight.remove((epoch_id, trader));
+                    self.reserved_rewards = new_reserved;
+                    self.rewards_pool = new_pool;
+                    share
+                }
+                core::cmp::Ordering::Greater => {
+                    // Época futura: nunca há peso (track só escreve na atual)
+                    return Ok(0);
+                }
+            };
+
+            Self::env().emit_event(BlacklistedWeightVoided {
+                trader,
+                epoch_id,
+                weight,
+                returned_to_pool,
+                timestamp: Self::env().block_timestamp(),
+            });
+
+            Ok(weight)
+        }
+
         /// Recebe fee allocation do pair contract e distribui 10% para staking.
         ///
         /// Com staking configurado, os 10% são enviados via
@@ -1155,8 +1300,16 @@ pub mod trading_rewards {
         #[ink(message, payable)]
         pub fn receive_fee_allocation(&mut self) -> Result<(), TradingRewardsError> {
             self.ensure_not_paused()?;
-            // Único ponto de acquire e único ponto de release (Ok e Err); o
-            // guard fica ativo durante a chamada externa ao staking
+            // Único ponto de acquire e único ponto de release (Ok e Err).
+            //
+            // ATENÇÃO (reentrância): em ink! 4.3 o struct raiz (incluindo
+            // `reentrancy_guard` e `rewards_pool`) só é gravado em storage no
+            // FIM da mensagem. Durante a chamada externa ao staking o guard está
+            // ativo apenas em memória: um frame que reentrasse leria o valor
+            // antigo do storage (`false`). A proteção real on-chain é o
+            // pallet-contracts negar reentrada por padrão (`build_call` sem
+            // `CallFlags::ALLOW_REENTRY`). Este contrato NUNCA deve usar
+            // `allow_reentry(true)`.
             self.acquire_reentrancy_guard()?;
             let result = self.receive_fee_allocation_inner();
             self.release_reentrancy_guard();
@@ -1187,7 +1340,9 @@ pub mod trading_rewards {
                 None => (amount, 0),
             };
 
-            // Efeitos antes da interação externa
+            // Atualiza o pool em memória antes da chamada externa. Não é visível
+            // a um frame reentrante (o struct raiz só é gravado no fim da
+            // mensagem); ver nota de reentrância em `receive_fee_allocation`.
             self.rewards_pool = self
                 .rewards_pool
                 .checked_add(trading_rewards_amount)
@@ -1301,7 +1456,9 @@ pub mod trading_rewards {
             {
                 // Stand-in determinístico: move o valor como a chamada real
                 // faria (transferred_value) e responde Ok, ou falha sob demanda.
-                // Registra se o guard estava ativo durante a chamada externa.
+                // Registra o guard EM MEMÓRIA no momento da chamada externa
+                // (prova o formato acquire/inner/release; não prova proteção
+                // on-chain, que vem do pallet negar reentrada por padrão).
                 test_mocks::record_guard_during_staking_call(self.reentrancy_guard);
                 if test_mocks::staking_call_fails() {
                     return Err(TradingRewardsError::StakingFundingFailed);
@@ -1448,7 +1605,12 @@ pub mod trading_rewards {
             Ok(())
         }
 
-        /// Adquire reentrancy guard (padrão acquire/release)
+        /// Adquire reentrancy guard (padrão acquire/release).
+        ///
+        /// O guard vive no struct raiz, que em ink! 4.3 só é gravado no fim da
+        /// mensagem: ele NÃO é visível a um frame reentrante. A proteção
+        /// on-chain contra reentrada é o pallet-contracts negar reentrada por
+        /// padrão (nunca usar `allow_reentry(true)` neste contrato).
         fn acquire_reentrancy_guard(&mut self) -> Result<(), TradingRewardsError> {
             if self.reentrancy_guard {
                 return Err(TradingRewardsError::ReentrancyGuardActive);
@@ -1589,7 +1751,18 @@ pub mod trading_rewards {
             assert!(!contract.reentrancy_guard);
         }
 
+        /// Avança o relógio até exatamente `epoch_start_time + epoch_duration`
+        /// (fim da época atual), se ainda não chegou lá
+        fn advance_to_epoch_end(contract: &TradingRewardsContract) {
+            let end = contract.epoch_start_time + contract.epoch_duration;
+            let now = TEST_TIME.with(|t| t.get());
+            if end > now {
+                advance_time(end - now);
+            }
+        }
+
         fn distribute(contract: &mut TradingRewardsContract) {
+            advance_to_epoch_end(contract);
             set_next_caller(default_accounts().alice);
             contract.distribute_rewards().unwrap();
             assert!(!contract.reentrancy_guard);
@@ -1706,7 +1879,8 @@ pub mod trading_rewards {
                 .track_trading_volume(accounts.charlie, 10_000 * constants::DECIMALS_8)
                 .unwrap();
 
-            // Distribui rewards
+            // Distribui rewards (após o fim da época)
+            advance_to_epoch_end(&contract);
             set_next_caller(accounts.alice);
             contract.distribute_rewards().unwrap();
 
@@ -1744,6 +1918,7 @@ pub mod trading_rewards {
                 .track_trading_volume(accounts.charlie, 10_000 * constants::DECIMALS_8)
                 .unwrap();
 
+            advance_to_epoch_end(&contract); // distribuição só após o fim da época
             set_next_caller(accounts.alice);
             contract.distribute_rewards().unwrap();
 
@@ -2760,8 +2935,15 @@ pub mod trading_rewards {
             assert_solvent(&contract);
         }
 
-        /// O guard cobre a chamada externa de `receive_fee_allocation` e é
+        /// O guard em memória está ativo durante a chamada externa de
+        /// `receive_fee_allocation` (formato acquire -> inner -> release) e é
         /// liberado nos caminhos Ok e `StakingFundingFailed`.
+        ///
+        /// Isto NÃO prova proteção contra reentrada on-chain: em ink! 4.3 o
+        /// struct raiz só é gravado no fim da mensagem, então um frame
+        /// reentrante leria `reentrancy_guard == false` do storage. A proteção
+        /// real é o pallet-contracts negar reentrada por padrão (o contrato
+        /// nunca deve usar `allow_reentry(true)`).
         #[ink::test]
         fn test_receive_fee_allocation_is_guarded() {
             let accounts = default_accounts();
@@ -2825,6 +3007,417 @@ pub mod trading_rewards {
             // Saldo abaixo das obrigações satura em 0
             set_balance(contract_account(), 3 * L);
             assert_eq!(contract.get_reward_accounting(), (10 * L, 0, 0));
+        }
+
+        // ========================================
+        // WP-3 R3: PESO DE BLACKLIST, TIME GATE, JANELA MENSAL, COOLDOWN,
+        // UNSET DO STAKING
+        // ========================================
+
+        /// R3-1: peso anulado na época aberta -> traders honestos recebem 100%;
+        /// época só com peso anulado volta a poder ser fechada por
+        /// `start_new_epoch`.
+        #[ink::test]
+        fn test_void_blacklisted_weight_open_epoch() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Ok(5_000 * L)
+            );
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                None
+            );
+            assert_eq!(contract.epoch_total_weight.get(0), Some(5_000 * L));
+            assert_eq!(contract.epoch_active_traders.get(0), Some(1));
+            assert_weight_invariant(&contract, 0, &[accounts.charlie, accounts.django]);
+            assert_eq!(contract.rewards_pool, 100 * L);
+            assert_eq!(contract.reserved_rewards, 0);
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::BlacklistedWeightVoided(BlacklistedWeightVoided {
+                    trader,
+                    epoch_id: 0,
+                    weight,
+                    returned_to_pool: 0,
+                    ..
+                }) if *trader == accounts.charlie && *weight == 5_000 * L
+            )));
+
+            // Segunda chamada: Ok(0), sem mudança de estado
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 0), Ok(0));
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(contract.epoch_total_weight.get(0), Some(5_000 * L));
+            assert_eq!(contract.epoch_active_traders.get(0), Some(1));
+            assert_eq!(contract.rewards_pool, 100 * L);
+
+            distribute(&mut contract);
+            let before = balance_of(accounts.django);
+            assert_eq!(claim(&mut contract, accounts.django), 100 * L);
+            assert_eq!(balance_of(accounts.django), before + 100 * L);
+            assert_eq!(contract.reserved_rewards, 0);
+            assert_solvent(&contract);
+
+            // Época 1 só com peso de um trader depois blacklisted: anular
+            // destrava `start_new_epoch`
+            set_next_caller(accounts.alice);
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            assert_eq!(
+                contract.start_new_epoch(),
+                Err(TradingRewardsError::EpochHasPendingWeight)
+            );
+            // 2º trade na janela mensal: 10k de volume mensal -> Silver (1.2x)
+            assert_eq!(
+                contract.epoch_trader_weight.get((1, accounts.charlie)),
+                Some(6_000 * L)
+            );
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 1),
+                Ok(6_000 * L)
+            );
+            assert_eq!(contract.epoch_total_weight.get(1), Some(0));
+            assert_eq!(contract.epoch_active_traders.get(1), Some(0));
+            assert_eq!(contract.start_new_epoch(), Ok(2));
+            assert_solvent(&contract);
+        }
+
+        /// R3-1: peso anulado em época fechada -> a fração exata sai do
+        /// reservado e volta ao pool; o trader nunca mais a reivindica.
+        #[ink::test]
+        fn test_void_blacklisted_weight_closed_epoch_returns_share_to_pool() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract);
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            let share = contract.get_epoch_rewards(0, accounts.charlie);
+            assert_eq!(share, 50 * L);
+            assert_eq!(contract.get_reward_accounting(), (0, 100 * L, 0));
+
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Ok(5_000 * L)
+            );
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(contract.reserved_rewards, 100 * L - share);
+            assert_eq!(contract.rewards_pool, share);
+            assert_eq!(contract.get_reward_accounting(), (50 * L, 50 * L, 0));
+            // Total da época fechada não muda: frações dos demais intactas
+            assert_eq!(contract.epoch_total_weight.get(0), Some(10_000 * L));
+            assert_eq!(contract.get_epoch_rewards(0, accounts.django), 50 * L);
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                None
+            );
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::BlacklistedWeightVoided(BlacklistedWeightVoided {
+                    trader,
+                    epoch_id: 0,
+                    returned_to_pool,
+                    ..
+                }) if *trader == accounts.charlie && *returned_to_pool == 50 * L
+            )));
+            assert_solvent(&contract);
+
+            // Idempotente: Ok(0) sem mudança de estado
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 0), Ok(0));
+            assert_eq!(contract.get_reward_accounting(), (50 * L, 50 * L, 0));
+
+            // Após unblacklist o trader não reivindica a época anulada
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            let c_before = balance_of(accounts.charlie);
+            set_next_caller(accounts.charlie);
+            assert_eq!(contract.claim_rewards(), Ok(0)); // cursor 0 -> 1, nada pago
+            assert_eq!(
+                contract.claim_epoch_rewards(0),
+                Err(TradingRewardsError::NoRewardsToClaim)
+            );
+            assert_eq!(contract.get_epoch_rewards(0, accounts.charlie), 0);
+            assert_eq!(balance_of(accounts.charlie), c_before);
+
+            // O trader honesto recebe sua fração; a fração anulada vai para a
+            // próxima distribuição
+            assert_eq!(claim(&mut contract, accounts.django), 50 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract);
+            assert_eq!(claim(&mut contract, accounts.django), 50 * L);
+            assert_eq!(contract.get_reward_accounting(), (0, 0, 0));
+            assert_solvent(&contract);
+        }
+
+        /// R3-1: só admin; só trader em blacklist; guard liberado.
+        #[ink::test]
+        fn test_void_blacklisted_weight_access_and_preconditions() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+            track(&mut contract, accounts.charlie, 5_000 * L);
+
+            set_next_caller(accounts.charlie);
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Err(TradingRewardsError::AccessDenied)
+            );
+
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Err(TradingRewardsError::NotBlacklisted)
+            );
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                Some(5_000 * L)
+            );
+            assert_eq!(contract.epoch_total_weight.get(0), Some(5_000 * L));
+            assert_eq!(contract.epoch_active_traders.get(0), Some(1));
+
+            // Blacklisted mas sem peso naquela época (época futura): Ok(0)
+            contract.blacklist_address(accounts.charlie).unwrap();
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 7), Ok(0));
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(contract.epoch_total_weight.get(0), Some(5_000 * L));
+        }
+
+        /// R3-2: distribute só no fim da época, sem mudança de estado antes.
+        #[ink::test]
+        fn test_distribute_requires_epoch_end() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            let end = contract.epoch_start_time + contract.epoch_duration;
+            let now = TEST_TIME.with(|t| t.get());
+            advance_time(end - 1 - now); // 1 ms antes do fim
+            let last_distribution = contract.last_distribution;
+
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(contract.rewards_pool, 100 * L);
+            assert_eq!(contract.reserved_rewards, 0);
+            assert_eq!(contract.total_distributed, 0);
+            assert_eq!(contract.current_epoch, 0);
+            assert_eq!(contract.last_distribution, last_distribution);
+            assert_eq!(contract.epoch_rewards.get(0), None);
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                Some(5_000 * L)
+            );
+            assert_eq!(contract.epoch_total_weight.get(0), Some(5_000 * L));
+
+            // Exatamente no fim da época: sucesso
+            advance_time(1);
+            assert_eq!(contract.distribute_rewards(), Ok(()));
+            assert_eq!(contract.current_epoch, 1);
+            assert_eq!(contract.reserved_rewards, 100 * L);
+            assert_eq!(contract.epoch_start_time, end);
+
+            // A nova época também precisa durar `epoch_duration`
+            fund_pool(&mut contract, 10 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            assert_eq!(contract.rewards_pool, 10 * L);
+            assert_eq!(contract.current_epoch, 1);
+            assert_solvent(&contract);
+        }
+
+        /// R3-3: trades a cada 20 dias nunca acumulam além de uma janela de 30
+        /// dias; o tier volta a cair.
+        #[ink::test]
+        fn test_monthly_window_is_anchored_for_active_trader() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            let day = constants::DAY_MS;
+
+            set_next_caller(accounts.bob);
+            advance_time(1000);
+            contract
+                .track_trading_volume(accounts.charlie, 6_000 * L)
+                .unwrap();
+            let anchor0 = contract
+                .get_trading_position(accounts.charlie)
+                .unwrap()
+                .monthly_window_start;
+
+            for i in 1..=10u64 {
+                advance_time(20 * day);
+                let w_before = contract
+                    .epoch_trader_weight
+                    .get((0, accounts.charlie))
+                    .unwrap();
+                contract
+                    .track_trading_volume(accounts.charlie, 6_000 * L)
+                    .unwrap();
+                let position = contract.get_trading_position(accounts.charlie).unwrap();
+                assert!(position.monthly_volume <= 12_000 * L);
+                if i % 2 == 0 {
+                    // 40 dias desde a âncora: janela nova
+                    assert_eq!(position.monthly_volume, 6_000 * L);
+                    assert_eq!(position.tier, TradingTier::Bronze);
+                    assert_eq!(position.monthly_window_start, anchor0 + 20 * day * i);
+                    // peso deste trade com multiplicador Bronze (1.0x)
+                    let w_after = contract
+                        .epoch_trader_weight
+                        .get((0, accounts.charlie))
+                        .unwrap();
+                    assert_eq!(w_after - w_before, 6_000 * L);
+                } else {
+                    assert_eq!(position.monthly_volume, 12_000 * L);
+                    assert_eq!(position.tier, TradingTier::Silver);
+                }
+            }
+            let position = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(position.total_volume, 66_000 * L); // vitalício segue somando
+            assert_eq!(position.tier, TradingTier::Bronze);
+        }
+
+        /// R3-3: fronteira da janela mensal ancorada: exatamente 30 dias desde
+        /// a âncora não zera; depois disso zera mesmo com trade recente.
+        #[ink::test]
+        fn test_monthly_window_boundary_uses_anchor() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+
+            set_next_caller(accounts.bob);
+            advance_time(1000);
+            contract
+                .track_trading_volume(accounts.charlie, 6_000 * L)
+                .unwrap();
+
+            advance_time(constants::MONTHLY_RESET_PERIOD); // exatamente 30 dias
+            contract
+                .track_trading_volume(accounts.charlie, 6_000 * L)
+                .unwrap();
+            assert_eq!(
+                contract
+                    .get_trading_position(accounts.charlie)
+                    .unwrap()
+                    .monthly_volume,
+                12_000 * L
+            );
+
+            // 60 s depois (último trade recente), mas > 30 dias desde a âncora
+            advance_time(60_000);
+            contract
+                .track_trading_volume(accounts.charlie, 6_000 * L)
+                .unwrap();
+            let position = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(position.monthly_volume, 6_000 * L);
+            assert_eq!(position.tier, TradingTier::Bronze);
+        }
+
+        /// R3-4: dois trades no mesmo timestamp -> o segundo está no cooldown
+        /// e não muda estado.
+        #[ink::test]
+        fn test_cooldown_applies_at_same_timestamp() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+
+            set_next_caller(accounts.bob);
+            advance_time(1000);
+            contract
+                .track_trading_volume(accounts.charlie, 500 * L)
+                .unwrap();
+            let position_before = contract.get_trading_position(accounts.charlie).unwrap();
+            let weight_before = contract.epoch_trader_weight.get((0, accounts.charlie));
+            let total_before = contract.epoch_total_weight.get(0);
+            let active_before = contract.epoch_active_traders.get(0);
+
+            // Sem avançar o relógio
+            assert_eq!(
+                contract.track_trading_volume(accounts.charlie, 500 * L),
+                Err(TradingRewardsError::TradeCooldownActive)
+            );
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(
+                contract.get_trading_position(accounts.charlie).unwrap(),
+                position_before
+            );
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                weight_before
+            );
+            assert_eq!(contract.epoch_total_weight.get(0), total_before);
+            assert_eq!(contract.epoch_active_traders.get(0), active_before);
+        }
+
+        /// R3-5: admin pode remover o staking; depois disso 100% vai ao pool.
+        #[ink::test]
+        fn test_clear_staking_contract() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+            test_mocks::set_staking_call_fails(false);
+
+            set_next_caller(accounts.alice);
+            contract.set_staking_contract(accounts.eve).unwrap();
+            set_balance(accounts.eve, 0);
+
+            set_next_caller(accounts.charlie);
+            assert_eq!(
+                contract.clear_staking_contract(),
+                Err(TradingRewardsError::AccessDenied)
+            );
+            assert_eq!(contract.staking_contract, Some(accounts.eve));
+
+            set_next_caller(accounts.alice);
+            assert_eq!(contract.clear_staking_contract(), Ok(()));
+            assert_eq!(contract.staking_contract, None);
+
+            // Staking falharia, mas não é mais chamado
+            test_mocks::set_staking_call_fails(true);
+            set_next_caller(accounts.charlie);
+            credit_contract(1_000 * L);
+            assert_eq!(contract.receive_fee_allocation(), Ok(()));
+            test_mocks::set_staking_call_fails(false);
+            assert_eq!(contract.rewards_pool, 1_000 * L);
+            assert_eq!(balance_of(accounts.eve), 0);
+            assert_eq!(contract.get_reward_accounting(), (1_000 * L, 0, 0));
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::RewardsPoolFunded(RewardsPoolFunded {
+                    total_amount,
+                    trading_amount,
+                    staking_amount: 0,
+                    ..
+                }) if *total_amount == 1_000 * L && *trading_amount == 1_000 * L
+            )));
+            assert_solvent(&contract);
+
+            // Idempotente
+            set_next_caller(accounts.alice);
+            assert_eq!(contract.clear_staking_contract(), Ok(()));
+            assert_eq!(contract.staking_contract, None);
         }
     }
 }
