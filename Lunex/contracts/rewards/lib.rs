@@ -84,8 +84,12 @@ pub mod trading_rewards {
         EpochHasPendingWeight,
         /// A operação exige um trader atualmente em blacklist
         NotBlacklisted,
-        /// A época atual ainda não atingiu `epoch_start_time + epoch_duration`
+        /// A época atual ainda não atingiu `epoch_end_time` (fixado na
+        /// abertura da época)
         EpochNotFinished,
+        /// Void de época fechada recusado: o trader ainda tem peso na época
+        /// aberta (anule a época aberta primeiro, depois as fechadas)
+        OpenEpochWeightPending,
     }
 
     /// Eventos emitidos pelo contrato
@@ -269,6 +273,9 @@ pub mod trading_rewards {
         /// Cursor por trader: próxima época a liquidar em `claim_rewards`
         /// (apenas otimização; não é a fonte de verdade de "já pago")
         next_claim_epoch: Mapping<AccountId, u32>,
+        /// Fim da época atual (ms), fixado quando a época abre:
+        /// `epoch_start_time + epoch_duration` vigente naquele momento
+        epoch_end_time: Timestamp,
     }
 
     /// Constantes
@@ -326,6 +333,9 @@ pub mod trading_rewards {
         /// Duração mínima de uma época: 1 hora (em ms)
         pub const MIN_EPOCH_DURATION: Timestamp = 60 * 60 * SECOND_MS;
 
+        /// Duração máxima de uma época: 90 dias (em ms)
+        pub const MAX_EPOCH_DURATION: Timestamp = 90 * DAY_MS;
+
         /// Máximo de épocas fechadas liquidadas por chamada de `claim_rewards`
         /// (limita o gas; traders com longo período ocioso avançam em várias
         /// chamadas)
@@ -346,6 +356,10 @@ pub mod trading_rewards {
             }
 
             let current_time = Self::env().block_timestamp();
+            // Fim da primeira época, fixado na abertura (ver `epoch_end_time`)
+            let epoch_end_time = current_time
+                .checked_add(constants::DEFAULT_EPOCH_DURATION)
+                .ok_or(TradingRewardsError::Overflow)?;
 
             Ok(Self {
                 admin,
@@ -382,6 +396,7 @@ pub mod trading_rewards {
                 epoch_trader_weight: Mapping::default(),
                 reserved_rewards: 0,
                 next_claim_epoch: Mapping::default(),
+                epoch_end_time,
             })
         }
 
@@ -640,15 +655,12 @@ pub mod trading_rewards {
                 return Err(TradingRewardsError::NoActiveTraders);
             }
 
-            // A época só fecha após `epoch_duration`: impede fechar uma época
-            // logo após abri-la com um pool irrisório (zerando as frações).
-            // Nenhuma mudança de estado em caso de falha.
+            // A época só fecha em `epoch_end_time` (fixado quando ela abriu):
+            // impede fechar uma época logo após abri-la com um pool irrisório
+            // (zerando as frações), e `set_epoch_duration` não encurta nem
+            // alonga a época já aberta. Nenhuma mudança de estado em falha.
             let current_time = Self::env().block_timestamp();
-            let epoch_end = self
-                .epoch_start_time
-                .checked_add(self.epoch_duration)
-                .ok_or(TradingRewardsError::Overflow)?;
-            if current_time < epoch_end {
+            if current_time < self.epoch_end_time {
                 return Err(TradingRewardsError::EpochNotFinished);
             }
 
@@ -665,6 +677,11 @@ pub mod trading_rewards {
                 .checked_add(amount_to_distribute)
                 .ok_or(TradingRewardsError::Overflow)?;
             let next_epoch = epoch.checked_add(1).ok_or(TradingRewardsError::Overflow)?;
+            // Duração aplicada à próxima época: a vigente agora
+            let next_epoch_duration = self.epoch_duration;
+            let next_epoch_end = current_time
+                .checked_add(next_epoch_duration)
+                .ok_or(TradingRewardsError::Overflow)?;
 
             self.epoch_rewards.insert(epoch, &amount_to_distribute);
             self.reserved_rewards = new_reserved;
@@ -687,10 +704,11 @@ pub mod trading_rewards {
             // Abre a próxima época
             self.current_epoch = next_epoch;
             self.epoch_start_time = current_time;
+            self.epoch_end_time = next_epoch_end;
             Self::env().emit_event(EpochStarted {
                 epoch_id: next_epoch,
                 start_time: current_time,
-                duration: self.epoch_duration,
+                duration: next_epoch_duration,
             });
 
             Ok(())
@@ -944,31 +962,33 @@ pub mod trading_rewards {
 
             let current_time = Self::env().block_timestamp();
 
-            // Finaliza época atual se houver
-            if self.current_epoch > 0
-                && current_time
-                    >= self
-                        .epoch_start_time
-                        .checked_add(self.epoch_duration)
-                        .unwrap_or(u64::MAX)
-            {
-                self.finalize_current_epoch()?;
-            }
-
-            // Inicia nova época
-            self.current_epoch = self
+            // Todo o cálculo checked antes de qualquer escrita
+            let next_epoch = self
                 .current_epoch
                 .checked_add(1)
                 .ok_or(TradingRewardsError::Overflow)?;
+            let next_epoch_duration = self.epoch_duration;
+            let next_epoch_end = current_time
+                .checked_add(next_epoch_duration)
+                .ok_or(TradingRewardsError::Overflow)?;
+
+            // Finaliza época atual se houver (apenas emite `EpochEnded`)
+            if self.current_epoch > 0 && current_time >= self.epoch_end_time {
+                self.finalize_current_epoch()?;
+            }
+
+            // Inicia nova época com o fim fixado agora
+            self.current_epoch = next_epoch;
             self.epoch_start_time = current_time;
+            self.epoch_end_time = next_epoch_end;
 
             Self::env().emit_event(EpochStarted {
-                epoch_id: self.current_epoch,
+                epoch_id: next_epoch,
                 start_time: current_time,
-                duration: self.epoch_duration,
+                duration: next_epoch_duration,
             });
 
-            Ok(self.current_epoch)
+            Ok(next_epoch)
         }
 
         /// Finaliza a época atual (apenas admin)
@@ -997,15 +1017,20 @@ pub mod trading_rewards {
             Ok(())
         }
 
-        /// Define duração da época (apenas admin)
+        /// Define duração da época em ms (apenas admin), entre
+        /// `MIN_EPOCH_DURATION` (1 h) e `MAX_EPOCH_DURATION` (90 dias).
+        ///
+        /// Só afeta épocas abertas DEPOIS desta chamada: o fim da época atual
+        /// (`epoch_end_time`) foi fixado quando ela abriu e não muda.
         #[ink(message)]
         pub fn set_epoch_duration(
             &mut self,
             duration: Timestamp,
         ) -> Result<(), TradingRewardsError> {
             self.ensure_admin()?;
-            if duration < constants::MIN_EPOCH_DURATION {
-                // Mínimo de 1 hora (em ms)
+            if !(constants::MIN_EPOCH_DURATION..=constants::MAX_EPOCH_DURATION).contains(&duration)
+            {
+                // Fora de [1 h, 90 dias] em ms
                 return Err(TradingRewardsError::VolumeTooSmall); // Reutilizando erro por simplicidade
             }
             self.epoch_duration = duration;
@@ -1075,7 +1100,13 @@ pub mod trading_rewards {
             Ok(reward_amount)
         }
 
-        /// Obtém informações da época atual
+        /// Obtém informações da época atual:
+        /// (`current_epoch`, `epoch_start_time`, `epoch_duration`, rewards).
+        ///
+        /// ATENÇÃO: `epoch_duration` é a duração CONFIGURADA (aplicada às
+        /// próximas épocas); após `set_epoch_duration` ela pode diferir da
+        /// época aberta. O fim real da época aberta, usado pelo gate de
+        /// `distribute_rewards`, é `get_epoch_end_time()`.
         #[ink(message)]
         pub fn get_current_epoch_info(&self) -> (u32, Timestamp, Timestamp, Balance) {
             let rewards = self.epoch_rewards.get(self.current_epoch).unwrap_or(0);
@@ -1085,6 +1116,14 @@ pub mod trading_rewards {
                 self.epoch_duration,
                 rewards,
             )
+        }
+
+        /// Fim da época atual (ms). É o mesmo valor que o gate de
+        /// `distribute_rewards` usa: a época só pode ser distribuída quando
+        /// `block_timestamp >= get_epoch_end_time()`.
+        #[ink(message)]
+        pub fn get_epoch_end_time(&self) -> Timestamp {
+            self.epoch_end_time
         }
 
         /// Quanto `trader` ainda pode reivindicar da época `epoch_id`.
@@ -1191,15 +1230,33 @@ pub mod trading_rewards {
         }
 
         /// Anula o peso de um trader ATUALMENTE em blacklist numa época
-        /// (apenas admin). Retorna o peso anulado (0 = nada a anular, sem
-        /// mudança de estado).
+        /// (apenas admin; funciona com o contrato pausado). Retorna o peso
+        /// anulado (0 = nada a anular, sem mudança de estado e sem evento).
         ///
         /// - Época aberta (`epoch_id == current_epoch`): o peso sai de
         ///   `epoch_total_weight` e o trader sai de `epoch_active_traders`.
         /// - Época fechada (`epoch_id < current_epoch`): a fração do trader
         ///   (mesma conta do claim) sai de `reserved_rewards` e volta para o
-        ///   `rewards_pool` (próxima distribuição). O total da época fechada
-        ///   não muda, então as frações dos demais ficam intactas.
+        ///   `rewards_pool` (próxima distribuição), e é subtraída de
+        ///   `total_distributed`. O total de peso e `epoch_rewards` da época
+        ///   fechada não mudam, então as frações dos demais ficam intactas.
+        ///
+        /// ORDEM: anule PRIMEIRO a época aberta e DEPOIS as fechadas. Void de
+        /// época fechada com o trader ainda pesando na época aberta é recusado
+        /// (`OpenEpochWeightPending`): a fração devolvida ao pool seria
+        /// redistribuída em parte ao próprio trader.
+        ///
+        /// Regra operacional (não imposta on-chain): após anular peso de época
+        /// fechada, NÃO faça unblacklist do trader antes do próximo
+        /// `distribute_rewards`. Senão ele volta a operar na época aberta e
+        /// concorre à própria fração que acabou de ser devolvida ao pool.
+        ///
+        /// Todo void efetivo também zera a janela de tier do trader
+        /// (`monthly_volume = 0`, `tier = Bronze`, nova âncora mensal), para
+        /// que o volume anulado não infle o multiplicador após um unblacklist.
+        ///
+        /// Contabilidade: os eventos `RewardsDistributed` são brutos;
+        /// `BlacklistedWeightVoided.returned_to_pool` é o lançamento de ajuste.
         ///
         /// A entrada de peso é removida, então um claim posterior (após
         /// unblacklist) dessa época paga 0.
@@ -1235,9 +1292,22 @@ pub mod trading_rewards {
             }
 
             let current_epoch = self.current_epoch;
+            let current_time = Self::env().block_timestamp();
+
+            // R4-3: janela de tier zerada (preparada; gravada após os checks).
+            // total_volume, daily_volume, last_trade_timestamp e o cursor de
+            // claim não mudam. Sem posição, nada a zerar.
+            let reset_position = self.trading_positions.get(trader).map(|mut position| {
+                position.monthly_volume = 0;
+                position.tier = TradingTier::Bronze;
+                position.monthly_window_start = current_time;
+                position
+            });
+
+            // Cada ramo faz TODOS os checks e o cálculo checked antes da
+            // primeira escrita; depois do `match` nada mais pode falhar.
             let returned_to_pool = match epoch_id.cmp(&current_epoch) {
                 core::cmp::Ordering::Equal => {
-                    // Todo o cálculo checked antes das escritas
                     let new_total = self
                         .epoch_total_weight
                         .get(epoch_id)
@@ -1257,6 +1327,16 @@ pub mod trading_rewards {
                     0
                 }
                 core::cmp::Ordering::Less => {
+                    // R4-2: com peso na época aberta, a fração devolvida ao pool
+                    // voltaria em parte ao próprio trader na próxima distribuição
+                    if self
+                        .epoch_trader_weight
+                        .get((current_epoch, trader))
+                        .unwrap_or(0)
+                        > 0
+                    {
+                        return Err(TradingRewardsError::OpenEpochWeightPending);
+                    }
                     // Mesma conta do claim (`take_epoch_reward`)
                     let share = self.epoch_share(epoch_id, weight)?;
                     let new_reserved = self
@@ -1267,10 +1347,17 @@ pub mod trading_rewards {
                         .rewards_pool
                         .checked_add(share)
                         .ok_or(TradingRewardsError::Overflow)?;
+                    // R4-4: a fração volta ao pool e será distribuída de novo;
+                    // sem isto seria contada duas vezes em `total_distributed`
+                    let new_total_distributed = self
+                        .total_distributed
+                        .checked_sub(share)
+                        .ok_or(TradingRewardsError::Overflow)?;
 
                     self.epoch_trader_weight.remove((epoch_id, trader));
                     self.reserved_rewards = new_reserved;
                     self.rewards_pool = new_pool;
+                    self.total_distributed = new_total_distributed;
                     share
                 }
                 core::cmp::Ordering::Greater => {
@@ -1279,12 +1366,16 @@ pub mod trading_rewards {
                 }
             };
 
+            if let Some(position) = reset_position {
+                self.trading_positions.insert(trader, &position);
+            }
+
             Self::env().emit_event(BlacklistedWeightVoided {
                 trader,
                 epoch_id,
                 weight,
                 returned_to_pool,
-                timestamp: Self::env().block_timestamp(),
+                timestamp: current_time,
             });
 
             Ok(weight)
@@ -1670,6 +1761,9 @@ pub mod trading_rewards {
 
     /// Testes unitários
     #[cfg(test)]
+    // Aritmética de teste (tempos, saldos esperados) em valores pequenos e
+    // controlados; o lint de `arithmetic_side_effects` vale para o contrato.
+    #[allow(clippy::arithmetic_side_effects)]
     mod tests {
         use super::*;
 
@@ -1689,7 +1783,7 @@ pub mod trading_rewards {
         use std::cell::Cell;
 
         thread_local! {
-            static TEST_TIME: Cell<u64> = Cell::new(1000);
+            static TEST_TIME: Cell<u64> = const { Cell::new(1000) };
         }
 
         fn reset_test_time_with_seed(seed: u64) {
@@ -1751,10 +1845,10 @@ pub mod trading_rewards {
             assert!(!contract.reentrancy_guard);
         }
 
-        /// Avança o relógio até exatamente `epoch_start_time + epoch_duration`
-        /// (fim da época atual), se ainda não chegou lá
+        /// Avança o relógio até exatamente `epoch_end_time` (fim da época
+        /// atual, o mesmo valor do gate), se ainda não chegou lá
         fn advance_to_epoch_end(contract: &TradingRewardsContract) {
-            let end = contract.epoch_start_time + contract.epoch_duration;
+            let end = contract.epoch_end_time;
             let now = TEST_TIME.with(|t| t.get());
             if end > now {
                 advance_time(end - now);
@@ -2819,7 +2913,7 @@ pub mod trading_rewards {
             assert_eq!(position.monthly_volume, 12_000 * L);
             assert_eq!(position.tier, TradingTier::Silver);
 
-            advance_time(2_592_000_000 + 1); // > 30 dias desde o último trade
+            advance_time(2_592_000_000 + 1); // > 30 dias desde a âncora da janela mensal
             contract
                 .track_trading_volume(accounts.charlie, 6_000 * L)
                 .unwrap();
@@ -3079,14 +3173,15 @@ pub mod trading_rewards {
                 contract.start_new_epoch(),
                 Err(TradingRewardsError::EpochHasPendingWeight)
             );
-            // 2º trade na janela mensal: 10k de volume mensal -> Silver (1.2x)
+            // O void da época 0 zerou a janela mensal do trader (R4-3): este
+            // trade recomeça em Bronze (1.0x), sem herdar o volume anulado
             assert_eq!(
                 contract.epoch_trader_weight.get((1, accounts.charlie)),
-                Some(6_000 * L)
+                Some(5_000 * L)
             );
             assert_eq!(
                 contract.void_blacklisted_weight(accounts.charlie, 1),
-                Ok(6_000 * L)
+                Ok(5_000 * L)
             );
             assert_eq!(contract.epoch_total_weight.get(1), Some(0));
             assert_eq!(contract.epoch_active_traders.get(1), Some(0));
@@ -3418,6 +3513,920 @@ pub mod trading_rewards {
             set_next_caller(accounts.alice);
             assert_eq!(contract.clear_staking_contract(), Ok(()));
             assert_eq!(contract.staking_contract, None);
+        }
+
+        // ========================================
+        // WP-3 R4: VOID (cobertura + R4-2/3/4) E GATE DE ÉPOCA (R4-1)
+        // ========================================
+
+        fn count_voided_events() -> usize {
+            decoded_events()
+                .iter()
+                .filter(|e| matches!(e, Event::BlacklistedWeightVoided(_)))
+                .count()
+        }
+
+        /// Campos do último `BlacklistedWeightVoided`:
+        /// (trader, epoch_id, weight, returned_to_pool, timestamp)
+        fn last_voided_event() -> (AccountId, u32, Balance, Balance, Timestamp) {
+            decoded_events()
+                .into_iter()
+                .rev()
+                .find_map(|e| match e {
+                    Event::BlacklistedWeightVoided(v) => Some((
+                        v.trader,
+                        v.epoch_id,
+                        v.weight,
+                        v.returned_to_pool,
+                        v.timestamp,
+                    )),
+                    _ => None,
+                })
+                .expect("nenhum BlacklistedWeightVoided emitido")
+        }
+
+        /// T1: claim, blacklist e void da mesma época fechada -> Ok(0) sem
+        /// nenhum efeito.
+        #[ink::test]
+        fn test_void_after_claim_is_noop() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract);
+            assert_eq!(claim(&mut contract, accounts.charlie), 50 * L);
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            let pool = contract.rewards_pool;
+            let reserved = contract.reserved_rewards;
+            let distributed = contract.total_distributed;
+            let balance = balance_of(contract_account());
+            let events = count_voided_events();
+            let position = contract.get_trading_position(accounts.charlie);
+            assert!(position.is_some());
+
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 0), Ok(0));
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(contract.rewards_pool, pool);
+            assert_eq!(contract.reserved_rewards, reserved);
+            assert_eq!(contract.total_distributed, distributed);
+            assert_eq!(balance_of(contract_account()), balance);
+            assert_eq!(count_voided_events(), events);
+            assert_eq!(count_voided_events(), 0);
+            // R4b (G14): Ok(0) não toca a janela de tier
+            assert_eq!(contract.get_trading_position(accounts.charlie), position);
+
+            // Época futura (sem peso): também Ok(0) sem efeito
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 5), Ok(0));
+            assert_eq!(contract.get_trading_position(accounts.charlie), position);
+            assert_eq!(count_voided_events(), 0);
+        }
+
+        /// T2: frações não divisíveis (pool de 100 unidades, 3 pesos iguais).
+        #[ink::test]
+        fn test_void_with_non_divisible_shares() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100); // 100 unidades, não 100 * L
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            track(&mut contract, accounts.eve, 5_000 * L);
+            distribute(&mut contract);
+            assert_eq!(contract.get_epoch_rewards(0, accounts.eve), 33); // floor(100/3)
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.eve).unwrap();
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.eve, 0),
+                Ok(5_000 * L)
+            );
+            assert_eq!(contract.rewards_pool, 33);
+            assert_eq!(contract.reserved_rewards, 67);
+
+            assert_eq!(claim(&mut contract, accounts.charlie), 33);
+            assert_eq!(claim(&mut contract, accounts.django), 33);
+            assert_eq!(contract.reserved_rewards, 1); // poeira: 100 - 3 * 33
+            assert_eq!(contract.rewards_pool, 33);
+            assert_solvent(&contract);
+        }
+
+        /// T3: o saldo do contrato não muda num void (aberto e fechado).
+        #[ink::test]
+        fn test_void_does_not_move_contract_balance() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            // Ramo aberto
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            let balance = balance_of(contract_account());
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Ok(5_000 * L)
+            );
+            assert_eq!(balance_of(contract_account()), balance);
+            distribute(&mut contract);
+
+            // Ramo fechado (época 1)
+            set_next_caller(accounts.alice);
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract);
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            let balance = balance_of(contract_account());
+            assert!(
+                contract
+                    .void_blacklisted_weight(accounts.charlie, 1)
+                    .unwrap()
+                    > 0
+            );
+            assert_eq!(balance_of(contract_account()), balance);
+            assert_solvent(&contract);
+        }
+
+        /// T4: void na época aberta, unblacklist e novo trade na mesma época:
+        /// peso recomeça do zero em Bronze (R4-3).
+        #[ink::test]
+        fn test_open_void_then_retrade_restarts_at_bronze() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            track(&mut contract, accounts.charlie, 6_000 * L); // Bronze: 6_000
+            track(&mut contract, accounts.charlie, 6_000 * L); // 12k mensal -> Silver: 7_200
+            track(&mut contract, accounts.django, 5_000 * L);
+            assert_eq!(
+                contract.get_trader_tier(accounts.charlie),
+                TradingTier::Silver
+            );
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            // R4b (G2/G3): snapshot antes do void
+            let before = contract.get_trading_position(accounts.charlie).unwrap();
+            let cursor = contract.next_claim_epoch.get(accounts.charlie);
+            let old_anchor = before.monthly_window_start;
+            advance_time(5_000); // void num instante distinto da âncora antiga
+            let now = TEST_TIME.with(|t| t.get());
+            assert!(now > old_anchor);
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Ok(13_200 * L)
+            );
+            let position = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(position.monthly_volume, 0);
+            assert_eq!(position.tier, TradingTier::Bronze);
+            assert_eq!(position.total_volume, 12_000 * L); // vitalício intacto
+            assert_eq!(contract.epoch_active_traders.get(0), Some(1));
+            // Nova âncora mensal = instante do void; demais campos intactos
+            assert_eq!(position.monthly_window_start, now);
+            assert_eq!(position.daily_volume, before.daily_volume);
+            assert_eq!(position.last_trade_timestamp, before.last_trade_timestamp);
+            assert_eq!(position.last_daily_reset, before.last_daily_reset);
+            assert_eq!(position.trade_count, before.trade_count);
+            let mut expected = before.clone();
+            expected.monthly_volume = 0;
+            expected.tier = TradingTier::Bronze;
+            expected.monthly_window_start = now;
+            assert_eq!(position, expected);
+            assert_eq!(contract.next_claim_epoch.get(accounts.charlie), cursor);
+            // G4: campos do evento no ramo aberto
+            assert_eq!(
+                last_voided_event(),
+                (accounts.charlie, 0, 13_200 * L, 0, now)
+            );
+
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            track(&mut contract, accounts.charlie, 6_000 * L);
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                Some(6_000 * L) // Bronze 1.0x, recomeçando do zero
+            );
+            let position = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(position.monthly_volume, 6_000 * L);
+            assert_eq!(position.tier, TradingTier::Bronze);
+            assert_eq!(contract.epoch_active_traders.get(0), Some(2));
+            assert_eq!(contract.epoch_total_weight.get(0), Some(11_000 * L));
+            assert_weight_invariant(&contract, 0, &[accounts.charlie, accounts.django]);
+        }
+
+        /// T5: void na época aberta, distribute, unblacklist -> nada a receber.
+        #[ink::test]
+        fn test_open_void_then_unblacklist_claims_nothing() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            contract
+                .void_blacklisted_weight(accounts.charlie, 0)
+                .unwrap();
+            distribute(&mut contract);
+
+            set_next_caller(accounts.alice);
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            let before = balance_of(accounts.charlie);
+            set_next_caller(accounts.charlie);
+            assert_eq!(contract.claim_rewards(), Ok(0));
+            assert_eq!(
+                contract.claim_epoch_rewards(0),
+                Err(TradingRewardsError::NoRewardsToClaim)
+            );
+            assert_eq!(balance_of(accounts.charlie), before);
+            assert_eq!(claim(&mut contract, accounts.django), 100 * L);
+            assert_solvent(&contract);
+        }
+
+        /// T6 (R4-2): void de época fechada é recusado enquanto o trader tem
+        /// peso na época aberta; a ordem correta é aberta -> fechadas.
+        #[ink::test]
+        fn test_void_closed_epoch_requires_open_epoch_voided_first() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract); // época 0 fechada (50/50)
+
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+
+            let pool = contract.rewards_pool;
+            let reserved = contract.reserved_rewards;
+            let w0 = contract.epoch_trader_weight.get((0, accounts.charlie));
+            let w1 = contract.epoch_trader_weight.get((1, accounts.charlie));
+            let t1 = contract.epoch_total_weight.get(1);
+            // R4b (G3/G13): snapshot completo antes do Err
+            let distributed = contract.total_distributed;
+            let position = contract.get_trading_position(accounts.charlie);
+            assert!(position.is_some());
+            let cursor = contract.next_claim_epoch.get(accounts.charlie);
+            let active1 = contract.epoch_active_traders.get(1);
+            let events = count_voided_events();
+            advance_time(5_000); // um reset prematuro gravaria outra âncora
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Err(TradingRewardsError::OpenEpochWeightPending)
+            );
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(contract.rewards_pool, pool);
+            assert_eq!(contract.reserved_rewards, reserved);
+            assert_eq!(contract.epoch_trader_weight.get((0, accounts.charlie)), w0);
+            assert_eq!(contract.epoch_trader_weight.get((1, accounts.charlie)), w1);
+            assert_eq!(contract.epoch_total_weight.get(1), t1);
+            assert_eq!(contract.total_distributed, distributed);
+            assert_eq!(contract.get_trading_position(accounts.charlie), position);
+            assert_eq!(contract.next_claim_epoch.get(accounts.charlie), cursor);
+            assert_eq!(contract.epoch_active_traders.get(1), active1);
+            assert_eq!(count_voided_events(), events);
+
+            // Ordem correta: época aberta, depois a fechada
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 1),
+                Ok(w1.unwrap())
+            );
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Ok(5_000 * L)
+            );
+            assert_eq!(contract.rewards_pool, 50 * L);
+            assert_eq!(contract.reserved_rewards, 50 * L);
+
+            distribute(&mut contract); // época 1: só django, pool = 50 devolvido
+            set_next_caller(accounts.alice);
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            let before = balance_of(accounts.charlie);
+            assert_eq!(claim(&mut contract, accounts.charlie), 0);
+            assert_eq!(balance_of(accounts.charlie), before);
+            assert_eq!(claim(&mut contract, accounts.django), 100 * L);
+            assert_eq!(contract.get_reward_accounting(), (0, 0, 0));
+            assert_solvent(&contract);
+        }
+
+        /// T7: NotBlacklisted numa época fechada não muda nada.
+        #[ink::test]
+        fn test_void_closed_epoch_not_blacklisted_is_rejected() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract);
+
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Err(TradingRewardsError::NotBlacklisted)
+            );
+            assert!(!contract.reentrancy_guard);
+            assert_eq!(contract.rewards_pool, 0);
+            assert_eq!(contract.reserved_rewards, 100 * L);
+            assert_eq!(contract.total_distributed, 100 * L);
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                Some(5_000 * L)
+            );
+            assert_eq!(count_voided_events(), 0);
+        }
+
+        /// T8: exatamente um evento por void efetivo; nenhum nos caminhos Ok(0).
+        #[ink::test]
+        fn test_void_event_count() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            assert_eq!(count_voided_events(), 0);
+
+            assert!(
+                contract
+                    .void_blacklisted_weight(accounts.charlie, 0)
+                    .unwrap()
+                    > 0
+            );
+            assert_eq!(count_voided_events(), 1);
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 0), Ok(0));
+            assert_eq!(count_voided_events(), 1);
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 9), Ok(0));
+            assert_eq!(count_voided_events(), 1);
+
+            distribute(&mut contract);
+            set_next_caller(accounts.alice);
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract);
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            assert!(
+                contract
+                    .void_blacklisted_weight(accounts.charlie, 1)
+                    .unwrap()
+                    > 0
+            );
+            assert_eq!(count_voided_events(), 2);
+            assert_eq!(contract.void_blacklisted_weight(accounts.charlie, 1), Ok(0));
+            assert_eq!(count_voided_events(), 2);
+        }
+
+        /// T9 (R4-4): total_distributed sem dupla contagem; excedente de
+        /// rescue intacto; void funciona com o contrato pausado.
+        #[ink::test]
+        fn test_void_total_distributed_surplus_and_pause() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract);
+            assert_eq!(contract.total_distributed, 100 * L);
+            set_balance(contract_account(), balance_of(contract_account()) + 5 * L);
+            assert_eq!(contract.get_reward_accounting().2, 5 * L);
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            contract.pause_contract().unwrap();
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Ok(5_000 * L)
+            );
+            assert_eq!(contract.total_distributed, 50 * L);
+            assert_eq!(contract.get_reward_accounting(), (50 * L, 50 * L, 5 * L));
+            contract.unpause_contract().unwrap();
+
+            assert_eq!(claim(&mut contract, accounts.django), 50 * L);
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract); // redistribui os 50 devolvidos
+                                       // Total financiado = 100; nada contado duas vezes
+            assert_eq!(contract.total_distributed, 100 * L);
+            assert_eq!(contract.get_reward_accounting(), (0, 50 * L, 5 * L));
+            assert_solvent(&contract);
+        }
+
+        /// T10: cursor sobre época anulada entre duas pagáveis: paga N-1 e N+1,
+        /// nada de N, e o cursor passa das três.
+        #[ink::test]
+        fn test_claim_cursor_skips_voided_epoch() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            for _ in 0..3 {
+                fund_pool(&mut contract, 100 * L);
+                track(&mut contract, accounts.charlie, 5_000 * L);
+                track(&mut contract, accounts.django, 5_000 * L);
+                distribute(&mut contract);
+            }
+            assert_eq!(contract.current_epoch, 3);
+            let e0 = contract.get_epoch_rewards(0, accounts.charlie);
+            let e2 = contract.get_epoch_rewards(2, accounts.charlie);
+            assert_eq!(e0, 50 * L);
+            assert_eq!(e2, 50 * L);
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            assert!(
+                contract
+                    .void_blacklisted_weight(accounts.charlie, 1)
+                    .unwrap()
+                    > 0
+            );
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            assert_eq!(contract.get_epoch_rewards(1, accounts.charlie), 0);
+
+            let before = balance_of(accounts.charlie);
+            assert_eq!(claim(&mut contract, accounts.charlie), e0 + e2);
+            assert_eq!(balance_of(accounts.charlie), before + e0 + e2);
+            assert_eq!(contract.next_claim_epoch.get(accounts.charlie), Some(3));
+            set_next_caller(accounts.charlie);
+            assert_eq!(
+                contract.claim_rewards(),
+                Err(TradingRewardsError::NoRewardsToClaim)
+            );
+            assert_solvent(&contract);
+        }
+
+        /// T11 (R4-1): start_new_epoch fixa início e fim; o gate usa esse fim.
+        #[ink::test]
+        fn test_start_new_epoch_sets_epoch_end_and_gate_uses_it() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            advance_time(5_000);
+            let now = TEST_TIME.with(|t| t.get());
+            set_next_caller(accounts.alice);
+            assert_eq!(contract.start_new_epoch(), Ok(1));
+            assert_eq!(contract.epoch_start_time, now);
+            assert_eq!(
+                contract.epoch_end_time,
+                now + constants::DEFAULT_EPOCH_DURATION
+            );
+            assert_eq!(contract.get_epoch_end_time(), contract.epoch_end_time);
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            assert_eq!(contract.rewards_pool, 100 * L);
+            assert_eq!(contract.current_epoch, 1);
+
+            let now = TEST_TIME.with(|t| t.get());
+            advance_time(contract.epoch_end_time - 1 - now);
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            advance_time(1); // exatamente epoch_end_time
+            assert_eq!(contract.distribute_rewards(), Ok(()));
+            assert_eq!(contract.current_epoch, 2);
+        }
+
+        /// T12 (R4-1): set_epoch_duration não move o fim da época aberta; só a
+        /// próxima época usa a nova duração.
+        #[ink::test]
+        fn test_set_epoch_duration_does_not_move_open_epoch_end() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+            let start0 = contract.epoch_start_time;
+            let end0 = contract.epoch_end_time;
+            assert_eq!(end0, start0 + constants::DEFAULT_EPOCH_DURATION);
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+
+            // Encurtar para 1h não libera a distribuição antes de end0
+            set_next_caller(accounts.alice);
+            contract.set_epoch_duration(3_600_000).unwrap();
+            assert_eq!(contract.epoch_end_time, end0);
+            // R4b (G7/G12): aqui start0 + epoch_duration (fórmula antiga)
+            // diverge do fim real
+            assert_ne!(start0 + contract.epoch_duration, end0);
+            assert_eq!(contract.get_epoch_end_time(), end0);
+            let now = TEST_TIME.with(|t| t.get());
+            advance_time(start0 + 2 * 3_600_000 - now); // 2h após o início
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            assert_eq!(contract.current_epoch, 0);
+            assert_eq!(contract.rewards_pool, 100 * L);
+
+            // Alongar para 14 dias não atrasa: distribui exatamente em end0
+            let fourteen_days = 14 * constants::DAY_MS;
+            contract.set_epoch_duration(fourteen_days).unwrap();
+            assert_eq!(contract.epoch_end_time, end0);
+            assert_ne!(start0 + contract.epoch_duration, end0);
+            assert_eq!(contract.get_epoch_end_time(), end0);
+            let now = TEST_TIME.with(|t| t.get());
+            advance_time(end0 - now);
+            assert_eq!(contract.distribute_rewards(), Ok(()));
+
+            // A próxima época usa a nova duração
+            assert_eq!(contract.epoch_start_time, end0);
+            assert_eq!(contract.epoch_end_time, end0 + fourteen_days);
+            assert_eq!(contract.get_epoch_end_time(), end0 + fourteen_days);
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::EpochStarted(EpochStarted {
+                    epoch_id: 1,
+                    start_time,
+                    duration,
+                }) if *start_time == end0 && *duration == fourteen_days
+            )));
+        }
+
+        /// T13 (R4-1): duração máxima de época = 90 dias em ms.
+        #[ink::test]
+        fn test_set_epoch_duration_upper_bound() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            assert_eq!(constants::MAX_EPOCH_DURATION, 7_776_000_000);
+
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.set_epoch_duration(constants::MAX_EPOCH_DURATION + 1),
+                Err(TradingRewardsError::VolumeTooSmall)
+            );
+            assert_eq!(
+                contract.set_epoch_duration(u64::MAX),
+                Err(TradingRewardsError::VolumeTooSmall)
+            );
+            assert_eq!(
+                contract.get_current_epoch_info().2,
+                constants::DEFAULT_EPOCH_DURATION
+            );
+            assert_eq!(
+                contract.set_epoch_duration(constants::MAX_EPOCH_DURATION),
+                Ok(())
+            );
+            assert_eq!(
+                contract.get_current_epoch_info().2,
+                constants::MAX_EPOCH_DURATION
+            );
+
+            set_next_caller(accounts.charlie);
+            assert_eq!(
+                contract.set_epoch_duration(constants::MIN_EPOCH_DURATION),
+                Err(TradingRewardsError::AccessDenied)
+            );
+        }
+
+        // ========================================
+        // WP-3 R4b: LACUNAS DE TESTE (só testes, sem mudança de produção)
+        // ========================================
+
+        /// R4b (G1/G8/G4): void de época FECHADA também zera a janela de tier;
+        /// os demais campos da posição e o cursor de claim ficam intactos, e
+        /// o evento traz weight / returned_to_pool / timestamp corretos.
+        #[ink::test]
+        fn test_closed_void_resets_tier_window() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            // Época 0: charlie reivindica e o cursor vai para 1
+            fund_pool(&mut contract, 10 * L);
+            track(&mut contract, accounts.charlie, 1_000 * L);
+            track(&mut contract, accounts.django, 1_000 * L);
+            distribute(&mut contract);
+            assert_eq!(claim(&mut contract, accounts.charlie), 5 * L);
+            assert_eq!(contract.next_claim_epoch.get(accounts.charlie), Some(1));
+
+            // Época 1: charlie chega a Silver (1k + 6k + 6k = 13k mensal)
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 6_000 * L); // 7k: Bronze 6_000
+            track(&mut contract, accounts.charlie, 6_000 * L); // 13k: Silver 7_200
+            track(&mut contract, accounts.django, 5_000 * L);
+            assert_eq!(
+                contract.get_trader_tier(accounts.charlie),
+                TradingTier::Silver
+            );
+            distribute(&mut contract);
+            let share = contract.get_epoch_rewards(1, accounts.charlie);
+            assert!(share > 0);
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            let before = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(before.monthly_volume, 13_000 * L);
+            let pool = contract.rewards_pool;
+            let reserved = contract.reserved_rewards;
+            let distributed = contract.total_distributed;
+            let now = TEST_TIME.with(|t| t.get());
+            assert!(now > before.monthly_window_start);
+
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 1),
+                Ok(13_200 * L)
+            );
+            let position = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(position.monthly_volume, 0);
+            assert_eq!(position.tier, TradingTier::Bronze);
+            assert_eq!(position.monthly_window_start, now);
+            assert_eq!(position.total_volume, 13_000 * L);
+            assert_eq!(position.daily_volume, before.daily_volume);
+            assert_eq!(position.last_trade_timestamp, before.last_trade_timestamp);
+            assert_eq!(position.last_daily_reset, before.last_daily_reset);
+            assert_eq!(position.trade_count, before.trade_count);
+            let mut expected = before.clone();
+            expected.monthly_volume = 0;
+            expected.tier = TradingTier::Bronze;
+            expected.monthly_window_start = now;
+            assert_eq!(position, expected);
+            assert_eq!(contract.next_claim_epoch.get(accounts.charlie), Some(1));
+            assert_eq!(contract.rewards_pool, pool + share);
+            assert_eq!(contract.reserved_rewards, reserved - share);
+            assert_eq!(contract.total_distributed, distributed - share);
+            assert_eq!(
+                last_voided_event(),
+                (accounts.charlie, 1, 13_200 * L, share, now)
+            );
+
+            // Ordem operacional: unblacklist só após o próximo distribute
+            track(&mut contract, accounts.django, 5_000 * L);
+            distribute(&mut contract); // época 2
+            set_next_caller(accounts.alice);
+            contract.unblacklist_address(accounts.charlie).unwrap();
+            track(&mut contract, accounts.charlie, 6_000 * L);
+            assert_eq!(contract.current_epoch, 3);
+            assert_eq!(
+                contract.epoch_trader_weight.get((3, accounts.charlie)),
+                Some(6_000 * L) // Bronze 1.0x: o volume anulado não conta
+            );
+            let position = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(position.monthly_volume, 6_000 * L);
+            assert_eq!(position.tier, TradingTier::Bronze);
+            assert_solvent(&contract);
+        }
+
+        /// R4b (G2): a nova âncora gravada pelo void reinicia a janela mensal
+        /// (comportamental: sem ela o reset de 30 dias dispararia cedo demais).
+        #[ink::test]
+        fn test_void_restarts_monthly_window_anchor() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            track(&mut contract, accounts.charlie, 6_000 * L); // âncora original
+            advance_time(20 * constants::DAY_MS);
+
+            set_next_caller(accounts.alice);
+            contract.blacklist_address(accounts.charlie).unwrap();
+            assert_eq!(
+                contract.void_blacklisted_weight(accounts.charlie, 0),
+                Ok(6_000 * L)
+            );
+            contract.unblacklist_address(accounts.charlie).unwrap();
+
+            // Bronze: 6_000
+            track(&mut contract, accounts.charlie, 6_000 * L);
+            // 35 dias após a âncora original, 15 após a do void
+            advance_time(15 * constants::DAY_MS);
+            track(&mut contract, accounts.charlie, 6_000 * L); // 12k: Silver 7_200
+
+            let position = contract.get_trading_position(accounts.charlie).unwrap();
+            assert_eq!(position.monthly_volume, 12_000 * L);
+            assert_eq!(position.tier, TradingTier::Silver);
+            assert_eq!(
+                contract.epoch_trader_weight.get((0, accounts.charlie)),
+                Some(13_200 * L)
+            );
+            assert_weight_invariant(&contract, 0, &[accounts.charlie]);
+        }
+
+        /// R4b (G5): com relógio não-zero no deploy, o fim da primeira época é
+        /// deploy + DEFAULT_EPOCH_DURATION, e o gate usa esse valor.
+        #[ink::test]
+        fn test_constructor_epoch_end_uses_nonzero_deploy_time() {
+            let accounts = default_accounts();
+            advance_time(1_700_000_000_000);
+            let deploy = TEST_TIME.with(|t| t.get());
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            let end = deploy + constants::DEFAULT_EPOCH_DURATION;
+            assert_eq!(contract.epoch_start_time, deploy);
+            assert_eq!(contract.epoch_end_time, end);
+            assert_eq!(contract.get_epoch_end_time(), end);
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            let now = TEST_TIME.with(|t| t.get());
+            advance_time(end - 1 - now);
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            assert_eq!(contract.current_epoch, 0);
+            advance_time(1);
+            assert_eq!(contract.distribute_rewards(), Ok(()));
+            assert_eq!(contract.current_epoch, 1);
+        }
+
+        /// R4b (G6/G11): start_new_epoch aplica a duração CONFIGURADA (não a
+        /// padrão) ao fim da nova época, no campo, no getter, no evento e no gate.
+        #[ink::test]
+        fn test_start_new_epoch_uses_configured_duration() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+            let one_hour = 3_600_000;
+
+            set_next_caller(accounts.alice);
+            contract.set_epoch_duration(one_hour).unwrap();
+            advance_time(5_000);
+            let now = TEST_TIME.with(|t| t.get());
+            assert_eq!(contract.start_new_epoch(), Ok(1));
+            assert_eq!(contract.epoch_start_time, now);
+            assert_eq!(contract.epoch_end_time, now + one_hour);
+            assert_eq!(contract.get_epoch_end_time(), now + one_hour);
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::EpochStarted(EpochStarted {
+                    epoch_id: 1,
+                    start_time,
+                    duration,
+                }) if *start_time == now && *duration == one_hour
+            )));
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            let t = TEST_TIME.with(|t| t.get());
+            advance_time(now + one_hour - 1 - t);
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            advance_time(1);
+            assert_eq!(contract.distribute_rewards(), Ok(()));
+            assert_eq!(contract.current_epoch, 2);
+        }
+
+        /// R4b (G10): distribute atrasado ancora o fim da próxima época no
+        /// instante de abertura (agora), não no fim antigo.
+        #[ink::test]
+        fn test_late_distribute_anchors_next_epoch_end_on_open_time() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            let end0 = contract.epoch_end_time;
+            let now = TEST_TIME.with(|t| t.get());
+            advance_time(end0 + 8 * constants::DAY_MS - now); // 8 dias de atraso
+            let late = TEST_TIME.with(|t| t.get());
+            set_next_caller(accounts.alice);
+            assert_eq!(contract.distribute_rewards(), Ok(()));
+
+            assert_eq!(contract.current_epoch, 1);
+            assert_eq!(contract.epoch_start_time, late);
+            assert_eq!(
+                contract.epoch_end_time,
+                late + constants::DEFAULT_EPOCH_DURATION
+            );
+            assert_eq!(
+                contract.get_epoch_end_time(),
+                late + constants::DEFAULT_EPOCH_DURATION
+            );
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::EpochStarted(EpochStarted {
+                    epoch_id: 1,
+                    start_time,
+                    duration,
+                }) if *start_time == late && *duration == constants::DEFAULT_EPOCH_DURATION
+            )));
+
+            // A época recém-aberta não pode ser fechada logo em seguida
+            fund_pool(&mut contract, 100 * L);
+            track(&mut contract, accounts.charlie, 5_000 * L);
+            set_next_caller(accounts.alice);
+            assert_eq!(
+                contract.distribute_rewards(),
+                Err(TradingRewardsError::EpochNotFinished)
+            );
+            assert_eq!(contract.current_epoch, 1);
+            assert_eq!(contract.rewards_pool, 100 * L);
+        }
+
+        /// R4b (G16): start_new_epoch emite EpochEnded só quando há época > 0
+        /// vencida, e EpochStarted com início e duração configurada.
+        #[ink::test]
+        fn test_start_new_epoch_emits_epoch_events() {
+            let accounts = default_accounts();
+            let mut contract = TradingRewardsContract::new(accounts.alice, accounts.bob).unwrap();
+            use_contract_account();
+            let count_ended = || {
+                decoded_events()
+                    .iter()
+                    .filter(|e| matches!(e, Event::EpochEnded(_)))
+                    .count()
+            };
+
+            set_next_caller(accounts.alice);
+            advance_time(5_000);
+            assert_eq!(contract.start_new_epoch(), Ok(1));
+            assert_eq!(count_ended(), 0); // época 0 não é finalizada aqui
+
+            let fourteen_days = 14 * constants::DAY_MS;
+            contract.set_epoch_duration(fourteen_days).unwrap();
+            // Época 1 abriu com 7 dias; 8 dias depois ela venceu
+            advance_time(8 * constants::DAY_MS);
+            let now = TEST_TIME.with(|t| t.get());
+            assert_eq!(contract.start_new_epoch(), Ok(2));
+
+            assert_eq!(count_ended(), 1);
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::EpochEnded(EpochEnded {
+                    epoch_id: 1,
+                    end_time,
+                    ..
+                }) if *end_time == now
+            )));
+            assert!(decoded_events().iter().any(|e| matches!(
+                e,
+                Event::EpochStarted(EpochStarted {
+                    epoch_id: 2,
+                    start_time,
+                    duration,
+                }) if *start_time == now && *duration == fourteen_days
+            )));
+            assert_eq!(contract.epoch_start_time, now);
+            assert_eq!(contract.epoch_end_time, now + fourteen_days);
+        }
+
+        /// R4b (G17): índices SCALE dos erros são ABI; o novo erro é o último.
+        #[ink::test]
+        fn test_error_scale_indices() {
+            use TradingRewardsError as E;
+            let cases = [
+                (E::AccessDenied, 0u8),
+                (E::ContractPaused, 1),
+                (E::ZeroAddress, 2),
+                (E::NoRewardsToClaim, 3),
+                (E::Overflow, 4),
+                (E::InsufficientBalance, 5),
+                (E::ReentrancyGuardActive, 6),
+                (E::VolumeTooSmall, 7),
+                (E::TradeCooldownActive, 8),
+                (E::DailyLimitExceeded, 9),
+                (E::SuspiciousAddress, 10),
+                (E::NoActiveTraders, 11),
+                (E::StakingFundingFailed, 12),
+                (E::EpochHasPendingWeight, 13),
+                (E::NotBlacklisted, 14),
+                (E::EpochNotFinished, 15),
+                (E::OpenEpochWeightPending, 16),
+            ];
+            for (error, index) in cases {
+                assert_eq!(scale::Encode::encode(&error), vec![index]);
+                assert_eq!(
+                    <E as scale::Decode>::decode(&mut &[index][..]).unwrap(),
+                    error
+                );
+            }
+            // OpenEpochWeightPending é o último: 17 não decodifica
+            assert!(<E as scale::Decode>::decode(&mut &[17u8][..]).is_err());
         }
     }
 }
