@@ -1,6 +1,10 @@
 import { NextFunction, Router, Request, Response } from 'express';
 import { orderService } from '../services/orderService';
-import { CreateOrderSchema, CancelOrderSchema } from '../utils/validation';
+import {
+  CreateOrderSchema,
+  CancelOrderSchema,
+  ss58Address,
+} from '../utils/validation';
 import {
   checkSignedTimestamp,
   verifySpotOrderSignature,
@@ -19,7 +23,7 @@ import { z } from 'zod';
 const router = Router();
 
 const SignedReadSchema = z.object({
-  makerAddress: z.string().min(8).max(128),
+  makerAddress: ss58Address,
   status: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),

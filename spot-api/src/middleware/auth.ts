@@ -3,6 +3,10 @@ import { getRedis } from '../utils/redis';
 import { config } from '../config';
 import { log } from '../utils/logger';
 import { walletRiskService } from '../services/walletRiskService';
+import {
+  accountAddressVariants,
+  toCanonicalAddress,
+} from '../utils/validation';
 
 const SIGNED_ACTION_TTL_MS = 5 * 60 * 1000;
 // Max clock skew tolerated for timestamps in the future. A signed message is
@@ -294,29 +298,24 @@ export function buildLegacyWalletActionMessage(input: WalletActionMessageInput) 
 
 async function verifyWalletMessage(
   input: WalletActionMessageInput & { signature: string },
-): Promise<'bound' | 'legacy' | null> {
-  if (
-    await verifyAddressSignature(
-      buildWalletActionMessage(input),
-      input.signature,
-      input.address,
-    )
-  ) {
-    return 'bound';
-  }
-  if (
-    acceptLegacySignatures() &&
-    (await verifyAddressSignature(
-      buildLegacyWalletActionMessage(input),
-      input.signature,
-      input.address,
-    ))
-  ) {
-    log.warn(
-      { address: input.address, action: input.action },
-      '[SECURITY] Legacy unbound wallet signature accepted (deprecated)',
-    );
-    return 'legacy';
+): Promise<{ format: 'bound' | 'legacy'; message: string } | null> {
+  const { signature, ...messageInput } = input;
+  // Request schemas hand auth the canonical form, while the wallet signed the
+  // `address:` line in whatever prefix it displays (M-09): try each encoding.
+  for (const address of accountAddressVariants(input.address)) {
+    const bound = buildWalletActionMessage({ ...messageInput, address });
+    if (await verifyAddressSignature(bound, signature, input.address)) {
+      return { format: 'bound', message: bound };
+    }
+    if (!acceptLegacySignatures()) continue;
+    const legacy = buildLegacyWalletActionMessage({ ...messageInput, address });
+    if (await verifyAddressSignature(legacy, signature, input.address)) {
+      log.warn(
+        { address: input.address, action: input.action },
+        '[SECURITY] Legacy unbound wallet signature accepted (deprecated)',
+      );
+      return { format: 'legacy', message: legacy };
+    }
   }
   return null;
 }
@@ -395,7 +394,21 @@ export async function verifyWalletActionSignature(input: {
     };
   }
 
-  const replayKey = `nonce:${input.action}:${input.address}:${input.nonce}`;
+  // One key, one identity: nonces (and bans) use the canonical address (M-09).
+  const address = toCanonicalAddress(input.address);
+  if (!address) {
+    log.warn(
+      {
+        address: input.address,
+        action: input.action,
+        reason: 'invalid_address',
+      },
+      '[SECURITY] Wallet signature rejected',
+    );
+    return { ok: false as const, error: 'Invalid signature' };
+  }
+
+  const replayKey = `nonce:${input.action}:${address}:${input.nonce}`;
   const nonceState = await getNonceState(replayKey);
   if (nonceState === 'unavailable') {
     log.error(
@@ -421,22 +434,15 @@ export async function verifyWalletActionSignature(input: {
     return { ok: false as const, error: 'Signature nonce already used' };
   }
 
-  const messageInput = {
+  const verified = await verifyWalletMessage({
     action: input.action,
     address: input.address,
     nonce: input.nonce,
     timestamp,
     fields: input.fields,
-  };
-  const format = await verifyWalletMessage({
-    ...messageInput,
     signature: input.signature,
   });
-  const message =
-    format === 'legacy'
-      ? buildLegacyWalletActionMessage(messageInput)
-      : buildWalletActionMessage(messageInput);
-  if (!format) {
+  if (!verified) {
     log.warn(
       {
         address: input.address,
@@ -449,7 +455,7 @@ export async function verifyWalletActionSignature(input: {
   }
 
   try {
-    await walletRiskService.assertWalletCanAct(input.address);
+    await walletRiskService.assertWalletCanAct(address);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Wallet is not allowed';
@@ -481,7 +487,7 @@ export async function verifyWalletActionSignature(input: {
     );
     return { ok: false as const, error };
   }
-  return { ok: true as const, message };
+  return { ok: true as const, message: verified.message };
 }
 
 export async function verifyWalletReadSignature(input: {
@@ -528,7 +534,21 @@ export async function verifyWalletReadSignature(input: {
     };
   }
 
-  const replayKey = `nonce:read:${input.action}:${input.address}:${input.nonce}`;
+  // One key, one identity: the nonce key uses the canonical address (M-09).
+  const address = toCanonicalAddress(input.address);
+  if (!address) {
+    log.warn(
+      {
+        address: input.address,
+        action: input.action,
+        reason: 'invalid_address',
+      },
+      '[SECURITY] Wallet read signature rejected',
+    );
+    return { ok: false as const, error: 'Invalid signature' };
+  }
+
+  const replayKey = `nonce:read:${input.action}:${address}:${input.nonce}`;
   const nonceState = await getNonceState(replayKey);
   if (nonceState === 'unavailable') {
     log.error(
@@ -554,22 +574,15 @@ export async function verifyWalletReadSignature(input: {
     return { ok: false as const, error: 'Signature nonce already used' };
   }
 
-  const messageInput = {
+  const verified = await verifyWalletMessage({
     action: input.action,
     address: input.address,
     nonce: input.nonce,
     timestamp,
     fields: input.fields,
-  };
-  const format = await verifyWalletMessage({
-    ...messageInput,
     signature: input.signature,
   });
-  const message =
-    format === 'legacy'
-      ? buildLegacyWalletActionMessage(messageInput)
-      : buildWalletActionMessage(messageInput);
-  if (!format) {
+  if (!verified) {
     log.warn(
       {
         address: input.address,
@@ -598,5 +611,5 @@ export async function verifyWalletReadSignature(input: {
     );
     return { ok: false as const, error };
   }
-  return { ok: true as const, message };
+  return { ok: true as const, message: verified.message };
 }

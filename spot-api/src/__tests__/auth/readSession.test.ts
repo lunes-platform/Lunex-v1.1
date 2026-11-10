@@ -1,4 +1,6 @@
 jest.mock('@polkadot/util-crypto', () => ({
+  // Real SS58 codec: auth canonicalizes addresses (M-09).
+  ...jest.requireActual('@polkadot/util-crypto'),
   cryptoWaitReady: jest.fn().mockResolvedValue(undefined),
   signatureVerify: jest.fn(),
 }));

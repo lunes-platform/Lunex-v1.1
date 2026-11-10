@@ -69,7 +69,7 @@ describe('Trades API E2E', () => {
     it('should return 200 with valid signed read', async () => {
       const res = await request(app)
         .get('/api/v1/trades')
-        .query(buildSignedQuery('address', 'test-addr-123'));
+        .query(buildSignedQuery('address', '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'));
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('trades');

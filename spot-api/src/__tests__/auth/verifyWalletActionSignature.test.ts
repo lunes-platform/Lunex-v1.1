@@ -1,4 +1,6 @@
 jest.mock('@polkadot/util-crypto', () => ({
+  // Real SS58 codec: auth canonicalizes addresses (M-09).
+  ...jest.requireActual('@polkadot/util-crypto'),
   cryptoWaitReady: jest.fn().mockResolvedValue(undefined),
   signatureVerify: jest.fn(),
 }));
@@ -62,7 +64,7 @@ describe('verifyWalletActionSignature security', () => {
 
     const result = await verifyWalletActionSignature({
       action: 'copytrade.deposit',
-      address: '5FakeAddress1111111111111111111111111111111111',
+      address: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
       nonce: 'nonce-invalid-signature',
       timestamp: Date.now(),
       signature: 'bad-signature',
@@ -83,7 +85,7 @@ describe('verifyWalletActionSignature security', () => {
 
     const result = await verifyWalletActionSignature({
       action: 'social.follow-leader',
-      address: '5ExpiredAddress111111111111111111111111111111111',
+      address: '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y',
       nonce: 'nonce-expired-signature',
       timestamp: Date.now() - 10 * 60 * 1000,
       signature: 'signed-payload',
@@ -103,7 +105,7 @@ describe('verifyWalletActionSignature security', () => {
 
     const input = {
       action: 'copytrade.withdraw',
-      address: '5ReplayAddress1111111111111111111111111111111111',
+      address: '5DAAnrj7VHTznn2AWBemMuyBwZWs6FNFjdyVXUeYum3PTXFy',
       nonce: 'nonce-replay-same-action',
       timestamp: Date.now(),
       signature: 'signed-payload',
@@ -134,7 +136,7 @@ describe('verifyWalletActionSignature security', () => {
 
     const result = await verifyWalletActionSignature({
       action: 'margin.deposit',
-      address: '5BannedAddress111111111111111111111111111111111',
+      address: '5HGjWAeFDfFCWPsjFQdVV2Msvz2XtMktvgocEZcCj68kUMaw',
       nonce: 'nonce-banned-wallet',
       timestamp: Date.now(),
       signature: 'signed-payload',

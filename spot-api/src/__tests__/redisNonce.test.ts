@@ -6,6 +6,8 @@
  */
 
 jest.mock('@polkadot/util-crypto', () => ({
+  // Real SS58 codec: auth canonicalizes addresses (M-09).
+  ...jest.requireActual('@polkadot/util-crypto'),
   cryptoWaitReady: jest.fn().mockResolvedValue(undefined),
   signatureVerify: jest.fn(),
 }));
@@ -71,6 +73,8 @@ const mockRedis = (redisModule as any)._mockRedis as {
   _store: Map<string, string>;
   _clear: () => void;
 };
+// Valid SS58: auth rejects non-addresses since M-09.
+const ADDR = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
 const signatureVerifyMock = signatureVerify as jest.MockedFunction<
   typeof signatureVerify
 >;
@@ -100,7 +104,7 @@ describe('buildWalletActionMessage', () => {
   it('sorts fields lexicographically', () => {
     const msg = buildWalletActionMessage({
       action: 'test',
-      address: 'addr',
+      address: ADDR,
       nonce: 'n1',
       timestamp: 0,
       fields: { z: 'last', a: 'first', m: 'middle' },
@@ -115,7 +119,7 @@ describe('buildWalletActionMessage', () => {
   it('omits null/undefined fields', () => {
     const msg = buildWalletActionMessage({
       action: 'test',
-      address: 'addr',
+      address: ADDR,
       nonce: 'n1',
       timestamp: 0,
       fields: { a: 'present', b: undefined, c: null },
@@ -154,7 +158,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
 
     const result = await verifyWalletActionSignature({
       action: 'trade',
-      address: 'addr',
+      address: ADDR,
       nonce: 'fresh-atomic-nonce',
       timestamp: Date.now(),
       signature: 'signed-payload',
@@ -162,7 +166,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
 
     expect(result.ok).toBe(true);
     expect(mockRedis.set).toHaveBeenCalledWith(
-      'nonce:trade:addr:fresh-atomic-nonce',
+      `nonce:trade:${ADDR}:fresh-atomic-nonce`,
       '1',
       'EX',
       // BE-17: retention never below 2× the signature window
@@ -177,7 +181,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
     >);
     const input = {
       action: 'trade',
-      address: 'addr',
+      address: ADDR,
       nonce: 'same-concurrent-nonce',
       timestamp: Date.now(),
       signature: 'signed-payload',
@@ -204,7 +208,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
 
     const result = await verifyWalletActionSignature({
       action: 'trade',
-      address: 'addr',
+      address: ADDR,
       nonce: 'nonce-store-down',
       timestamp: Date.now(),
       signature: 'signed-payload',
@@ -217,7 +221,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
   it('rejects an expired timestamp', async () => {
     const result = await verifyWalletActionSignature({
       action: 'deposit',
-      address: 'addr',
+      address: ADDR,
       nonce: 'n1',
       timestamp: Date.now() - 10 * 60 * 1000, // 10 minutes ago
       signature: '0x00',
@@ -230,7 +234,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
   it('rejects a future timestamp beyond the TTL window', async () => {
     const result = await verifyWalletActionSignature({
       action: 'deposit',
-      address: 'addr',
+      address: ADDR,
       nonce: 'n2',
       timestamp: Date.now() + 10 * 60 * 1000, // 10 minutes in future
       signature: '0x00',
@@ -241,12 +245,12 @@ describe('verifyWalletActionSignature — replay protection', () => {
   });
 
   it('rejects if nonce is already used (Redis)', async () => {
-    const replayKey = 'nonce:deposit:addr:nonce-already-used';
+    const replayKey = `nonce:deposit:${ADDR}:nonce-already-used`;
     mockRedis._store.set(replayKey, '1');
 
     const result = await verifyWalletActionSignature({
       action: 'deposit',
-      address: 'addr',
+      address: ADDR,
       nonce: 'nonce-already-used',
       timestamp: Date.now(),
       signature: '0x00',
@@ -262,7 +266,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
     // Should not throw — should fall back gracefully and proceed to signature validation
     const result = await verifyWalletActionSignature({
       action: 'deposit',
-      address: 'addr',
+      address: ADDR,
       nonce: 'nonce-fallback',
       timestamp: Date.now(),
       signature: '0x00',
@@ -281,7 +285,7 @@ describe('verifyWalletActionSignature — replay protection', () => {
 
     await verifyWalletActionSignature({
       action: 'trade',
-      address: 'addr',
+      address: ADDR,
       nonce: 'fresh-nonce',
       timestamp: Date.now(),
       signature: '0x00',
@@ -318,12 +322,12 @@ describe('verifyWalletReadSignature — replay protection', () => {
   });
 
   it('rejects a replayed signed-read nonce before signature verification', async () => {
-    const replayKey = 'nonce:read:orders.list:addr:read-nonce-used';
+    const replayKey = `nonce:read:orders.list:${ADDR}:read-nonce-used`;
     mockRedis._store.set(replayKey, '1');
 
     const result = await verifyWalletReadSignature({
       action: 'orders.list',
-      address: 'addr',
+      address: ADDR,
       nonce: 'read-nonce-used',
       timestamp: Date.now(),
       signature: '0x00',

@@ -87,7 +87,7 @@ describe('Margin API E2E', () => {
     it('should return 200 with valid address', async () => {
       const res = await request(app)
         .get('/api/v1/margin')
-        .query(buildSignedQuery('address', 'test-addr-123'));
+        .query(buildSignedQuery('address', '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'));
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('account');
@@ -171,7 +171,7 @@ describe('Margin API E2E', () => {
       const res = await request(app)
         .post('/api/v1/margin/collateral/deposit')
         .send({
-          address: 'test-addr-123',
+          address: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
           token: 'USDT',
           amount: '1000',
           ...buildSignedBody({}),
@@ -194,7 +194,7 @@ describe('Margin API E2E', () => {
       const res = await request(app)
         .post('/api/v1/margin/collateral/withdraw')
         .send({
-          address: 'test-addr-123',
+          address: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
           token: 'USDT',
           amount: '500',
           ...buildSignedBody({}),
@@ -215,7 +215,7 @@ describe('Margin API E2E', () => {
       const res = await request(app)
         .post('/api/v1/margin/positions')
         .send({
-          address: 'test-addr-123',
+          address: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
           pairSymbol: 'LUNES/USDT',
           side: 'BUY',
           collateralAmount: '500',
@@ -240,7 +240,7 @@ describe('Margin API E2E', () => {
       const res = await request(app)
         .post('/api/v1/margin/positions/pos-1/close')
         .send({
-          address: 'test-addr-123',
+          address: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
           ...buildSignedBody({}),
         });
 
@@ -261,7 +261,7 @@ describe('Margin API E2E', () => {
       const res = await request(app)
         .post('/api/v1/margin/positions/pos-1/liquidate')
         .send({
-          liquidatorAddress: 'liquidator-addr-123',
+          liquidatorAddress: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
           ...buildSignedBody({}),
         });
 

@@ -1,15 +1,28 @@
 import prisma from '../db';
 import { ApiError } from '../middleware/errors';
+import {
+  accountAddressVariants,
+  toCanonicalAddress,
+} from '../utils/validation';
+
+/**
+ * Admin input → canonical address (M-09). The explorer shows prefix 57 while
+ * requests arrive canonical, so a ban stored as typed would never match.
+ */
+function canonicalAdminAddress(address: string) {
+  const trimmed = address.trim();
+  if (!trimmed) throw ApiError.badRequest('Wallet address is required');
+  const canonical = toCanonicalAddress(trimmed);
+  if (!canonical) throw ApiError.badRequest('Invalid wallet address');
+  return canonical;
+}
 
 export const walletRiskService = {
   async banWallet(address: string, reason: string, bannedBy: string) {
-    const normalizedAddress = address.trim();
+    const normalizedAddress = canonicalAdminAddress(address);
     const normalizedReason = reason.trim();
     const normalizedBannedBy = bannedBy.trim();
 
-    if (!normalizedAddress) {
-      throw ApiError.badRequest('Wallet address is required');
-    }
     if (!normalizedReason) {
       throw ApiError.badRequest('Ban reason is required');
     }
@@ -31,7 +44,9 @@ export const walletRiskService = {
         },
       }),
       prisma.agent.updateMany({
-        where: { walletAddress: normalizedAddress },
+        where: {
+          walletAddress: { in: accountAddressVariants(normalizedAddress) },
+        },
         data: { isBanned: true, banReason: normalizedReason },
       }),
     ]);
@@ -44,17 +59,16 @@ export const walletRiskService = {
   },
 
   async unbanWallet(address: string) {
-    const normalizedAddress = address.trim();
-    if (!normalizedAddress) {
-      throw ApiError.badRequest('Wallet address is required');
-    }
+    const normalizedAddress = canonicalAdminAddress(address);
+    // Rows written before canonicalization may hold any encoding of the key.
+    const variants = accountAddressVariants(normalizedAddress);
 
     await prisma.$transaction([
       prisma.bannedWallet.deleteMany({
-        where: { address: normalizedAddress },
+        where: { address: { in: variants } },
       }),
       prisma.agent.updateMany({
-        where: { walletAddress: normalizedAddress },
+        where: { walletAddress: { in: variants } },
         data: { isBanned: false, banReason: null },
       }),
     ]);
@@ -66,13 +80,17 @@ export const walletRiskService = {
   },
 
   async assertWalletCanAct(walletAddress: string) {
+    // Raw input plus every accepted SS58 encoding (canonical included), so
+    // rows stored before canonicalization still block. Undecodable → raw only.
+    const variants = accountAddressVariants(walletAddress);
+
     const [walletBan, agent] = await Promise.all([
-      prisma.bannedWallet.findUnique({
-        where: { address: walletAddress },
+      prisma.bannedWallet.findFirst({
+        where: { address: { in: variants } },
         select: { reason: true },
       }),
-      prisma.agent.findUnique({
-        where: { walletAddress },
+      prisma.agent.findFirst({
+        where: { walletAddress: { in: variants }, isBanned: true },
         select: {
           isBanned: true,
           banReason: true,

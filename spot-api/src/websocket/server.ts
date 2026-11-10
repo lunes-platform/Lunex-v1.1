@@ -6,6 +6,7 @@ import { log } from '../utils/logger';
 import { config } from '../config';
 import { validateReadSessionToken } from '../middleware/readSession';
 import { resolveClientIp } from '../utils/trustProxy';
+import { toCanonicalAddress } from '../utils/validation';
 
 // ─── Security Constants ──────────────────────────────────────────
 
@@ -82,6 +83,8 @@ interface Client {
   authenticated: boolean;
   /** Wallet bound by a read-session token (action `auth`). */
   address?: string;
+  /** `address` in the canonical SS58 prefix: user-channel routing (M-09). */
+  canonicalAddress?: string;
   /** Session expiry (unix seconds); private channels stop after it. */
   sessionExp?: number;
   /** Raw read-session token, kept to re-check revocation (BE-21). */
@@ -155,21 +158,35 @@ export function broadcast(channel: string, data: unknown) {
   const isUser = channel.startsWith(USER_CHANNEL_PREFIX);
   const payload = JSON.stringify({ type: 'update', channel, data });
   const nowSec = Date.now() / 1000;
+  // M-09: publishers use the canonical address, the wallet subscribed with
+  // the prefix it displays. Route `user:` by account id; reply under the
+  // channel name the client subscribed to.
+  const userAccount = isUser
+    ? toCanonicalAddress(channel.slice(USER_CHANNEL_PREFIX.length))
+    : null;
   for (const client of clients) {
-    if (!client.subscriptions.has(channel)) continue;
+    const target =
+      userAccount && client.canonicalAddress === userAccount
+        ? `${USER_CHANNEL_PREFIX}${client.address}`
+        : channel;
+    if (!client.subscriptions.has(target)) continue;
     if (client.ws.readyState !== WebSocket.OPEN) continue;
     if (isUser) {
       if (!hasValidUserSession(client, nowSec)) {
-        client.subscriptions.delete(channel);
+        client.subscriptions.delete(target);
         continue;
       }
+      const clientPayload =
+        target === channel
+          ? payload
+          : JSON.stringify({ type: 'update', channel: target, data });
       // Private data: re-validate the session (revocation) at use time.
       client.sendChain = client.sendChain
         .then(async () => {
           if (!(await revalidateSession(client))) return;
-          if (!client.subscriptions.has(channel)) return;
+          if (!client.subscriptions.has(target)) return;
           if (client.ws.readyState !== WebSocket.OPEN) return;
-          client.ws.send(payload);
+          client.ws.send(clientPayload);
         })
         .catch((err: unknown) => {
           log.warn({ err, channel }, '[WS] User broadcast failed');
@@ -190,6 +207,7 @@ function dropUserSession(client: Client, reason: string) {
   }
   client.authenticated = false;
   client.address = undefined;
+  client.canonicalAddress = undefined;
   client.sessionExp = undefined;
   client.sessionToken = undefined;
   if (client.ws.readyState === WebSocket.OPEN) {
@@ -384,6 +402,8 @@ export function createWebSocketServer(
               }
               client.authenticated = true;
               client.address = claims.sub;
+              client.canonicalAddress =
+                toCanonicalAddress(claims.sub) ?? claims.sub;
               client.sessionExp = claims.exp;
               client.sessionToken = msg.token;
               ws.send(

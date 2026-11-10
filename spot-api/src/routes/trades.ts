@@ -4,11 +4,9 @@ import {
   parsePairSymbol,
   RetryTradeSettlementsSchema,
   TradeSettlementQuerySchema,
+  ss58Address,
 } from '../utils/validation';
-import {
-  getSignedAuthInput,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+import { getSignedAuthInput } from '../middleware/auth';
 import {
   readAuthSchema,
   verifyWalletReadAccess,
@@ -19,7 +17,7 @@ import { z } from 'zod';
 const router = Router();
 
 const SignedTradesReadSchema = z.object({
-  address: z.string().min(8).max(128),
+  address: ss58Address,
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   nonce: z.string().min(8),

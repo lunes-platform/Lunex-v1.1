@@ -7,11 +7,11 @@ import {
   MarginOpenPositionSchema,
   MarginClosePositionSchema,
   MarginLiquidatePositionSchema,
+  ss58Address,
 } from '../utils/validation';
 import {
   getSignedAuthInput,
   verifyWalletActionSignature,
-  verifyWalletReadSignature,
 } from '../middleware/auth';
 import {
   readAuthSchema,
@@ -23,7 +23,7 @@ import { z } from 'zod';
 const router = Router();
 
 const MarginOverviewReadSchema = z.object({
-  address: z.string().min(8).max(128),
+  address: ss58Address,
   nonce: z.string().min(8),
   timestamp: z.coerce.number().int().positive(),
   signature: z.string().min(8),

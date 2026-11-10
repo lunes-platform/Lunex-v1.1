@@ -88,6 +88,9 @@ jest.mock(
 
 import { orderService } from '../services/orderService';
 
+// Valid canonical SS58: createOrder rejects undecodable makers (M-09).
+const MAKER = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
+
 const pair = {
   id: 'pair-1',
   symbol: 'LUNES/USDT',
@@ -109,7 +112,7 @@ function makeOrder(overrides: Record<string, any> = {}) {
   return {
     id: 'order-1',
     pairId: pair.id,
-    makerAddress: 'maker-1',
+    makerAddress: MAKER,
     side: 'BUY',
     type: 'STOP',
     price: new Decimal('0'),
@@ -180,7 +183,7 @@ describe('orderService stop orders', () => {
       mockSettlementService.getVaultBalance.mockResolvedValue(0n);
       await expect(
         orderService.createOrder({
-          makerAddress: 'maker-1',
+          makerAddress: MAKER,
           pairSymbol: pair.symbol,
           side,
           type: 'LIMIT',
@@ -204,7 +207,7 @@ describe('orderService stop orders', () => {
     mockPrisma.trade.findMany.mockResolvedValue([
       {
         side: 'BUY',
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         takerAddress: 'taker-9',
         price: '2',
         amount: '1',
@@ -213,7 +216,7 @@ describe('orderService stop orders', () => {
     ]);
     await expect(
       orderService.createOrder({
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         pairSymbol: pair.symbol,
         side: 'SELL',
         type: 'LIMIT',
@@ -237,7 +240,7 @@ describe('orderService stop orders', () => {
     mockSettlementService.getVaultBalance.mockResolvedValue(200_000_000n);
     await expect(
       orderService.createOrder({
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         pairSymbol: pair.symbol,
         side: 'BUY',
         type: 'LIMIT',
@@ -282,13 +285,13 @@ describe('orderService stop orders', () => {
       nonce: '1700000000099',
       timestamp: Date.now(),
       signature: 'sig',
-      makerAddress: 'maker-1',
+      makerAddress: MAKER,
       timeInForce: 'GTC',
     });
 
     // Two pairs sharing a token (e.g. LUNES as base and as quote) would
     // otherwise both admit orders against the same vault balance.
-    expect(calls).toEqual(['maker:maker-1', pair.symbol]);
+    expect(calls).toEqual([`maker:${MAKER}`, pair.symbol]);
   });
 
   it('keeps accepting orders without vault checks when settlement is disabled', async () => {
@@ -319,7 +322,7 @@ describe('orderService stop orders', () => {
         nonce: '1700000000100',
         timestamp: Date.now(),
         signature: 'sig',
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         timeInForce: 'GTC',
       }),
     ).resolves.toBeTruthy();
@@ -331,7 +334,7 @@ describe('orderService stop orders', () => {
     async (signature) => {
       await expect(
         orderService.createOrder({
-          makerAddress: 'maker-1',
+          makerAddress: MAKER,
           pairSymbol: pair.symbol,
           side: 'BUY',
           type: 'LIMIT',
@@ -370,7 +373,7 @@ describe('orderService stop orders', () => {
     mockBook.addLimitOrder.mockReturnValue([]);
     await expect(
       orderService.createOrder({
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         pairSymbol: pair.symbol,
         side: 'BUY',
         type: 'LIMIT',
@@ -387,7 +390,7 @@ describe('orderService stop orders', () => {
   it('rejects an already expired order before persistence or matching', async () => {
     await expect(
       orderService.createOrder({
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         pairSymbol: pair.symbol,
         side: 'SELL',
         type: 'LIMIT',
@@ -442,7 +445,7 @@ describe('orderService stop orders', () => {
           : [],
       );
       const result = await orderService.createOrder({
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         pairSymbol: pair.symbol,
         side: 'BUY',
         type: 'LIMIT',
@@ -484,7 +487,7 @@ describe('orderService stop orders', () => {
     ]);
     mockPrisma.trade.findFirst.mockResolvedValue(null);
     await orderService.createOrder({
-      makerAddress: 'maker-1',
+      makerAddress: MAKER,
       pairSymbol: pair.symbol,
       side: 'BUY',
       type: 'LIMIT',
@@ -511,12 +514,12 @@ describe('orderService stop orders', () => {
       },
     ]);
 
-    const result = await orderService.getUserOrders('maker-1');
+    const result = await orderService.getUserOrders(MAKER);
 
     expect(result).toEqual([
       expect.objectContaining({
         id: 'order-1',
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         pair: { symbol: pair.symbol },
       }),
     ]);
@@ -546,7 +549,7 @@ describe('orderService stop orders', () => {
       nonce: '1700000000001',
       timestamp: Date.now(),
       signature: 'sig',
-      makerAddress: 'maker-1',
+      makerAddress: MAKER,
       timeInForce: 'GTC',
     });
 
@@ -608,7 +611,7 @@ describe('orderService stop orders', () => {
       nonce: '1700000000002',
       timestamp: Date.now(),
       signature: 'sig',
-      makerAddress: 'maker-1',
+      makerAddress: MAKER,
       timeInForce: 'GTC',
     });
 
@@ -621,7 +624,7 @@ describe('orderService stop orders', () => {
       createdOrder.id,
       'BUY',
       1,
-      'maker-1',
+      MAKER,
     );
     expect(mockTradeService.processMatches).toHaveBeenCalledWith(
       pair.id,
@@ -669,7 +672,7 @@ describe('orderService stop orders', () => {
       nonce: '1700000000003',
       timestamp: Date.now(),
       signature: 'sig',
-      makerAddress: 'maker-1',
+      makerAddress: MAKER,
       timeInForce: 'GTC',
     });
 
@@ -679,7 +682,7 @@ describe('orderService stop orders', () => {
       'SELL',
       88,
       2,
-      'maker-1',
+      MAKER,
     );
     expect(mockBook.addMarketOrder).not.toHaveBeenCalled();
     expect(mockTradeService.processMatches).not.toHaveBeenCalled();
@@ -698,7 +701,7 @@ describe('orderService stop orders', () => {
         nonce: '1700000000004',
         timestamp: Date.now(),
         signature: 'sig',
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         timeInForce: 'GTC',
       }),
     ).rejects.toThrow('On-chain nonce validation unavailable');
@@ -719,7 +722,7 @@ describe('orderService stop orders', () => {
         nonce: '1700000000005',
         timestamp: Date.now(),
         signature: 'sig',
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         timeInForce: 'GTC',
       }),
     ).rejects.toThrow('Wallet is banned: market abuse');
@@ -765,7 +768,7 @@ describe('orderService stop orders', () => {
         nonce: '1700000000006',
         timestamp: Date.now(),
         signature: 'sig',
-        makerAddress: 'maker-1',
+        makerAddress: MAKER,
         timeInForce: 'IOC',
       }),
     ).rejects.toThrow('database unavailable');
@@ -797,7 +800,7 @@ describe('orderService stop orders', () => {
       nonce: '1700000000007',
       timestamp: Date.now(),
       signature: 'sig',
-      makerAddress: 'maker-1',
+      makerAddress: MAKER,
       timeInForce: 'GTC',
     });
 
@@ -813,7 +816,7 @@ describe('orderService stop orders', () => {
       'SELL',
       100,
       1,
-      'maker-1',
+      MAKER,
     );
   });
 

@@ -11,7 +11,8 @@
  * - The token only ever authorizes reads routed through `verifyWalletReadAccess`.
  *   It is never consulted by `verifyWalletActionSignature`, order signatures or
  *   any fund-moving / state-changing path.
- * - `sub` must equal the requested address exactly (case-sensitive SS58).
+ * - `sub` must be the same account as the requested address (any SS58
+ *   prefix: routes canonicalize, the token keeps the address as issued).
  * - Tokens are revocable by `sid` until they expire (Redis + in-memory fallback).
  * - Legacy per-request signed reads keep working unchanged when no bearer is sent.
  */
@@ -21,6 +22,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { getRedis } from '../utils/redis';
 import { log } from '../utils/logger';
+import { isSameAccount } from '../utils/validation';
 import { verifyWalletReadSignature } from './auth';
 
 export const READ_SESSION_TOKEN_PREFIX = 'lxs1';
@@ -340,7 +342,7 @@ export async function verifyWalletReadAccess(
     typeof input.signature === 'string';
 
   if (state.status === 'valid') {
-    if (state.claims.sub === input.address) {
+    if (isSameAccount(state.claims.sub, input.address)) {
       return { ok: true as const, via: 'session' as const };
     }
     log.warn(

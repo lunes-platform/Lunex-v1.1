@@ -123,7 +123,7 @@ describe('Orders API E2E', () => {
       const res = await request(app)
         .delete('/api/v1/orders/some-order-id')
         .send({
-          makerAddress: 'test-maker-123',
+          makerAddress: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
           signature: 'signed-payload',
         });
 
@@ -140,7 +140,7 @@ describe('Orders API E2E', () => {
       const res = await request(app)
         .delete('/api/v1/orders/some-order-id')
         .send({
-          makerAddress: 'test-maker-123',
+          makerAddress: '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY',
           nonce: 'cancel-nonce-123',
           timestamp: Date.now(),
           signature: 'signed-payload',
@@ -163,7 +163,7 @@ describe('Orders API E2E', () => {
     it('should return 200 with empty orders for valid signed read', async () => {
       const res = await request(app)
         .get('/api/v1/orders')
-        .query(buildSignedQuery('makerAddress', 'test-addr-123'));
+        .query(buildSignedQuery('makerAddress', '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY'));
 
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty('orders');
