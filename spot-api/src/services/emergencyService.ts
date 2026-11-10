@@ -21,7 +21,11 @@ function normalizeMethodKey(key: string) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-function resolveMethodKey(
+/**
+ * Exact message name (case/underscore-insensitive). A substring match let
+ * `pause` resolve to `unpause` depending on metadata key order (M-11).
+ */
+export function resolveMethodKey(
   contract: ContractPromise,
   expected: string,
   kind: ContractMethodKind,
@@ -29,9 +33,8 @@ function resolveMethodKey(
   const target = normalizeMethodKey(expected);
   const source = kind === 'tx' ? contract.tx : contract.query;
   return (
-    Object.keys(source).find((key) =>
-      normalizeMethodKey(key).includes(target),
-    ) || null
+    Object.keys(source).find((key) => normalizeMethodKey(key) === target) ||
+    null
   );
 }
 
@@ -206,18 +209,21 @@ class EmergencyService {
   }
 
   async pauseSpot(): Promise<EmergencyComponentStatus> {
-    return this.runSpotPauseTx(this.spotPauseTxKey, 'pause');
+    return this.runSpotPauseTx('pause');
   }
 
   async unpauseSpot(): Promise<EmergencyComponentStatus> {
-    return this.runSpotPauseTx(this.spotUnpauseTxKey, 'unpause');
+    return this.runSpotPauseTx('unpause');
   }
 
   private async runSpotPauseTx(
-    methodKey: string | null,
     action: 'pause' | 'unpause',
   ): Promise<EmergencyComponentStatus> {
     const ready = await this.ensureReady();
+    // Read the key only after initialize(): it is null before the first init,
+    // so the first pause after a restart used to come back "not available".
+    const methodKey =
+      action === 'pause' ? this.spotPauseTxKey : this.spotUnpauseTxKey;
     if (
       !ready ||
       !this.api ||
@@ -249,6 +255,25 @@ class EmergencyService {
         60_000,
       );
 
+      // Finalized is not enough: a message that returns Err (e.g. caller is
+      // not the owner) may not surface as a dispatch error. Report success
+      // only once the contract state shows the change.
+      const expected = action === 'pause';
+      const observed = await this.querySpotPaused(true);
+      if (observed.paused !== expected) {
+        log.error(
+          { action, txHash, observed: observed.paused },
+          '[Emergency] spot_settlement tx finalized but state change not confirmed',
+        );
+        return {
+          component: 'spot_settlement',
+          available: true,
+          paused: observed.paused,
+          txHash,
+          error: `spot_settlement.${action} not confirmed on-chain (is_paused=${String(observed.paused)})`,
+        };
+      }
+
       log.warn(
         { action, txHash, by: 'admin emergency endpoint' },
         '[Emergency] spot_settlement state changed via admin action',
@@ -257,7 +282,7 @@ class EmergencyService {
       return {
         component: 'spot_settlement',
         available: true,
-        paused: action === 'pause',
+        paused: expected,
         txHash,
       };
     } catch (err) {

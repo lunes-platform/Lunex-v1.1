@@ -1,4 +1,6 @@
 import prisma from '../db';
+import { ApiError } from '../middleware/errors';
+import { toCanonicalAddress } from '../utils/validation';
 import type {
   StrategyType,
   StrategyRiskLevel,
@@ -103,6 +105,16 @@ export const strategyService = {
         where: { id: input.leaderId },
       });
       if (!leader) throw new Error('Leader not found');
+      // M-10: the leader must be the agent's own — linked to it, or owned by
+      // the agent wallet (compared as account ids, any SS58 prefix).
+      const leaderWallet = toCanonicalAddress(leader.address);
+      const ownsLeader =
+        agent.leaderId === leader.id ||
+        (leaderWallet !== null &&
+          leaderWallet === toCanonicalAddress(agent.walletAddress));
+      if (!ownsLeader) {
+        throw ApiError.forbidden('Leader does not belong to this agent');
+      }
     }
 
     const strategy = await prisma.strategy.create({
