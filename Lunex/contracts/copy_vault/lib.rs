@@ -48,12 +48,20 @@
 ///    disponível (`InsufficientNativeLiquidity` caso contrário).
 /// 5. `tracked_token_count <= MAX_TRACKED_TOKENS` sempre.
 /// 6. (A-02) `total_shares == 0 || total_shares >= MINIMUM_SHARES`: o
-///    1º depósito minta MINIMUM_SHARES dead shares para o `AccountId`
-///    zero, que nunca são queimadas. "Sem depositantes" passa a ser
+///    1º depósito soma MINIMUM_SHARES dead shares SÓ em `total_shares`,
+///    sem creditá-las a conta alguma — nenhum caller consegue queimá-las.
+///    Logo `Σ shares[conta] + MINIMUM_SHARES == total_shares` após o 1º
+///    depósito, e "sem depositantes" passa a ser
 ///    `total_shares <= MINIMUM_SHARES` (ver `depositor_shares`).
-/// 7. (A-01) router e factory/wnative só mudam pelo admin do protocolo
-///    e sem depositantes; o `amount_out` do swap é o delta de
-///    `balance_of(vault)` do token_out, nunca o retorno do router.
+/// 7. (A-01) router e factory/wnative só mudam pelo admin do protocolo:
+///    na hora quando não há depositantes, ou com depositantes via
+///    `propose_*` → `apply_*` após `CONFIG_CHANGE_DELAY_MS` (maior que o
+///    atraso do saque de emergência). A proposta caduca em
+///    `eta + CONFIG_CHANGE_GRACE_MS`, o setter imediato a descarta, e
+///    `deposit` é recusado enquanto ela está viva — todo depositante
+///    presente no `apply_*` já o era na proposta. O `amount_out` do swap
+///    é o delta de `balance_of(vault)` do token_out, nunca o retorno do
+///    router.
 
 #[ink::contract]
 pub mod copy_vault {
@@ -141,10 +149,25 @@ pub mod copy_vault {
         /// Performance fee cannot be raised while depositors hold shares
         /// (a raise would apply retroactively to capital already in)
         FeeIncreaseWithDepositors,
-        /// Router / valuation infra cannot change while depositors hold
-        /// shares (their funds would be approved to / priced by the new
-        /// contracts without their consent)
+        /// Router / valuation infra cannot change IMMEDIATELY while
+        /// depositors hold shares (their funds would be approved to /
+        /// priced by the new contracts without their consent) — use the
+        /// timelocked `propose_*` / `apply_*` path instead
         ConfigChangeWithDepositors,
+        /// `apply_*` / `cancel_*` called without a pending proposal
+        NoPendingConfigChange,
+        /// `apply_*` called before the proposal's `eta`
+        ConfigChangeTimelocked,
+        /// `apply_*` called after `eta + CONFIG_CHANGE_GRACE_MS` — the
+        /// proposal lapsed and must be proposed again (fresh notice)
+        ConfigChangeExpired,
+        /// Deposits are refused while a router / valuation infra change
+        /// is pending (not expired), so every depositor present at
+        /// `apply_*` had the full notice window
+        DepositsBlockedByPendingConfigChange,
+        /// Proposed address is the zero AccountId, the vault itself, or
+        /// factory == wnative
+        InvalidConfigAddress,
     }
 
     // ─── Router interop (selectors + espelhos SCALE) ────────────
@@ -256,6 +279,29 @@ pub mod copy_vault {
         pub requested_at: Timestamp,
     }
 
+    /// Troca de router proposta, aplicável a partir de `eta` (ms).
+    #[derive(Debug, PartialEq, Eq, Clone, Copy, scale::Encode, scale::Decode)]
+    #[cfg_attr(
+        feature = "std",
+        derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
+    )]
+    pub struct PendingRouterChange {
+        pub router: AccountId,
+        pub eta: Timestamp,
+    }
+
+    /// Troca de factory/wnative proposta, aplicável a partir de `eta` (ms).
+    #[derive(Debug, PartialEq, Eq, Clone, Copy, scale::Encode, scale::Decode)]
+    #[cfg_attr(
+        feature = "std",
+        derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
+    )]
+    pub struct PendingValuationInfraChange {
+        pub factory: AccountId,
+        pub wnative: AccountId,
+        pub eta: Timestamp,
+    }
+
     // ─── Constants ──────────────────────────────────────────────
 
     pub mod constants {
@@ -309,12 +355,34 @@ pub mod copy_vault {
         /// rastreado (10 LUNES = 10 * 10^8).
         pub const MIN_TRACKING_RESERVE_NATIVE: Balance = 1_000_000_000;
 
-        /// A-02: dead shares mintadas para o `AccountId` zero no 1º
-        /// depósito e nunca queimadas (mesmo valor do
-        /// `MINIMUM_LIQUIDITY` de pair/router). Mantém `total_shares`
-        /// em 0 ou >= este piso, o que torna o ataque de inflação do
-        /// primeiro depositante (1 share + doação) não lucrativo.
+        /// A-02: dead shares somadas a `total_shares` no 1º depósito e
+        /// nunca queimadas (mesmo valor do `MINIMUM_LIQUIDITY` de
+        /// pair/router). Não são creditadas a conta alguma (nem ao
+        /// `AccountId` zero, cuja chave de ordem pequena é assinável),
+        /// então nenhum caller as saca. Mantém `total_shares` em 0 ou
+        /// >= este piso, o que torna o ataque de inflação do primeiro
+        /// depositante (1 share + doação) não lucrativo.
         pub const MINIMUM_SHARES: Balance = 1_000;
+
+        /// A-01: atraso entre `propose_router` / `propose_valuation_infra`
+        /// e o respectivo `apply_*` quando há depositantes (120h, em ms).
+        /// É ESTRITAMENTE maior que `EMERGENCY_UNLOCK_DELAY_MS` (72h) +
+        /// 48h de folga: um depositante que pede o saque de emergência ao
+        /// ver o evento de proposta consegue executá-lo antes de a troca
+        /// poder ser aplicada.
+        pub const CONFIG_CHANGE_DELAY_MS: u64 = EMERGENCY_UNLOCK_DELAY_MS + 48 * 60 * 60 * 1000;
+
+        const _: () = assert!(CONFIG_CHANGE_DELAY_MS > EMERGENCY_UNLOCK_DELAY_MS);
+
+        /// A-01 (rodada 2): validade da proposta após o `eta` (48h, em
+        /// ms). `apply_*` só passa em `[eta, eta + CONFIG_CHANGE_GRACE_MS]`;
+        /// depois a proposta caduca (`ConfigChangeExpired`) e não pode
+        /// ficar latente, pré-armada, à espera de depositantes futuros.
+        /// Enquanto a proposta está viva (até `eta + grace`), `deposit`
+        /// é recusado — logo todo depositante presente no `apply` já o
+        /// era na proposta e teve o aviso inteiro de
+        /// `CONFIG_CHANGE_DELAY_MS`.
+        pub const CONFIG_CHANGE_GRACE_MS: u64 = 48 * 60 * 60 * 1000;
     }
 
     // ─── Events ─────────────────────────────────────────────────
@@ -454,6 +522,39 @@ pub mod copy_vault {
         pub timestamp: Timestamp,
     }
 
+    /// A-01: troca de router proposta (timelock); aplicável a partir de
+    /// `eta`. Declarado depois dos existentes para manter os índices.
+    #[ink(event)]
+    pub struct RouterChangeProposed {
+        pub router: AccountId,
+        pub eta: Timestamp,
+        pub timestamp: Timestamp,
+    }
+
+    /// A-01: proposta de troca de router cancelada.
+    #[ink(event)]
+    pub struct RouterChangeCancelled {
+        pub router: AccountId,
+        pub timestamp: Timestamp,
+    }
+
+    /// A-01: troca de factory/wnative proposta (timelock).
+    #[ink(event)]
+    pub struct ValuationInfraChangeProposed {
+        pub factory: AccountId,
+        pub wnative: AccountId,
+        pub eta: Timestamp,
+        pub timestamp: Timestamp,
+    }
+
+    /// A-01: proposta de troca de factory/wnative cancelada.
+    #[ink(event)]
+    pub struct ValuationInfraChangeCancelled {
+        pub factory: AccountId,
+        pub wnative: AccountId,
+        pub timestamp: Timestamp,
+    }
+
     // ─── Storage ────────────────────────────────────────────────
 
     #[ink(storage)]
@@ -540,6 +641,12 @@ pub mod copy_vault {
         /// WLUNES (wnative) — ponta nativa do path de cotação; o saldo
         /// do vault em wnative entra no equity 1:1.
         wnative: Option<AccountId>,
+
+        // --- A-01: trocas de config com timelock (anexados por último) ---
+        /// Troca de router pendente (`propose_router`).
+        pending_router: Option<PendingRouterChange>,
+        /// Troca de factory/wnative pendente (`propose_valuation_infra`).
+        pending_valuation_infra: Option<PendingValuationInfraChange>,
     }
 
     impl CopyVault {
@@ -583,6 +690,8 @@ pub mod copy_vault {
                 tracked_token_count: 0,
                 factory: None,
                 wnative: None,
+                pending_router: None,
+                pending_valuation_infra: None,
             }
         }
 
@@ -595,6 +704,9 @@ pub mod copy_vault {
         #[ink(message, payable)]
         pub fn deposit(&mut self) -> Result<Balance, VaultError> {
             self.ensure_not_paused()?;
+            // Rodada 2 (A-01): sem novos depositantes com troca de
+            // router/infra viva — quem está no `apply` teve o aviso todo.
+            self.ensure_no_live_config_proposal()?;
             self.acquire_lock()?;
 
             let caller = self.env().caller();
@@ -632,10 +744,11 @@ pub mod copy_vault {
                 return Err(VaultError::BelowMinimumDeposit);
             }
 
-            // A-02: no 1º depósito, MINIMUM_SHARES vão para o AccountId
-            // zero (dead shares, nunca queimadas). Assim `total_shares`
-            // nunca volta a ficar entre 0 e o piso, e inflar o preço da
-            // cota via doação custa ao atacante ~toda a doação.
+            // A-02: no 1º depósito, MINIMUM_SHARES entram só em
+            // `total_shares` (dead shares sem dono, nunca queimadas).
+            // Assim `total_shares` nunca volta a ficar entre 0 e o piso,
+            // e inflar o preço da cota via doação custa ao atacante ~toda
+            // a doação.
             let dead_shares = if self.total_shares == 0 {
                 constants::MINIMUM_SHARES
             } else {
@@ -681,9 +794,6 @@ pub mod copy_vault {
             }
 
             self.shares.insert(caller, &new_shares);
-            if dead_shares > 0 {
-                self.shares.insert(AccountId::from([0u8; 32]), &dead_shares);
-            }
             self.total_shares = self
                 .total_shares
                 .checked_add(shares_to_mint)
@@ -1327,8 +1437,12 @@ pub mod copy_vault {
             };
 
             // Bypassed under unit-test cfg — there is no router contract in
-            // the ink test env. O caminho real é provado on-chain pelo
-            // script E2E `spot-api/scripts/e2e-copy-vault-swap.ts`.
+            // the ink test env. O caminho real (approve → router → swap) é
+            // exercitado on-chain pelo script E2E manual
+            // `spot-api/scripts/e2e-copy-vault-equity.ts` (fora de CI). Ele
+            // NÃO afirma `allowance(vault, router) == 0` após o swap nem
+            // `retorno == delta de balance_of`: essas duas propriedades do
+            // A-01 não têm prova automatizada hoje.
             #[cfg(not(test))]
             {
                 use ink::env::call::{build_call, ExecutionInput, Selector};
@@ -1540,10 +1654,11 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// Unpause the vault (admin only)
+        /// Unpause the vault (protocol admin only — the leader can pause
+        /// but never lift a pause)
         #[ink(message)]
         pub fn unpause(&mut self) -> Result<(), VaultError> {
-            self.ensure_admin()?;
+            self.ensure_protocol_admin()?;
             self.paused = false;
             self.env().emit_event(VaultUnpausedEvent {
                 admin: self.env().caller(),
@@ -1552,10 +1667,11 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// Resume trading after circuit breaker (admin only)
+        /// Resume trading after circuit breaker (protocol admin only —
+        /// the leader must not reset the breaker it tripped)
         #[ink(message)]
         pub fn resume_trading(&mut self) -> Result<(), VaultError> {
-            self.ensure_admin()?;
+            self.ensure_protocol_admin()?;
             self.trading_halted = false;
             self.total_equity = self.get_vault_equity_internal()?;
             // Reset high water mark to current equity to prevent immediate re-trigger
@@ -1563,18 +1679,23 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// Set performance fee (admin only, max 50%). Raising it is only
-        /// allowed while no depositor holds shares, so a raise never applies
-        /// retroactively to capital already in the vault. Lowering is free.
+        /// Set performance fee (max 50%). Lowering: protocol admin or
+        /// leader. Raising: protocol admin only, and only while no
+        /// depositor holds shares, so a raise never applies retroactively
+        /// to capital already in the vault.
         #[ink(message)]
         pub fn set_performance_fee(&mut self, new_fee_bps: u32) -> Result<(), VaultError> {
             self.ensure_admin()?;
             if new_fee_bps > constants::MAX_PERFORMANCE_FEE_BPS {
                 return Err(VaultError::FeeTooHigh);
             }
-            // Dead shares (A-02) não são depositantes.
-            if new_fee_bps > self.performance_fee_bps && self.depositor_shares() > 0 {
-                return Err(VaultError::FeeIncreaseWithDepositors);
+            if new_fee_bps > self.performance_fee_bps {
+                // O leader só pode reduzir a própria taxa.
+                self.ensure_protocol_admin()?;
+                // Dead shares (A-02) não são depositantes.
+                if self.depositor_shares() > 0 {
+                    return Err(VaultError::FeeIncreaseWithDepositors);
+                }
             }
 
             let old_fee = self.performance_fee_bps;
@@ -1589,10 +1710,11 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// Set maximum drawdown before circuit breaker triggers (admin only)
+        /// Set maximum drawdown before circuit breaker triggers (protocol
+        /// admin only — the leader must not loosen its own breaker)
         #[ink(message)]
         pub fn set_max_drawdown(&mut self, drawdown_bps: u32) -> Result<(), VaultError> {
-            self.ensure_admin()?;
+            self.ensure_protocol_admin()?;
             if drawdown_bps == 0 || drawdown_bps > constants::BPS {
                 return Err(VaultError::ZeroAmount);
             }
@@ -1603,14 +1725,25 @@ pub mod copy_vault {
         /// Configure the Router contract used for real on-chain swaps.
         /// Must be set before `swap_through_router` is callable.
         ///
-        /// A-01: protocol admin only (NOT the leader) and only while no
-        /// depositor holds shares — the router receives `approve` over
-        /// vault funds and prices the NAV, so swapping it under live
-        /// deposits would let a malicious router drain them.
+        /// A-01: protocol admin only (NOT the leader) and, immediately,
+        /// only while no depositor holds shares — the router receives
+        /// `approve` over vault funds and prices the NAV, so swapping it
+        /// under live deposits without notice would let a malicious
+        /// router drain them. With depositors use `propose_router` /
+        /// `apply_router` (timelock `CONFIG_CHANGE_DELAY_MS`). Discards
+        /// (and emits `RouterChangeCancelled` for) any pending proposal.
         #[ink(message)]
         pub fn set_router(&mut self, router: AccountId) -> Result<(), VaultError> {
             self.ensure_protocol_admin()?;
             self.ensure_no_depositors()?;
+            // Rodada 2: a troca imediata descarta a proposta pendente —
+            // ela não pode ficar latente (pré-armada) para depois.
+            if let Some(pending) = self.pending_router.take() {
+                self.env().emit_event(RouterChangeCancelled {
+                    router: pending.router,
+                    timestamp: self.env().block_timestamp(),
+                });
+            }
             let old_router = self.router;
             self.router = Some(router);
             self.env().emit_event(RouterChanged {
@@ -1627,6 +1760,69 @@ pub mod copy_vault {
             self.router
         }
 
+        /// A-01: propõe a troca do router (admin do protocolo). Aplicável
+        /// por `apply_router` a partir do `eta` retornado
+        /// (`now + CONFIG_CHANGE_DELAY_MS`) até `eta +
+        /// CONFIG_CHANGE_GRACE_MS`. Nova proposta sobrescreve a anterior e
+        /// reinicia o relógio. Enquanto viva, `deposit` é recusado.
+        /// Recusa o AccountId zero e o próprio vault.
+        #[ink(message)]
+        pub fn propose_router(&mut self, router: AccountId) -> Result<Timestamp, VaultError> {
+            self.ensure_protocol_admin()?;
+            self.ensure_valid_config_address(router)?;
+            let eta = self.config_change_eta()?;
+            let now = self.env().block_timestamp();
+            self.pending_router = Some(PendingRouterChange { router, eta });
+            self.env().emit_event(RouterChangeProposed {
+                router,
+                eta,
+                timestamp: now,
+            });
+            Ok(eta)
+        }
+
+        /// A-01: aplica a troca de router proposta, em
+        /// `[eta, eta + CONFIG_CHANGE_GRACE_MS]` (depois: `ConfigChangeExpired`).
+        #[ink(message)]
+        pub fn apply_router(&mut self) -> Result<(), VaultError> {
+            self.ensure_protocol_admin()?;
+            let pending = self
+                .pending_router
+                .ok_or(VaultError::NoPendingConfigChange)?;
+            let now = self.env().block_timestamp();
+            Self::ensure_config_change_window(pending.eta, now)?;
+            let old_router = self.router;
+            self.router = Some(pending.router);
+            self.pending_router = None;
+            self.env().emit_event(RouterChanged {
+                old_router,
+                new_router: pending.router,
+                timestamp: now,
+            });
+            Ok(())
+        }
+
+        /// A-01: cancela a troca de router pendente.
+        #[ink(message)]
+        pub fn cancel_router_proposal(&mut self) -> Result<(), VaultError> {
+            self.ensure_protocol_admin()?;
+            let pending = self
+                .pending_router
+                .ok_or(VaultError::NoPendingConfigChange)?;
+            self.pending_router = None;
+            self.env().emit_event(RouterChangeCancelled {
+                router: pending.router,
+                timestamp: self.env().block_timestamp(),
+            });
+            Ok(())
+        }
+
+        /// Troca de router pendente (None se não houver).
+        #[ink(message)]
+        pub fn get_pending_router(&self) -> Option<PendingRouterChange> {
+            self.pending_router
+        }
+
         // ════════════════════════════════════════════════════════
         // ADR-002 — TRACKED TOKENS & VALUATION
         // ════════════════════════════════════════════════════════
@@ -1635,8 +1831,12 @@ pub mod copy_vault {
         /// cotação on-chain do equity. Deve ser chamada antes de
         /// qualquer swap/tracking.
         ///
-        /// A-01: só o admin do protocolo (NÃO o leader) e só sem
-        /// depositantes — uma factory falsa torna o NAV arbitrário.
+        /// A-01: só o admin do protocolo (NÃO o leader) e, na hora, só
+        /// sem depositantes — uma factory falsa torna o NAV arbitrário.
+        /// Com depositantes: `propose_valuation_infra` /
+        /// `apply_valuation_infra` (timelock `CONFIG_CHANGE_DELAY_MS`).
+        /// Descarta (com `ValuationInfraChangeCancelled`) a proposta
+        /// pendente.
         #[ink(message)]
         pub fn set_valuation_infra(
             &mut self,
@@ -1645,6 +1845,14 @@ pub mod copy_vault {
         ) -> Result<(), VaultError> {
             self.ensure_protocol_admin()?;
             self.ensure_no_depositors()?;
+            // Rodada 2: descarta a proposta pendente (ver `set_router`).
+            if let Some(pending) = self.pending_valuation_infra.take() {
+                self.env().emit_event(ValuationInfraChangeCancelled {
+                    factory: pending.factory,
+                    wnative: pending.wnative,
+                    timestamp: self.env().block_timestamp(),
+                });
+            }
             self.factory = Some(factory);
             self.wnative = Some(wnative);
             self.env().emit_event(ValuationInfraChanged {
@@ -1659,6 +1867,83 @@ pub mod copy_vault {
         #[ink(message)]
         pub fn get_valuation_infra(&self) -> (Option<AccountId>, Option<AccountId>) {
             (self.factory, self.wnative)
+        }
+
+        /// A-01: propõe a troca de factory/wnative (admin do protocolo).
+        /// Aplicável por `apply_valuation_infra` a partir do `eta`
+        /// retornado (`now + CONFIG_CHANGE_DELAY_MS`) até `eta +
+        /// CONFIG_CHANGE_GRACE_MS`. Nova proposta sobrescreve a anterior e
+        /// reinicia o relógio. Enquanto viva, `deposit` é recusado.
+        /// Recusa AccountId zero, o próprio vault e factory == wnative.
+        #[ink(message)]
+        pub fn propose_valuation_infra(
+            &mut self,
+            factory: AccountId,
+            wnative: AccountId,
+        ) -> Result<Timestamp, VaultError> {
+            self.ensure_protocol_admin()?;
+            self.ensure_valid_config_address(factory)?;
+            self.ensure_valid_config_address(wnative)?;
+            if factory == wnative {
+                return Err(VaultError::InvalidConfigAddress);
+            }
+            let eta = self.config_change_eta()?;
+            let now = self.env().block_timestamp();
+            self.pending_valuation_infra = Some(PendingValuationInfraChange {
+                factory,
+                wnative,
+                eta,
+            });
+            self.env().emit_event(ValuationInfraChangeProposed {
+                factory,
+                wnative,
+                eta,
+                timestamp: now,
+            });
+            Ok(eta)
+        }
+
+        /// A-01: aplica a troca de factory/wnative proposta, em
+        /// `[eta, eta + CONFIG_CHANGE_GRACE_MS]` (depois: `ConfigChangeExpired`).
+        #[ink(message)]
+        pub fn apply_valuation_infra(&mut self) -> Result<(), VaultError> {
+            self.ensure_protocol_admin()?;
+            let pending = self
+                .pending_valuation_infra
+                .ok_or(VaultError::NoPendingConfigChange)?;
+            let now = self.env().block_timestamp();
+            Self::ensure_config_change_window(pending.eta, now)?;
+            self.factory = Some(pending.factory);
+            self.wnative = Some(pending.wnative);
+            self.pending_valuation_infra = None;
+            self.env().emit_event(ValuationInfraChanged {
+                factory: pending.factory,
+                wnative: pending.wnative,
+                timestamp: now,
+            });
+            Ok(())
+        }
+
+        /// A-01: cancela a troca de factory/wnative pendente.
+        #[ink(message)]
+        pub fn cancel_valuation_infra_proposal(&mut self) -> Result<(), VaultError> {
+            self.ensure_protocol_admin()?;
+            let pending = self
+                .pending_valuation_infra
+                .ok_or(VaultError::NoPendingConfigChange)?;
+            self.pending_valuation_infra = None;
+            self.env().emit_event(ValuationInfraChangeCancelled {
+                factory: pending.factory,
+                wnative: pending.wnative,
+                timestamp: self.env().block_timestamp(),
+            });
+            Ok(())
+        }
+
+        /// Troca de factory/wnative pendente (None se não houver).
+        #[ink(message)]
+        pub fn get_pending_valuation_infra(&self) -> Option<PendingValuationInfraChange> {
+            self.pending_valuation_infra
         }
 
         /// Adiciona um token PSP22 à lista de rastreados (admin/leader).
@@ -2184,7 +2469,8 @@ pub mod copy_vault {
             Ok(())
         }
 
-        /// A-01: config sensível só muda sem shares de depositantes.
+        /// A-01: config sensível só muda NA HORA sem shares de
+        /// depositantes (com depositantes: `propose_*` / `apply_*`).
         fn ensure_no_depositors(&self) -> Result<(), VaultError> {
             if self.depositor_shares() > 0 {
                 return Err(VaultError::ConfigChangeWithDepositors);
@@ -2193,9 +2479,68 @@ pub mod copy_vault {
         }
 
         /// Shares de depositantes reais: `total_shares` menos as dead
-        /// shares (A-02). `total_shares` é sempre 0 ou >= MINIMUM_SHARES.
+        /// shares (A-02), que não pertencem a conta alguma.
+        /// `total_shares` é sempre 0 ou >= MINIMUM_SHARES.
         fn depositor_shares(&self) -> Balance {
             self.total_shares.saturating_sub(constants::MINIMUM_SHARES)
+        }
+
+        /// A-01: `eta` de uma nova proposta (`now + CONFIG_CHANGE_DELAY_MS`).
+        /// Também exige que `eta + CONFIG_CHANGE_GRACE_MS` caiba em u64,
+        /// para o fim da janela nunca saturar (proposta sem expiração).
+        fn config_change_eta(&self) -> Result<Timestamp, VaultError> {
+            let eta = self
+                .env()
+                .block_timestamp()
+                .checked_add(constants::CONFIG_CHANGE_DELAY_MS)
+                .ok_or(VaultError::Overflow)?;
+            eta.checked_add(constants::CONFIG_CHANGE_GRACE_MS)
+                .ok_or(VaultError::Overflow)?;
+            Ok(eta)
+        }
+
+        /// A-01 (rodada 2): proposta com `eta` ainda não caducou?
+        /// (`now <= eta + CONFIG_CHANGE_GRACE_MS`; a soma não estoura —
+        /// `config_change_eta` já a verificou).
+        fn config_change_live(eta: Timestamp, now: Timestamp) -> bool {
+            now <= eta.saturating_add(constants::CONFIG_CHANGE_GRACE_MS)
+        }
+
+        /// A-01 (rodada 2): `apply_*` só dentro de
+        /// `[eta, eta + CONFIG_CHANGE_GRACE_MS]`.
+        fn ensure_config_change_window(eta: Timestamp, now: Timestamp) -> Result<(), VaultError> {
+            if now < eta {
+                return Err(VaultError::ConfigChangeTimelocked);
+            }
+            if !Self::config_change_live(eta, now) {
+                return Err(VaultError::ConfigChangeExpired);
+            }
+            Ok(())
+        }
+
+        /// A-01 (rodada 2): recusa depósito enquanto houver proposta de
+        /// router ou de factory/wnative viva (não caducada).
+        fn ensure_no_live_config_proposal(&self) -> Result<(), VaultError> {
+            let now = self.env().block_timestamp();
+            let router_live = self
+                .pending_router
+                .is_some_and(|p| Self::config_change_live(p.eta, now));
+            let infra_live = self
+                .pending_valuation_infra
+                .is_some_and(|p| Self::config_change_live(p.eta, now));
+            if router_live || infra_live {
+                return Err(VaultError::DepositsBlockedByPendingConfigChange);
+            }
+            Ok(())
+        }
+
+        /// A-01 (rodada 2): endereço proposto não pode ser o AccountId
+        /// zero nem o próprio vault.
+        fn ensure_valid_config_address(&self, addr: AccountId) -> Result<(), VaultError> {
+            if addr == AccountId::from([0u8; 32]) || addr == self.env().account_id() {
+                return Err(VaultError::InvalidConfigAddress);
+            }
+            Ok(())
         }
 
         fn ensure_not_paused(&self) -> Result<(), VaultError> {
@@ -2359,11 +2704,9 @@ pub mod copy_vault {
                 100_000_000_000 - constants::MINIMUM_SHARES
             );
             assert_eq!(vault.active_depositors, 1);
-            // Dead shares travadas no AccountId zero; total = 1:1
-            assert_eq!(
-                vault.shares.get(AccountId::from([0u8; 32])),
-                Some(constants::MINIMUM_SHARES)
-            );
+            // Dead shares só em total_shares, sem dono (nem o AccountId
+            // zero); total = 1:1
+            assert_eq!(vault.shares.get(AccountId::from([0u8; 32])), None);
             assert_eq!(vault.total_shares, 100_000_000_000);
         }
 
@@ -3611,6 +3954,844 @@ pub mod copy_vault {
             vault.withdraw(1).unwrap();
             assert_eq!(vault.get_depositor_info(accounts.charlie), Ok((0, 0)));
             assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Re-revisão #7 — dead shares não pertencem a conta alguma
+        // ════════════════════════════════════════════════════════
+
+        fn zero_account() -> AccountId {
+            AccountId::from([0u8; 32])
+        }
+
+        #[ink::test]
+        fn test_zero_account_cannot_withdraw_dead_shares() {
+            let (mut vault, _accounts) = vault_with_single_depositor();
+            let total_before = vault.total_shares;
+
+            // A conta zero (chave de ordem pequena, assinável por
+            // qualquer um em verificadores permissivos) não tem shares.
+            set_caller(zero_account());
+            assert_eq!(
+                vault.withdraw(constants::MINIMUM_SHARES),
+                Err(VaultError::InsufficientShares)
+            );
+            assert_eq!(vault.withdraw(1), Err(VaultError::InsufficientShares));
+            assert_eq!(
+                vault.request_withdrawal(1),
+                Err(VaultError::InsufficientShares)
+            );
+            assert_eq!(
+                vault.request_emergency_withdrawal(),
+                Err(VaultError::InsufficientShares)
+            );
+            // Mesmo com um unlock de emergência forjado no storage, o
+            // saque de emergência não paga nada à conta zero.
+            vault.emergency_unlocks.insert(zero_account(), &0);
+            assert_eq!(
+                vault.execute_emergency_withdrawal(),
+                Err(VaultError::InsufficientShares)
+            );
+            assert!(!vault.locked);
+
+            assert_eq!(vault.shares.get(zero_account()), None);
+            assert_eq!(vault.get_depositor_info(zero_account()), Ok((0, 0)));
+            assert_eq!(vault.total_shares, total_before);
+        }
+
+        #[ink::test]
+        fn test_total_shares_never_below_floor_after_all_exit() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            // Único depositante sai pela via de emergência (queima tudo).
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            vault.execute_emergency_withdrawal().unwrap();
+            assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
+            assert_eq!(vault.depositor_shares(), 0);
+
+            // O piso continua de pé: a conta zero não queima as dead shares.
+            set_caller(zero_account());
+            assert_eq!(
+                vault.withdraw(constants::MINIMUM_SHARES),
+                Err(VaultError::InsufficientShares)
+            );
+            assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Re-revisão #2 — o leader só freia, nunca desfaz freios
+        // ════════════════════════════════════════════════════════
+
+        #[ink::test]
+        fn test_leader_can_pause_but_not_unpause() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.bob);
+            assert_eq!(vault.pause(), Ok(()));
+            assert!(vault.paused);
+            assert_eq!(vault.unpause(), Err(VaultError::NotAdmin));
+            assert!(vault.paused);
+
+            // Pause do admin também não é desfeito pelo leader.
+            set_caller(accounts.alice);
+            assert_eq!(vault.unpause(), Ok(()));
+            vault.pause().unwrap();
+            set_caller(accounts.bob);
+            assert_eq!(vault.unpause(), Err(VaultError::NotAdmin));
+            assert!(vault.paused);
+        }
+
+        #[ink::test]
+        fn test_leader_cannot_resume_trading() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            vault.trading_halted = true;
+            vault.high_water_mark = 200_000_000_000;
+
+            set_caller(accounts.bob);
+            assert_eq!(vault.resume_trading(), Err(VaultError::NotAdmin));
+            assert!(vault.trading_halted);
+            assert_eq!(vault.high_water_mark, 200_000_000_000);
+
+            set_caller(accounts.alice);
+            assert_eq!(vault.resume_trading(), Ok(()));
+            assert!(!vault.trading_halted);
+        }
+
+        #[ink::test]
+        fn test_leader_cannot_set_max_drawdown() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.bob);
+            assert_eq!(vault.set_max_drawdown(10_000), Err(VaultError::NotAdmin));
+            assert_eq!(vault.max_drawdown_bps, constants::DEFAULT_MAX_DRAWDOWN_BPS);
+
+            set_caller(accounts.alice);
+            assert_eq!(vault.set_max_drawdown(2_000), Ok(()));
+            assert_eq!(vault.max_drawdown_bps, 2_000);
+        }
+
+        #[ink::test]
+        fn test_leader_can_only_lower_performance_fee() {
+            let (mut vault, accounts) = create_vault();
+
+            // Sem depositantes: aumento só pelo admin do protocolo.
+            set_caller(accounts.bob);
+            assert_eq!(vault.set_performance_fee(3000), Err(VaultError::NotAdmin));
+            assert_eq!(vault.performance_fee_bps, 2000);
+            assert_eq!(vault.set_performance_fee(1000), Ok(()));
+            assert_eq!(vault.performance_fee_bps, 1000);
+
+            set_caller(accounts.alice);
+            assert_eq!(vault.set_performance_fee(1500), Ok(()));
+            assert_eq!(vault.performance_fee_bps, 1500);
+
+            // Terceiros não mexem na taxa.
+            set_caller(accounts.charlie);
+            assert_eq!(vault.set_performance_fee(1000), Err(VaultError::NotAdmin));
+
+            // Com depositantes: o leader continua sem poder aumentar.
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_value(100_000_000_000);
+            set_balance(contract_id, 100_000_000_000);
+            vault.deposit().unwrap();
+            set_value(0);
+            set_caller(accounts.bob);
+            assert_eq!(vault.set_performance_fee(1600), Err(VaultError::NotAdmin));
+            assert_eq!(vault.set_performance_fee(500), Ok(()));
+            assert_eq!(vault.performance_fee_bps, 500);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Re-revisão #0/#1/#4 — troca de router/infra com timelock
+        // ════════════════════════════════════════════════════════
+
+        type Event = <CopyVault as ::ink::reflect::ContractEventBase>::Type;
+
+        fn last_event() -> Event {
+            let event = ink::env::test::recorded_events()
+                .last()
+                .expect("nenhum evento emitido");
+            <Event as scale::Decode>::decode(&mut &event.data[..]).expect("evento inválido")
+        }
+
+        #[ink::test]
+        fn test_config_change_delay_exceeds_emergency_delay() {
+            assert_eq!(
+                constants::CONFIG_CHANGE_DELAY_MS,
+                constants::EMERGENCY_UNLOCK_DELAY_MS + 48 * 60 * 60 * 1000
+            );
+            // `CONFIG_CHANGE_DELAY_MS > EMERGENCY_UNLOCK_DELAY_MS` também é
+            // garantido em tempo de compilação (const assert em `constants`).
+        }
+
+        #[ink::test]
+        fn test_router_change_with_depositors_goes_through_timelock() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            // Caminho imediato continua fechado com depositantes.
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.set_router(accounts.frank),
+                Err(VaultError::ConfigChangeWithDepositors)
+            );
+
+            let events_before = ink::env::test::recorded_events().count();
+            let eta = vault.propose_router(accounts.frank).unwrap();
+            assert_eq!(eta, 1_000 + constants::CONFIG_CHANGE_DELAY_MS);
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(1)
+            );
+            match last_event() {
+                Event::RouterChangeProposed(e) => {
+                    assert_eq!(e.router, accounts.frank);
+                    assert_eq!(e.eta, eta);
+                }
+                _ => panic!("esperado RouterChangeProposed"),
+            }
+            assert_eq!(
+                vault.get_pending_router(),
+                Some(PendingRouterChange {
+                    router: accounts.frank,
+                    eta,
+                })
+            );
+            assert_eq!(vault.router_address(), None);
+
+            // Antes do eta: recusado, nada muda.
+            set_now(eta.saturating_sub(1));
+            assert_eq!(
+                vault.apply_router(),
+                Err(VaultError::ConfigChangeTimelocked)
+            );
+            assert_eq!(vault.router_address(), None);
+            assert!(vault.get_pending_router().is_some());
+
+            // No eta: aplica, limpa o pendente e emite RouterChanged.
+            set_now(eta);
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.apply_router(), Ok(()));
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(1)
+            );
+            match last_event() {
+                Event::RouterChanged(e) => {
+                    assert_eq!(e.old_router, None);
+                    assert_eq!(e.new_router, accounts.frank);
+                }
+                _ => panic!("esperado RouterChanged"),
+            }
+            assert_eq!(vault.router_address(), Some(accounts.frank));
+            assert_eq!(vault.get_pending_router(), None);
+
+            // Sem proposta pendente não há o que aplicar.
+            assert_eq!(vault.apply_router(), Err(VaultError::NoPendingConfigChange));
+        }
+
+        #[ink::test]
+        fn test_new_router_proposal_overwrites_and_restarts_clock() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            let first_eta = vault.propose_router(accounts.frank).unwrap();
+            set_now(5_000);
+            let second_eta = vault.propose_router(accounts.django).unwrap();
+            assert_eq!(second_eta, 5_000 + constants::CONFIG_CHANGE_DELAY_MS);
+
+            set_now(first_eta);
+            assert_eq!(
+                vault.apply_router(),
+                Err(VaultError::ConfigChangeTimelocked)
+            );
+
+            set_now(second_eta);
+            assert_eq!(vault.apply_router(), Ok(()));
+            assert_eq!(vault.router_address(), Some(accounts.django));
+        }
+
+        #[ink::test]
+        fn test_cancel_router_proposal() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.cancel_router_proposal(),
+                Err(VaultError::NoPendingConfigChange)
+            );
+            let eta = vault.propose_router(accounts.frank).unwrap();
+
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.cancel_router_proposal(), Ok(()));
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(1)
+            );
+            match last_event() {
+                Event::RouterChangeCancelled(e) => assert_eq!(e.router, accounts.frank),
+                _ => panic!("esperado RouterChangeCancelled"),
+            }
+            assert_eq!(vault.get_pending_router(), None);
+
+            set_now(eta);
+            assert_eq!(vault.apply_router(), Err(VaultError::NoPendingConfigChange));
+            assert_eq!(vault.router_address(), None);
+        }
+
+        #[ink::test]
+        fn test_router_proposal_requires_protocol_admin() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            for caller in [accounts.bob, accounts.charlie] {
+                set_caller(caller);
+                assert_eq!(
+                    vault.propose_router(accounts.django),
+                    Err(VaultError::NotAdmin)
+                );
+            }
+            assert_eq!(vault.get_pending_router(), None);
+
+            set_caller(accounts.alice);
+            let eta = vault.propose_router(accounts.frank).unwrap();
+            set_now(eta);
+
+            for caller in [accounts.bob, accounts.charlie] {
+                set_caller(caller);
+                assert_eq!(
+                    vault.propose_router(accounts.django),
+                    Err(VaultError::NotAdmin)
+                );
+                assert_eq!(vault.apply_router(), Err(VaultError::NotAdmin));
+                assert_eq!(vault.cancel_router_proposal(), Err(VaultError::NotAdmin));
+            }
+            assert_eq!(vault.router_address(), None);
+            assert_eq!(
+                vault.get_pending_router(),
+                Some(PendingRouterChange {
+                    router: accounts.frank,
+                    eta,
+                })
+            );
+        }
+
+        #[ink::test]
+        fn test_valuation_infra_change_with_depositors_goes_through_timelock() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            let new_factory = token(0xF1);
+            let new_wnative = token(0xF2);
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.set_valuation_infra(new_factory, new_wnative),
+                Err(VaultError::ConfigChangeWithDepositors)
+            );
+
+            let events_before = ink::env::test::recorded_events().count();
+            let eta = vault
+                .propose_valuation_infra(new_factory, new_wnative)
+                .unwrap();
+            assert_eq!(eta, 1_000 + constants::CONFIG_CHANGE_DELAY_MS);
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(1)
+            );
+            match last_event() {
+                Event::ValuationInfraChangeProposed(e) => {
+                    assert_eq!(e.factory, new_factory);
+                    assert_eq!(e.wnative, new_wnative);
+                    assert_eq!(e.eta, eta);
+                }
+                _ => panic!("esperado ValuationInfraChangeProposed"),
+            }
+            assert_eq!(
+                vault.get_pending_valuation_infra(),
+                Some(PendingValuationInfraChange {
+                    factory: new_factory,
+                    wnative: new_wnative,
+                    eta,
+                })
+            );
+
+            set_now(eta.saturating_sub(1));
+            assert_eq!(
+                vault.apply_valuation_infra(),
+                Err(VaultError::ConfigChangeTimelocked)
+            );
+            assert_eq!(vault.get_valuation_infra(), (None, None));
+
+            set_now(eta);
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.apply_valuation_infra(), Ok(()));
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(1)
+            );
+            match last_event() {
+                Event::ValuationInfraChanged(e) => {
+                    assert_eq!(e.factory, new_factory);
+                    assert_eq!(e.wnative, new_wnative);
+                }
+                _ => panic!("esperado ValuationInfraChanged"),
+            }
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(new_factory), Some(new_wnative))
+            );
+            assert_eq!(vault.get_pending_valuation_infra(), None);
+            assert_eq!(
+                vault.apply_valuation_infra(),
+                Err(VaultError::NoPendingConfigChange)
+            );
+        }
+
+        #[ink::test]
+        fn test_cancel_valuation_infra_proposal() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.cancel_valuation_infra_proposal(),
+                Err(VaultError::NoPendingConfigChange)
+            );
+            let eta = vault
+                .propose_valuation_infra(factory_addr(), wnative_addr())
+                .unwrap();
+
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.cancel_valuation_infra_proposal(), Ok(()));
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(1)
+            );
+            match last_event() {
+                Event::ValuationInfraChangeCancelled(e) => {
+                    assert_eq!(e.factory, factory_addr());
+                    assert_eq!(e.wnative, wnative_addr());
+                }
+                _ => panic!("esperado ValuationInfraChangeCancelled"),
+            }
+            assert_eq!(vault.get_pending_valuation_infra(), None);
+
+            set_now(eta);
+            assert_eq!(
+                vault.apply_valuation_infra(),
+                Err(VaultError::NoPendingConfigChange)
+            );
+            assert_eq!(vault.get_valuation_infra(), (None, None));
+        }
+
+        #[ink::test]
+        fn test_valuation_infra_proposal_requires_protocol_admin() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            for caller in [accounts.bob, accounts.charlie] {
+                set_caller(caller);
+                assert_eq!(
+                    vault.propose_valuation_infra(token(0xF1), token(0xF2)),
+                    Err(VaultError::NotAdmin)
+                );
+            }
+            assert_eq!(vault.get_pending_valuation_infra(), None);
+
+            set_caller(accounts.alice);
+            let eta = vault
+                .propose_valuation_infra(factory_addr(), wnative_addr())
+                .unwrap();
+            set_now(eta);
+
+            for caller in [accounts.bob, accounts.charlie] {
+                set_caller(caller);
+                assert_eq!(
+                    vault.propose_valuation_infra(token(0xF1), token(0xF2)),
+                    Err(VaultError::NotAdmin)
+                );
+                assert_eq!(vault.apply_valuation_infra(), Err(VaultError::NotAdmin));
+                assert_eq!(
+                    vault.cancel_valuation_infra_proposal(),
+                    Err(VaultError::NotAdmin)
+                );
+            }
+            assert_eq!(vault.get_valuation_infra(), (None, None));
+            assert_eq!(
+                vault.get_pending_valuation_infra(),
+                Some(PendingValuationInfraChange {
+                    factory: factory_addr(),
+                    wnative: wnative_addr(),
+                    eta,
+                })
+            );
+        }
+
+        /// #1: um depósito feito antes da configuração (griefing ou
+        /// acidente) não impede mais o admin de configurar o vault.
+        #[ink::test]
+        fn test_deposit_before_configuration_no_longer_blocks_it() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.set_router(accounts.frank),
+                Err(VaultError::ConfigChangeWithDepositors)
+            );
+            assert_eq!(
+                vault.set_valuation_infra(factory_addr(), wnative_addr()),
+                Err(VaultError::ConfigChangeWithDepositors)
+            );
+
+            let router_eta = vault.propose_router(accounts.frank).unwrap();
+            let infra_eta = vault
+                .propose_valuation_infra(factory_addr(), wnative_addr())
+                .unwrap();
+            set_now(core::cmp::max(router_eta, infra_eta));
+            assert_eq!(vault.apply_router(), Ok(()));
+            assert_eq!(vault.apply_valuation_infra(), Ok(()));
+
+            assert_eq!(vault.router_address(), Some(accounts.frank));
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(factory_addr()), Some(wnative_addr()))
+            );
+
+            // O depositante segue com as suas shares intactas.
+            let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
+            assert_eq!(shares, 100_000_000_000 - constants::MINIMUM_SHARES);
+        }
+
+        /// O depositante que reage à proposta consegue executar o saque
+        /// de emergência ANTES de a troca poder ser aplicada.
+        #[ink::test]
+        fn test_depositor_can_exit_before_router_change_applies() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            let eta = vault.propose_router(accounts.frank).unwrap();
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            assert!(unlock_at < eta);
+            set_now(unlock_at);
+            assert!(vault.execute_emergency_withdrawal().is_ok());
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.apply_router(),
+                Err(VaultError::ConfigChangeTimelocked)
+            );
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Rodada 2 — timelock pré-armado / expiração / depositante tardio
+        // ════════════════════════════════════════════════════════
+
+        /// Vault vazio (sem depositantes), relógio em 1_000.
+        fn empty_vault_at_1000() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
+            let (vault, accounts) = create_vault();
+            set_now(1_000);
+            (vault, accounts)
+        }
+
+        /// Charlie deposita 1000 LUNES no vault (sem infra de valuation).
+        fn charlie_deposits(vault: &mut CopyVault) -> Result<Balance, VaultError> {
+            let accounts = default_accounts();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_caller(accounts.charlie);
+            set_value(100_000_000_000);
+            set_balance(contract_id, 100_000_000_000);
+            let res = vault.deposit();
+            set_value(0);
+            res
+        }
+
+        #[ink::test]
+        fn test_config_change_grace_constant() {
+            assert_eq!(constants::CONFIG_CHANGE_GRACE_MS, 48 * 60 * 60 * 1000);
+        }
+
+        /// (a) O setter imediato (sem depositantes) descarta a proposta
+        /// de router pendente: ela não pode ser aplicada depois.
+        #[ink::test]
+        fn test_immediate_set_router_clears_pending_proposal() {
+            let (mut vault, accounts) = empty_vault_at_1000();
+
+            set_caller(accounts.alice);
+            let eta = vault.propose_router(accounts.frank).unwrap();
+            assert_eq!(vault.set_router(accounts.django), Ok(()));
+            assert_eq!(vault.get_pending_router(), None);
+            assert_eq!(vault.router_address(), Some(accounts.django));
+
+            // Depósito posterior e eta maduro: nada a aplicar.
+            assert!(charlie_deposits(&mut vault).is_ok());
+            set_caller(accounts.alice);
+            set_now(eta);
+            assert_eq!(vault.apply_router(), Err(VaultError::NoPendingConfigChange));
+            assert_eq!(vault.router_address(), Some(accounts.django));
+        }
+
+        /// (a) Mesmo para a infra de valuation — cenário do revisor:
+        /// wnative falso pré-armado + config legítima imediata.
+        #[ink::test]
+        fn test_immediate_set_valuation_infra_clears_pending_proposal() {
+            let (mut vault, accounts) = empty_vault_at_1000();
+            let fake_wnative = token(0xEE);
+
+            set_caller(accounts.alice);
+            let eta = vault
+                .propose_valuation_infra(factory_addr(), fake_wnative)
+                .unwrap();
+            assert_eq!(
+                vault.set_valuation_infra(factory_addr(), wnative_addr()),
+                Ok(())
+            );
+            assert_eq!(vault.get_pending_valuation_infra(), None);
+
+            assert!(charlie_deposits(&mut vault).is_ok());
+            set_caller(accounts.alice);
+            set_now(eta);
+            assert_eq!(
+                vault.apply_valuation_infra(),
+                Err(VaultError::NoPendingConfigChange)
+            );
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(factory_addr()), Some(wnative_addr()))
+            );
+        }
+
+        /// (a) O descarte pelo setter imediato emite o evento de cancelamento.
+        #[ink::test]
+        fn test_immediate_setter_emits_cancel_for_discarded_proposal() {
+            let (mut vault, accounts) = empty_vault_at_1000();
+
+            set_caller(accounts.alice);
+            vault.propose_router(accounts.frank).unwrap();
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.set_router(accounts.django), Ok(()));
+            // RouterChangeCancelled + RouterChanged.
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(2)
+            );
+            let cancelled = ink::env::test::recorded_events()
+                .nth(events_before)
+                .expect("evento de cancelamento");
+            match <Event as scale::Decode>::decode(&mut &cancelled.data[..]).unwrap() {
+                Event::RouterChangeCancelled(e) => assert_eq!(e.router, accounts.frank),
+                _ => panic!("esperado RouterChangeCancelled"),
+            }
+
+            vault
+                .propose_valuation_infra(token(0xF1), token(0xF2))
+                .unwrap();
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(
+                vault.set_valuation_infra(factory_addr(), wnative_addr()),
+                Ok(())
+            );
+            assert_eq!(
+                ink::env::test::recorded_events().count(),
+                events_before.saturating_add(2)
+            );
+            let cancelled = ink::env::test::recorded_events()
+                .nth(events_before)
+                .expect("evento de cancelamento");
+            match <Event as scale::Decode>::decode(&mut &cancelled.data[..]).unwrap() {
+                Event::ValuationInfraChangeCancelled(e) => {
+                    assert_eq!(e.factory, token(0xF1));
+                    assert_eq!(e.wnative, token(0xF2));
+                }
+                _ => panic!("esperado ValuationInfraChangeCancelled"),
+            }
+        }
+
+        /// (b) A proposta de router tem validade: só aplica em
+        /// [eta, eta + CONFIG_CHANGE_GRACE_MS]; fora disso nada muda.
+        #[ink::test]
+        fn test_router_proposal_expires_after_grace() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            let eta = vault.propose_router(accounts.frank).unwrap();
+            let last_valid = eta.saturating_add(constants::CONFIG_CHANGE_GRACE_MS);
+
+            set_now(last_valid.saturating_add(1));
+            assert_eq!(vault.apply_router(), Err(VaultError::ConfigChangeExpired));
+            assert_eq!(vault.router_address(), None);
+
+            set_now(last_valid);
+            assert_eq!(vault.apply_router(), Ok(()));
+            assert_eq!(vault.router_address(), Some(accounts.frank));
+        }
+
+        /// (b) Idem para factory/wnative.
+        #[ink::test]
+        fn test_valuation_infra_proposal_expires_after_grace() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            let eta = vault
+                .propose_valuation_infra(factory_addr(), wnative_addr())
+                .unwrap();
+            let last_valid = eta.saturating_add(constants::CONFIG_CHANGE_GRACE_MS);
+
+            set_now(last_valid.saturating_add(1));
+            assert_eq!(
+                vault.apply_valuation_infra(),
+                Err(VaultError::ConfigChangeExpired)
+            );
+            assert_eq!(vault.get_valuation_infra(), (None, None));
+
+            set_now(last_valid);
+            assert_eq!(vault.apply_valuation_infra(), Ok(()));
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(factory_addr()), Some(wnative_addr()))
+            );
+        }
+
+        /// (c) Com proposta de router viva, ninguém entra: todo
+        /// depositante presente no `apply` teve o aviso completo.
+        #[ink::test]
+        fn test_deposit_blocked_while_router_proposal_pending() {
+            let (mut vault, accounts) = empty_vault_at_1000();
+
+            set_caller(accounts.alice);
+            let eta = vault.propose_router(accounts.frank).unwrap();
+
+            set_now(eta.saturating_sub(1));
+            assert_eq!(
+                charlie_deposits(&mut vault),
+                Err(VaultError::DepositsBlockedByPendingConfigChange)
+            );
+            assert_eq!(vault.total_shares, 0);
+            set_now(eta.saturating_add(constants::CONFIG_CHANGE_GRACE_MS));
+            assert_eq!(
+                charlie_deposits(&mut vault),
+                Err(VaultError::DepositsBlockedByPendingConfigChange)
+            );
+            assert_eq!(vault.total_shares, 0);
+
+            // Cancelada a proposta, o depósito volta a funcionar.
+            set_caller(accounts.alice);
+            assert_eq!(vault.cancel_router_proposal(), Ok(()));
+            assert!(charlie_deposits(&mut vault).is_ok());
+        }
+
+        /// (c) Idem para proposta de factory/wnative.
+        #[ink::test]
+        fn test_deposit_blocked_while_valuation_infra_proposal_pending() {
+            let (mut vault, accounts) = empty_vault_at_1000();
+
+            set_caller(accounts.alice);
+            vault
+                .propose_valuation_infra(factory_addr(), wnative_addr())
+                .unwrap();
+            assert_eq!(
+                charlie_deposits(&mut vault),
+                Err(VaultError::DepositsBlockedByPendingConfigChange)
+            );
+            assert_eq!(vault.total_shares, 0);
+
+            set_caller(accounts.alice);
+            assert_eq!(vault.cancel_valuation_infra_proposal(), Ok(()));
+            assert!(charlie_deposits(&mut vault).is_ok());
+        }
+
+        /// Cenário do revisor: proposta pré-armada que já expirou não
+        /// bloqueia depósitos e não pode mais ser aplicada sobre eles.
+        #[ink::test]
+        fn test_expired_prearmed_proposal_cannot_hit_later_depositors() {
+            let (mut vault, accounts) = empty_vault_at_1000();
+            let fake_wnative = token(0xEE);
+
+            set_caller(accounts.alice);
+            let eta = vault
+                .propose_valuation_infra(factory_addr(), fake_wnative)
+                .unwrap();
+
+            set_now(
+                eta.saturating_add(constants::CONFIG_CHANGE_GRACE_MS)
+                    .saturating_add(1),
+            );
+            assert!(charlie_deposits(&mut vault).is_ok());
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.apply_valuation_infra(),
+                Err(VaultError::ConfigChangeExpired)
+            );
+            assert_eq!(vault.get_valuation_infra(), (None, None));
+        }
+
+        /// Revisor (baixo): nova proposta de infra sobrescreve a anterior
+        /// e reinicia o relógio, como no router.
+        #[ink::test]
+        fn test_new_valuation_infra_proposal_overwrites_and_restarts_clock() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+
+            set_caller(accounts.alice);
+            let first_eta = vault
+                .propose_valuation_infra(token(0xF1), token(0xF2))
+                .unwrap();
+            set_now(5_000);
+            let second_eta = vault
+                .propose_valuation_infra(factory_addr(), wnative_addr())
+                .unwrap();
+            assert_eq!(
+                second_eta,
+                5_000u64.saturating_add(constants::CONFIG_CHANGE_DELAY_MS)
+            );
+
+            set_now(first_eta);
+            assert_eq!(
+                vault.apply_valuation_infra(),
+                Err(VaultError::ConfigChangeTimelocked)
+            );
+
+            set_now(second_eta);
+            assert_eq!(vault.apply_valuation_infra(), Ok(()));
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(factory_addr()), Some(wnative_addr()))
+            );
+        }
+
+        /// Revisor (baixo): propostas degeneradas são recusadas antes de
+        /// qualquer escrita (AccountId zero, o próprio vault, factory ==
+        /// wnative).
+        #[ink::test]
+        fn test_propose_rejects_degenerate_addresses() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            let zero = AccountId::from([0u8; 32]);
+            let this = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+
+            set_caller(accounts.alice);
+            let events_before = ink::env::test::recorded_events().count();
+            for bad in [zero, this] {
+                assert_eq!(
+                    vault.propose_router(bad),
+                    Err(VaultError::InvalidConfigAddress)
+                );
+            }
+            for (factory, wnative) in [
+                (zero, wnative_addr()),
+                (factory_addr(), zero),
+                (this, wnative_addr()),
+                (factory_addr(), this),
+                (factory_addr(), factory_addr()),
+            ] {
+                assert_eq!(
+                    vault.propose_valuation_infra(factory, wnative),
+                    Err(VaultError::InvalidConfigAddress)
+                );
+            }
+            assert_eq!(vault.get_pending_router(), None);
+            assert_eq!(vault.get_pending_valuation_infra(), None);
+            assert_eq!(ink::env::test::recorded_events().count(), events_before);
         }
     }
 }
