@@ -86,6 +86,9 @@ pub mod staking_contract {
         /// The funded rewards pool cannot cover this payout (principal is
         /// never used to pay rewards/bonuses)
         InsufficientRewardsPool,
+        /// Paginated distribution must continue from the stored cursor (pass
+        /// `None` or the `next_index` returned by the previous page)
+        InvalidDistributionCursor,
     }
 
     /// Governance proposal for project listing
@@ -109,7 +112,7 @@ pub mod staking_contract {
         pub vote_count: u64,
         /// Total LUNES collected from votes (100%)
         pub votes_for: Balance,
-        /// Liquidity fund for project (10% of votes)
+        /// Number of NO votes (the liquidity share of votes is in `liquidity_fund`)
         pub votes_against: Balance,
         /// Voting deadline
         pub voting_deadline: Timestamp,
@@ -359,6 +362,33 @@ pub mod staking_contract {
         pub timestamp: Timestamp,
     }
 
+    /// Primeiro passo da troca de owner; só vale após `accept_ownership`.
+    #[ink(event)]
+    pub struct OwnershipTransferStarted {
+        pub current_owner: AccountId,
+        pub pending_owner: AccountId,
+        pub timestamp: Timestamp,
+    }
+
+    #[ink(event)]
+    pub struct DistributorChanged {
+        pub old_distributor: Option<AccountId>,
+        pub new_distributor: Option<AccountId>,
+        pub admin: AccountId,
+        pub timestamp: Timestamp,
+    }
+
+    /// Saque de uma fatia dos votos.
+    #[ink(event)]
+    pub struct VoteFundWithdrawn {
+        #[ink(topic)]
+        pub to: AccountId,
+        pub fund: u8, // 1=liquidity, 2=treasury, 3=team
+        pub amount: Balance,
+        pub caller: AccountId,
+        pub timestamp: Timestamp,
+    }
+
     #[ink(event)]
     pub struct TradingRewardsContractChanged {
         pub old_contract: Option<AccountId>,
@@ -564,9 +594,10 @@ pub mod staking_contract {
         active_stakers: u32,
         /// Mapping from staker to their position
         stakes: Mapping<AccountId, StakePosition>,
-        /// Mapping for tracking staker addresses
+        /// Mapping for tracking staker addresses (slots `0..staker_index` hold
+        /// exactly the active stakers)
         staker_addresses: Mapping<u32, AccountId>,
-        /// Current staker index
+        /// Number of indexed stakers (== active stakers)
         staker_index: u32,
         /// Governance proposals
         proposals: Mapping<u32, ProjectProposal>,
@@ -604,7 +635,9 @@ pub mod staking_contract {
         ///   + trading rewards já creditadas em `stake.pending_rewards`
         ///     (`total_credited_rewards`)
         ///   + pool financiado de APY/bônus (`apy_rewards_pool`)
-        ///   + excedente (taxas de voto/proposta retidas).
+        ///   + fatias dos votos ainda não sacadas (`liquidity_fund`,
+        ///     `treasury_fund`, `team_fund`)
+        ///   + excedente (taxas de proposta retidas).
         /// APY e bônus de governança só são pagos de `apy_rewards_pool`.
         apy_rewards_pool: Balance,
         /// Soma de `stake.pending_rewards` (trading rewards creditadas, lastreadas).
@@ -614,6 +647,39 @@ pub mod staking_contract {
         owed_rewards: Mapping<AccountId, Balance>,
         /// Snapshot do pool no início de uma distribuição paginada.
         distribution_amount: Balance,
+
+        /// === FUNDOS DOS VOTOS (cada voto: 10% rewards, 10% liquidez, 10% treasury, 70% team) ===
+        /// Fatia de liquidez de projetos, sacável pelo owner (`withdraw_liquidity_fund`).
+        liquidity_fund: Balance,
+        /// Fatia do treasury, sacável só para `treasury_address` (`withdraw_treasury_fund`).
+        treasury_fund: Balance,
+        /// Fatia do team, sacável pelo owner (`withdraw_team_fund`).
+        team_fund: Balance,
+
+        /// === ÍNDICE DE STAKERS ===
+        /// Soma de `calculate_staker_weight` das posições ativas, mantida em
+        /// stake/unstake (a distribuição não varre mais o índice para obtê-la).
+        total_staker_weight: Balance,
+        /// Posição de cada staker ativo em `staker_addresses`. Só é válida
+        /// enquanto a posição está ativa (unstake faz swap-remove no índice).
+        staker_slots: Mapping<AccountId, u32>,
+
+        /// === PAPÉIS ===
+        /// Conta que só pode financiar (`fund_staking_rewards`) e distribuir
+        /// trading rewards — a hot key do relayer, sem poderes de owner.
+        distributor: Option<AccountId>,
+        /// Owner proposto por `transfer_ownership`; vira owner em `accept_ownership`.
+        pending_owner: Option<AccountId>,
+        /// Próximo slot da rodada de distribuição em andamento
+        /// (`distribution_amount != 0`); 0 fora de rodada.
+        distribution_cursor: u32,
+        /// Número da rodada de distribuição atual (incrementado quando uma
+        /// rodada começa; a primeira é 1).
+        distribution_round: u32,
+        /// Última rodada em que cada conta recebeu crédito (0/ausente = nunca).
+        /// Não é limpo no unstake: impede crédito duplo de quem sai e volta a
+        /// fazer stake entre páginas da mesma rodada.
+        last_credited_round: Mapping<AccountId, u32>,
     }
 
     impl StakingContract {
@@ -650,6 +716,16 @@ pub mod staking_contract {
                 total_credited_rewards: 0,
                 owed_rewards: Mapping::default(),
                 distribution_amount: 0,
+                liquidity_fund: 0,
+                treasury_fund: 0,
+                team_fund: 0,
+                total_staker_weight: 0,
+                staker_slots: Mapping::default(),
+                distributor: None,
+                pending_owner: None,
+                distribution_cursor: 0,
+                distribution_round: 0,
+                last_credited_round: Mapping::default(),
             };
 
             // Campos já inicializados diretamente no struct
@@ -774,11 +850,18 @@ pub mod staking_contract {
             };
 
             // Update state
+            let weight = self.calculate_staker_weight(&stake_position);
             self.stakes.insert(caller, &stake_position);
-            self.staker_addresses.insert(self.staker_index, &caller);
-            self.staker_index = self
-                .staker_index
-                .checked_add(1)
+            // Indexa o staker. Só posições ativas ficam no índice (unstake faz
+            // swap-remove) e um caller com posição ativa já foi rejeitado
+            // acima, então o endereço nunca é indexado duas vezes.
+            let slot = self.staker_index;
+            self.staker_addresses.insert(slot, &caller);
+            self.staker_slots.insert(caller, &slot);
+            self.staker_index = slot.checked_add(1).ok_or(StakingError::Overflow)?;
+            self.total_staker_weight = self
+                .total_staker_weight
+                .checked_add(weight)
                 .ok_or(StakingError::Overflow)?;
             self.active_stakers = self
                 .active_stakers
@@ -808,9 +891,13 @@ pub mod staking_contract {
         /// accrued capped by `apy_rewards_pool`. Any APY the pool cannot cover
         /// stays in `owed_rewards` (claimable later via `claim_rewards`).
         /// The 5% early-unstake penalty goes to `apy_rewards_pool`.
+        ///
+        /// Also works while the contract is paused (the owner cannot freeze
+        /// principal): principal − penalty and the credited trading rewards are
+        /// paid, but no APY leaves the shared pool — all of it goes to
+        /// `owed_rewards`, claimable via `claim_rewards` after unpause.
         #[ink(message)]
         pub fn unstake(&mut self) -> Result<(), StakingError> {
-            self.ensure_not_paused()?;
             self.acquire_lock()?;
             let result = self.unstake_inner();
             self.release_lock();
@@ -828,7 +915,12 @@ pub mod staking_contract {
 
             let (accrued, penalty) = self.calculate_rewards_and_penalty(&stake, current_time)?;
             let credited = stake.pending_rewards;
-            let (apy_paid, apy_unpaid) = self.split_apy_payout(caller, accrued)?;
+            let (apy_paid, apy_unpaid) = if self.paused {
+                let owed = self.owed_rewards.get(caller).unwrap_or(0);
+                (0, accrued.checked_add(owed).ok_or(StakingError::Overflow)?)
+            } else {
+                self.split_apy_payout(caller, accrued)?
+            };
 
             let principal_out = stake
                 .amount
@@ -860,6 +952,11 @@ pub mod staking_contract {
             self.active_stakers = self
                 .active_stakers
                 .checked_sub(1)
+                .ok_or(StakingError::Overflow)?;
+            self.remove_from_staker_index(caller)?;
+            self.total_staker_weight = self
+                .total_staker_weight
+                .checked_sub(self.calculate_staker_weight(&stake))
                 .ok_or(StakingError::Overflow)?;
             self.total_staked = self
                 .total_staked
@@ -1045,14 +1142,15 @@ pub mod staking_contract {
         }
 
         /// Votes on a project listing proposal (YES or NO)
-        /// Each vote costs 10 LUNES. Users can vote once per hour.
+        /// Each vote costs exactly `VOTE_COST` (10 LUNES); any other value is
+        /// rejected (no change is kept). Users can vote once per hour.
         /// Requirements:
         /// - Voter must have active staking
-        /// Vote distribution:
-        /// - 10% → Rewards Pool (stakers)
-        /// - 10% → Project Liquidity Pool
-        /// - 10% → Treasury
-        /// - 70% → Team
+        /// Vote distribution (each share has its own counter, see `get_vote_funds`):
+        /// - 10% → Rewards Pool (stakers) — `trading_rewards_pool`
+        /// - 10% → Project Liquidity Pool — `liquidity_fund` (`withdraw_liquidity_fund`)
+        /// - 10% → Treasury — `treasury_fund` (`withdraw_treasury_fund`)
+        /// - 70% → Team — `team_fund` (`withdraw_team_fund`)
         /// Project needs 10,000 YES votes minimum to be approved.
         #[ink(message, payable)]
         pub fn vote(&mut self, proposal_id: u32, vote_yes: bool) -> Result<(), StakingError> {
@@ -1078,9 +1176,12 @@ pub mod staking_contract {
                 return Err(StakingError::AlreadyVoted);
             }
 
-            // === VALIDATE PAYMENT (10 LUNES per vote) ===
+            // === VALIDATE PAYMENT (exactly 10 LUNES per vote) ===
             if payment < constants::VOTE_COST {
                 return Err(StakingError::InsufficientFee);
+            }
+            if payment > constants::VOTE_COST {
+                return Err(StakingError::InvalidAmount);
             }
 
             let mut proposal = self
@@ -1097,30 +1198,43 @@ pub mod staking_contract {
             }
 
             // === DISTRIBUTE VOTE PAYMENT ===
-            // 10% to rewards pool (stakers)
-            let rewards_share = payment / 10; // 10%
-                                              // 10% to project liquidity pool
-            let liquidity_share = payment / 10; // 10%
-                                                // 10% to treasury
-            let treasury_share = payment / 10; // 10%
-                                               // 70% to team (remains in contract, to be withdrawn by team)
+            // Every share is credited to its own counter, so no part of the
+            // payment is left in the balance without accounting.
+            // 10% rewards, 10% liquidity, 10% treasury; 70% team is the
+            // remainder, so the shares always add up to `payment`.
+            let rewards_share = payment.checked_div(10).ok_or(StakingError::Overflow)?;
+            let liquidity_share = payment.checked_div(10).ok_or(StakingError::Overflow)?;
+            let treasury_share = payment.checked_div(10).ok_or(StakingError::Overflow)?;
+            let team_share = payment
+                .checked_sub(rewards_share)
+                .and_then(|v| v.checked_sub(liquidity_share))
+                .and_then(|v| v.checked_sub(treasury_share))
+                .ok_or(StakingError::Overflow)?;
 
-            // Add to rewards pool
-            self.trading_rewards_pool = self.trading_rewards_pool.saturating_add(rewards_share);
+            self.trading_rewards_pool = self
+                .trading_rewards_pool
+                .checked_add(rewards_share)
+                .ok_or(StakingError::Overflow)?;
+            self.liquidity_fund = self
+                .liquidity_fund
+                .checked_add(liquidity_share)
+                .ok_or(StakingError::Overflow)?;
+            self.treasury_fund = self
+                .treasury_fund
+                .checked_add(treasury_share)
+                .ok_or(StakingError::Overflow)?;
+            self.team_fund = self
+                .team_fund
+                .checked_add(team_share)
+                .ok_or(StakingError::Overflow)?;
 
-            // Add to proposal's liquidity fund
-            // proposal.votes_against is currently being used to track liquidity fund for YES votes
+            // votes_against counts NO votes
             if !vote_yes {
                 proposal.votes_against = proposal
                     .votes_against
                     .checked_add(1)
                     .ok_or(StakingError::Overflow)?;
             }
-
-            let _ = treasury_share; // Treasury share stays in contract
-                                    // Liquidity share also stays in the contract balance: it is not yet
-                                    // earmarked anywhere (no liquidity-fund accounting exists).
-            let _ = liquidity_share;
 
             // === COUNT VOTE (YES or NO) ===
             if vote_yes {
@@ -1633,7 +1747,9 @@ pub mod staking_contract {
             Ok(())
         }
 
-        /// Transfers ownership (admin only)
+        /// Starts an ownership transfer (admin only). Step 1 of 2: `new_owner`
+        /// only becomes owner after calling `accept_ownership`. Calling again
+        /// replaces the pending owner.
         #[ink(message)]
         pub fn transfer_ownership(&mut self, new_owner: AccountId) -> Result<(), StakingError> {
             self.ensure_owner()?;
@@ -1642,17 +1758,139 @@ pub mod staking_contract {
                 return Err(StakingError::ZeroAddress);
             }
 
-            let old_owner = self.owner;
-            self.owner = new_owner;
+            self.pending_owner = Some(new_owner);
 
-            // Emit event
-            self.env().emit_event(OwnershipTransferred {
-                old_owner,
-                new_owner,
+            self.env().emit_event(OwnershipTransferStarted {
+                current_owner: self.owner,
+                pending_owner: new_owner,
                 timestamp: self.env().block_timestamp(),
             });
 
             Ok(())
+        }
+
+        /// Step 2 of 2: the pending owner accepts and becomes owner.
+        #[ink(message)]
+        pub fn accept_ownership(&mut self) -> Result<(), StakingError> {
+            let caller = self.env().caller();
+            if self.pending_owner != Some(caller) {
+                return Err(StakingError::AccessDenied);
+            }
+
+            let old_owner = self.owner;
+            self.owner = caller;
+            self.pending_owner = None;
+
+            // Emit event
+            self.env().emit_event(OwnershipTransferred {
+                old_owner,
+                new_owner: caller,
+                timestamp: self.env().block_timestamp(),
+            });
+
+            Ok(())
+        }
+
+        /// Sets (or revokes, with `None`) the distributor (admin only). The
+        /// distributor can only fund and distribute trading rewards.
+        #[ink(message)]
+        pub fn set_distributor(
+            &mut self,
+            new_distributor: Option<AccountId>,
+        ) -> Result<(), StakingError> {
+            self.ensure_owner()?;
+
+            if new_distributor == Some(AccountId::from(constants::ZERO_ADDRESS)) {
+                return Err(StakingError::ZeroAddress);
+            }
+
+            let old_distributor = self.distributor;
+            self.distributor = new_distributor;
+
+            self.env().emit_event(DistributorChanged {
+                old_distributor,
+                new_distributor,
+                admin: self.env().caller(),
+                timestamp: self.env().block_timestamp(),
+            });
+
+            Ok(())
+        }
+
+        /// (owner, pending_owner, distributor).
+        #[ink(message)]
+        pub fn get_admin_roles(&self) -> (AccountId, Option<AccountId>, Option<AccountId>) {
+            (self.owner, self.pending_owner, self.distributor)
+        }
+
+        // ========================================
+        // FUNDOS DOS VOTOS (liquidez / treasury / team)
+        // ========================================
+
+        /// (liquidity_fund, treasury_fund, team_fund): vote shares not yet withdrawn.
+        #[ink(message)]
+        pub fn get_vote_funds(&self) -> (Balance, Balance, Balance) {
+            (self.liquidity_fund, self.treasury_fund, self.team_fund)
+        }
+
+        /// Sends the whole treasury share to `treasury_address` (its only
+        /// possible destination). Callable by the owner or by the treasury.
+        #[ink(message)]
+        pub fn withdraw_treasury_fund(&mut self) -> Result<Balance, StakingError> {
+            let caller = self.env().caller();
+            if caller != self.owner && caller != self.treasury_address {
+                return Err(StakingError::AccessDenied);
+            }
+            self.withdraw_vote_fund(2, self.treasury_address)
+        }
+
+        /// Sends the whole project-liquidity share to `to` (admin only). The
+        /// contract has no on-chain liquidity destination, so the owner picks
+        /// it and `VoteFundWithdrawn` records it.
+        #[ink(message)]
+        pub fn withdraw_liquidity_fund(&mut self, to: AccountId) -> Result<Balance, StakingError> {
+            self.ensure_owner()?;
+            self.withdraw_vote_fund(1, to)
+        }
+
+        /// Sends the whole team share to `to` (admin only); no team address
+        /// exists on-chain, `VoteFundWithdrawn` records the destination.
+        #[ink(message)]
+        pub fn withdraw_team_fund(&mut self, to: AccountId) -> Result<Balance, StakingError> {
+            self.ensure_owner()?;
+            self.withdraw_vote_fund(3, to)
+        }
+
+        /// Zeroes vote share `fund` (1=liquidity, 2=treasury, 3=team) and then
+        /// transfers it to `to` (effects before the interaction).
+        fn withdraw_vote_fund(&mut self, fund: u8, to: AccountId) -> Result<Balance, StakingError> {
+            if to == AccountId::from(constants::ZERO_ADDRESS) {
+                return Err(StakingError::ZeroAddress);
+            }
+            let share = match fund {
+                1 => &mut self.liquidity_fund,
+                2 => &mut self.treasury_fund,
+                _ => &mut self.team_fund,
+            };
+            let amount = *share;
+            if amount == 0 {
+                return Err(StakingError::ZeroAmount);
+            }
+            *share = 0;
+
+            // Interaction (an Err reverts the effect above on-chain)
+            if self.env().transfer(to, amount).is_err() {
+                return Err(StakingError::InsufficientBalance);
+            }
+
+            self.env().emit_event(VoteFundWithdrawn {
+                to,
+                fund,
+                amount,
+                caller: self.env().caller(),
+                timestamp: self.env().block_timestamp(),
+            });
+            Ok(amount)
         }
 
         // === FUNÇÕES DE INTEGRAÇÃO COM TRADING REWARDS ===
@@ -1683,14 +1921,14 @@ pub mod staking_contract {
             Ok(())
         }
 
-        /// Recebe trading rewards do contrato de rewards (apenas contrato autorizado)
+        /// Recebe trading rewards (apenas o contrato de rewards autorizado ou o distributor)
         #[ink(message, payable)]
         pub fn fund_staking_rewards(&mut self) -> Result<(), StakingError> {
             self.ensure_not_paused()?;
 
-            // Verifica se é o contrato autorizado
+            // Verifica se é o contrato autorizado ou o distributor
             let caller = self.env().caller();
-            if self.trading_rewards_contract != Some(caller) {
+            if self.trading_rewards_contract != Some(caller) && self.distributor != Some(caller) {
                 return Err(StakingError::AccessDenied);
             }
 
@@ -1735,8 +1973,9 @@ pub mod staking_contract {
             Ok(())
         }
 
-        /// Distribui trading rewards para todos os stakers ativos (apenas admin)
-        /// Para compatibilidade, distribui tudo em uma página
+        /// Distribui trading rewards para todos os stakers ativos (owner ou distributor)
+        /// Para compatibilidade, processa a próxima página (até 100 stakers) a
+        /// partir do cursor da rodada; com mais stakers, chamadas seguintes continuam
         #[ink(message)]
         pub fn distribute_trading_rewards(&mut self) -> Result<(), StakingError> {
             // Para compatibilidade, distribui tudo em uma página
@@ -1745,10 +1984,21 @@ pub mod staking_contract {
             Ok(())
         }
 
-        /// Distribui trading rewards com paginação para melhor eficiência de gas (apenas admin)
+        /// Distribui trading rewards com paginação para melhor eficiência de gas (owner ou distributor)
+        ///
+        /// O índice só contém stakers ativos (swap-remove no unstake): um
+        /// unstake entre páginas pode mover o último staker para um slot já
+        /// processado, que então fica sem crédito nesta rodada (o valor
+        /// permanece no pool para a próxima). Cada conta recebe no máximo um
+        /// crédito por rodada (`last_credited_round`), mesmo que saia e volte a
+        /// fazer stake entre páginas.
         ///
         /// # Parâmetros
-        /// - `start_index`: Índice inicial para distribuição (None = do início)
+        /// - `start_index`: o índice é imposto on-chain (`distribution_cursor`):
+        ///   passe `None` ou o `next_index` devolvido pela página anterior. Fora
+        ///   de rodada o início esperado é 0. Qualquer outro valor falha com
+        ///   `InvalidDistributionCursor` sem alterar estado (impede repetir uma
+        ///   página ou recomeçar a rodada com novo snapshot).
         /// - `batch_size`: Número máximo de stakers para processar (None = todos restantes, max 100)
         ///
         /// # Retorna
@@ -1762,29 +2012,55 @@ pub mod staking_contract {
             start_index: Option<u32>,
             batch_size: Option<u32>,
         ) -> Result<(u32, bool, Option<u32>), StakingError> {
-            self.ensure_owner()?;
+            self.ensure_owner_or_distributor()?;
             self.ensure_not_paused()?;
             self.acquire_lock()?;
+            let result = self.distribute_trading_rewards_paginated_inner(start_index, batch_size);
+            self.release_lock();
+            result
+        }
+
+        fn distribute_trading_rewards_paginated_inner(
+            &mut self,
+            start_index: Option<u32>,
+            batch_size: Option<u32>,
+        ) -> Result<(u32, bool, Option<u32>), StakingError> {
+            // Uma rodada está em andamento enquanto há snapshot; ela só avança
+            // a partir do cursor gravado.
+            let in_progress = self.distribution_amount != 0;
+            let expected_start = if in_progress {
+                self.distribution_cursor
+            } else {
+                0
+            };
+            let start = start_index.unwrap_or(expected_start);
+            if start != expected_start {
+                return Err(StakingError::InvalidDistributionCursor);
+            }
 
             if self.trading_rewards_pool == 0 {
-                self.release_lock();
+                self.reset_distribution_round();
                 return Ok((0, true, None)); // Nada para distribuir
             }
 
-            let total_weight = self.calculate_total_staker_weight()?;
+            let total_weight = self.total_staker_weight;
             if total_weight == 0 {
-                self.release_lock();
+                self.reset_distribution_round();
                 return Ok((0, true, None)); // Nenhum staker ativo
             }
 
-            let start = start_index.unwrap_or(0);
-            // Snapshot at page 0 so every page shares the same base amount;
-            // each credit is still capped by what is left in the pool, so the
-            // total credited can never exceed what was funded.
-            if start == 0 || self.distribution_amount == 0 {
+            // Snapshot only when a round starts, so every page shares the same
+            // base amount; each credit is still capped by what is left in the
+            // pool, so the total credited can never exceed what was funded.
+            if !in_progress {
                 self.distribution_amount = self.trading_rewards_pool;
+                self.distribution_round = self
+                    .distribution_round
+                    .checked_add(1)
+                    .ok_or(StakingError::Overflow)?;
             }
             let amount_to_distribute = self.distribution_amount;
+            let round = self.distribution_round;
             let mut credited_this_page: Balance = 0;
             let max_batch = batch_size.unwrap_or(100).min(100); // Limita a 100 para evitar gas excessivo
             let end = start
@@ -1803,7 +2079,11 @@ pub mod staking_contract {
 
                 if let Some(staker) = self.staker_addresses.get(i) {
                     if let Some(mut stake) = self.stakes.get(staker) {
-                        if stake.active {
+                        // Já creditado nesta rodada (saiu e voltou a fazer
+                        // stake entre páginas): sem segundo crédito.
+                        let already_credited =
+                            self.last_credited_round.get(staker).unwrap_or(0) == round;
+                        if stake.active && !already_credited {
                             let weight = self.calculate_staker_weight(&stake);
                             let reward = amount_to_distribute
                                 .checked_mul(weight)
@@ -1830,6 +2110,7 @@ pub mod staking_contract {
                                     .ok_or(StakingError::Overflow)?;
 
                                 self.stakes.insert(staker, &stake);
+                                self.last_credited_round.insert(staker, &round);
                                 distributed_count = distributed_count
                                     .checked_add(1)
                                     .ok_or(StakingError::Overflow)?;
@@ -1839,6 +2120,8 @@ pub mod staking_contract {
                 }
             }
 
+            // Com o índice encolhido entre páginas (cursor >= staker_index) a
+            // página fica vazia e a rodada termina.
             let is_complete = end >= self.staker_index;
             let next_index = if is_complete { None } else { Some(end) };
 
@@ -1847,12 +2130,18 @@ pub mod staking_contract {
                 .checked_add(credited_this_page)
                 .ok_or(StakingError::Overflow)?;
 
+            if is_complete {
+                self.reset_distribution_round();
+            } else {
+                self.distribution_cursor = end;
+            }
+
             // Se é a primeira página ou a distribuição está completa, atualiza estado global
             if start == 0 || is_complete {
                 if is_complete {
-                    // Finaliza a distribuição. O resto de arredondamento fica
-                    // no pool para a próxima distribuição (não é zerado).
-                    self.distribution_amount = 0;
+                    // Rodada finalizada (snapshot e cursor zerados acima). O
+                    // resto de arredondamento fica no pool para a próxima
+                    // distribuição (não é zerado).
 
                     // Emit event final
                     self.env().emit_event(TradingRewardsDistributed {
@@ -1873,8 +2162,13 @@ pub mod staking_contract {
                 }
             }
 
-            self.release_lock();
             Ok((processed_count, is_complete, next_index))
+        }
+
+        /// Encerra a rodada de distribuição: sem snapshot, cursor no início.
+        fn reset_distribution_round(&mut self) {
+            self.distribution_amount = 0;
+            self.distribution_cursor = 0;
         }
 
         // === FUNÇÕES DE GOVERNANÇA EXPANDIDA ===
@@ -2019,6 +2313,15 @@ pub mod staking_contract {
         /// Ensures only owner can call
         fn ensure_owner(&self) -> Result<(), StakingError> {
             if self.env().caller() != self.owner {
+                return Err(StakingError::AccessDenied);
+            }
+            Ok(())
+        }
+
+        /// Ensures caller is the owner or the distributor (rewards ops only)
+        fn ensure_owner_or_distributor(&self) -> Result<(), StakingError> {
+            let caller = self.env().caller();
+            if caller != self.owner && self.distributor != Some(caller) {
                 return Err(StakingError::AccessDenied);
             }
             Ok(())
@@ -2221,24 +2524,31 @@ pub mod staking_contract {
                 .unwrap_or(0)
         }
 
-        /// Calcula peso total de todos os stakers ativos
-        fn calculate_total_staker_weight(&self) -> Result<Balance, StakingError> {
-            let mut total_weight = 0u128;
-
-            for i in 0..self.staker_index {
-                if let Some(staker) = self.staker_addresses.get(i) {
-                    if let Some(stake) = self.stakes.get(staker) {
-                        if stake.active {
-                            let weight = self.calculate_staker_weight(&stake);
-                            total_weight = total_weight
-                                .checked_add(weight)
-                                .ok_or(StakingError::Overflow)?;
-                        }
-                    }
-                }
+        /// Swap-remove de `account` do índice: o último endereço ocupa o slot
+        /// dele, mantendo `staker_addresses[0..staker_index]` == stakers ativos.
+        /// As entradas antigas (`staker_addresses[último]` e
+        /// `staker_slots[account]`) ficam obsoletas em vez de removidas
+        /// (compatibilidade com seal0::clear_storage): a primeira fica fora de
+        /// `0..staker_index` e a segunda só é lida com a posição ativa.
+        fn remove_from_staker_index(&mut self, account: AccountId) -> Result<(), StakingError> {
+            let slot = self
+                .staker_slots
+                .get(account)
+                .ok_or(StakingError::NoActiveStake)?;
+            let last = self
+                .staker_index
+                .checked_sub(1)
+                .ok_or(StakingError::Overflow)?;
+            if slot != last {
+                let moved = self
+                    .staker_addresses
+                    .get(last)
+                    .ok_or(StakingError::NoActiveStake)?;
+                self.staker_addresses.insert(slot, &moved);
+                self.staker_slots.insert(moved, &slot);
             }
-
-            Ok(total_weight as Balance)
+            self.staker_index = last;
+            Ok(())
         }
 
         /// Calculates rewards and early unstaking penalty
@@ -2376,12 +2686,13 @@ pub mod staking_contract {
                 )
                 .unwrap();
 
-            // Vote on proposal
+            // Vote on proposal (pays exactly VOTE_COST)
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::VOTE_COST);
             let vote_result = contract.vote(proposal_id, true);
             assert!(vote_result.is_ok());
 
             let proposal = contract.get_proposal(proposal_id).unwrap();
-            assert_eq!(proposal.votes_for, constants::MIN_PROPOSAL_POWER);
+            assert_eq!(proposal.votes_for, constants::VOTE_COST);
             assert_eq!(proposal.votes_against, 0);
         }
 
@@ -2417,8 +2728,11 @@ pub mod staking_contract {
             // Test unpause
             assert!(contract.unpause().is_ok());
 
-            // Test transfer ownership
+            // Test transfer ownership (two steps: propose + accept)
             assert!(contract.transfer_ownership(accounts.bob).is_ok());
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
+            assert!(contract.accept_ownership().is_ok());
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
 
             // Original owner should no longer have access
             assert_eq!(contract.pause(), Err(StakingError::AccessDenied));
@@ -2490,7 +2804,10 @@ pub mod staking_contract {
                 )
                 .unwrap();
 
-            // Votar a favor
+            // Votar a favor (paga exatamente VOTE_COST)
+            ink::env::test::set_value_transferred::<ink::env::DefaultEnvironment>(
+                constants::VOTE_COST,
+            );
             assert!(staking.vote(proposal_id, true).is_ok());
 
             // Avançar tempo para depois do deadline
@@ -2753,21 +3070,31 @@ pub mod staking_contract {
             }
         }
 
+        /// Passivo contabilizado: principal + rewards creditadas + pools
+        /// financiados + fundos dos votos (liquidez, treasury, team).
+        fn liabilities(c: &StakingContract) -> Balance {
+            let (apy_pool, trading_pool, credited) = c.get_reward_pools();
+            let (total_staked, _, _) = c.get_stats();
+            let (liquidity, treasury, team) = c.get_vote_funds();
+            total_staked + credited + apy_pool + trading_pool + liquidity + treasury + team
+        }
+
         /// Invariante de custódia: o saldo do contrato cobre o principal
-        /// devido + rewards já creditadas + pools financiados.
+        /// devido + rewards já creditadas + pools financiados + fundos dos votos.
         fn assert_solvent(c: &StakingContract, contract_id: AccountId) {
             let (apy_pool, trading_pool, credited) = c.get_reward_pools();
             let (total_staked, _, _) = c.get_stats();
-            let liabilities = total_staked + credited + apy_pool + trading_pool;
+            let liabilities = liabilities(c);
             assert!(
                 balance_of(contract_id) >= liabilities,
-                "insolvent: balance {} < liabilities {} (staked {}, credited {}, apy {}, trading {})",
+                "insolvent: balance {} < liabilities {} (staked {}, credited {}, apy {}, trading {}, vote funds {:?})",
                 balance_of(contract_id),
                 liabilities,
                 total_staked,
                 credited,
                 apy_pool,
-                trading_pool
+                trading_pool,
+                c.get_vote_funds()
             );
             assert!(balance_of(contract_id) >= total_staked);
         }
@@ -2990,6 +3317,7 @@ pub mod staking_contract {
                         }
                     }
                     assert_solvent(&c, contract_id);
+                    assert_index_consistent(&c);
                 }
                 // Todos saem: o principal é integralmente devolvido.
                 for who in stakers {
@@ -2999,6 +3327,886 @@ pub mod staking_contract {
                 }
                 assert_eq!(c.get_stats().0, 0);
             }
+        }
+
+        // ========================================
+        // A-05: FUNDOS DOS VOTOS (liquidez / treasury / team)
+        // Antes só os 10% do rewards pool eram contabilizados; os 90% restantes
+        // ficavam presos no saldo do contrato sem contador nem saída.
+        // ========================================
+
+        const VOTE_SHARE: Balance = constants::VOTE_COST / 10; // 10%
+        const VOTE_TEAM_SHARE: Balance = constants::VOTE_COST * 7 / 10; // 70%
+
+        /// Alice (owner) faz stake com poder de proposta e cria uma proposta.
+        fn proposal_setup(c: &mut StakingContract) -> u32 {
+            let accounts = test::default_accounts::<E>();
+            as_caller(accounts.alice, constants::MIN_PROPOSAL_POWER);
+            c.stake(30 * DAY_MS).unwrap();
+            as_caller(accounts.alice, constants::PROPOSAL_FEE);
+            c.create_proposal("P".to_string(), "D".to_string(), accounts.bob)
+                .unwrap()
+        }
+
+        fn stake_and_vote(c: &mut StakingContract, who: AccountId, proposal_id: u32) {
+            as_caller(who, constants::MIN_STAKE);
+            c.stake(7 * DAY_MS).unwrap();
+            as_caller(who, constants::VOTE_COST);
+            c.vote(proposal_id, true).unwrap();
+        }
+
+        #[ink::test]
+        fn test_vote_funds_are_accounted_per_vote() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            let id = proposal_setup(&mut c);
+            let voters = [
+                accounts.bob,
+                accounts.charlie,
+                accounts.django,
+                accounts.frank,
+            ];
+            for who in voters {
+                stake_and_vote(&mut c, who, id);
+            }
+            let n = voters.len() as Balance;
+            assert_eq!(
+                c.get_vote_funds(),
+                (n * VOTE_SHARE, n * VOTE_SHARE, n * VOTE_TEAM_SHARE)
+            );
+            assert_eq!(c.get_reward_pools().1, n * VOTE_SHARE);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_vote_requires_exact_vote_cost() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, _) = solvency_setup();
+            let id = proposal_setup(&mut c);
+            as_caller(accounts.bob, constants::MIN_STAKE);
+            c.stake(7 * DAY_MS).unwrap();
+            // Pagamento acima do custo era aceito sem troco.
+            as_caller(accounts.bob, constants::VOTE_COST + 1);
+            assert_eq!(c.vote(id, true), Err(StakingError::InvalidAmount));
+            assert_eq!(c.get_proposal(id).unwrap().vote_count, 0);
+            assert_eq!(c.get_vote_funds(), (0, 0, 0));
+        }
+
+        #[ink::test]
+        fn test_vote_fund_withdrawals_are_restricted() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            // `[0x1; 32]` (treasury do setup) é a própria alice no ambiente
+            // off-chain; usa um treasury distinto do owner.
+            let treasury = AccountId::from([0x7A; 32]);
+            as_caller(accounts.alice, 0);
+            c.set_treasury_address(treasury).unwrap();
+            let id = proposal_setup(&mut c);
+            for who in [accounts.bob, accounts.charlie] {
+                stake_and_vote(&mut c, who, id);
+            }
+
+            // Conta qualquer (staker votante) não saca nenhuma fatia.
+            as_caller(accounts.bob, 0);
+            assert_eq!(c.withdraw_treasury_fund(), Err(StakingError::AccessDenied));
+            assert_eq!(
+                c.withdraw_liquidity_fund(accounts.bob),
+                Err(StakingError::AccessDenied)
+            );
+            assert_eq!(
+                c.withdraw_team_fund(accounts.bob),
+                Err(StakingError::AccessDenied)
+            );
+            assert_eq!(
+                c.get_vote_funds(),
+                (2 * VOTE_SHARE, 2 * VOTE_SHARE, 2 * VOTE_TEAM_SHARE)
+            );
+
+            // Treasury: só sai para `treasury_address` (o próprio treasury pode acionar).
+            as_caller(treasury, 0);
+            assert_eq!(c.withdraw_treasury_fund(), Ok(2 * VOTE_SHARE));
+            assert_eq!(balance_of(treasury), 2 * VOTE_SHARE);
+            assert_eq!(c.withdraw_treasury_fund(), Err(StakingError::ZeroAmount));
+
+            // Liquidez e team: owner, para o endereço informado.
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.withdraw_team_fund(AccountId::from(constants::ZERO_ADDRESS)),
+                Err(StakingError::ZeroAddress)
+            );
+            let django_before = balance_of(accounts.django);
+            assert_eq!(
+                c.withdraw_liquidity_fund(accounts.django),
+                Ok(2 * VOTE_SHARE)
+            );
+            assert_eq!(balance_of(accounts.django), django_before + 2 * VOTE_SHARE);
+            let frank_before = balance_of(accounts.frank);
+            assert_eq!(
+                c.withdraw_team_fund(accounts.frank),
+                Ok(2 * VOTE_TEAM_SHARE)
+            );
+            assert_eq!(
+                balance_of(accounts.frank),
+                frank_before + 2 * VOTE_TEAM_SHARE
+            );
+            assert_eq!(c.get_vote_funds(), (0, 0, 0));
+            assert_eq!(
+                c.withdraw_liquidity_fund(accounts.django),
+                Err(StakingError::ZeroAmount)
+            );
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_vote_funds_keep_contract_solvent_through_lifecycle() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 0);
+            c.set_trading_rewards_contract(accounts.eve).unwrap();
+            let id = proposal_setup(&mut c);
+            assert_solvent(&c, contract_id);
+            for who in [accounts.bob, accounts.charlie, accounts.django] {
+                stake_and_vote(&mut c, who, id);
+                assert_solvent(&c, contract_id);
+            }
+            // Todo LUNES dos votos está contabilizado: o único excedente é a
+            // taxa da proposta ainda não executada.
+            assert_eq!(
+                balance_of(contract_id) - liabilities(&c),
+                constants::PROPOSAL_FEE
+            );
+
+            as_caller(accounts.frank, 100 * LUNES);
+            c.fund_apy_rewards().unwrap();
+            as_caller(accounts.alice, 0);
+            c.distribute_trading_rewards().unwrap();
+            assert_solvent(&c, contract_id);
+
+            test::set_block_timestamp::<E>(1_000 + 10 * DAY_MS);
+            as_caller(accounts.bob, 0);
+            c.claim_rewards().unwrap();
+            assert_solvent(&c, contract_id);
+            as_caller(accounts.charlie, 0);
+            c.unstake().unwrap();
+            assert_solvent(&c, contract_id);
+
+            as_caller(accounts.alice, 0);
+            c.withdraw_treasury_fund().unwrap();
+            c.withdraw_liquidity_fund(accounts.frank).unwrap();
+            c.withdraw_team_fund(accounts.frank).unwrap();
+            assert_solvent(&c, contract_id);
+
+            for who in [accounts.alice, accounts.bob, accounts.django] {
+                as_caller(who, 0);
+                c.unstake().unwrap();
+                assert_solvent(&c, contract_id);
+            }
+            assert_eq!(c.get_stats().0, 0);
+            assert_eq!(
+                balance_of(contract_id) - liabilities(&c),
+                constants::PROPOSAL_FEE
+            );
+        }
+
+        // ========================================
+        // M-04: ÍNDICE DE STAKERS LIMITADO + PESO TOTAL INCREMENTAL
+        // ========================================
+
+        /// Peso total recalculado varrendo o índice (referência para o
+        /// contador incremental `total_staker_weight`).
+        fn recomputed_total_weight(c: &StakingContract) -> Balance {
+            (0..c.staker_index)
+                .filter_map(|i| c.staker_addresses.get(i))
+                .filter_map(|who| c.stakes.get(who))
+                .filter(|s| s.active)
+                .map(|s| c.calculate_staker_weight(&s))
+                .sum()
+        }
+
+        /// O índice contém exatamente os stakers ativos, sem duplicatas, e o
+        /// slot de cada um aponta de volta para a posição dele.
+        fn assert_index_consistent(c: &StakingContract) {
+            assert_eq!(c.staker_index, c.active_stakers);
+            for i in 0..c.staker_index {
+                let who = c.staker_addresses.get(i).unwrap();
+                assert!(c.stakes.get(who).unwrap().active);
+                assert_eq!(c.staker_slots.get(who), Some(i));
+            }
+            assert_eq!(c.total_staker_weight, recomputed_total_weight(c));
+        }
+
+        #[ink::test]
+        fn test_stake_unstake_cycles_keep_staker_index_bounded() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 10_000 * LUNES);
+            c.stake(365 * DAY_MS).unwrap();
+
+            let mut now = 1_000u64;
+            for _ in 0..25 {
+                as_caller(accounts.bob, constants::MIN_STAKE);
+                c.stake(7 * DAY_MS).unwrap();
+                now += 7 * DAY_MS;
+                test::set_block_timestamp::<E>(now);
+                as_caller(accounts.bob, 0);
+                c.unstake().unwrap();
+            }
+            assert!(
+                c.staker_index <= 2,
+                "staker_index cresceu para {}",
+                c.staker_index
+            );
+            assert_index_consistent(&c);
+
+            // A distribuição paginada só percorre o staker ativo.
+            as_caller(accounts.alice, 0);
+            c.set_trading_rewards_contract(accounts.eve).unwrap();
+            as_caller(accounts.eve, 100 * LUNES);
+            c.fund_staking_rewards().unwrap();
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(10)),
+                Ok((1, true, None))
+            );
+            assert_eq!(c.get_reward_pools().2, 100 * LUNES);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_unstake_swap_removes_from_staker_index() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 0);
+            c.set_trading_rewards_contract(accounts.eve).unwrap();
+            as_caller(accounts.alice, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            as_caller(accounts.bob, 20_000 * LUNES);
+            c.stake(91 * DAY_MS).unwrap();
+            as_caller(accounts.charlie, 60_000 * LUNES);
+            c.stake(181 * DAY_MS).unwrap();
+            assert_index_consistent(&c);
+
+            // Remove o do meio: o último (charlie) ocupa o slot do bob.
+            test::set_block_timestamp::<E>(1_000 + 200 * DAY_MS);
+            as_caller(accounts.bob, 0);
+            c.unstake().unwrap();
+            assert_index_consistent(&c);
+            assert_eq!(c.staker_addresses.get(1), Some(accounts.charlie));
+
+            as_caller(accounts.eve, 90 * LUNES);
+            c.fund_staking_rewards().unwrap();
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(1), Some(1)),
+                Ok((1, true, None))
+            );
+            assert!(c.get_stake(accounts.alice).unwrap().pending_rewards > 0);
+            assert!(c.get_stake(accounts.charlie).unwrap().pending_rewards > 0);
+            assert_solvent(&c, contract_id);
+
+            for who in [accounts.charlie, accounts.alice] {
+                as_caller(who, 0);
+                c.unstake().unwrap();
+                assert_index_consistent(&c);
+            }
+            assert_eq!(c.total_staker_weight, 0);
+
+            // Re-stake de quem já saiu entra de novo uma única vez.
+            as_caller(accounts.bob, constants::MIN_STAKE);
+            c.stake(7 * DAY_MS).unwrap();
+            assert_index_consistent(&c);
+            assert_eq!(c.staker_index, 1);
+            assert_solvent(&c, contract_id);
+        }
+
+        // ========================================
+        // M-05: PAPEL `distributor`, OWNERSHIP EM DOIS PASSOS, UNSTAKE PAUSADO
+        // ========================================
+
+        #[ink::test]
+        fn test_distributor_funds_and_distributes_but_has_no_admin_power() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            let distributor = accounts.eve;
+            as_caller(accounts.alice, 0);
+            assert_eq!(c.set_distributor(Some(distributor)), Ok(()));
+            assert_eq!(
+                c.get_admin_roles(),
+                (accounts.alice, None, Some(distributor))
+            );
+            as_caller(accounts.bob, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+
+            as_caller(distributor, 100 * LUNES);
+            assert_eq!(c.fund_staking_rewards(), Ok(()));
+            as_caller(distributor, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((1, true, None))
+            );
+            assert_eq!(c.get_reward_pools().2, 100 * LUNES);
+
+            // Nenhum poder administrativo.
+            assert_eq!(c.pause(), Err(StakingError::AccessDenied));
+            assert_eq!(
+                c.set_treasury_address(distributor),
+                Err(StakingError::AccessDenied)
+            );
+            assert_eq!(
+                c.set_distributor(Some(accounts.charlie)),
+                Err(StakingError::AccessDenied)
+            );
+            assert_eq!(
+                c.transfer_ownership(distributor),
+                Err(StakingError::AccessDenied)
+            );
+            assert_eq!(
+                c.reward_approved_proposal(distributor),
+                Err(StakingError::AccessDenied)
+            );
+            assert_eq!(
+                c.withdraw_team_fund(distributor),
+                Err(StakingError::AccessDenied)
+            );
+
+            // Conta comum não distribui; owner revoga o distributor.
+            as_caller(accounts.charlie, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Err(StakingError::AccessDenied)
+            );
+            as_caller(accounts.alice, 0);
+            c.set_distributor(None).unwrap();
+            as_caller(distributor, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Err(StakingError::AccessDenied)
+            );
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_unstake_returns_principal_while_paused() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.bob, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            as_caller(accounts.charlie, 1_000 * LUNES);
+            c.fund_apy_rewards().unwrap();
+            test::set_block_timestamp::<E>(1_000 + 8 * DAY_MS);
+            let accrued = c.get_pending_rewards(accounts.bob).unwrap();
+            assert!(accrued > 0);
+
+            as_caller(accounts.alice, 0);
+            c.pause().unwrap();
+
+            let before = balance_of(accounts.bob);
+            as_caller(accounts.bob, 0);
+            assert_eq!(c.unstake(), Ok(()));
+            // Principal integral; o APY fica devido até o despause.
+            assert_eq!(balance_of(accounts.bob), before + 10_000 * LUNES);
+            assert_eq!(c.get_owed_rewards(accounts.bob), accrued);
+            assert_eq!(c.claim_rewards(), Err(StakingError::ContractPaused));
+            assert_solvent(&c, contract_id);
+
+            as_caller(accounts.alice, 0);
+            c.unpause().unwrap();
+            as_caller(accounts.bob, 0);
+            c.claim_rewards().unwrap();
+            assert_eq!(balance_of(accounts.bob), before + 10_000 * LUNES + accrued);
+            assert_eq!(c.get_owed_rewards(accounts.bob), 0);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_ownership_transfer_requires_acceptance() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, _) = solvency_setup();
+            as_caller(accounts.alice, 0);
+            assert_eq!(c.transfer_ownership(accounts.bob), Ok(()));
+            assert_eq!(
+                c.get_admin_roles(),
+                (accounts.alice, Some(accounts.bob), None)
+            );
+            // Ainda vale o owner antigo até o aceite.
+            assert_eq!(c.pause(), Ok(()));
+            assert_eq!(c.unpause(), Ok(()));
+            as_caller(accounts.bob, 0);
+            assert_eq!(c.pause(), Err(StakingError::AccessDenied));
+
+            as_caller(accounts.charlie, 0);
+            assert_eq!(c.accept_ownership(), Err(StakingError::AccessDenied));
+
+            as_caller(accounts.bob, 0);
+            assert_eq!(c.accept_ownership(), Ok(()));
+            assert_eq!(c.get_admin_roles(), (accounts.bob, None, None));
+            assert_eq!(c.pause(), Ok(()));
+            as_caller(accounts.alice, 0);
+            assert_eq!(c.unpause(), Err(StakingError::AccessDenied));
+            // Aceite não pode ser repetido.
+            as_caller(accounts.bob, 0);
+            assert_eq!(c.accept_ownership(), Err(StakingError::AccessDenied));
+        }
+
+        // ========================================
+        // DISTRIBUIÇÃO PAGINADA SEQUENCIAL (cursor on-chain)
+        // Antes o caller escolhia `start_index` livremente: repetir a mesma
+        // página creditava os mesmos slots de novo (snapshot reaproveitado).
+        // ========================================
+
+        /// Contrato com `eve` como contrato de trading rewards e os stakers dados
+        /// (conta, valor, dias de lock).
+        fn distribution_setup(
+            stakers: &[(AccountId, Balance, u64)],
+        ) -> (StakingContract, AccountId) {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            as_caller(accounts.alice, 0);
+            c.set_trading_rewards_contract(accounts.eve).unwrap();
+            for &(who, amount, days) in stakers {
+                as_caller(who, amount);
+                c.stake(days * DAY_MS).unwrap();
+            }
+            (c, contract_id)
+        }
+
+        fn four_stakers() -> [(AccountId, Balance, u64); 4] {
+            let accounts = test::default_accounts::<E>();
+            [
+                (accounts.alice, 10_000 * LUNES, 7),
+                (accounts.bob, 20_000 * LUNES, 91),
+                (accounts.charlie, 60_000 * LUNES, 181),
+                (accounts.django, 5_000 * LUNES, 31),
+            ]
+        }
+
+        fn fund_trading(c: &mut StakingContract, amount: Balance) {
+            let accounts = test::default_accounts::<E>();
+            as_caller(accounts.eve, amount);
+            c.fund_staking_rewards().unwrap();
+        }
+
+        fn credited(c: &StakingContract, who: AccountId) -> Balance {
+            c.get_stake(who).map(|s| s.pending_rewards).unwrap_or(0)
+        }
+
+        /// Fatia proporcional de `who` sobre `snapshot` (mesma conta do contrato).
+        fn expected_share(c: &StakingContract, who: AccountId, snapshot: Balance) -> Balance {
+            let stake = c.get_stake(who).unwrap();
+            snapshot * c.calculate_staker_weight(&stake) / c.total_staker_weight
+        }
+
+        #[ink::test]
+        fn test_distribution_page_cannot_be_replayed() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = distribution_setup(&four_stakers());
+            fund_trading(&mut c, 100 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(1), Some(1)),
+                Ok((1, false, Some(2)))
+            );
+            let pool = c.get_reward_pools().1;
+            let credits: Vec<Balance> = four_stakers()
+                .iter()
+                .map(|&(who, _, _)| credited(&c, who))
+                .collect();
+
+            // Repetir a página 1 (ou recomeçar na 0) é rejeitado sem mudar estado.
+            for replay in [Some(1), Some(0)] {
+                assert_eq!(
+                    c.distribute_trading_rewards_paginated(replay, Some(1)),
+                    Err(StakingError::InvalidDistributionCursor)
+                );
+            }
+            assert_eq!(c.get_reward_pools().1, pool);
+            for (i, &(who, _, _)) in four_stakers().iter().enumerate() {
+                assert_eq!(credited(&c, who), credits[i]);
+            }
+            assert_eq!(c.distribution_cursor, 2);
+            assert!(!c.locked);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_distribution_rejects_out_of_sequence_start() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = distribution_setup(&four_stakers());
+            fund_trading(&mut c, 100 * LUNES);
+            as_caller(accounts.alice, 0);
+
+            // Fora de rodada só o início (0) é aceito.
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(1), Some(1)),
+                Err(StakingError::InvalidDistributionCursor)
+            );
+            assert_eq!(c.distribution_amount, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(0), Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            let snapshot = c.distribution_amount;
+            assert_eq!(snapshot, 100 * LUNES);
+
+            // À frente e atrás do cursor.
+            for wrong in [Some(3), Some(2)] {
+                assert_eq!(
+                    c.distribute_trading_rewards_paginated(wrong, Some(1)),
+                    Err(StakingError::InvalidDistributionCursor)
+                );
+            }
+            // `Some(0)` no meio da rodada não refaz o snapshot, nem com pool novo.
+            fund_trading(&mut c, 50 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(0), Some(1)),
+                Err(StakingError::InvalidDistributionCursor)
+            );
+            assert_eq!(c.distribution_amount, snapshot);
+            assert_eq!(c.distribution_cursor, 1);
+            assert!(!c.locked);
+
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(1), None),
+                Ok((3, true, None))
+            );
+            assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_sequential_round_credits_each_staker_once() {
+            let accounts = test::default_accounts::<E>();
+            let stakers = four_stakers();
+            let (mut c, contract_id) = distribution_setup(&stakers);
+            fund_trading(&mut c, 100 * LUNES);
+
+            // Rodada 1 usando o `next_index` devolvido; rodada 2 usando `None`.
+            for use_returned_next in [true, false] {
+                as_caller(accounts.alice, 0);
+                let pool_at_start = c.get_reward_pools().1;
+                let before: Vec<Balance> =
+                    stakers.iter().map(|&(w, _, _)| credited(&c, w)).collect();
+                let shares: Vec<Balance> = stakers
+                    .iter()
+                    .map(|&(w, _, _)| expected_share(&c, w, pool_at_start))
+                    .collect();
+
+                let mut next = None;
+                let mut pages = 0;
+                let mut complete = false;
+                for _ in 0..10 {
+                    let start = if use_returned_next { next } else { None };
+                    let (processed, done, n) = c
+                        .distribute_trading_rewards_paginated(start, Some(1))
+                        .unwrap();
+                    assert_eq!(processed, 1);
+                    pages += 1;
+                    next = n;
+                    if done {
+                        complete = true;
+                        break;
+                    }
+                }
+                assert!(complete, "rodada não terminou em 10 páginas");
+                assert_eq!(pages, 4);
+
+                let mut total = 0;
+                for (i, &(who, _, _)) in stakers.iter().enumerate() {
+                    let got = credited(&c, who) - before[i];
+                    assert_eq!(got, shares[i]);
+                    total += got;
+                }
+                assert!(total <= pool_at_start);
+                assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+                assert_solvent(&c, contract_id);
+
+                fund_trading(&mut c, 70 * LUNES);
+            }
+        }
+
+        #[ink::test]
+        fn test_distributor_cannot_drain_pool_into_one_slot() {
+            let accounts = test::default_accounts::<E>();
+            let distributor = accounts.frank;
+            let mut stakers = four_stakers().to_vec();
+            stakers[3] = (distributor, 10_000 * LUNES, 7); // slot 3
+            let (mut c, contract_id) = distribution_setup(&stakers);
+            as_caller(accounts.alice, 0);
+            c.set_distributor(Some(distributor)).unwrap();
+            fund_trading(&mut c, 100 * LUNES);
+            let share = expected_share(&c, distributor, 100 * LUNES);
+            assert!(share < 100 * LUNES);
+
+            // Mirar direto o próprio slot, repetidamente: rejeitado.
+            as_caller(distributor, 0);
+            for _ in 0..5 {
+                assert_eq!(
+                    c.distribute_trading_rewards_paginated(Some(3), Some(1)),
+                    Err(StakingError::InvalidDistributionCursor)
+                );
+            }
+            assert_eq!(credited(&c, distributor), 0);
+
+            // Avança em sequência até a página do próprio slot e tenta repeti-la.
+            for expected_start in 0..3u32 {
+                assert_eq!(
+                    c.distribute_trading_rewards_paginated(Some(expected_start), Some(1)),
+                    Ok((1, false, Some(expected_start + 1)))
+                );
+            }
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(3), Some(1)),
+                Ok((1, true, None))
+            );
+            for _ in 0..5 {
+                assert_eq!(
+                    c.distribute_trading_rewards_paginated(Some(3), Some(1)),
+                    Err(StakingError::InvalidDistributionCursor)
+                );
+            }
+            assert_eq!(credited(&c, distributor), share);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_round_state_resets_when_pool_or_weight_is_zero() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = distribution_setup(&[
+                (accounts.alice, 10_000 * LUNES, 7),
+                (accounts.bob, 10_000 * LUNES, 7),
+            ]);
+
+            // (a) Todos saem no meio da rodada (peso total 0).
+            fund_trading(&mut c, 100 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(
+                (c.distribution_amount, c.distribution_cursor),
+                (100 * LUNES, 1)
+            );
+            test::set_block_timestamp::<E>(1_000 + 8 * DAY_MS);
+            for who in [accounts.alice, accounts.bob] {
+                as_caller(who, 0);
+                c.unstake().unwrap();
+            }
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(1), Some(1)),
+                Ok((0, true, None))
+            );
+            assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+            assert!(!c.locked);
+
+            // A próxima rodada financiada começa em 0 com snapshot novo.
+            as_caller(accounts.bob, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            fund_trading(&mut c, 30 * LUNES);
+            let pool = c.get_reward_pools().1;
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(1), None),
+                Err(StakingError::InvalidDistributionCursor)
+            );
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((1, true, None))
+            );
+            assert_eq!(credited(&c, accounts.bob), pool);
+            assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+            assert_solvent(&c, contract_id);
+
+            // (b) Pool zerado no meio da rodada. Não há caminho natural para
+            // isso (cada crédito é limitado ao pool), então o teste zera o
+            // campo diretamente para exercitar o retorno antecipado.
+            as_caller(accounts.charlie, 10_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            fund_trading(&mut c, 40 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            c.trading_rewards_pool = 0;
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(1), Some(1)),
+                Ok((0, true, None))
+            );
+            assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+            assert!(!c.locked);
+
+            fund_trading(&mut c, 20 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(c.distribution_amount, 20 * LUNES);
+        }
+
+        // ========================================
+        // UM CRÉDITO POR CONTA POR RODADA (unstake → stake entre páginas)
+        // ========================================
+
+        #[ink::test]
+        fn test_restake_between_pages_is_not_credited_twice() {
+            let accounts = test::default_accounts::<E>();
+            // Alice domina o peso; os demais são pequenos.
+            let (mut c, contract_id) = distribution_setup(&[
+                (accounts.alice, 60_000 * LUNES, 181),
+                (accounts.bob, 1_000 * LUNES, 7),
+                (accounts.charlie, 1_000 * LUNES, 7),
+                (accounts.django, 1_000 * LUNES, 7),
+            ]);
+            fund_trading(&mut c, 100 * LUNES);
+            let alice_share = expected_share(&c, accounts.alice, 100 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(credited(&c, accounts.alice), alice_share);
+
+            // Lock expirado: sai (recebe o crédito) e volta no fim do índice.
+            test::set_block_timestamp::<E>(1_000 + 182 * DAY_MS);
+            as_caller(accounts.alice, 0);
+            c.unstake().unwrap();
+            as_caller(accounts.alice, 60_000 * LUNES);
+            c.stake(181 * DAY_MS).unwrap();
+            // Um staker novo depois dela fica na última página.
+            as_caller(accounts.frank, 1_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            assert_eq!(c.staker_addresses.get(3), Some(accounts.alice));
+            assert_eq!(c.staker_addresses.get(4), Some(accounts.frank));
+
+            let late = [accounts.bob, accounts.charlie, accounts.frank];
+            let late_shares: Vec<Balance> = late
+                .iter()
+                .map(|&w| expected_share(&c, w, 100 * LUNES))
+                .collect();
+            as_caller(accounts.alice, 0);
+            let mut next = Some(1);
+            while let Some(start) = next {
+                let (_, _, n) = c
+                    .distribute_trading_rewards_paginated(Some(start), Some(1))
+                    .unwrap();
+                next = n;
+            }
+            // Nenhum segundo crédito para alice nesta rodada...
+            assert_eq!(credited(&c, accounts.alice), 0);
+            // ...e quem ficou para o fim recebe a fatia inteira.
+            for (i, &who) in late.iter().enumerate() {
+                assert_eq!(credited(&c, who), late_shares[i]);
+            }
+            assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_staker_is_credited_again_in_the_next_round() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = distribution_setup(&[
+                (accounts.alice, 10_000 * LUNES, 7),
+                (accounts.bob, 20_000 * LUNES, 7),
+            ]);
+            fund_trading(&mut c, 100 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((2, true, None))
+            );
+            assert_eq!(c.last_credited_round.get(accounts.bob), Some(1));
+            let bob_round_1 = credited(&c, accounts.bob);
+            assert!(bob_round_1 > 0);
+
+            // Sai e volta entre as rodadas: a marca da rodada 1 não o bloqueia.
+            test::set_block_timestamp::<E>(1_000 + 8 * DAY_MS);
+            as_caller(accounts.bob, 0);
+            c.unstake().unwrap();
+            as_caller(accounts.bob, 20_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            assert_eq!(c.last_credited_round.get(accounts.bob), Some(1));
+
+            fund_trading(&mut c, 60 * LUNES);
+            let pool = c.get_reward_pools().1;
+            let shares = [
+                expected_share(&c, accounts.alice, pool),
+                expected_share(&c, accounts.bob, pool),
+            ];
+            let alice_before = credited(&c, accounts.alice);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((2, true, None))
+            );
+            assert_eq!(c.distribution_round, 2);
+            assert_eq!(credited(&c, accounts.alice) - alice_before, shares[0]);
+            assert_eq!(credited(&c, accounts.bob), shares[1]);
+            assert_eq!(c.last_credited_round.get(accounts.alice), Some(2));
+            assert_eq!(c.last_credited_round.get(accounts.bob), Some(2));
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_round_counter_advances_once_per_round() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, _) = distribution_setup(&[]);
+            as_caller(accounts.alice, 0);
+            // Pool vazio e peso zero: retornos antecipados não abrem rodada.
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((0, true, None))
+            );
+            assert_eq!(c.distribution_round, 0);
+            fund_trading(&mut c, 100 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((0, true, None))
+            );
+            assert_eq!(c.distribution_round, 0);
+
+            for (who, amount, days) in four_stakers() {
+                as_caller(who, amount);
+                c.stake(days * DAY_MS).unwrap();
+            }
+            as_caller(accounts.alice, 0);
+            c.distribute_trading_rewards_paginated(None, Some(1))
+                .unwrap();
+            assert_eq!(c.distribution_round, 1);
+            // Chamada rejeitada não avança o contador.
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(Some(3), Some(1)),
+                Err(StakingError::InvalidDistributionCursor)
+            );
+            assert_eq!(c.distribution_round, 1);
+            // Páginas seguintes da mesma rodada também não.
+            c.distribute_trading_rewards_paginated(None, Some(1))
+                .unwrap();
+            assert_eq!(c.distribution_round, 1);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((2, true, None))
+            );
+            assert_eq!(c.distribution_round, 1);
+
+            // Nova rodada: +1.
+            fund_trading(&mut c, 50 * LUNES);
+            as_caller(accounts.alice, 0);
+            c.distribute_trading_rewards_paginated(None, Some(1))
+                .unwrap();
+            assert_eq!(c.distribution_round, 2);
         }
     }
 }
