@@ -89,6 +89,9 @@ pub mod staking_contract {
         /// Paginated distribution must continue from the stored cursor (pass
         /// `None` or the `next_index` returned by the previous page)
         InvalidDistributionCursor,
+        /// Destination cannot be this contract itself (the transfer would be a
+        /// no-op and the withdrawn fund would lose its counter)
+        InvalidRecipient,
     }
 
     /// Governance proposal for project listing
@@ -680,12 +683,40 @@ pub mod staking_contract {
         /// Não é limpo no unstake: impede crédito duplo de quem sai e volta a
         /// fazer stake entre páginas da mesma rodada.
         last_credited_round: Mapping<AccountId, u32>,
+        /// Peso total (`total_staker_weight`) no início da rodada em andamento:
+        /// denominador de todas as páginas dela, para que stake/unstake entre
+        /// páginas não infle nem dilua as fatias. 0 fora de rodada.
+        distribution_total_weight: Balance,
+        /// Soma creditada na rodada em andamento; nunca passa de
+        /// `distribution_amount`. 0 fora de rodada.
+        distribution_credited: Balance,
+        /// `distribution_round` vigente quando a posição atual de cada conta
+        /// foi criada. A posição só é elegível nas rodadas seguintes: capital
+        /// que entra (ou volta, por qualquer conta) com uma rodada aberta não
+        /// está no peso do snapshot e não recebe nada nela.
+        stake_entry_round: Mapping<AccountId, u32>,
+    }
+
+    /// Estado de uma rodada de distribuição enquanto uma página (ou o crédito
+    /// imediato no unstake) é calculada, antes de qualquer escrita.
+    struct RoundState {
+        round: u32,
+        amount: Balance,
+        total_weight: Balance,
+        credited: Balance,
+        pool_left: Balance,
     }
 
     impl StakingContract {
         /// Creates a new staking contract
         #[ink(constructor)]
         pub fn new(treasury_address: AccountId) -> Self {
+            // O próprio contrato como treasury faria `withdraw_treasury_fund`
+            // zerar o contador numa auto-transferência que não move saldo.
+            assert!(
+                treasury_address != Self::env().account_id(),
+                "treasury cannot be the staking contract itself"
+            );
             let mut contract = Self {
                 owner: Self::env().caller(),
                 treasury_address,
@@ -726,6 +757,9 @@ pub mod staking_contract {
                 distribution_cursor: 0,
                 distribution_round: 0,
                 last_credited_round: Mapping::default(),
+                distribution_total_weight: 0,
+                distribution_credited: 0,
+                stake_entry_round: Mapping::default(),
             };
 
             // Campos já inicializados diretamente no struct
@@ -775,6 +809,9 @@ pub mod staking_contract {
 
             if new_treasury == AccountId::from(constants::ZERO_ADDRESS) {
                 return Err(StakingError::ZeroAddress);
+            }
+            if new_treasury == self.env().account_id() {
+                return Err(StakingError::InvalidRecipient);
             }
 
             let old_treasury = self.treasury_address;
@@ -858,6 +895,10 @@ pub mod staking_contract {
             let slot = self.staker_index;
             self.staker_addresses.insert(slot, &caller);
             self.staker_slots.insert(caller, &slot);
+            // Elegível só a partir da próxima rodada (com rodada aberta, a
+            // atual já tem snapshot do peso sem esta posição).
+            self.stake_entry_round
+                .insert(caller, &self.distribution_round);
             self.staker_index = slot.checked_add(1).ok_or(StakingError::Overflow)?;
             self.total_staker_weight = self
                 .total_staker_weight
@@ -933,6 +974,31 @@ pub mod staking_contract {
                 .checked_add(rewards_out)
                 .ok_or(StakingError::Overflow)?;
 
+            // Rodada paginada em andamento: o swap-remove abaixo pode levar o
+            // staker do último slot (ainda não processado) para um slot já
+            // processado, que a rodada não visita mais. Ele recebe agora a
+            // fatia do snapshot (todas as contas checadas antes das escritas).
+            let moved_credit = self.moved_staker_credit(caller)?;
+            let moved_reward = moved_credit.as_ref().map_or(0, |(_, _, r)| *r);
+            let trading_rewards_pool = self
+                .trading_rewards_pool
+                .checked_sub(moved_reward)
+                .ok_or(StakingError::Overflow)?;
+            let distribution_credited = self
+                .distribution_credited
+                .checked_add(moved_reward)
+                .ok_or(StakingError::Overflow)?;
+            let total_trading_rewards_distributed = self
+                .total_trading_rewards_distributed
+                .checked_add(moved_reward)
+                .ok_or(StakingError::Overflow)?;
+            let total_credited_rewards = self
+                .total_credited_rewards
+                .checked_sub(credited)
+                .ok_or(StakingError::Overflow)?
+                .checked_add(moved_reward)
+                .ok_or(StakingError::Overflow)?;
+
             // Effects
             stake.active = false;
             stake.pending_rewards = 0;
@@ -945,10 +1011,15 @@ pub mod staking_contract {
                 .ok_or(StakingError::Overflow)?
                 .checked_add(penalty)
                 .ok_or(StakingError::Overflow)?;
-            self.total_credited_rewards = self
-                .total_credited_rewards
-                .checked_sub(credited)
-                .ok_or(StakingError::Overflow)?;
+            if let Some((moved, moved_stake, _)) = &moved_credit {
+                self.stakes.insert(*moved, moved_stake);
+                self.last_credited_round
+                    .insert(*moved, &self.distribution_round);
+            }
+            self.trading_rewards_pool = trading_rewards_pool;
+            self.distribution_credited = distribution_credited;
+            self.total_trading_rewards_distributed = total_trading_rewards_distributed;
+            self.total_credited_rewards = total_credited_rewards;
             self.active_stakers = self
                 .active_stakers
                 .checked_sub(1)
@@ -1867,6 +1938,11 @@ pub mod staking_contract {
             if to == AccountId::from(constants::ZERO_ADDRESS) {
                 return Err(StakingError::ZeroAddress);
             }
+            // Auto-transferência não move saldo: o contador seria zerado e o
+            // valor ficaria preso fora de qualquer contador.
+            if to == self.env().account_id() {
+                return Err(StakingError::InvalidRecipient);
+            }
             let share = match fund {
                 1 => &mut self.liquidity_fund,
                 2 => &mut self.treasury_fund,
@@ -1986,12 +2062,20 @@ pub mod staking_contract {
 
         /// Distribui trading rewards com paginação para melhor eficiência de gas (owner ou distributor)
         ///
-        /// O índice só contém stakers ativos (swap-remove no unstake): um
-        /// unstake entre páginas pode mover o último staker para um slot já
-        /// processado, que então fica sem crédito nesta rodada (o valor
-        /// permanece no pool para a próxima). Cada conta recebe no máximo um
-        /// crédito por rodada (`last_credited_round`), mesmo que saia e volte a
-        /// fazer stake entre páginas.
+        /// A rodada fixa no início o valor (`distribution_amount`) e o peso
+        /// total (`distribution_total_weight`); toda página usa os dois. Cada
+        /// staker ativo desde antes do início recebe
+        /// `distribution_amount * peso / distribution_total_weight`, e a soma
+        /// da rodada nunca passa de `distribution_amount`
+        /// (`distribution_credited`).
+        /// - O índice só contém stakers ativos (swap-remove no unstake). Se um
+        ///   unstake entre páginas move o último staker, ainda não processado,
+        ///   para um slot já processado, ele é creditado na hora (no unstake).
+        /// - Quem sai antes de ser processado não recebe; a fatia fica no pool.
+        /// - Posições criadas com a rodada aberta (`stake_entry_round`), por
+        ///   qualquer conta, só participam da rodada seguinte.
+        /// - Cada conta recebe no máximo um crédito por rodada
+        ///   (`last_credited_round`).
         ///
         /// # Parâmetros
         /// - `start_index`: o índice é imposto on-chain (`distribution_cursor`):
@@ -2043,24 +2127,34 @@ pub mod staking_contract {
                 return Ok((0, true, None)); // Nada para distribuir
             }
 
-            let total_weight = self.total_staker_weight;
+            // O denominador também é snapshot: stake/unstake entre páginas não
+            // muda a fatia de quem ainda não foi processado.
+            let total_weight = if in_progress {
+                self.distribution_total_weight
+            } else {
+                self.total_staker_weight
+            };
             if total_weight == 0 {
                 self.reset_distribution_round();
                 return Ok((0, true, None)); // Nenhum staker ativo
             }
 
-            // Snapshot only when a round starts, so every page shares the same
-            // base amount; each credit is still capped by what is left in the
-            // pool, so the total credited can never exceed what was funded.
-            if !in_progress {
-                self.distribution_amount = self.trading_rewards_pool;
-                self.distribution_round = self
-                    .distribution_round
-                    .checked_add(1)
-                    .ok_or(StakingError::Overflow)?;
-            }
-            let amount_to_distribute = self.distribution_amount;
-            let round = self.distribution_round;
+            // Snapshot (valor, peso total, número da rodada) só quando a rodada
+            // começa. Tudo é calculado em `state` e gravado no fim.
+            let mut state = if in_progress {
+                self.current_round_state()
+            } else {
+                RoundState {
+                    round: self
+                        .distribution_round
+                        .checked_add(1)
+                        .ok_or(StakingError::Overflow)?,
+                    amount: self.trading_rewards_pool,
+                    total_weight,
+                    credited: 0,
+                    pool_left: self.trading_rewards_pool,
+                }
+            };
             let mut credited_this_page: Balance = 0;
             let max_batch = batch_size.unwrap_or(100).min(100); // Limita a 100 para evitar gas excessivo
             let end = start
@@ -2070,6 +2164,7 @@ pub mod staking_contract {
 
             let mut distributed_count = 0u32;
             let mut processed_count = 0u32;
+            let mut credits: Vec<(AccountId, StakePosition)> = Vec::new();
 
             // Distribui proporcionalmente para o lote de stakers
             for i in start..end {
@@ -2079,42 +2174,27 @@ pub mod staking_contract {
 
                 if let Some(staker) = self.staker_addresses.get(i) {
                     if let Some(mut stake) = self.stakes.get(staker) {
-                        // Já creditado nesta rodada (saiu e voltou a fazer
-                        // stake entre páginas): sem segundo crédito.
-                        let already_credited =
-                            self.last_credited_round.get(staker).unwrap_or(0) == round;
-                        if stake.active && !already_credited {
-                            let weight = self.calculate_staker_weight(&stake);
-                            let reward = amount_to_distribute
-                                .checked_mul(weight)
-                                .ok_or(StakingError::Overflow)?
-                                .checked_div(total_weight)
-                                .ok_or(StakingError::Overflow)?
-                                .min(self.trading_rewards_pool);
-
-                            if reward > 0 {
-                                stake.pending_rewards = stake
-                                    .pending_rewards
-                                    .checked_add(reward)
-                                    .ok_or(StakingError::Overflow)?;
-                                self.trading_rewards_pool = self
-                                    .trading_rewards_pool
-                                    .checked_sub(reward)
-                                    .ok_or(StakingError::Overflow)?;
-                                self.total_credited_rewards = self
-                                    .total_credited_rewards
-                                    .checked_add(reward)
-                                    .ok_or(StakingError::Overflow)?;
-                                credited_this_page = credited_this_page
-                                    .checked_add(reward)
-                                    .ok_or(StakingError::Overflow)?;
-
-                                self.stakes.insert(staker, &stake);
-                                self.last_credited_round.insert(staker, &round);
-                                distributed_count = distributed_count
-                                    .checked_add(1)
-                                    .ok_or(StakingError::Overflow)?;
-                            }
+                        let reward = self.round_share(staker, &stake, &state)?;
+                        if reward > 0 {
+                            stake.pending_rewards = stake
+                                .pending_rewards
+                                .checked_add(reward)
+                                .ok_or(StakingError::Overflow)?;
+                            state.pool_left = state
+                                .pool_left
+                                .checked_sub(reward)
+                                .ok_or(StakingError::Overflow)?;
+                            state.credited = state
+                                .credited
+                                .checked_add(reward)
+                                .ok_or(StakingError::Overflow)?;
+                            credited_this_page = credited_this_page
+                                .checked_add(reward)
+                                .ok_or(StakingError::Overflow)?;
+                            distributed_count = distributed_count
+                                .checked_add(1)
+                                .ok_or(StakingError::Overflow)?;
+                            credits.push((staker, stake));
                         }
                     }
                 }
@@ -2124,15 +2204,31 @@ pub mod staking_contract {
             // página fica vazia e a rodada termina.
             let is_complete = end >= self.staker_index;
             let next_index = if is_complete { None } else { Some(end) };
-
-            self.total_trading_rewards_distributed = self
+            let total_credited_rewards = self
+                .total_credited_rewards
+                .checked_add(credited_this_page)
+                .ok_or(StakingError::Overflow)?;
+            let total_trading_rewards_distributed = self
                 .total_trading_rewards_distributed
                 .checked_add(credited_this_page)
                 .ok_or(StakingError::Overflow)?;
 
+            // Effects (todas as contas acima já foram checadas)
+            for (staker, stake) in &credits {
+                self.stakes.insert(*staker, stake);
+                self.last_credited_round.insert(*staker, &state.round);
+            }
+            self.trading_rewards_pool = state.pool_left;
+            self.total_credited_rewards = total_credited_rewards;
+            self.total_trading_rewards_distributed = total_trading_rewards_distributed;
+            self.distribution_round = state.round;
+
             if is_complete {
                 self.reset_distribution_round();
             } else {
+                self.distribution_amount = state.amount;
+                self.distribution_total_weight = state.total_weight;
+                self.distribution_credited = state.credited;
                 self.distribution_cursor = end;
             }
 
@@ -2145,7 +2241,7 @@ pub mod staking_contract {
 
                     // Emit event final
                     self.env().emit_event(TradingRewardsDistributed {
-                        total_amount: amount_to_distribute,
+                        total_amount: state.amount,
                         stakers_count: distributed_count,
                         timestamp: self.env().block_timestamp(),
                     });
@@ -2165,10 +2261,97 @@ pub mod staking_contract {
             Ok((processed_count, is_complete, next_index))
         }
 
+        /// Estado gravado da rodada em andamento (`distribution_amount != 0`).
+        fn current_round_state(&self) -> RoundState {
+            RoundState {
+                round: self.distribution_round,
+                amount: self.distribution_amount,
+                total_weight: self.distribution_total_weight,
+                credited: self.distribution_credited,
+                pool_left: self.trading_rewards_pool,
+            }
+        }
+
+        /// Fatia de `staker` na rodada `state`, ou 0 se a posição não é
+        /// elegível: precisa estar ativa, ter sido criada antes do início da
+        /// rodada (`stake_entry_round`) e ainda não ter crédito nela.
+        fn round_share(
+            &self,
+            staker: AccountId,
+            stake: &StakePosition,
+            state: &RoundState,
+        ) -> Result<Balance, StakingError> {
+            if !stake.active
+                || self.last_credited_round.get(staker).unwrap_or(0) == state.round
+                || self.stake_entry_round.get(staker).unwrap_or(0) >= state.round
+            {
+                return Ok(0);
+            }
+            let share = state
+                .amount
+                .checked_mul(self.calculate_staker_weight(stake))
+                .ok_or(StakingError::Overflow)?
+                .checked_div(state.total_weight)
+                .ok_or(StakingError::Overflow)?;
+            // A soma da rodada nunca passa do snapshot, qualquer que seja o
+            // arredondamento ou o pool (que pode ter recebido aportes da
+            // próxima rodada).
+            let remaining = state
+                .amount
+                .checked_sub(state.credited)
+                .ok_or(StakingError::Overflow)?;
+            Ok(share.min(remaining).min(state.pool_left))
+        }
+
+        /// Crédito do staker que o swap-remove de `account` vai mover do último
+        /// slot (ainda não processado na rodada em andamento) para o slot de
+        /// `account`, já processado (< `distribution_cursor`), onde a rodada
+        /// não o visitaria mais. Só calcula: devolve a posição já creditada e
+        /// o valor, e as escritas ficam com o chamador.
+        fn moved_staker_credit(
+            &self,
+            account: AccountId,
+        ) -> Result<Option<(AccountId, StakePosition, Balance)>, StakingError> {
+            if self.distribution_amount == 0 {
+                return Ok(None);
+            }
+            let slot = self
+                .staker_slots
+                .get(account)
+                .ok_or(StakingError::NoActiveStake)?;
+            let last = self
+                .staker_index
+                .checked_sub(1)
+                .ok_or(StakingError::Overflow)?;
+            // slot < cursor <= last: o movido sai da parte não processada para
+            // a processada. Fora disso ninguém troca de lado.
+            if slot >= self.distribution_cursor || last < self.distribution_cursor {
+                return Ok(None);
+            }
+            let moved = self
+                .staker_addresses
+                .get(last)
+                .ok_or(StakingError::NoActiveStake)?;
+            let Some(mut stake) = self.stakes.get(moved) else {
+                return Ok(None);
+            };
+            let reward = self.round_share(moved, &stake, &self.current_round_state())?;
+            if reward == 0 {
+                return Ok(None);
+            }
+            stake.pending_rewards = stake
+                .pending_rewards
+                .checked_add(reward)
+                .ok_or(StakingError::Overflow)?;
+            Ok(Some((moved, stake, reward)))
+        }
+
         /// Encerra a rodada de distribuição: sem snapshot, cursor no início.
         fn reset_distribution_round(&mut self) {
             self.distribution_amount = 0;
             self.distribution_cursor = 0;
+            self.distribution_total_weight = 0;
+            self.distribution_credited = 0;
         }
 
         // === FUNÇÕES DE GOVERNANÇA EXPANDIDA ===
@@ -2580,14 +2763,22 @@ pub mod staking_contract {
     }
 
     // === Unit Tests ===
+    // Aritmética simples nos testes (overflow em debug já faz o teste falhar);
+    // `arithmetic_side_effects` vale para o código do contrato.
     #[cfg(test)]
+    #[allow(clippy::arithmetic_side_effects)]
     mod tests {
         use super::*;
         use ink::env::test;
 
+        /// Treasury dos fixtures. Antes era `[0x1; 32]`, que é a própria alice
+        /// e também o callee padrão do ambiente off-chain (a conta do
+        /// contrato), destino que o construtor agora rejeita.
+        const TEST_TREASURY: [u8; 32] = [0x7E; 32];
+
         #[ink::test]
         fn test_new_staking_contract() {
-            let contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             let (total_staked, total_rewards, active_stakers) = contract.get_stats();
 
             assert_eq!(total_staked, 0);
@@ -2601,7 +2792,7 @@ pub mod staking_contract {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::MIN_STAKE);
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             let result = contract.stake(constants::MIN_DURATION);
 
             assert!(result.is_ok());
@@ -2618,7 +2809,7 @@ pub mod staking_contract {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(1000); // Below minimum
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             let result = contract.stake(constants::MIN_DURATION);
 
             assert_eq!(result, Err(StakingError::MinimumStakeNotMet));
@@ -2630,7 +2821,7 @@ pub mod staking_contract {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::MIN_STAKE);
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             let result = contract.stake(1000); // Below minimum duration
 
             assert_eq!(result, Err(StakingError::InvalidDuration));
@@ -2644,7 +2835,7 @@ pub mod staking_contract {
                 constants::MIN_PROPOSAL_POWER,
             );
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
 
             // First stake enough tokens for proposal power
             let stake_result = contract.stake(constants::MIN_DURATION);
@@ -2674,7 +2865,7 @@ pub mod staking_contract {
                 constants::MIN_PROPOSAL_POWER,
             );
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
 
             // Stake and create proposal
             contract.stake(constants::MIN_DURATION).unwrap();
@@ -2702,7 +2893,7 @@ pub mod staking_contract {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::MIN_STAKE);
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
 
             // No stake, no voting power
             let power = contract.get_voting_power(accounts.alice).unwrap();
@@ -2720,7 +2911,7 @@ pub mod staking_contract {
             let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
 
             // Test pause
             assert!(contract.pause().is_ok());
@@ -2744,7 +2935,7 @@ pub mod staking_contract {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::MIN_STAKE);
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
 
             // Pause contract
             contract.pause().unwrap();
@@ -2762,7 +2953,7 @@ pub mod staking_contract {
                 constants::MIN_PROPOSAL_POWER,
             );
 
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             contract.stake(constants::MIN_DURATION).unwrap();
 
             let result = contract.create_proposal(
@@ -2776,7 +2967,7 @@ pub mod staking_contract {
 
         #[ink::test]
         fn test_proposal_fee_governance_works() {
-            let treasury = AccountId::from([0x1; 32]);
+            let treasury = AccountId::from(TEST_TREASURY);
             let mut staking = StakingContract::new(treasury);
             let alice = AccountId::from([0x2; 32]);
 
@@ -2826,7 +3017,7 @@ pub mod staking_contract {
 
         #[ink::test]
         fn test_proposal_fee_governance_validation() {
-            let treasury = AccountId::from([0x1; 32]);
+            let treasury = AccountId::from(TEST_TREASURY);
             let mut staking = StakingContract::new(treasury);
             let alice = AccountId::from([0x2; 32]);
 
@@ -2877,7 +3068,7 @@ pub mod staking_contract {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_block_timestamp::<ink::env::DefaultEnvironment>(1_000);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(amount);
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             contract.stake(duration).unwrap();
             contract
         }
@@ -2936,7 +3127,7 @@ pub mod staking_contract {
             let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
             test::set_value_transferred::<ink::env::DefaultEnvironment>(constants::MIN_STAKE);
-            let mut contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let mut contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             assert_eq!(
                 contract.stake(6 * DAY_MS),
                 Err(StakingError::InvalidDuration)
@@ -2950,7 +3141,7 @@ pub mod staking_contract {
 
         #[ink::test]
         fn test_tier_thresholds_are_in_days() {
-            let contract = StakingContract::new(AccountId::from([0x1; 32]));
+            let contract = StakingContract::new(AccountId::from(TEST_TREASURY));
             assert_eq!(
                 contract.calculate_staking_tier(7 * DAY_MS),
                 StakingTier::Bronze
@@ -3052,7 +3243,7 @@ pub mod staking_contract {
             test::set_caller::<E>(accounts.alice);
             test::set_value_transferred::<E>(0);
             (
-                StakingContract::new(AccountId::from([0x1; 32])),
+                StakingContract::new(AccountId::from(TEST_TREASURY)),
                 contract_id,
             )
         }
@@ -3285,7 +3476,7 @@ pub mod staking_contract {
                 let mut now = 1_000u64;
                 for _ in 0..120 {
                     let who = stakers[(next() % 4) as usize];
-                    now += (next() % (20 * DAY_MS)) as u64;
+                    now += next() % (20 * DAY_MS);
                     test::set_block_timestamp::<E>(now);
                     match next() % 5 {
                         0 | 1 => {
@@ -3396,8 +3587,7 @@ pub mod staking_contract {
         fn test_vote_fund_withdrawals_are_restricted() {
             let accounts = test::default_accounts::<E>();
             let (mut c, contract_id) = solvency_setup();
-            // `[0x1; 32]` (treasury do setup) é a própria alice no ambiente
-            // off-chain; usa um treasury distinto do owner.
+            // Usa um treasury explícito, distinto do owner (alice).
             let treasury = AccountId::from([0x7A; 32]);
             as_caller(accounts.alice, 0);
             c.set_treasury_address(treasury).unwrap();
@@ -4027,9 +4217,12 @@ pub mod staking_contract {
             assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
             assert_solvent(&c, contract_id);
 
-            // (b) Pool zerado no meio da rodada. Não há caminho natural para
-            // isso (cada crédito é limitado ao pool), então o teste zera o
-            // campo diretamente para exercitar o retorno antecipado.
+            // (b) Pool zerado no meio da rodada. Com valor e peso em snapshot e
+            // o acumulador da rodada, o pool só zera no meio dela quando toda
+            // a fatia do snapshot já foi creditada sem aporte novo (como em (a),
+            // onde o unstake da alice credita bob na hora). Aqui o teste zera o
+            // campo diretamente para exercitar o retorno antecipado com
+            // stakers ainda por processar.
             as_caller(accounts.charlie, 10_000 * LUNES);
             c.stake(7 * DAY_MS).unwrap();
             fund_trading(&mut c, 40 * LUNES);
@@ -4070,7 +4263,17 @@ pub mod staking_contract {
                 (accounts.django, 1_000 * LUNES, 7),
             ]);
             fund_trading(&mut c, 100 * LUNES);
+            // Fatias sobre o peso total do INÍCIO da rodada (snapshot), não o
+            // peso corrente depois das mudanças entre páginas.
+            let early = [
+                accounts.alice,
+                accounts.bob,
+                accounts.charlie,
+                accounts.django,
+            ];
+            let shares = snapshot_shares(&c, &early, 100 * LUNES);
             let alice_share = expected_share(&c, accounts.alice, 100 * LUNES);
+            assert_eq!(alice_share, shares[0]);
             as_caller(accounts.alice, 0);
             assert_eq!(
                 c.distribute_trading_rewards_paginated(None, Some(1)),
@@ -4079,6 +4282,8 @@ pub mod staking_contract {
             assert_eq!(credited(&c, accounts.alice), alice_share);
 
             // Lock expirado: sai (recebe o crédito) e volta no fim do índice.
+            // O swap-remove leva django (slot 3, ainda não processado) para o
+            // slot 0, já processado.
             test::set_block_timestamp::<E>(1_000 + 182 * DAY_MS);
             as_caller(accounts.alice, 0);
             c.unstake().unwrap();
@@ -4087,14 +4292,10 @@ pub mod staking_contract {
             // Um staker novo depois dela fica na última página.
             as_caller(accounts.frank, 1_000 * LUNES);
             c.stake(7 * DAY_MS).unwrap();
+            assert_eq!(c.staker_addresses.get(0), Some(accounts.django));
             assert_eq!(c.staker_addresses.get(3), Some(accounts.alice));
             assert_eq!(c.staker_addresses.get(4), Some(accounts.frank));
 
-            let late = [accounts.bob, accounts.charlie, accounts.frank];
-            let late_shares: Vec<Balance> = late
-                .iter()
-                .map(|&w| expected_share(&c, w, 100 * LUNES))
-                .collect();
             as_caller(accounts.alice, 0);
             let mut next = Some(1);
             while let Some(start) = next {
@@ -4103,14 +4304,247 @@ pub mod staking_contract {
                     .unwrap();
                 next = n;
             }
-            // Nenhum segundo crédito para alice nesta rodada...
+            // Nenhum segundo crédito para alice nesta rodada, nem crédito para
+            // frank, que entrou depois do início da rodada...
             assert_eq!(credited(&c, accounts.alice), 0);
-            // ...e quem ficou para o fim recebe a fatia inteira.
-            for (i, &who) in late.iter().enumerate() {
-                assert_eq!(credited(&c, who), late_shares[i]);
+            assert_eq!(credited(&c, accounts.frank), 0);
+            // ...e todo staker ativo desde o início, inclusive django (movido
+            // para um slot já processado), recebe a fatia exata do snapshot.
+            let mut round_total = shares[0];
+            for (i, &who) in early.iter().enumerate().skip(1) {
+                assert_eq!(credited(&c, who), shares[i], "staker {i}");
+                round_total += shares[i];
             }
+            assert!(round_total <= 100 * LUNES);
+            assert_eq!(c.get_reward_pools().1, 100 * LUNES - round_total);
             assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
             assert_solvent(&c, contract_id);
+        }
+
+        /// Fatia de cada conta sobre `amount` com o peso total corrente
+        /// (chamar antes da rodada: é o peso do snapshot).
+        fn snapshot_shares(
+            c: &StakingContract,
+            who: &[AccountId],
+            amount: Balance,
+        ) -> Vec<Balance> {
+            let total_weight = recomputed_total_weight(c);
+            assert_eq!(total_weight, c.total_staker_weight);
+            who.iter()
+                .map(|&w| {
+                    amount * c.calculate_staker_weight(&c.get_stake(w).unwrap()) / total_weight
+                })
+                .collect()
+        }
+
+        /// Percorre o resto da rodada em páginas de 1 a partir do cursor.
+        fn finish_round_in_pages_of_one(c: &mut StakingContract) {
+            let accounts = test::default_accounts::<E>();
+            as_caller(accounts.alice, 0);
+            let mut next = Some(c.distribution_cursor);
+            let mut pages = 0;
+            while let Some(start) = next {
+                let (_, _, n) = c
+                    .distribute_trading_rewards_paginated(Some(start), Some(1))
+                    .unwrap();
+                next = n;
+                pages += 1;
+                assert!(pages <= 20, "rodada não terminou");
+            }
+        }
+
+        #[ink::test]
+        fn test_capital_returning_through_another_account_is_not_credited() {
+            let accounts = test::default_accounts::<E>();
+            let second = AccountId::from([0x58; 32]);
+            // Cenário do achado #0: X (bob), Y (charlie), Z (django) com o
+            // mesmo peso, pool 90, páginas de 1.
+            let (mut c, contract_id) = distribution_setup(&[
+                (accounts.bob, 1_000 * LUNES, 7),
+                (accounts.charlie, 1_000 * LUNES, 7),
+                (accounts.django, 1_000 * LUNES, 7),
+            ]);
+            test::set_account_balance::<E>(second, 10_000 * LUNES);
+            fund_trading(&mut c, 90 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(credited(&c, accounts.bob), 30 * LUNES);
+
+            // X sai com lock vencido (leva principal + 30) e o mesmo capital
+            // volta por OUTRA conta, no fim do índice.
+            test::set_block_timestamp::<E>(1_000 + 8 * DAY_MS);
+            let bob_before = balance_of(accounts.bob);
+            as_caller(accounts.bob, 0);
+            c.unstake().unwrap();
+            assert_eq!(
+                balance_of(accounts.bob),
+                bob_before + 1_000 * LUNES + 30 * LUNES
+            );
+            as_caller(second, 1_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+
+            finish_round_in_pages_of_one(&mut c);
+
+            // A segunda conta não captura a fatia de ninguém; Y e Z recebem a
+            // fatia inteira e nada do snapshot sobra nem falta.
+            assert_eq!(credited(&c, second), 0);
+            assert_eq!(credited(&c, accounts.charlie), 30 * LUNES);
+            assert_eq!(credited(&c, accounts.django), 30 * LUNES);
+            assert_eq!(c.get_reward_pools().1, 0);
+            assert_eq!(c.get_reward_pools().2, 60 * LUNES);
+            assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+            assert_solvent(&c, contract_id);
+
+            // Na rodada seguinte a segunda conta participa normalmente.
+            fund_trading(&mut c, 30 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, None),
+                Ok((3, true, None))
+            );
+            assert_eq!(credited(&c, second), 10 * LUNES);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_unstake_and_stake_between_pages_keep_exact_snapshot_shares() {
+            let accounts = test::default_accounts::<E>();
+            let late = AccountId::from([0x59; 32]);
+            // Pesos 4:2:2:1:1 (mesmo tier e multiplicador): fatias 40/20/20/10/10.
+            let (mut c, contract_id) = distribution_setup(&[
+                (accounts.alice, 4_000 * LUNES, 7),
+                (accounts.bob, 2_000 * LUNES, 7),
+                (accounts.charlie, 2_000 * LUNES, 7),
+                (accounts.django, 1_000 * LUNES, 7),
+                (accounts.frank, 1_000 * LUNES, 7),
+            ]);
+            test::set_account_balance::<E>(late, 10_000 * LUNES);
+            fund_trading(&mut c, 100 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(credited(&c, accounts.alice), 40 * LUNES);
+
+            test::set_block_timestamp::<E>(1_000 + 8 * DAY_MS);
+            // Alice (já processada, a maior) sai: frank, do último slot e
+            // ainda não processado, vai para o slot 0.
+            as_caller(accounts.alice, 0);
+            c.unstake().unwrap();
+            assert_eq!(c.staker_addresses.get(0), Some(accounts.frank));
+            // Django sai antes de ser processado: não recebe, a fatia fica no pool.
+            as_caller(accounts.django, 0);
+            c.unstake().unwrap();
+            // Capital novo no meio da rodada não entra no snapshot.
+            as_caller(late, 4_000 * LUNES);
+            c.stake(7 * DAY_MS).unwrap();
+            // Aporte no meio da rodada pertence à próxima.
+            fund_trading(&mut c, 7 * LUNES);
+            assert_index_consistent(&c);
+
+            finish_round_in_pages_of_one(&mut c);
+
+            assert_eq!(credited(&c, accounts.frank), 10 * LUNES);
+            assert_eq!(credited(&c, accounts.bob), 20 * LUNES);
+            assert_eq!(credited(&c, accounts.charlie), 20 * LUNES);
+            assert_eq!(credited(&c, accounts.django), 0);
+            assert_eq!(credited(&c, late), 0);
+            let round_total = (40 + 10 + 20 + 20) * LUNES;
+            assert!(round_total <= 100 * LUNES);
+            // Pool restante exato: fatia do django + aporte do meio da rodada.
+            assert_eq!(
+                c.get_reward_pools().1,
+                100 * LUNES - round_total + 7 * LUNES
+            );
+            // Creditado em aberto: alice já levou os 40 dela no unstake.
+            assert_eq!(c.get_reward_pools().2, (10 + 20 + 20) * LUNES);
+            assert_eq!((c.distribution_amount, c.distribution_cursor), (0, 0));
+            assert_index_consistent(&c);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_round_credits_never_exceed_snapshot_amount() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = distribution_setup(&[
+                (accounts.alice, 1_000 * LUNES, 7),
+                (accounts.bob, 1_000 * LUNES, 7),
+                (accounts.charlie, 1_000 * LUNES, 7),
+            ]);
+            fund_trading(&mut c, 90 * LUNES);
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.distribute_trading_rewards_paginated(None, Some(1)),
+                Ok((1, false, Some(1)))
+            );
+            assert_eq!(c.distribution_credited, 30 * LUNES);
+
+            // Denominador corrompido (qualquer deriva de peso) e pool com
+            // sobra: só o acumulador da rodada limita a soma ao snapshot.
+            c.distribution_total_weight /= 3;
+            fund_trading(&mut c, 1_000 * LUNES);
+            finish_round_in_pages_of_one(&mut c);
+
+            let round_total = credited(&c, accounts.alice)
+                + credited(&c, accounts.bob)
+                + credited(&c, accounts.charlie);
+            assert_eq!(round_total, 90 * LUNES);
+            assert_eq!(c.get_reward_pools().1, 1_000 * LUNES);
+            assert_eq!(c.distribution_credited, 0);
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        fn test_vote_funds_cannot_be_withdrawn_to_the_contract_itself() {
+            let accounts = test::default_accounts::<E>();
+            let (mut c, contract_id) = solvency_setup();
+            let id = proposal_setup(&mut c);
+            for who in [accounts.bob, accounts.charlie] {
+                stake_and_vote(&mut c, who, id);
+            }
+            let funds = c.get_vote_funds();
+            let balance = balance_of(contract_id);
+
+            as_caller(accounts.alice, 0);
+            assert_eq!(
+                c.withdraw_team_fund(contract_id),
+                Err(StakingError::InvalidRecipient)
+            );
+            assert_eq!(
+                c.withdraw_liquidity_fund(contract_id),
+                Err(StakingError::InvalidRecipient)
+            );
+            assert_eq!(c.get_vote_funds(), funds);
+            assert_eq!(balance_of(contract_id), balance);
+
+            // O treasury também não pode apontar para o próprio contrato.
+            let treasury_before = c.treasury_address;
+            assert_eq!(
+                c.set_treasury_address(contract_id),
+                Err(StakingError::InvalidRecipient)
+            );
+            assert_eq!(c.treasury_address, treasury_before);
+            assert_eq!(c.withdraw_treasury_fund(), Ok(2 * VOTE_SHARE));
+            assert_eq!(c.get_vote_funds(), (funds.0, 0, funds.2));
+
+            // O caminho legítimo continua funcionando.
+            assert_eq!(
+                c.withdraw_team_fund(accounts.frank),
+                Ok(2 * VOTE_TEAM_SHARE)
+            );
+            assert_solvent(&c, contract_id);
+        }
+
+        #[ink::test]
+        #[should_panic(expected = "treasury")]
+        fn test_constructor_rejects_contract_as_treasury() {
+            let contract_id = AccountId::from([0xCA; 32]);
+            test::set_callee::<E>(contract_id);
+            let _ = StakingContract::new(contract_id);
         }
 
         #[ink::test]
