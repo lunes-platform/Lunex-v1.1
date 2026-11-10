@@ -41,7 +41,7 @@ import {
   isLocalEndpoint,
   isPlaceholder,
 } from '../utils/productionGuards';
-import { withTxTimeout } from '../utils/txWithTimeout';
+import { DEFAULT_TX_TIMEOUT_MS, withTxTimeout } from '../utils/txWithTimeout';
 import { isSameAccount } from '../utils/validation';
 
 // --- Types ---
@@ -50,6 +50,9 @@ interface BridgeAssetConfig {
   assetId: number;
   wrapperAddress: string;
   symbol: string;
+  // SEC R8: smallest amount (base units, decimal string) minted automatically;
+  // smaller deposits are recorded as MANUAL. Unset: no minimum.
+  minDepositAmount?: string;
 }
 
 interface BridgeConfig {
@@ -59,6 +62,9 @@ interface BridgeConfig {
   contractMetadataPath: string;
   stateFilePath: string; // SEC B-02: persistent state file
   txTimeoutMs?: number; // bound on every extrinsic (default 60 s)
+  // SEC R8: mint/confirm/payout items handled inline per block, and per kind
+  // per retry pass; the excess stays PENDING for the retry.
+  maxInlinePerBlock?: number;
 }
 
 /**
@@ -69,7 +75,10 @@ interface BridgeConfig {
  *   PENDING    -> CONFIRMING  persisted right before confirm_withdraw is broadcast
  *   CONFIRMING -> CONFIRMED   our confirm finalized with WithdrawConfirmed(id),
  *                             or WithdrawConfirmed(id) seen later in the stream
- *   CONFIRMING -> PENDING     confirm finalized but failed (ExtrinsicFailed / no event)
+ *   CONFIRMING -> PENDING     confirm finalized but failed (ExtrinsicFailed, or
+ *                             ExtrinsicSuccess without WithdrawConfirmed(id));
+ *                             a finalized status with neither is ambiguous and
+ *                             stays CONFIRMING (SEC R7)
  *   CONFIRMED  -> DONE        pallet-asset delivered
  *   PENDING    -> CONFIRMED   WithdrawConfirmed(id) we never broadcast: NOT sent
  *   PENDING | CONFIRMING -> RECLAIMED  WithdrawReclaimed(id) seen
@@ -100,15 +109,20 @@ type WithdrawalRecord = {
  * SEC R3: a deposit stays PENDING until the wrapper emitted Mint with its
  * deposit_ref. Retrying is safe: the contract rejects a reused ref with
  * DepositAlreadyProcessed, which marks the record DONE.
+ *
+ * MANUAL is a quarantine: the deposit is recorded (lastError says why) but is
+ * never minted or retried automatically; an operator settles it. Used when
+ * the event index does not fit deposit_ref (depositRef null) and for amounts
+ * below the asset's minDepositAmount.
  */
 type DepositRecord = {
-  status: 'PENDING' | 'DONE';
+  status: 'PENDING' | 'DONE' | 'MANUAL';
   assetId: number;
   wrapperAddress: string;
   from: string;
   amount: string;
   blockNumber: number;
-  depositRef: number;
+  depositRef: number | null;
   lastAttemptBlock: number;
   lastError?: string;
 };
@@ -126,6 +140,15 @@ const RETRY_INTERVAL_BLOCKS = 10;
 
 /** deposit_ref = blockNumber * DEPOSIT_REF_STRIDE + index of the event in the block. */
 const DEPOSIT_REF_STRIDE = 10_000;
+
+/** Default SEC R8 bound on inline mint/confirm/payout items per block. */
+const DEFAULT_MAX_INLINE_PER_BLOCK = 20;
+
+/** Slack on top of the in-flight item's tx timeouts that stop() waits for. */
+const STOP_WAIT_SLACK_MS = 5_000;
+
+const DEFERRED_ERROR =
+  'deferred: per-block inline limit reached or stopping, left PENDING for the retry';
 
 type ContractApi = ConstructorParameters<typeof ContractPromise>[0];
 
@@ -155,6 +178,9 @@ export class AssetBridgeService {
   private nonceStale = false; // SEC R2: resync from chain before next extrinsic
   private latestFinalizedHead = 0; // SEC A-07: highest finalized head seen
   private catchingUp = false; // SEC A-07: one block-processing loop at a time
+  private currentRun?: Promise<void>; // the loop stop() waits for
+  private lastRetryBlock = -1; // SEC R8: cursor at the last retry pass
+  private inlineBudget = 0; // SEC R8: items left for the block in progress
 
   constructor(private config: BridgeConfig) {
     const keyring = new Keyring({ type: 'sr25519' });
@@ -232,6 +258,14 @@ export class AssetBridgeService {
 
     // Initialize wrapper contracts
     for (const asset of this.config.assets) {
+      if (
+        asset.minDepositAmount !== undefined &&
+        !/^\d+$/.test(asset.minDepositAmount)
+      ) {
+        throw new Error(
+          `Invalid minDepositAmount for asset #${asset.assetId}: expected a decimal integer string`,
+        );
+      }
       const contract = new ContractPromise(
         asContractApi(this.api),
         metadata,
@@ -289,6 +323,7 @@ export class AssetBridgeService {
     if (this.unsubscribeBlocks) {
       this.unsubscribeBlocks();
     }
+    await this.waitForCurrentRun();
     try {
       this.saveState();
     } catch (err) {
@@ -303,15 +338,67 @@ export class AssetBridgeService {
     log.info('[AssetBridge] Stopped.');
   }
 
+  /**
+   * SEC R9: with `running` false no new item starts, so the run in progress
+   * ends after its current item, at worst a confirm_withdraw followed by its
+   * payout (two tx timeouts). Wait for that, bounded, so a shutdown does not
+   * strand a record in CONFIRMING / CONFIRMED with the outcome unrecorded.
+   */
+  private async waitForCurrentRun(): Promise<void> {
+    const run = this.currentRun;
+    if (!run) return;
+    const txTimeoutMs = this.config.txTimeoutMs ?? DEFAULT_TX_TIMEOUT_MS;
+    const capMs = 2 * txTimeoutMs + STOP_WAIT_SLACK_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finished = await Promise.race([
+      run.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), capMs);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (!finished) {
+      log.error(
+        { capMs },
+        '[AssetBridge] CRITICAL: In-flight bridge work did not finish before the stop deadline; stopping anyway',
+      );
+    }
+  }
+
   // --- Block Processing (SEC A-07) ---
+
+  /** SEC R8: configured per-block inline bound, invalid values -> default. */
+  private get maxInlinePerBlock(): number {
+    const configured = this.config.maxInlinePerBlock;
+    return configured !== undefined &&
+      Number.isInteger(configured) &&
+      configured >= 1
+      ? configured
+      : DEFAULT_MAX_INLINE_PER_BLOCK;
+  }
+
+  /**
+   * SEC R8: claim one inline mint/confirm for the block in progress. False
+   * once the block's budget is spent or the service is stopping; the caller
+   * then leaves the record PENDING for the retry.
+   */
+  private takeInlineSlot(): boolean {
+    if (!this.running || this.inlineBudget <= 0) return false;
+    this.inlineBudget--;
+    return true;
+  }
 
   /**
    * Process every block from `lastProcessedBlock + 1` up to the newest
    * finalized head, in order. The persisted cursor only advances after a block
    * succeeds (including its state save); on error we stop and retry that block
    * on the next head. Heads that arrive mid-run only raise the target of the
-   * run already in progress, so a block is never processed by two loops. Once
-   * caught up, due PENDING records are retried.
+   * run already in progress, so a block is never processed by two loops. Due
+   * PENDING records are retried every RETRY_INTERVAL_BLOCKS blocks while
+   * catching up, and once caught up.
    */
   private async onFinalizedHead(headNumber: number): Promise<void> {
     if (!this.running) return;
@@ -329,32 +416,47 @@ export class AssetBridgeService {
     }
 
     this.catchingUp = true;
+    const run = this.catchUp();
+    this.currentRun = run;
     try {
-      while (
-        this.running &&
-        this.state.lastProcessedBlock < this.latestFinalizedHead
-      ) {
-        const blockNumber = this.state.lastProcessedBlock + 1;
-        try {
-          await this.processBlock(blockNumber);
-          this.state.lastProcessedBlock = blockNumber;
-          this.saveState();
-        } catch (err) {
-          this.state.lastProcessedBlock = blockNumber - 1;
-          log.error(
-            { err, blockNumber },
-            '[AssetBridge] Error processing block, will retry on next finalized head',
-          );
-          return;
-        }
-      }
-      await this.retryPending();
+      await run;
     } finally {
+      this.currentRun = undefined;
       this.catchingUp = false;
     }
   }
 
+  private async catchUp(): Promise<void> {
+    if (this.lastRetryBlock < 0) {
+      this.lastRetryBlock = this.state.lastProcessedBlock;
+    }
+    while (
+      this.running &&
+      this.state.lastProcessedBlock < this.latestFinalizedHead
+    ) {
+      const blockNumber = this.state.lastProcessedBlock + 1;
+      try {
+        await this.processBlock(blockNumber);
+        this.state.lastProcessedBlock = blockNumber;
+        this.saveState();
+      } catch (err) {
+        this.state.lastProcessedBlock = blockNumber - 1;
+        log.error(
+          { err, blockNumber },
+          '[AssetBridge] Error processing block, will retry on next finalized head',
+        );
+        return;
+      }
+      // SEC R8: a relayer that is behind still serves PENDING records.
+      if (blockNumber - this.lastRetryBlock >= RETRY_INTERVAL_BLOCKS) {
+        await this.retryPending();
+      }
+    }
+    await this.retryPending();
+  }
+
   private async processBlock(blockNumber: number): Promise<void> {
+    this.inlineBudget = this.maxInlinePerBlock;
     const blockHash = await this.api.rpc.chain.getBlockHash(blockNumber);
     const events = (await this.api.query.system.events.at(
       blockHash,
@@ -366,22 +468,31 @@ export class AssetBridgeService {
 
   /**
    * SEC R1/R3: retry PENDING deposits and withdrawals at most once every
-   * RETRY_INTERVAL_BLOCKS finalized blocks each. CONFIRMING / CONFIRMED are
-   * never retried here.
+   * RETRY_INTERVAL_BLOCKS finalized blocks each. CONFIRMING / CONFIRMED /
+   * MANUAL are never retried here. SEC R8: at most maxInlinePerBlock attempts
+   * per kind and pass, so a flood of deposits cannot starve withdrawals.
    */
   private async retryPending(): Promise<void> {
     const now = this.state.lastProcessedBlock;
+    this.lastRetryBlock = now;
+    const limit = this.maxInlinePerBlock;
     const isDue = (record: { status: string; lastAttemptBlock: number }) =>
       record.status === 'PENDING' &&
       now - record.lastAttemptBlock >= RETRY_INTERVAL_BLOCKS;
     try {
+      let attempts = 0;
       for (const [key, deposit] of Object.entries(this.state.deposits)) {
-        if (this.running && isDue(deposit)) {
+        if (!this.running || attempts >= limit) break;
+        if (isDue(deposit)) {
+          attempts++;
           await this.attemptMint(key, deposit, now);
         }
       }
+      attempts = 0;
       for (const [key, withdrawal] of Object.entries(this.state.withdrawals)) {
-        if (this.running && isDue(withdrawal)) {
+        if (!this.running || attempts >= limit) break;
+        if (isDue(withdrawal)) {
+          attempts++;
           await this.attemptConfirm(key, withdrawal, now);
         }
       }
@@ -414,12 +525,6 @@ export class AssetBridgeService {
         );
         continue;
       }
-      if (eventIndex >= DEPOSIT_REF_STRIDE) {
-        throw new Error(
-          `Deposit at event index ${eventIndex} in block ${blockNumber} does not fit deposit_ref; refusing to collide`,
-        );
-      }
-
       // Legacy dedup (old relayer keyed deposits by extrinsic index).
       const extrinsicIndex = phase.isApplyExtrinsic
         ? phase.asApplyExtrinsic.toNumber()
@@ -437,21 +542,80 @@ export class AssetBridgeService {
         log.info(`[AssetBridge] Skipping already minted deposit ${key}`);
         continue;
       }
+      if (existing?.status === 'MANUAL') {
+        log.warn(
+          { key, lastError: existing.lastError },
+          '[AssetBridge] Skipping quarantined deposit (MANUAL), not minting',
+        );
+        continue;
+      }
+
+      const amountStr = amount.toString();
+      const fitsRef = eventIndex < DEPOSIT_REF_STRIDE;
+      const depositRef = fitsRef
+        ? blockNumber * DEPOSIT_REF_STRIDE + eventIndex
+        : null;
+
+      if (!existing) {
+        // SEC R6/R8: record and quarantine instead of minting; never throw,
+        // or one deposit would stall the cursor on this block forever.
+        const quarantine = depositQuarantineReason(
+          asset,
+          eventIndex,
+          amountStr,
+        );
+        if (quarantine) {
+          this.state.deposits[key] = {
+            status: 'MANUAL',
+            assetId: assetIdNum,
+            wrapperAddress: asset.wrapperAddress,
+            from: from.toString(),
+            amount: amountStr,
+            blockNumber,
+            depositRef,
+            lastAttemptBlock: blockNumber,
+            lastError: quarantine,
+          };
+          this.saveState();
+          if (fitsRef) {
+            log.warn(
+              { key, reason: quarantine },
+              '[AssetBridge] Deposit below minimum recorded as MANUAL, not minted',
+            );
+          } else {
+            log.error(
+              { key, reason: quarantine },
+              '[AssetBridge] CRITICAL: Deposit quarantined (MANUAL), not minted; manual resolution required',
+            );
+          }
+          continue;
+        }
+      }
 
       const deposit: DepositRecord = existing ?? {
         status: 'PENDING',
         assetId: assetIdNum,
         wrapperAddress: asset.wrapperAddress,
         from: from.toString(),
-        amount: amount.toString(),
+        amount: amountStr,
         blockNumber,
-        depositRef: blockNumber * DEPOSIT_REF_STRIDE + eventIndex,
+        depositRef,
         lastAttemptBlock: blockNumber,
       };
+      const inline = this.takeInlineSlot();
+      if (!inline) {
+        // Due on the next retry pass; persisted before the cursor advances.
+        deposit.lastAttemptBlock = blockNumber - RETRY_INTERVAL_BLOCKS;
+        deposit.lastError = DEFERRED_ERROR;
+      }
       this.state.deposits[key] = deposit;
       this.saveState();
 
-      await this.attemptMint(key, deposit, blockNumber);
+      if (inline) {
+        await this.attemptMint(key, deposit, blockNumber);
+      } else {
+        log.warn({ key }, `[AssetBridge] Mint ${DEFERRED_ERROR}`);
+      }
     }
   }
 
@@ -465,8 +629,10 @@ export class AssetBridgeService {
     deposit: DepositRecord,
     now: number,
   ): Promise<void> {
-    deposit.lastAttemptBlock = now;
     const ref = deposit.depositRef;
+    // MANUAL / DONE records and refless deposits are never minted here.
+    if (deposit.status !== 'PENDING' || ref === null) return;
+    deposit.lastAttemptBlock = now;
     const label = `mint_with_ref(ref ${ref})`;
     try {
       const contract = this.wrapperContracts.get(deposit.assetId);
@@ -628,10 +794,20 @@ export class AssetBridgeService {
       blockNumber,
       lastAttemptBlock: blockNumber,
     };
+    const inline = this.takeInlineSlot();
+    if (!inline) {
+      // Due on the next retry pass; persisted before the cursor advances.
+      withdrawal.lastAttemptBlock = blockNumber - RETRY_INTERVAL_BLOCKS;
+      withdrawal.lastError = DEFERRED_ERROR;
+    }
     this.state.withdrawals[key] = withdrawal;
     this.saveState();
 
-    await this.attemptConfirm(key, withdrawal, blockNumber);
+    if (inline) {
+      await this.attemptConfirm(key, withdrawal, blockNumber);
+    } else {
+      log.warn({ key }, `[AssetBridge] confirm_withdraw ${DEFERRED_ERROR}`);
+    }
   }
 
   private async onWithdrawConfirmed(key: string): Promise<void> {
@@ -644,10 +820,13 @@ export class AssetBridgeService {
       return;
     }
     if (withdrawal.status === 'CONFIRMING') {
-      // Our own confirm landed after we stopped waiting for it.
+      // Our own confirm landed after we stopped waiting for it. The payout
+      // counts against the block's inline budget but is never deferred:
+      // CONFIRMING / CONFIRMED have no retry path.
       withdrawal.status = 'CONFIRMED';
       delete withdrawal.lastError;
       this.saveState();
+      this.inlineBudget = Math.max(0, this.inlineBudget - 1);
       await this.sendWithdrawal(key, withdrawal);
       return;
     }
@@ -809,6 +988,8 @@ export class AssetBridgeService {
       );
       if (hasExtrinsicFailed(events))
         throw new Error(`${label}: ExtrinsicFailed`);
+      if (!hasExtrinsicSuccess(events))
+        throw new Error(`${label}: no ExtrinsicSuccess, outcome ambiguous`);
     } catch (err) {
       withdrawal.lastError = errorMessage(err);
       this.saveState();
@@ -890,7 +1071,9 @@ export class AssetBridgeService {
    * rejection (drop/invalid/usurp, submission error, timeout) marks the nonce
    * stale so the next extrinsic resyncs it from the chain. A rejection is NOT
    * proof the extrinsic failed (see txWithTimeout): callers treat it as
-   * ambiguous.
+   * ambiguous. SEC R7: so is a finalized status whose events could not be
+   * fetched (`internalError`) or hold neither system.ExtrinsicSuccess nor
+   * system.ExtrinsicFailed (@polkadot/api then reports `events = []`).
    */
   private async submit(
     label: string,
@@ -919,7 +1102,24 @@ export class AssetBridgeService {
           if (result.isError) {
             reject(new Error(`${label}: dropped, invalid or usurped`));
           } else if (result.status.isFinalized) {
-            resolve(result.events);
+            if (result.internalError) {
+              reject(
+                new Error(
+                  `${label}: finalized but outcome ambiguous: ${result.internalError.message}`,
+                ),
+              );
+            } else if (
+              !hasExtrinsicSuccess(result.events) &&
+              !hasExtrinsicFailed(result.events)
+            ) {
+              reject(
+                new Error(
+                  `${label}: finalized but outcome ambiguous: no ExtrinsicSuccess/ExtrinsicFailed`,
+                ),
+              );
+            } else {
+              resolve(result.events);
+            }
           }
         },
       )
@@ -942,10 +1142,38 @@ export class AssetBridgeService {
   }
 }
 
+/**
+ * Why a new deposit must be recorded as MANUAL instead of minted, if at all:
+ * its event index does not fit deposit_ref, or it is below the asset minimum.
+ */
+function depositQuarantineReason(
+  asset: BridgeAssetConfig,
+  eventIndex: number,
+  amount: string,
+): string | undefined {
+  if (eventIndex >= DEPOSIT_REF_STRIDE) {
+    return `event index ${eventIndex} does not fit deposit_ref (stride ${DEPOSIT_REF_STRIDE}); not minted to avoid a ref collision`;
+  }
+  if (
+    asset.minDepositAmount !== undefined &&
+    new BN(amount).lt(new BN(asset.minDepositAmount))
+  ) {
+    return `amount ${amount} is below the minimum deposit ${asset.minDepositAmount}; not minted automatically`;
+  }
+  return undefined;
+}
+
 function hasExtrinsicFailed(events: EventRecord[]): boolean {
   return events.some(
     ({ event }) =>
       event.section === 'system' && event.method === 'ExtrinsicFailed',
+  );
+}
+
+function hasExtrinsicSuccess(events: EventRecord[]): boolean {
+  return events.some(
+    ({ event }) =>
+      event.section === 'system' && event.method === 'ExtrinsicSuccess',
   );
 }
 
@@ -1011,6 +1239,20 @@ export function createBridgeFromEnv(): AssetBridgeService {
     process.env.BRIDGE_CONTRACT_METADATA ||
     './artifacts/asset_wrapper_contract.json';
   const stateFilePath = process.env.BRIDGE_STATE_FILE || './bridge-state.json';
+  const maxInlineRaw = process.env.BRIDGE_MAX_INLINE_PER_BLOCK;
+  const maxInlinePerBlock =
+    maxInlineRaw !== undefined && maxInlineRaw !== ''
+      ? Number(maxInlineRaw)
+      : undefined;
+  if (
+    maxInlinePerBlock !== undefined &&
+    !(Number.isInteger(maxInlinePerBlock) && maxInlinePerBlock >= 1)
+  ) {
+    log.warn(
+      { maxInlineRaw },
+      `[AssetBridge] Invalid BRIDGE_MAX_INLINE_PER_BLOCK, using ${DEFAULT_MAX_INLINE_PER_BLOCK}`,
+    );
+  }
 
   let assets: BridgeAssetConfig[];
   try {
@@ -1032,6 +1274,7 @@ export function createBridgeFromEnv(): AssetBridgeService {
     assets,
     contractMetadataPath: metadataPath,
     stateFilePath,
+    maxInlinePerBlock,
   });
 }
 
@@ -1043,9 +1286,15 @@ if (require.main === module) {
     process.exit(1);
   });
 
-  process.on('SIGINT', async () => {
-    log.info('[AssetBridge] Shutting down...');
+  // SEC R9: same graceful path for PM2 (SIGINT) and docker/systemd (SIGTERM).
+  let shuttingDown = false;
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info({ signal }, '[AssetBridge] Shutting down...');
     await bridge.stop();
     process.exit(0);
-  });
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }

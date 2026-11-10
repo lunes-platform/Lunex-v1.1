@@ -427,6 +427,7 @@ describe('asset bridge withdrawals and block catch-up', () => {
     status: { isFinalized: boolean };
     isError: boolean;
     events: unknown[];
+    internalError?: Error;
   }
   type StatusCallback = (result: MockResult) => void;
 
@@ -579,8 +580,47 @@ describe('asset bridge withdrawals and block catch-up', () => {
     event: { section: 'system', method: 'ExtrinsicFailed', data: [] },
   };
 
+  const extrinsicSuccess = {
+    event: { section: 'system', method: 'ExtrinsicSuccess', data: [] },
+  };
+
   function finalized(events: unknown[] = []): MockResult {
     return { status: { isFinalized: true }, isError: false, events };
+  }
+
+  /** Finalized and dispatched: `events` followed by system.ExtrinsicSuccess. */
+  function succeeded(events: unknown[] = []): MockResult {
+    return finalized([...events, extrinsicSuccess]);
+  }
+
+  /**
+   * What @polkadot/api delivers when the post-finalization events fetch fails:
+   * status Finalized, no events, `internalError` set, `isError` false.
+   */
+  function finalizedWithoutEvents(internalError?: Error): MockResult {
+    return { ...finalized([]), internalError };
+  }
+
+  /** Like `sends`, but the status callback fires after `ms` milliseconds. */
+  function sendsAfter(ms: number, result: MockResult) {
+    return {
+      signAndSend: (
+        _pair: unknown,
+        opts: { nonce: number },
+        cb: StatusCallback,
+      ) => {
+        sentNonces.push(opts.nonce);
+        setTimeout(() => cb(result), ms);
+        return Promise.resolve(() => undefined);
+      },
+    };
+  }
+
+  async function waitFor(condition: () => boolean, label: string) {
+    for (let i = 0; i < 200 && !condition(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    if (!condition()) throw new Error(`waitFor timed out: ${label}`);
   }
 
   function sends(result: MockResult) {
@@ -718,16 +758,36 @@ describe('asset bridge withdrawals and block catch-up', () => {
     };
   }
 
-  async function startService(metadata = wrapperMetadata()) {
+  type BridgeOptions = {
+    maxInlinePerBlock?: number;
+    minDepositAmount?: string;
+  };
+
+  async function startService(
+    metadata = wrapperMetadata(),
+    options: BridgeOptions = {},
+  ) {
     fs.writeFileSync(metadataFile, JSON.stringify(metadata));
     mockChain.api = buildApi();
     const service = new AssetBridgeService({
       wsEndpoint: 'ws://mock',
       adminSeed: 'mock seed',
-      assets: [{ assetId: ASSET_ID, wrapperAddress: WRAPPER, symbol: 'wTEST' }],
+      assets: [
+        {
+          assetId: ASSET_ID,
+          wrapperAddress: WRAPPER,
+          symbol: 'wTEST',
+          ...(options.minDepositAmount !== undefined
+            ? { minDepositAmount: options.minDepositAmount }
+            : {}),
+        },
+      ],
       contractMetadataPath: metadataFile,
       stateFilePath: stateFile,
       txTimeoutMs: 50,
+      ...(options.maxInlinePerBlock !== undefined
+        ? { maxInlinePerBlock: options.maxInlinePerBlock }
+        : {}),
     });
     await service.start();
     return service;
@@ -751,7 +811,7 @@ describe('asset bridge withdrawals and block catch-up', () => {
       async (blockNumber: number) => `hash-${blockNumber}`,
     );
     assetTransfer = jest.fn(() =>
-      sends(assetTransferFails ? finalized([extrinsicFailed]) : finalized()),
+      sends(assetTransferFails ? finalized([extrinsicFailed]) : succeeded()),
     );
     mockContractTx.mockReset();
     mockContractQuery.mockReset();
@@ -760,13 +820,13 @@ describe('asset bridge withdrawals and block catch-up', () => {
       (_address: string, method: string, args: unknown[]) => {
         if (method === 'mintWithRef') {
           const ref = Number(String(args[2]));
-          return sends(finalized([contractEmitted(WRAPPER, mintPayload(ref))]));
+          return sends(succeeded([contractEmitted(WRAPPER, mintPayload(ref))]));
         }
         if (method !== 'confirmWithdraw')
           throw new Error(`unexpected tx ${method}`);
         const id = Number(String(args[0]));
         return sends(
-          finalized([contractEmitted(WRAPPER, withdrawConfirmedPayload(id))]),
+          succeeded([contractEmitted(WRAPPER, withdrawConfirmedPayload(id))]),
         );
       },
     );
@@ -877,7 +937,7 @@ describe('asset bridge withdrawals and block catch-up', () => {
     ],
     [
       'no WithdrawConfirmed(id) is emitted',
-      () => mockContractTx.mockImplementation(() => sends(finalized([]))),
+      () => mockContractTx.mockImplementation(() => sends(succeeded([]))),
     ],
   ])(
     'does not send when confirm_withdraw fails (%s)',
@@ -1082,7 +1142,7 @@ describe('asset bridge withdrawals and block catch-up', () => {
 
   it('WithdrawConfirmed for DONE and for CONFIRMED records never sends again', async () => {
     assetTransfer
-      .mockImplementationOnce(() => sends(finalized()))
+      .mockImplementationOnce(() => sends(succeeded()))
       .mockImplementationOnce(() => sends(finalized([extrinsicFailed])));
     seedState(10);
     eventsByBlock.set(11, [queued(4), queued(6)]);
@@ -1137,7 +1197,7 @@ describe('asset bridge withdrawals and block catch-up', () => {
           return rejectsBeforeBroadcast();
         }
         const ref = Number(String(args[2]));
-        return sends(finalized([contractEmitted(WRAPPER, mintPayload(ref))]));
+        return sends(succeeded([contractEmitted(WRAPPER, mintPayload(ref))]));
       },
     );
     seedState(10);
@@ -1192,10 +1252,10 @@ describe('asset bridge withdrawals and block catch-up', () => {
   });
 
   it.each([
-    ['without any Mint event', () => []],
+    ['without any Mint event', () => [extrinsicSuccess]],
     [
       'with a Mint for another ref',
-      () => [contractEmitted(WRAPPER, mintPayload(999))],
+      () => [contractEmitted(WRAPPER, mintPayload(999)), extrinsicSuccess],
     ],
     ['with ExtrinsicFailed', () => [extrinsicFailed]],
   ])(
@@ -1302,7 +1362,38 @@ describe('asset bridge withdrawals and block catch-up', () => {
     await head(11);
 
     expect(mintCalls()).toHaveLength(0);
-    expect(readState().lastProcessedBlock).toBe(10);
+    // Quarantined, not a poison block: the cursor moves past it.
+    expect(readState().lastProcessedBlock).toBe(11);
+    expect(deposit('11:10000')).toMatchObject({
+      status: 'MANUAL',
+      depositRef: null,
+      amount: '500',
+    });
+  });
+
+  it('a quarantined deposit does not stop the rest of its block nor later blocks, and is never retried', async () => {
+    seedState(10);
+    eventsByBlock.set(11, [
+      transferredToBridge('400'),
+      ...Array.from({ length: 9999 }, () => otherEvent),
+      transferredToBridge('500'),
+      queued(30),
+    ]);
+    eventsByBlock.set(12, [transferredToBridge('600')]);
+
+    await startService();
+    await head(12);
+    await head(60); // far past the retry throttle
+
+    expect(mintCalls().map(([, , args]) => Number(String(args[2])))).toEqual([
+      110000, 120000,
+    ]);
+    expect(deposit('11:0').status).toBe('DONE');
+    expect(deposit('11:10000').status).toBe('MANUAL');
+    expect(deposit('11:10000').lastError).toMatch(/deposit_ref/);
+    expect(deposit('12:0').status).toBe('DONE');
+    expect(withdrawal(30).status).toBe('DONE');
+    expect(readState().lastProcessedBlock).toBe(60);
   });
 
   // --- R4: state durability -------------------------------------------------
@@ -1327,6 +1418,361 @@ describe('asset bridge withdrawals and block catch-up', () => {
 
     expect(getBlockHash.mock.calls.map(([n]) => n)).toEqual([11, 11, 12]);
     expect(readState().lastProcessedBlock).toBe(12);
+  });
+
+  // --- R6: CONFIRMING is on disk before confirm_withdraw leaves -------------
+
+  it('the state file already says CONFIRMING when confirm_withdraw is signed and sent', async () => {
+    const statusOnDisk: string[] = [];
+    mockContractTx.mockImplementation(
+      (_address: string, method: string, args: unknown[]) => {
+        if (method !== 'confirmWithdraw')
+          throw new Error(`unexpected tx ${method}`);
+        const id = Number(String(args[0]));
+        const inner = sends(
+          succeeded([contractEmitted(WRAPPER, withdrawConfirmedPayload(id))]),
+        );
+        return {
+          signAndSend: (
+            pair: unknown,
+            opts: { nonce: number },
+            cb: StatusCallback,
+          ) => {
+            statusOnDisk.push(withdrawal(id).status);
+            return inner.signAndSend(pair, opts, cb);
+          },
+        };
+      },
+    );
+    seedState(10);
+    eventsByBlock.set(11, [queued(5)]);
+
+    await startService();
+    await head(11);
+
+    expect(statusOnDisk).toEqual(['CONFIRMING']);
+    expect(withdrawal(5).status).toBe('DONE');
+  });
+
+  it('a failed CONFIRMING save broadcasts nothing, keeps the cursor and leaves PENDING on disk', async () => {
+    mockContractQuery.mockImplementation(async (_address, method) => {
+      // The PENDING record is already on disk; the CONFIRMING save must fail.
+      if (method === 'confirmWithdraw') fs.chmodSync(tmpDir, 0o500);
+      return dryRunOk;
+    });
+    seedState(10);
+    eventsByBlock.set(11, [queued(5)]);
+
+    await startService();
+    await head(11);
+    fs.chmodSync(tmpDir, 0o700);
+
+    expect(sentNonces).toEqual([]); // nothing signed or broadcast
+    expect(assetTransfer).not.toHaveBeenCalled();
+    expect(readState().lastProcessedBlock).toBe(10);
+    expect(withdrawal(5).status).toBe('PENDING');
+
+    // Reopen on the file as it is on disk: the replay confirms exactly once.
+    mockContractQuery.mockReset();
+    mockContractQuery.mockResolvedValue(dryRunOk);
+    await startService();
+    await head(11);
+
+    expect(sentNonces).toHaveLength(2); // one confirm + one transfer
+    expect(assetTransfer).toHaveBeenCalledTimes(1);
+    expect(withdrawal(5).status).toBe('DONE');
+    expect(readState().lastProcessedBlock).toBe(11);
+  });
+
+  it('after a restart on a CONFIRMING record, WithdrawQueued does not re-confirm and WithdrawConfirmed pays exactly once', async () => {
+    fs.writeFileSync(
+      stateFile,
+      JSON.stringify({
+        lastProcessedBlock: 10,
+        processedDeposits: {},
+        deposits: {},
+        withdrawals: {
+          [`${WRAPPER}:5`]: {
+            status: 'CONFIRMING',
+            assetId: ASSET_ID,
+            wrapperAddress: WRAPPER,
+            withdrawalId: '5',
+            owner: USER,
+            amount: '1000',
+            blockNumber: 9,
+            lastAttemptBlock: 9,
+            lastError: 'timed out; outcome unknown',
+          },
+        },
+      }),
+    );
+    eventsByBlock.set(11, [queued(5)]); // re-observed after the restart
+    eventsByBlock.set(41, [confirmedEvent(5)]);
+    eventsByBlock.set(42, [confirmedEvent(5), queued(5)]); // replays
+
+    await startService();
+    await head(11);
+    await head(40); // retries never touch CONFIRMING
+
+    expect(confirmCalls()).toHaveLength(0);
+    expect(sentNonces).toEqual([]);
+    expect(withdrawal(5).status).toBe('CONFIRMING');
+
+    await head(42);
+    await head(60);
+
+    expect(confirmCalls()).toHaveLength(0);
+    expect(assetTransfer).toHaveBeenCalledTimes(1);
+    expect(assetTransfer.mock.calls[0][1]).toBe(USER);
+    expect(String(assetTransfer.mock.calls[0][2])).toBe('1000');
+    expect(withdrawal(5).status).toBe('DONE');
+  });
+
+  // --- R7: a finalized status without dispatch outcome is ambiguous ---------
+
+  it.each([
+    ['internalError set', () => new Error('events fetch failed')],
+    ['extrinsic not found in the block', () => undefined],
+  ])(
+    'a confirm that finalizes with no events (%s) stays CONFIRMING and the stream pays it once',
+    async (_label, internalError) => {
+      const fallback = mockContractTx.getMockImplementation()!;
+      mockContractTx.mockImplementation(
+        (address: string, method: string, args: unknown[]) =>
+          method === 'confirmWithdraw'
+            ? sends(finalizedWithoutEvents(internalError()))
+            : fallback(address, method, args),
+      );
+      seedState(10);
+      eventsByBlock.set(11, [queued(7)]);
+      eventsByBlock.set(12, [confirmedEvent(7)]);
+
+      await startService();
+      await head(11);
+
+      expect(withdrawal(7).status).toBe('CONFIRMING');
+      expect(withdrawal(7).lastError).toMatch(/outcome unknown/);
+      expect(assetTransfer).not.toHaveBeenCalled();
+
+      await head(40);
+
+      expect(confirmCalls()).toHaveLength(1);
+      expect(assetTransfer).toHaveBeenCalledTimes(1);
+      expect(withdrawal(7).status).toBe('DONE');
+    },
+  );
+
+  it.each([
+    ['internalError set', () => new Error('events fetch failed')],
+    ['extrinsic not found in the block', () => undefined],
+  ])(
+    'a payout that finalizes with no events (%s) is not marked DONE and never resent',
+    async (_label, internalError) => {
+      assetTransfer.mockImplementation(() =>
+        sends(finalizedWithoutEvents(internalError())),
+      );
+      seedState(10);
+      eventsByBlock.set(11, [queued(9)]);
+      eventsByBlock.set(12, [confirmedEvent(9)]);
+
+      await startService();
+      await head(12);
+      await head(40);
+
+      expect(assetTransfer).toHaveBeenCalledTimes(1);
+      expect(withdrawal(9).status).toBe('CONFIRMED');
+      expect(withdrawal(9).lastError).toMatch(/ambiguous/);
+    },
+  );
+
+  it('a mint that finalizes with no events and internalError stays PENDING as ambiguous and the retry settles it', async () => {
+    const fallback = mockContractTx.getMockImplementation()!;
+    let first = true;
+    mockContractTx.mockImplementation(
+      (address: string, method: string, args: unknown[]) => {
+        if (method === 'mintWithRef' && first) {
+          first = false;
+          return sends(
+            finalizedWithoutEvents(new Error('events fetch failed')),
+          );
+        }
+        return fallback(address, method, args);
+      },
+    );
+    seedState(10);
+    eventsByBlock.set(11, [transferredToBridge('500')]);
+
+    await startService();
+    await head(11);
+
+    expect(deposit('11:0').status).toBe('PENDING');
+    expect(deposit('11:0').lastError).toMatch(/ambiguous/);
+
+    await head(21);
+
+    expect(mintCalls()).toHaveLength(2); // same ref: the contract dedups it
+    expect(mintCalls().map(([, , args]) => Number(String(args[2])))).toEqual([
+      110000, 110000,
+    ]);
+    expect(deposit('11:0').status).toBe('DONE');
+  });
+
+  // --- R8: bounded inline work, retry while behind, minimum deposit ---------
+
+  it('processes at most maxInlinePerBlock items inline; the rest stays PENDING and the retry serves it exactly once', async () => {
+    const cursorAtMint: number[] = [];
+    const fallback = mockContractTx.getMockImplementation()!;
+    mockContractTx.mockImplementation(
+      (address: string, method: string, args: unknown[]) => {
+        if (method === 'mintWithRef')
+          cursorAtMint.push(readState().lastProcessedBlock);
+        return fallback(address, method, args);
+      },
+    );
+    seedState(10);
+    eventsByBlock.set(11, [
+      transferredToBridge('100'),
+      transferredToBridge('200'),
+      transferredToBridge('300'),
+      queued(31),
+    ]);
+
+    await startService(wrapperMetadata(), { maxInlinePerBlock: 2 });
+    await head(11);
+
+    // two inline while block 11 was being processed, one by the retry after
+    expect(cursorAtMint).toEqual([10, 10, 11]);
+    expect(mintCalls().map(([, , args]) => Number(String(args[2])))).toEqual([
+      110000, 110001, 110002,
+    ]);
+    expect(confirmCalls()).toHaveLength(1);
+    expect(assetTransfer).toHaveBeenCalledTimes(1);
+    expect(deposit('11:2').status).toBe('DONE');
+    expect(withdrawal(31).status).toBe('DONE');
+
+    await head(40);
+
+    expect(mintCalls()).toHaveLength(3);
+    expect(confirmCalls()).toHaveLength(1);
+    expect(assetTransfer).toHaveBeenCalledTimes(1);
+  });
+
+  it('a deferred item is persisted PENDING before the block cursor advances', async () => {
+    let cursorAtDeferredMint = -1;
+    let deferredOnDisk: { status: string; lastError?: string } | undefined;
+    const fallback = mockContractTx.getMockImplementation()!;
+    mockContractTx.mockImplementation(
+      (address: string, method: string, args: unknown[]) => {
+        if (method === 'mintWithRef' && Number(String(args[2])) === 110001) {
+          cursorAtDeferredMint = readState().lastProcessedBlock;
+          deferredOnDisk = deposit('11:1');
+        }
+        return fallback(address, method, args);
+      },
+    );
+    seedState(10);
+    eventsByBlock.set(11, [
+      transferredToBridge('100'),
+      transferredToBridge('200'),
+    ]);
+
+    await startService(wrapperMetadata(), { maxInlinePerBlock: 1 });
+    await head(11);
+
+    expect(cursorAtDeferredMint).toBe(11);
+    expect(deferredOnDisk).toMatchObject({
+      status: 'PENDING',
+      lastError: expect.stringMatching(/deferred/),
+    });
+    expect(deposit('11:1').status).toBe('DONE');
+  });
+
+  it('retries PENDING records while catching up, not only once the head is reached', async () => {
+    let cursorAtConfirm = -1;
+    const fallback = mockContractTx.getMockImplementation()!;
+    mockContractTx.mockImplementation(
+      (address: string, method: string, args: unknown[]) => {
+        if (method === 'confirmWithdraw')
+          cursorAtConfirm = readState().lastProcessedBlock;
+        return fallback(address, method, args);
+      },
+    );
+    bridgeBalance = '10';
+    seedState(10);
+    eventsByBlock.set(11, [queued(8, '1000')]);
+
+    await startService();
+    await head(11);
+
+    expect(withdrawal(8).status).toBe('PENDING');
+
+    bridgeBalance = '1' + '0'.repeat(30);
+    await head(40); // one run from 12 to 40
+
+    expect(confirmCalls()).toHaveLength(1);
+    expect(cursorAtConfirm).toBe(21);
+    expect(assetTransfer).toHaveBeenCalledTimes(1);
+    expect(withdrawal(8).status).toBe('DONE');
+  });
+
+  it('records a deposit below the asset minimum without minting it, ever', async () => {
+    seedState(10);
+    eventsByBlock.set(11, [
+      transferredToBridge('999'),
+      transferredToBridge('1000'),
+    ]);
+
+    await startService(wrapperMetadata(), { minDepositAmount: '1000' });
+    await head(11);
+    await head(40);
+
+    expect(mintCalls().map(([, , args]) => Number(String(args[2])))).toEqual([
+      110001,
+    ]);
+    expect(mockContractQuery).toHaveBeenCalledTimes(1); // no dry-run for dust
+    expect(deposit('11:0')).toMatchObject({
+      status: 'MANUAL',
+      amount: '999',
+      depositRef: 110000,
+      lastError: expect.stringMatching(/minimum/),
+    });
+    expect(deposit('11:1').status).toBe('DONE');
+  });
+
+  // --- R9: stop() lets the in-flight work finish -----------------------------
+
+  it('stop() waits for the in-flight payout before saving and disconnecting', async () => {
+    assetTransfer.mockImplementation(() => sendsAfter(30, succeeded()));
+    seedState(10);
+    eventsByBlock.set(11, [queued(12)]);
+
+    const service = await startService();
+    const api = mockChain.api as { disconnect: jest.Mock };
+    let doneAtDisconnect: string | undefined;
+    api.disconnect.mockImplementation(async () => {
+      doneAtDisconnect = withdrawal(12).status;
+    });
+    const run = head(11);
+    await waitFor(() => assetTransfer.mock.calls.length > 0, 'payout sent');
+
+    await service.stop();
+
+    expect(withdrawal(12).status).toBe('DONE');
+    expect(doneAtDisconnect).toBe('DONE');
+    expect(api.disconnect).toHaveBeenCalledTimes(1);
+    await run;
+  });
+
+  it('a block that arrives after stop() is not processed', async () => {
+    seedState(10);
+    eventsByBlock.set(11, [transferredToBridge('500')]);
+
+    const service = await startService();
+    await service.stop();
+    await head(11);
+
+    expect(mintCalls()).toHaveLength(0);
+    expect(readState().lastProcessedBlock).toBe(10);
   });
 
   // --- R5: accounts compared by id, not by SS58 string ----------------------
@@ -1358,7 +1804,7 @@ describe('asset bridge withdrawals and block catch-up', () => {
           throw new Error(`unexpected tx ${method}`);
         const id = Number(String(args[0]));
         return sends(
-          finalized([
+          succeeded([
             contractEmitted(
               WRAPPER,
               withdrawConfirmedPayload(id),
