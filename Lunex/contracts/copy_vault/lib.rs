@@ -15,7 +15,8 @@
 /// - Performance fee (max 50%, only on profit)
 /// - 24h cooldown for large withdrawals (>10% of vault)
 /// - Max drawdown circuit breaker (auto-pauses trading)
-/// - Emergency time-locked withdrawal
+/// - Emergency time-locked withdrawal, paid in kind (no valuation needed)
+/// - Protocol-admin token allowlist for tracked/bought tokens
 ///
 /// ## Security Features:
 /// - Reentrancy protection
@@ -35,8 +36,8 @@
 /// ## Invariantes de contabilidade (base p/ fuzz `copy_vault_accounting`):
 /// 1. Completude do equity: todo ativo que qualquer codepath do vault
 ///    pode adquirir está em {nativo, wnative} ∪ tracked_tokens — o swap
-///    restringe as pontas a esse conjunto e `remove_tracked_token`
-///    exige balance 0.
+///    restringe as pontas a esse conjunto, `remove_tracked_token` exige
+///    saldo LIVRE 0 e a troca de wnative rastreia o antigo com saldo.
 /// 2. `total_shares == 0 ⟺` equity atribuível a cotistas == 0 (módulo
 ///    donations diretas, que entram no equity diluindo A FAVOR dos
 ///    cotistas existentes).
@@ -46,7 +47,10 @@
 /// 4. Saque nunca paga mais que `shares/total_shares × equity` no
 ///    momento do pagamento, e nunca mais que a liquidez nativa
 ///    disponível (`InsufficientNativeLiquidity` caso contrário).
-/// 5. `tracked_token_count <= MAX_TRACKED_TOKENS` sempre.
+/// 5. `add_tracked_token` / auto-track nunca passam de
+///    MAX_TRACKED_TOKENS. Só a troca de wnative (D3) pode acrescentar o
+///    wnative antigo acima do teto (a lista pode ter 9+); a skip list da
+///    saída in-kind é limitada por `tracked_token_count + 1`.
 /// 6. (A-02) `total_shares == 0 || total_shares >= MINIMUM_SHARES`: o
 ///    1º depósito soma MINIMUM_SHARES dead shares SÓ em `total_shares`,
 ///    sem creditá-las a conta alguma — nenhum caller consegue queimá-las.
@@ -62,6 +66,39 @@
 ///    presente no `apply_*` já o era na proposta. O `amount_out` do swap
 ///    é o delta de `balance_of(vault)` do token_out, nunca o retorno do
 ///    router.
+/// 8. (Saída in-kind) `reserved_tokens[t] == Σ pending_tokens[(t, *)]`
+///    entre mensagens, e o reservado nunca entra no equity, no saldo
+///    vendável do swap nem no pro-rata de saídas seguintes: quem fica
+///    não recebe o que já é devido a quem saiu.
+/// 9. (Allowlist) o vault só rastreia ou compra token permitido AGORA
+///    pelo admin do protocolo (wnative é implícito). Com depositantes a
+///    permissão só vale após `CONFIG_CHANGE_DELAY_MS`; a remoção é
+///    imediata e não força venda.
+///
+/// ## Riscos aceitos / abertos (só documentação)
+/// - (A-03) Cotação spot manipulável no DEPÓSITO e no `withdraw` normal
+///   continua aberta: ambos precificam a cota pela reserva instantânea do
+///   par (mitigação v1 = `MIN_TRACKING_RESERVE_NATIVE`). A saída de
+///   emergência in-kind não depende de cotação.
+/// - A saída de emergência não cobra taxa de performance (como antes).
+///   O unlock maduro NÃO expira: quem chama `request_emergency_withdrawal`
+///   logo após depositar espera 72 h (`EMERGENCY_UNLOCK_DELAY_MS`) UMA
+///   vez e passa a ter, enquanto não depositar de novo, a opção
+///   permanente de sair a qualquer momento sem taxa. O líder não perde
+///   principal; perde a taxa de performance desse depositante.
+/// - Skip (renúncia) na saída in-kind: a fração renunciada fica no vault
+///   e no NAV, para quem fica. Se TODOS os depositantes saem pulando um
+///   ativo, o valor dele fica com as `MINIMUM_SHARES` dead shares (que
+///   ninguém resgata) e infla o preço da cota: o próximo depósito perde
+///   até ~1 cota por arredondamento (ou falha com `ZeroAmount` se menor
+///   que o preço de 1 cota) — mesma classe da doação direta.
+/// - Allowlist pendente não bloqueia depósito (ao contrário das propostas
+///   de router/infra): o depositante deve consultar
+///   `get_token_allowed_at`; a janela conta da permissão, não da entrada.
+/// - Transfer PSP22: o vault só confia num retorno `Ok(Ok(Ok(())))` ou na
+///   prova pelo saldo (`settle_psp22_transfer`). A ABI de retorno do
+///   `transfer` de cada token precisa ser provada em e2e ANTES de
+///   `set_token_allowed`.
 
 #[ink::contract]
 pub mod copy_vault {
@@ -168,6 +205,17 @@ pub mod copy_vault {
         /// Proposed address is the zero AccountId, the vault itself, or
         /// factory == wnative
         InvalidConfigAddress,
+        // ── Saída in-kind + allowlist (anexados por último) ─────
+        /// Token is not on the protocol admin's allowlist (or its
+        /// allowance is not effective yet) — cannot be tracked or bought
+        TokenNotAllowed,
+        /// `skip_tokens` longer than `tracked_token_count + 1`
+        InvalidSkipList,
+        /// PSP22 balance of a non-skipped exit asset could not be read —
+        /// retry with that token in `skip_tokens`
+        TokenUnreadable,
+        /// No pending token credit for (token, caller)
+        NothingToClaim,
     }
 
     // ─── Router interop (selectors + espelhos SCALE) ────────────
@@ -206,6 +254,10 @@ pub mod copy_vault {
     /// composta on-chain via factory.get_pair + pair.get_reserves +
     /// router.get_amount_out, preservando a fórmula (com fee) do AMM.
     pub const ROUTER_GET_AMOUNT_OUT_SELECTOR: [u8; 4] = [0xa8, 0x54, 0x49, 0x16];
+
+    /// `PSP22::transfer(to, value, data)` — trait selector padrão PSP22
+    /// usado na saída de emergência in-kind (metadata: 0xdb20f9f5).
+    pub const PSP22_TRANSFER_SELECTOR: [u8; 4] = [0xdb, 0x20, 0xf9, 0xf5];
 
     /// Espelho SCALE-compatível de `PSP22Error` do router/psp22_token
     /// (mesmos discriminantes do type 11 no metadata do router).
@@ -555,6 +607,40 @@ pub mod copy_vault {
         pub timestamp: Timestamp,
     }
 
+    /// Allowlist: `token` permitido a partir de `effective_at` (ms), ou
+    /// removido (`allowed == false`, `effective_at == now`). Declarado
+    /// depois dos existentes para manter os índices.
+    #[ink(event)]
+    pub struct TokenAllowlistChanged {
+        #[ink(topic)]
+        pub token: AccountId,
+        pub allowed: bool,
+        pub effective_at: Timestamp,
+    }
+
+    /// Saída in-kind: perna PSP22 de `depositor` em `token`.
+    /// `status`: 0 = pago, 1 = pendente (`claim_pending_token`),
+    /// 2 = renunciado (skip, `amount == 0`).
+    #[ink(event)]
+    pub struct EmergencyTokenSettled {
+        #[ink(topic)]
+        pub depositor: AccountId,
+        #[ink(topic)]
+        pub token: AccountId,
+        pub amount: Balance,
+        pub status: u8,
+    }
+
+    /// Crédito pendente de `token` pago a `account`.
+    #[ink(event)]
+    pub struct PendingTokenClaimed {
+        #[ink(topic)]
+        pub account: AccountId,
+        #[ink(topic)]
+        pub token: AccountId,
+        pub amount: Balance,
+    }
+
     // ─── Storage ────────────────────────────────────────────────
 
     #[ink(storage)]
@@ -647,6 +733,17 @@ pub mod copy_vault {
         pending_router: Option<PendingRouterChange>,
         /// Troca de factory/wnative pendente (`propose_valuation_infra`).
         pending_valuation_infra: Option<PendingValuationInfraChange>,
+
+        // --- Saída in-kind + allowlist (anexados por último) ---
+        /// Tokens que o admin do protocolo permite rastrear/comprar:
+        /// token → instante (ms) a partir do qual a permissão vale.
+        allowed_tokens: Mapping<AccountId, Timestamp>,
+        /// Por token: soma dos valores já devidos a quem saiu (créditos
+        /// pendentes). Fora do equity e do distribuível.
+        reserved_tokens: Mapping<AccountId, Balance>,
+        /// Crédito pendente por (token, conta), resgatável por
+        /// `claim_pending_token`.
+        pending_tokens: Mapping<(AccountId, AccountId), Balance>,
     }
 
     impl CopyVault {
@@ -692,6 +789,9 @@ pub mod copy_vault {
                 wnative: None,
                 pending_router: None,
                 pending_valuation_infra: None,
+                allowed_tokens: Mapping::default(),
+                reserved_tokens: Mapping::default(),
+                pending_tokens: Mapping::default(),
             }
         }
 
@@ -820,6 +920,11 @@ pub mod copy_vault {
                 .checked_add(amount)
                 .ok_or(VaultError::Overflow)?;
 
+            // Saída in-kind: depositar desarma o unlock de emergência do
+            // caller (fecha "depósito a preço spot + saída in-kind
+            // imediata" com unlock pré-armado). Depois de todos os checks.
+            self.emergency_unlocks.remove(caller);
+
             let share_price = self.share_price_from_equity(current_balance);
             let timestamp = self.env().block_timestamp();
 
@@ -900,18 +1005,20 @@ pub mod copy_vault {
                 .checked_div(self.total_shares)
                 .ok_or(VaultError::SharePriceZero)?;
 
-            // Calculate performance fee on profit
+            // Calculate performance fee on profit.
+            // CV-FEE-01: custo das `shares` = basis × shares / caller_shares
+            // (multiplica ANTES de dividir). O antigo `basis / caller_shares`
+            // truncava para ~1 (ou 0, cota < 1,0) e cobrava taxa sobre o
+            // principal. Saque total ⇒ custo == basis exatamente.
+            // (`caller_shares >= shares > 0` garantido acima.)
             let basis = self.cost_basis.get(caller).unwrap_or(0);
-            let basis_per_share = if caller_shares > 0 {
-                basis
-                    .checked_div(caller_shares)
-                    .ok_or(VaultError::Overflow)?
-            } else {
-                0
+            let cost_for_shares = match Self::mul_div_floor(basis, shares, caller_shares) {
+                Ok(cost) => cost,
+                Err(e) => {
+                    self.release_lock();
+                    return Err(e);
+                }
             };
-            let cost_for_shares = basis_per_share
-                .checked_mul(shares)
-                .ok_or(VaultError::Overflow)?;
 
             let (fee, net_payout) = if payout > cost_for_shares {
                 let profit = payout
@@ -1083,97 +1190,143 @@ pub mod copy_vault {
             Ok(unlock_at)
         }
 
-        /// Execute emergency withdrawal after unlock period
+        /// Execute emergency withdrawal after unlock period.
+        ///
+        /// Seletor e assinatura mantidos. Desde a saída in-kind este é o
+        /// mesmo caminho de `execute_emergency_withdrawal_in_kind` sem
+        /// skip: paga a fração do caller EM ESPÉCIE (nativo + wnative +
+        /// cada token rastreado) e devolve só a perna nativa paga. Não
+        /// depende de cotação, router, factory, leader, pausa ou halt.
         #[ink(message)]
         pub fn execute_emergency_withdrawal(&mut self) -> Result<Balance, VaultError> {
             self.acquire_lock()?;
-
-            let caller = self.env().caller();
-            let unlock_at = self
-                .emergency_unlocks
-                .get(caller)
-                .ok_or(VaultError::EmergencyNotUnlocked)?;
-
-            let now = self.env().block_timestamp();
-            if now < unlock_at {
-                self.release_lock();
-                return Err(VaultError::EmergencyNotUnlocked);
-            }
-
-            let caller_shares = self.shares.get(caller).unwrap_or(0);
-            if caller_shares == 0 {
-                self.release_lock();
-                return Err(VaultError::InsufficientShares);
-            }
-
-            // Calculate proportional equity (no fee on emergency)
-            let (native_balance, tokens_value) = match self.equity_split_internal() {
-                Ok(split) => split,
-                Err(e) => {
-                    self.release_lock();
-                    return Err(e);
-                }
-            };
-            let equity = match native_balance.checked_add(tokens_value) {
-                Some(v) => v,
-                None => {
-                    self.release_lock();
-                    return Err(VaultError::Overflow);
-                }
-            };
-            let payout = caller_shares
-                .checked_mul(equity)
-                .ok_or(VaultError::Overflow)?
-                .checked_div(self.total_shares)
-                .ok_or(VaultError::SharePriceZero)?;
-
-            // ADR-002: fail explícito quando a liquidez nativa não
-            // cobre o payout (mesma regra do withdraw normal).
-            if payout > native_balance {
-                self.release_lock();
-                return Err(VaultError::InsufficientNativeLiquidity);
-            }
-
-            if self.env().transfer(caller, payout).is_err() {
-                self.release_lock();
-                return Err(VaultError::TransferFailed);
-            }
-
-            // Update state
-            self.shares.remove(caller);
-            self.cost_basis.remove(caller);
-            self.emergency_unlocks.remove(caller);
-            self.active_depositors = self.active_depositors.saturating_sub(1);
-
-            self.total_shares = self
-                .total_shares
-                .checked_sub(caller_shares)
-                .ok_or(VaultError::Overflow)?;
-
-            self.total_equity = match self.get_vault_equity_internal() {
-                Ok(e) => e,
-                Err(e) => {
-                    self.release_lock();
-                    return Err(e);
-                }
-            };
-
-            self.total_withdrawn = self
-                .total_withdrawn
-                .checked_add(payout)
-                .ok_or(VaultError::Overflow)?;
-
-            let timestamp = self.env().block_timestamp();
-            self.env().emit_event(Withdrawn {
-                depositor: caller,
-                shares_burned: caller_shares,
-                amount_received: payout,
-                performance_fee: 0,
-                timestamp,
-            });
-
+            let result = self.emergency_exit_internal(&[]);
             self.release_lock();
-            Ok(payout)
+            result
+        }
+
+        /// Saída de emergência IN-KIND (após o unlock de 72h).
+        ///
+        /// Paga ao caller `piso(livre × s / total_shares)` de cada ativo
+        /// do vault — nativo (saldo − existential deposit), wnative e cada
+        /// token rastreado (saldo − `reserved_tokens`) — e queima as `s`
+        /// cotas. Não lê cotação nem chama router/factory: funciona com o
+        /// vault pausado, trading parado e valuation quebrada.
+        ///
+        /// * `skip_tokens`: renúncia explícita da fração desses ativos em
+        ///   favor de quem fica, com ZERO chamadas ao token (escape de um
+        ///   token que trava, queima gas ou devolve saída gigante). No
+        ///   máximo `tracked_token_count + 1` entradas; entradas que não
+        ///   são ativo do vault são ignoradas.
+        /// * Saldo ilegível de um ativo não pulado ⇒ `TokenUnreadable`
+        ///   antes de qualquer escrita (refazer com o token em skip).
+        /// * Transfer PSP22 com falha limpa (saldo inalterado) ⇒ a saída
+        ///   conclui e o valor vira crédito pendente
+        ///   (`claim_pending_token`), mantido em `reserved_tokens` fora do
+        ///   distribuível. Retorno não confirmado com saldo que caiu
+        ///   exatamente o valor ⇒ pago; saldo divergente ou ilegível ⇒
+        ///   `TransferFailed` (reverte tudo; refazer com o token em skip).
+        ///
+        /// Retorna o nativo pago. Emite um `Withdrawn` (`amount_received`
+        /// = só a perna nativa, `performance_fee` = 0) e um
+        /// `EmergencyTokenSettled` por ativo pago, pendente ou pulado.
+        /// Sem taxa de performance (ver "Riscos aceitos" no topo).
+        #[ink(message)]
+        pub fn execute_emergency_withdrawal_in_kind(
+            &mut self,
+            skip_tokens: Vec<AccountId>,
+        ) -> Result<Balance, VaultError> {
+            self.acquire_lock()?;
+            let result = self.emergency_exit_internal(&skip_tokens);
+            self.release_lock();
+            result
+        }
+
+        /// Resgata o crédito pendente do caller em `token` (deixado por um
+        /// transfer falho na saída in-kind). Paga só ao caller; funciona
+        /// pausado e para token não rastreado. Se o transfer falhar de
+        /// novo SEM mover saldo devolve `Ok(0)` e o crédito continua de
+        /// pé; retorno não confirmado com saldo que caiu exatamente o
+        /// crédito conta como pago; qualquer outro caso (saldo ilegível
+        /// ou divergente) ⇒ `TransferFailed`, que reverte a mensagem.
+        #[ink(message)]
+        pub fn claim_pending_token(&mut self, token: AccountId) -> Result<Balance, VaultError> {
+            self.acquire_lock()?;
+            let caller = self.env().caller();
+            let key = (token, caller);
+            let amount = self.pending_tokens.get(key).unwrap_or(0);
+            if amount == 0 {
+                self.release_lock();
+                return Err(VaultError::NothingToClaim);
+            }
+            // Débito ANTES de qualquer chamada ao token (inclusive a
+            // leitura de saldo); a reserva só cai após o sucesso.
+            self.pending_tokens.remove(key);
+            // Saldo ANTES do transfer: prova do que saiu se o retorno do
+            // token não for confirmado (ver `settle_psp22_transfer`).
+            let balance_before = self.psp22_balance_of(token).ok();
+            let paid = match self.settle_psp22_transfer(token, caller, amount, balance_before) {
+                Ok(true) => {
+                    let reserved = self.reserved_of(token).saturating_sub(amount);
+                    self.set_reserved(token, reserved);
+                    self.env().emit_event(PendingTokenClaimed {
+                        account: caller,
+                        token,
+                        amount,
+                    });
+                    amount
+                }
+                Ok(false) => {
+                    self.pending_tokens.insert(key, &amount);
+                    0
+                }
+                Err(e) => {
+                    // On-chain o `Err` reverte tudo; aqui só espelha o
+                    // estado do vault de antes da chamada.
+                    self.pending_tokens.insert(key, &amount);
+                    self.release_lock();
+                    return Err(e);
+                }
+            };
+            self.release_lock();
+            Ok(paid)
+        }
+
+        /// Prévia da saída in-kind de `account` (sem skip): (nativo,
+        /// [(ativo, valor)]) na ordem de pagamento, com `None` quando o
+        /// saldo do ativo é ilegível (ou, fora do domínio de
+        /// `mul_div_floor`, quando a perna estouraria): é o ativo que a
+        /// saída real recusa e que entra na skip list.
+        /// `(0, [])` se a conta não tem cotas.
+        #[ink(message)]
+        pub fn preview_emergency_exit(
+            &self,
+            account: AccountId,
+        ) -> (Balance, Vec<(AccountId, Option<Balance>)>) {
+            let s = self.shares.get(account).unwrap_or(0);
+            let total = self.total_shares;
+            if s == 0 || s > total {
+                return (0, Vec::new());
+            }
+            let native = self.native_exit_amount(s, total).unwrap_or(0);
+            let legs = self
+                .exit_assets()
+                .into_iter()
+                .map(|asset| (asset, self.token_exit_amount(asset, s, total).ok()))
+                .collect();
+            (native, legs)
+        }
+
+        /// Crédito pendente de `account` em `token`.
+        #[ink(message)]
+        pub fn get_pending_token(&self, token: AccountId, account: AccountId) -> Balance {
+            self.pending_tokens.get((token, account)).unwrap_or(0)
+        }
+
+        /// Total reservado (devido a quem já saiu) de `token`.
+        #[ink(message)]
+        pub fn get_reserved_token(&self, token: AccountId) -> Balance {
+            self.reserved_of(token)
         }
 
         // ════════════════════════════════════════════════════════
@@ -1344,9 +1497,17 @@ pub mod copy_vault {
                 self.release_lock();
                 return Err(VaultError::TokenNotTracked);
             }
+            // Allowlist: só se COMPRA wnative ou token permitido agora —
+            // mesmo que já rastreado (token removido da allowlist ainda
+            // pode ser vendido como token_in).
+            if token_out != wnative && !self.token_allowed_now(token_out) {
+                self.release_lock();
+                return Err(VaultError::TokenNotAllowed);
+            }
             // Saldo REAL de token_in via balance_of — nunca via equity
-            // (era exatamente a confusão do P0-3).
-            let token_in_balance = match self.psp22_balance_of(token_in) {
+            // (era exatamente a confusão do P0-3) — menos o que está
+            // reservado a quem já saiu (saída in-kind).
+            let token_in_balance = match self.free_token_balance(token_in) {
                 Ok(b) => b,
                 Err(e) => {
                     self.release_lock();
@@ -1824,6 +1985,83 @@ pub mod copy_vault {
         }
 
         // ════════════════════════════════════════════════════════
+        // ALLOWLIST DE TOKENS
+        // ════════════════════════════════════════════════════════
+
+        /// Allowlist (admin do protocolo): permite ou remove `token` como
+        /// ativo que o vault pode rastrear e comprar.
+        ///
+        /// * `true`: sem depositantes vale na hora; com depositantes vale
+        ///   a partir de `now + CONFIG_CHANGE_DELAY_MS` (aviso a quem está
+        ///   dentro). Entrada já existente ⇒ `Ok` sem alterar nem emitir
+        ///   (não reinicia o prazo). wnative é implícito
+        ///   (`CannotTrackWnative`).
+        /// * `false`: remove na hora (cancela permissão pendente); ausente
+        ///   ⇒ `Ok`. O token continua rastreado, avaliado, vendável e
+        ///   pago in-kind; só não pode mais ser comprado nem re-rastreado.
+        ///
+        /// Recusa o AccountId zero e o próprio vault.
+        ///
+        /// Regras operacionais: (1) provar em e2e, ANTES de permitir, a
+        /// ABI de retorno de `PSP22::transfer` do token
+        /// (`Result<Result<(), PSP22Error>, LangError>`, ink! 4); um token
+        /// cujo retorno não decodifica só é liquidado pela prova de saldo
+        /// de `settle_psp22_transfer` e, se ela não fechar, a saída falha
+        /// com `TransferFailed` até o usuário pular o token. (2) A
+        /// permissão pendente NÃO bloqueia depósito: quem entra durante a
+        /// janela deve consultar `get_token_allowed_at`.
+        #[ink(message)]
+        pub fn set_token_allowed(
+            &mut self,
+            token: AccountId,
+            allowed: bool,
+        ) -> Result<(), VaultError> {
+            self.ensure_protocol_admin()?;
+            self.ensure_valid_config_address(token)?;
+            let now = self.env().block_timestamp();
+            if allowed {
+                if self.wnative == Some(token) {
+                    return Err(VaultError::CannotTrackWnative);
+                }
+                if self.allowed_tokens.contains(token) {
+                    return Ok(());
+                }
+                let effective_at = if self.depositor_shares() == 0 {
+                    now
+                } else {
+                    self.config_change_eta()?
+                };
+                self.allowed_tokens.insert(token, &effective_at);
+                self.env().emit_event(TokenAllowlistChanged {
+                    token,
+                    allowed: true,
+                    effective_at,
+                });
+            } else if self.allowed_tokens.contains(token) {
+                self.allowed_tokens.remove(token);
+                self.env().emit_event(TokenAllowlistChanged {
+                    token,
+                    allowed: false,
+                    effective_at: now,
+                });
+            }
+            Ok(())
+        }
+
+        /// `token` está permitido AGORA (entrada existe e já vale)?
+        #[ink(message)]
+        pub fn is_token_allowed(&self, token: AccountId) -> bool {
+            self.token_allowed_now(token)
+        }
+
+        /// Instante (ms) a partir do qual `token` é permitido (None se não
+        /// está na allowlist).
+        #[ink(message)]
+        pub fn get_token_allowed_at(&self, token: AccountId) -> Option<Timestamp> {
+            self.allowed_tokens.get(token)
+        }
+
+        // ════════════════════════════════════════════════════════
         // ADR-002 — TRACKED TOKENS & VALUATION
         // ════════════════════════════════════════════════════════
 
@@ -1837,6 +2075,9 @@ pub mod copy_vault {
         /// `apply_valuation_infra` (timelock `CONFIG_CHANGE_DELAY_MS`).
         /// Descarta (com `ValuationInfraChangeCancelled`) a proposta
         /// pendente.
+        ///
+        /// Troca de wnative: mesma regra de `apply_valuation_infra` (ver
+        /// `switch_valuation_infra`).
         #[ink(message)]
         pub fn set_valuation_infra(
             &mut self,
@@ -1853,8 +2094,7 @@ pub mod copy_vault {
                     timestamp: self.env().block_timestamp(),
                 });
             }
-            self.factory = Some(factory);
-            self.wnative = Some(wnative);
+            self.switch_valuation_infra(factory, wnative)?;
             self.env().emit_event(ValuationInfraChanged {
                 factory,
                 wnative,
@@ -1905,6 +2145,14 @@ pub mod copy_vault {
 
         /// A-01: aplica a troca de factory/wnative proposta, em
         /// `[eta, eta + CONFIG_CHANGE_GRACE_MS]` (depois: `ConfigChangeExpired`).
+        ///
+        /// Troca de wnative COM saldo (D3, ver `switch_valuation_infra`):
+        /// o wnative antigo com saldo vira token rastreado comum e o novo
+        /// sai da lista de rastreados. Regra operacional do admin: criar o
+        /// par wnative antigo↔novo na factory NOVA antes do `apply` — sem
+        /// ele o wnative antigo fica sem cotação (`ValuationUnavailable`
+        /// fecha depósito e saque normal; a saída de emergência in-kind
+        /// continua funcionando; o líder vende e des-rastreia).
         #[ink(message)]
         pub fn apply_valuation_infra(&mut self) -> Result<(), VaultError> {
             self.ensure_protocol_admin()?;
@@ -1913,8 +2161,7 @@ pub mod copy_vault {
                 .ok_or(VaultError::NoPendingConfigChange)?;
             let now = self.env().block_timestamp();
             Self::ensure_config_change_window(pending.eta, now)?;
-            self.factory = Some(pending.factory);
-            self.wnative = Some(pending.wnative);
+            self.switch_valuation_infra(pending.factory, pending.wnative)?;
             self.pending_valuation_infra = None;
             self.env().emit_event(ValuationInfraChanged {
                 factory: pending.factory,
@@ -1947,9 +2194,11 @@ pub mod copy_vault {
         }
 
         /// Adiciona um token PSP22 à lista de rastreados (admin/leader).
-        /// Falha se a lista está cheia (MAX_TRACKED_TOKENS), se o token
-        /// já é rastreado, ou se o par token<>wnative não existe / não
-        /// tem a reserva nativa mínima (anti-manipulação v1).
+        /// Falha se o token não está permitido agora pela allowlist do
+        /// admin do protocolo (`TokenNotAllowed`), se a lista está cheia
+        /// (MAX_TRACKED_TOKENS), se o token já é rastreado, ou se o par
+        /// token<>wnative não existe / não tem a reserva nativa mínima
+        /// (anti-manipulação v1).
         #[ink(message)]
         pub fn add_tracked_token(&mut self, token: AccountId) -> Result<(), VaultError> {
             self.ensure_admin()?;
@@ -1957,8 +2206,10 @@ pub mod copy_vault {
         }
 
         /// Remove um token da lista de rastreados (admin/leader).
-        /// NUNCA des-rastreia com posição aberta: falha se
-        /// balance_of(vault, token) > 0 (invariante 1).
+        /// NUNCA des-rastreia com posição aberta: falha se o saldo LIVRE
+        /// (balance_of(vault, token) − reservado a quem saiu) > 0
+        /// (invariante 1). O reservado segue resgatável por
+        /// `claim_pending_token`.
         #[ink(message)]
         pub fn remove_tracked_token(&mut self, token: AccountId) -> Result<(), VaultError> {
             self.ensure_admin()?;
@@ -1977,11 +2228,12 @@ pub mod copy_vault {
             tokens
         }
 
-        /// Valuation em nativo do saldo do vault em `token`
-        /// (0 se balance == 0; ERRO explícito se a cotação falhar).
+        /// Valuation em nativo do saldo LIVRE do vault em `token` (menos
+        /// o reservado a quem saiu, como no equity; 0 se o saldo livre é
+        /// 0; ERRO explícito se a cotação falhar).
         #[ink(message)]
         pub fn get_token_valuation(&self, token: AccountId) -> Result<Balance, VaultError> {
-            let balance = self.psp22_balance_of(token)?;
+            let balance = self.free_token_balance(token)?;
             if balance == 0 {
                 return Ok(0);
             }
@@ -1992,6 +2244,8 @@ pub mod copy_vault {
         /// [(token, balance, valor_em_nativo)], total).
         /// Inclui wnative (1:1) quando o vault tem saldo. ERRO explícito
         /// se qualquer cotação falhar — nunca valuation parcial.
+        /// `balance` é o saldo LIVRE (menos o reservado a quem saiu), o
+        /// mesmo que entra em `get_vault_equity`.
         #[allow(clippy::type_complexity)]
         #[ink(message)]
         pub fn get_equity_breakdown(
@@ -2002,7 +2256,7 @@ pub mod copy_vault {
             let mut total = native;
 
             if let Some(wnative) = self.wnative {
-                let balance = self.psp22_balance_of(wnative)?;
+                let balance = self.free_token_balance(wnative)?;
                 if balance > 0 {
                     entries.push((wnative, balance, balance));
                     total = total.checked_add(balance).ok_or(VaultError::Overflow)?;
@@ -2014,7 +2268,12 @@ pub mod copy_vault {
                     .tracked_tokens
                     .get(i)
                     .ok_or(VaultError::ValuationUnavailable)?;
-                let balance = self.psp22_balance_of(token)?;
+                // Estado legado wnative == rastreado: já contado 1:1
+                // acima (mesma regra de `exit_assets`).
+                if Some(token) == self.wnative {
+                    continue;
+                }
+                let balance = self.free_token_balance(token)?;
                 if balance == 0 {
                     continue;
                 }
@@ -2133,12 +2392,14 @@ pub mod copy_vault {
         /// `tokens` = saldo wnative (1:1) + Σ valuation on-chain dos
         /// tracked tokens com balance > 0. Falha de QUALQUER cotação é
         /// falha da leitura (`ValuationUnavailable`) — nunca "vale 0".
+        /// Saldos PSP22 entram LIVRES: o reservado a quem já saiu pela
+        /// saída in-kind (`reserved_tokens`) não é dos cotistas.
         fn equity_split_internal(&self) -> Result<(Balance, Balance), VaultError> {
             let native = self.env().balance();
             let mut tokens_value: Balance = 0;
 
             if let Some(wnative) = self.wnative {
-                let balance = self.psp22_balance_of(wnative)?;
+                let balance = self.free_token_balance(wnative)?;
                 tokens_value = tokens_value
                     .checked_add(balance)
                     .ok_or(VaultError::Overflow)?;
@@ -2149,7 +2410,12 @@ pub mod copy_vault {
                     .tracked_tokens
                     .get(i)
                     .ok_or(VaultError::ValuationUnavailable)?;
-                let balance = self.psp22_balance_of(token)?;
+                // Estado legado wnative == rastreado: já contado 1:1
+                // acima (mesma regra de `exit_assets`).
+                if Some(token) == self.wnative {
+                    continue;
+                }
+                let balance = self.free_token_balance(token)?;
                 if balance == 0 {
                     continue;
                 }
@@ -2204,6 +2470,11 @@ pub mod copy_vault {
             if token == wnative {
                 return Err(VaultError::CannotTrackWnative);
             }
+            // Allowlist: leader/admin só rastreiam (e o swap só auto-
+            // rastreia) o que o admin do protocolo permitiu.
+            if !self.token_allowed_now(token) {
+                return Err(VaultError::TokenNotAllowed);
+            }
             if self.is_tracked(token) {
                 return Err(VaultError::TokenAlreadyTracked);
             }
@@ -2218,10 +2489,31 @@ pub mod copy_vault {
                 return Err(VaultError::InsufficientPairLiquidity);
             }
 
+            self.push_tracked(token)
+        }
+
+        fn untrack_token_internal(&mut self, token: AccountId) -> Result<(), VaultError> {
+            let idx = self
+                .tracked_token_index
+                .get(token)
+                .ok_or(VaultError::TokenNotTracked)?;
+            // Invariante 1: nunca des-rastrear com posição aberta. O
+            // reservado a quem saiu não é posição do vault.
+            let balance = self.free_token_balance(token)?;
+            if balance > 0 {
+                return Err(VaultError::TokenHasBalance);
+            }
+            self.remove_tracked(token, idx)
+        }
+
+        /// Acrescenta `token` no fim da lista densa, SEM checagens de
+        /// política (allowlist, liquidez, teto) — quem chama decide.
+        fn push_tracked(&mut self, token: AccountId) -> Result<(), VaultError> {
             let idx = self.tracked_token_count;
+            let count = idx.checked_add(1).ok_or(VaultError::Overflow)?;
             self.tracked_tokens.insert(idx, &token);
             self.tracked_token_index.insert(token, &idx);
-            self.tracked_token_count = idx.checked_add(1).ok_or(VaultError::Overflow)?;
+            self.tracked_token_count = count;
 
             self.env().emit_event(TrackedTokenAdded {
                 token,
@@ -2230,27 +2522,23 @@ pub mod copy_vault {
             Ok(())
         }
 
-        fn untrack_token_internal(&mut self, token: AccountId) -> Result<(), VaultError> {
-            let idx = self
-                .tracked_token_index
-                .get(token)
-                .ok_or(VaultError::TokenNotTracked)?;
-            // Invariante 1: nunca des-rastrear com posição aberta.
-            let balance = self.psp22_balance_of(token)?;
-            if balance > 0 {
-                return Err(VaultError::TokenHasBalance);
-            }
-
-            // Swap-remove mantendo o índice denso.
+        /// Swap-remove de `token` (posição `idx`) mantendo o índice denso,
+        /// SEM checar saldo — quem chama decide.
+        fn remove_tracked(&mut self, token: AccountId, idx: u32) -> Result<(), VaultError> {
             let last = self
                 .tracked_token_count
                 .checked_sub(1)
                 .ok_or(VaultError::Overflow)?;
-            if idx != last {
-                let moved = self
-                    .tracked_tokens
-                    .get(last)
-                    .ok_or(VaultError::TokenNotTracked)?;
+            let moved = if idx != last {
+                Some(
+                    self.tracked_tokens
+                        .get(last)
+                        .ok_or(VaultError::TokenNotTracked)?,
+                )
+            } else {
+                None
+            };
+            if let Some(moved) = moved {
                 self.tracked_tokens.insert(idx, &moved);
                 self.tracked_token_index.insert(moved, &idx);
             }
@@ -2263,6 +2551,336 @@ pub mod copy_vault {
                 by: self.env().caller(),
             });
             Ok(())
+        }
+
+        /// D3: grava factory/wnative aplicando a regra da troca de wnative
+        /// (chamada por `set_valuation_infra` e `apply_valuation_infra`).
+        /// Só quando o wnative MUDA:
+        /// 1. se o novo wnative estava rastreado, sai da lista sem checar
+        ///    saldo (passa a valer 1:1 como wnative — sem dupla contagem);
+        /// 2. se havia wnative antigo e o saldo dele no vault é > 0 (ou a
+        ///    leitura falha), ele entra na lista de rastreados IGNORANDO
+        ///    allowlist, liquidez mínima e MAX_TRACKED_TOKENS — nunca sai
+        ///    do NAV nem da saída in-kind. Saldo lido 0 ⇒ não rastreia.
+        ///
+        /// Depois da troca o wnative antigo é um token rastreado comum,
+        /// cotado pela factory nova; sem par antigo↔novo ele fica sem
+        /// cotação (`ValuationUnavailable` fecha depósito, saque normal,
+        /// `sync_equity` e o próprio swap do líder, que lê o equity antes
+        /// de trocar; a saída de emergência in-kind segue funcionando).
+        /// Como ele não está na allowlist, pode ser vendido mas não
+        /// recomprado.
+        ///
+        /// Regras operacionais do admin do protocolo:
+        /// * criar o par antigo↔novo (com reservas) na factory nova ANTES
+        ///   do `apply`, MESMO com saldo zero no wnative antigo: qualquer
+        ///   conta pode doar 1 planck durante o timelock e o antigo é
+        ///   rastreado no `apply`. Sem par, o líder não consegue vender nem
+        ///   des-rastrear (`TokenHasBalance`); a recuperação é criar o par
+        ///   (permissionless) ou rotacionar de volta (novo timelock).
+        /// * limitações conhecidas: um wnative antigo que trapa/queima gas
+        ///   no `balance_of` derruba a própria rotação; um que falha limpo
+        ///   fica rastreado sem rota administrativa de des-rastreio (só a
+        ///   saída in-kind com skip). Cada rotação com saldo acrescenta um
+        ///   item acima de `MAX_TRACKED_TOKENS`, sem teto rígido — o custo
+        ///   de gas da saída sem skip cresce junto; medir em e2e.
+        fn switch_valuation_infra(
+            &mut self,
+            factory: AccountId,
+            new_wnative: AccountId,
+        ) -> Result<(), VaultError> {
+            let old_wnative = self.wnative;
+            if old_wnative != Some(new_wnative) {
+                if let Some(idx) = self.tracked_token_index.get(new_wnative) {
+                    self.remove_tracked(new_wnative, idx)?;
+                }
+                if let Some(old) = old_wnative {
+                    let has_balance = match self.psp22_balance_of(old) {
+                        Ok(balance) => balance > 0,
+                        Err(_) => true,
+                    };
+                    if has_balance && !self.is_tracked(old) {
+                        self.push_tracked(old)?;
+                    }
+                }
+            }
+            self.factory = Some(factory);
+            self.wnative = Some(new_wnative);
+            Ok(())
+        }
+
+        // ── Saída in-kind + allowlist ────────────────────────────
+
+        /// Corpo da saída de emergência in-kind. Pressupõe o lock tomado
+        /// (os wrappers liberam em todo caminho). Ordem: checks →
+        /// leituras/matemática → transfer nativo → escritas → evento
+        /// `Withdrawn` → transfers PSP22 → eventos por ativo.
+        /// Depois da primeira escrita só há um `Err`: transfer PSP22 não
+        /// confirmado que não se prova pelo saldo (`TransferFailed`), que
+        /// on-chain reverte a mensagem inteira (falha fechada).
+        fn emergency_exit_internal(
+            &mut self,
+            skip_tokens: &[AccountId],
+        ) -> Result<Balance, VaultError> {
+            // 1) Checks.
+            let max_skip = (self.tracked_token_count as usize).saturating_add(1);
+            if skip_tokens.len() > max_skip {
+                return Err(VaultError::InvalidSkipList);
+            }
+            let caller = self.env().caller();
+            let now = self.env().block_timestamp();
+            match self.emergency_unlocks.get(caller) {
+                Some(unlock_at) if now >= unlock_at => {}
+                _ => return Err(VaultError::EmergencyNotUnlocked),
+            }
+            let s = self.shares.get(caller).unwrap_or(0);
+            if s == 0 {
+                return Err(VaultError::InsufficientShares);
+            }
+            let total = self.total_shares;
+            if s > total {
+                return Err(VaultError::Overflow);
+            }
+
+            // 2) Leituras e matemática (nenhuma escrita). `None` = skip:
+            // nenhuma chamada ao token. `Some((valor, saldo_lido))`: o
+            // saldo lido aqui é o "antes" de `settle_psp22_transfer`.
+            let native_out = self.native_exit_amount(s, total)?;
+            let mut legs: Vec<(AccountId, Option<(Balance, Balance)>)> = Vec::new();
+            for asset in self.exit_assets() {
+                if skip_tokens.contains(&asset) {
+                    legs.push((asset, None));
+                } else {
+                    legs.push((asset, Some(self.token_exit_leg(asset, s, total)?)));
+                }
+            }
+            let new_total = total.checked_sub(s).ok_or(VaultError::Overflow)?;
+            let new_equity = Self::mul_div_floor(self.total_equity, new_total, total)?;
+            let new_hwm = Self::mul_div_floor(self.high_water_mark, new_total, total)?;
+
+            // 3) Perna nativa (KeepAlive, não executa código do destino).
+            if native_out > 0 && self.env().transfer(caller, native_out).is_err() {
+                return Err(VaultError::TransferFailed);
+            }
+
+            // 4) Escritas — cotas queimadas ANTES de qualquer chamada a
+            // token; tudo o que é devido entra na reserva.
+            self.shares.remove(caller);
+            self.cost_basis.remove(caller);
+            self.emergency_unlocks.remove(caller);
+            self.withdrawal_requests.remove(caller);
+            self.total_shares = new_total;
+            self.total_equity = new_equity;
+            self.high_water_mark = new_hwm;
+            self.active_depositors = self.active_depositors.saturating_sub(1);
+            self.total_withdrawn = self.total_withdrawn.saturating_add(native_out);
+            for (asset, leg) in legs.iter() {
+                if let Some((amount, _)) = *leg {
+                    if amount > 0 {
+                        let reserved = self.reserved_of(*asset).saturating_add(amount);
+                        self.set_reserved(*asset, reserved);
+                    }
+                }
+            }
+
+            // 5) Exatamente um Withdrawn (perna nativa, sem taxa).
+            self.env().emit_event(Withdrawn {
+                depositor: caller,
+                shares_burned: s,
+                amount_received: native_out,
+                performance_fee: 0,
+                timestamp: now,
+            });
+
+            // 6) Pernas PSP22, na ordem da lista. Falha limpa (saldo
+            // inalterado) ⇒ crédito pendente por VALOR (a reserva fica).
+            // Único `Err` possível aqui: transfer não confirmado com saldo
+            // ilegível/divergente (`settle_psp22_transfer`) — on-chain ele
+            // reverte a mensagem INTEIRA (perna nativa, escritas e
+            // movimentos de token); o usuário refaz com o token em skip.
+            for (asset, leg) in legs {
+                match leg {
+                    None => self.env().emit_event(EmergencyTokenSettled {
+                        depositor: caller,
+                        token: asset,
+                        amount: 0,
+                        status: 2,
+                    }),
+                    Some((0, _)) => {}
+                    Some((amount, balance_before)) => {
+                        let paid = self.settle_psp22_transfer(
+                            asset,
+                            caller,
+                            amount,
+                            Some(balance_before),
+                        )?;
+                        let status = if paid {
+                            let reserved = self.reserved_of(asset).saturating_sub(amount);
+                            self.set_reserved(asset, reserved);
+                            0
+                        } else {
+                            let key = (asset, caller);
+                            let pending = self
+                                .pending_tokens
+                                .get(key)
+                                .unwrap_or(0)
+                                .saturating_add(amount);
+                            self.pending_tokens.insert(key, &pending);
+                            1
+                        };
+                        self.env().emit_event(EmergencyTokenSettled {
+                            depositor: caller,
+                            token: asset,
+                            amount,
+                            status,
+                        });
+                    }
+                }
+            }
+
+            Ok(native_out)
+        }
+
+        /// Ativos pagos na saída in-kind, em ordem: wnative (se
+        /// configurado) e os rastreados, omitindo um rastreado igual ao
+        /// wnative (estado legado — sem isso haveria pagamento duplo).
+        fn exit_assets(&self) -> Vec<AccountId> {
+            let mut assets = Vec::new();
+            if let Some(wnative) = self.wnative {
+                assets.push(wnative);
+            }
+            for i in 0..self.tracked_token_count {
+                if let Some(token) = self.tracked_tokens.get(i) {
+                    if Some(token) != self.wnative {
+                        assets.push(token);
+                    }
+                }
+            }
+            assets
+        }
+
+        /// Perna nativa da saída: piso((saldo − ED) × s / total). O ED
+        /// fica sempre no vault (transfer nativo é KeepAlive).
+        fn native_exit_amount(&self, s: Balance, total: Balance) -> Result<Balance, VaultError> {
+            let free = self
+                .env()
+                .balance()
+                .saturating_sub(self.env().minimum_balance());
+            Self::mul_div_floor(free, s, total)
+        }
+
+        /// Perna de `token` na saída: piso(saldo livre × s / total).
+        /// Saldo ilegível ⇒ `TokenUnreadable`.
+        fn token_exit_amount(
+            &self,
+            token: AccountId,
+            s: Balance,
+            total: Balance,
+        ) -> Result<Balance, VaultError> {
+            self.token_exit_leg(token, s, total)
+                .map(|(amount, _)| amount)
+        }
+
+        /// (perna, saldo PSP22 bruto lido) de `token` na saída. O saldo
+        /// lido serve de "antes" para `settle_psp22_transfer`.
+        fn token_exit_leg(
+            &self,
+            token: AccountId,
+            s: Balance,
+            total: Balance,
+        ) -> Result<(Balance, Balance), VaultError> {
+            let balance = self
+                .psp22_balance_of(token)
+                .map_err(|_| VaultError::TokenUnreadable)?;
+            let free = balance.saturating_sub(self.reserved_of(token));
+            Ok((Self::mul_div_floor(free, s, total)?, balance))
+        }
+
+        /// Transfer PSP22 do vault com prova pelo saldo quando o retorno
+        /// do token não é confirmado (`psp22_transfer == false`). O vault
+        /// não distingue "o token não moveu" de "moveu e o retorno não
+        /// decodificou" (ink! 4: falha de decode NÃO reverte o callee).
+        /// Com `balance_before` = saldo PSP22 do vault lido antes:
+        /// * retorno confirmado ⇒ `Ok(true)` (pago);
+        /// * não confirmado e saldo inalterado ⇒ `Ok(false)` (nada saiu);
+        /// * não confirmado e saldo caiu exatamente `amount` ⇒ `Ok(true)`;
+        /// * qualquer outro caso (saldo ilegível antes ou depois, ou
+        ///   divergente) ⇒ `Err(TransferFailed)`: on-chain reverte a
+        ///   mensagem inteira, inclusive o que o token moveu.
+        ///
+        /// Na saída o "antes" é o saldo lido no passo de leituras: entre a
+        /// leitura e o transfer o vault não move esse token por outro
+        /// caminho (lista sem duplicata, allowances zeradas), então só um
+        /// token hostil alheio poderia alterá-lo — e qualquer alteração
+        /// que não seja exatamente `−amount` cai no `Err`.
+        fn settle_psp22_transfer(
+            &self,
+            token: AccountId,
+            to: AccountId,
+            amount: Balance,
+            balance_before: Option<Balance>,
+        ) -> Result<bool, VaultError> {
+            if self.psp22_transfer(token, to, amount) {
+                return Ok(true);
+            }
+            let before = balance_before.ok_or(VaultError::TransferFailed)?;
+            match self.psp22_balance_of(token) {
+                Ok(after) if after == before => Ok(false),
+                Ok(after) if before.checked_sub(amount) == Some(after) => Ok(true),
+                _ => Err(VaultError::TransferFailed),
+            }
+        }
+
+        /// Saldo PSP22 do vault em `token` menos o reservado a quem saiu.
+        fn free_token_balance(&self, token: AccountId) -> Result<Balance, VaultError> {
+            let balance = self.psp22_balance_of(token)?;
+            Ok(balance.saturating_sub(self.reserved_of(token)))
+        }
+
+        fn reserved_of(&self, token: AccountId) -> Balance {
+            self.reserved_tokens.get(token).unwrap_or(0)
+        }
+
+        fn set_reserved(&mut self, token: AccountId, amount: Balance) {
+            if amount == 0 {
+                self.reserved_tokens.remove(token);
+            } else {
+                self.reserved_tokens.insert(token, &amount);
+            }
+        }
+
+        /// Allowlist: entrada existe e já vale (`now >= effective_at`).
+        fn token_allowed_now(&self, token: AccountId) -> bool {
+            let now = self.env().block_timestamp();
+            self.allowed_tokens
+                .get(token)
+                .is_some_and(|effective_at| now >= effective_at)
+        }
+
+        /// piso(a × b / d) sem perder precisão quando `a × b` estoura u128:
+        /// a = q·d + r ⇒ piso(a·b/d) = q·b + piso(r·b/d). `d == 0` ou
+        /// resultado que não cabe ⇒ `Overflow` (nunca trunca).
+        ///
+        /// Domínio: NÃO é mul-div de 256 bits — também devolve `Overflow`
+        /// (falha fechada, nunca valor errado) quando `r·b >= 2^128` mesmo
+        /// que o resultado coubesse. Com `b, d` = cotas (`total_shares`
+        /// ≪ 2^64) isso exige `r·b` com `r < d`, inalcançável na prática.
+        fn mul_div_floor(a: Balance, b: Balance, d: Balance) -> Result<Balance, VaultError> {
+            if d == 0 {
+                return Err(VaultError::Overflow);
+            }
+            if let Some(product) = a.checked_mul(b) {
+                return product.checked_div(d).ok_or(VaultError::Overflow);
+            }
+            let q = a.checked_div(d).ok_or(VaultError::Overflow)?;
+            let r = a.checked_rem(d).ok_or(VaultError::Overflow)?;
+            let high = q.checked_mul(b).ok_or(VaultError::Overflow)?;
+            let low = r
+                .checked_mul(b)
+                .ok_or(VaultError::Overflow)?
+                .checked_div(d)
+                .ok_or(VaultError::Overflow)?;
+            high.checked_add(low).ok_or(VaultError::Overflow)
         }
 
         // ── ADR-002: cross-contract reads (mockados em unit test) ─
@@ -2294,7 +2912,37 @@ pub mod copy_vault {
             }
             #[cfg(test)]
             {
-                Ok(test_mocks::psp22_balance(token))
+                test_mocks::psp22_balance_of_checked(token).ok_or(VaultError::ValuationUnavailable)
+            }
+        }
+
+        /// PSP22::transfer(to, value, data = []) do saldo do vault em
+        /// `token`. `true` só em `Ok(Ok(Ok(())))`; revert, trap, erro PSP22
+        /// ou decode falho ⇒ `false` (nunca propaga). `false` é AMBÍGUO
+        /// (decode falho não reverte o token): quem move fundos usa
+        /// `settle_psp22_transfer`, nunca este `bool` sozinho. Sem gas cap
+        /// (`gas_limit(0)` = todo o gas restante).
+        fn psp22_transfer(&self, token: AccountId, to: AccountId, value: Balance) -> bool {
+            #[cfg(not(test))]
+            {
+                use ink::env::call::{build_call, ExecutionInput, Selector};
+                let result = build_call::<ink::env::DefaultEnvironment>()
+                    .call(token)
+                    .gas_limit(0)
+                    .transferred_value(0)
+                    .exec_input(
+                        ExecutionInput::new(Selector::new(PSP22_TRANSFER_SELECTOR))
+                            .push_arg(to)
+                            .push_arg(value)
+                            .push_arg(Vec::<u8>::new()),
+                    )
+                    .returns::<core::result::Result<(), Psp22ErrorMirror>>()
+                    .try_invoke();
+                matches!(result, Ok(Ok(Ok(()))))
+            }
+            #[cfg(test)]
+            {
+                test_mocks::psp22_transfer(token, to, value)
             }
         }
 
@@ -2580,7 +3228,10 @@ pub mod copy_vault {
     #[cfg(test)]
     pub(crate) mod test_mocks {
         use super::{AccountId, Balance};
-        use std::{cell::RefCell, collections::BTreeMap};
+        use std::{
+            cell::RefCell,
+            collections::{BTreeMap, BTreeSet},
+        };
 
         thread_local! {
             static PSP22_BALANCES: RefCell<BTreeMap<AccountId, Balance>> =
@@ -2588,6 +3239,110 @@ pub mod copy_vault {
             static PAIR_RESERVES: RefCell<BTreeMap<AccountId, (Balance, Balance)>> =
                 RefCell::new(BTreeMap::new());
             static ROUTER_SWAP_CREDIT: RefCell<Option<Balance>> = RefCell::new(None);
+            static PSP22_TRANSFER_FAIL: RefCell<BTreeSet<AccountId>> =
+                const { RefCell::new(BTreeSet::new()) };
+            static PSP22_BALANCE_FAIL: RefCell<BTreeSet<AccountId>> =
+                const { RefCell::new(BTreeSet::new()) };
+            static PSP22_TRANSFERS: RefCell<Vec<(AccountId, AccountId, Balance)>> =
+                const { RefCell::new(Vec::new()) };
+            static PSP22_CALLS: RefCell<BTreeMap<AccountId, u32>> =
+                const { RefCell::new(BTreeMap::new()) };
+            static PSP22_TRANSFER_UNCONFIRMED: RefCell<BTreeMap<AccountId, Option<Balance>>> =
+                const { RefCell::new(BTreeMap::new()) };
+        }
+
+        fn count_call(token: AccountId) {
+            PSP22_CALLS.with(|m| {
+                let mut m = m.borrow_mut();
+                let n = m.entry(token).or_insert(0);
+                *n = n.saturating_add(1);
+            });
+        }
+
+        /// Faz `transfer` do `token` falhar (revert/trap limpo).
+        pub fn set_psp22_transfer_fail(token: AccountId, fail: bool) {
+            PSP22_TRANSFER_FAIL.with(|s| {
+                if fail {
+                    s.borrow_mut().insert(token);
+                } else {
+                    s.borrow_mut().remove(&token);
+                }
+            });
+        }
+
+        /// Faz `balance_of` do `token` falhar (saldo ilegível).
+        pub fn set_psp22_balance_fail(token: AccountId, fail: bool) {
+            PSP22_BALANCE_FAIL.with(|s| {
+                if fail {
+                    s.borrow_mut().insert(token);
+                } else {
+                    s.borrow_mut().remove(&token);
+                }
+            });
+        }
+
+        /// Faz `transfer` do `token` MOVER saldo e devolver um retorno que
+        /// o vault não confirma (ex.: token ink! 3.x sem a camada
+        /// `LangError`, decode falho). `moved = None` move o valor pedido;
+        /// `Some(x)` move `x`. O movimento entra em `psp22_transfers`.
+        pub fn set_psp22_transfer_unconfirmed(token: AccountId, moved: Option<Balance>) {
+            PSP22_TRANSFER_UNCONFIRMED.with(|m| {
+                m.borrow_mut().insert(token, moved);
+            });
+        }
+
+        pub fn clear_psp22_transfer_unconfirmed(token: AccountId) {
+            PSP22_TRANSFER_UNCONFIRMED.with(|m| {
+                m.borrow_mut().remove(&token);
+            });
+        }
+
+        /// Transfers PSP22 que MOVERAM saldo, em ordem: (token, to, amount).
+        pub fn psp22_transfers() -> Vec<(AccountId, AccountId, Balance)> {
+            PSP22_TRANSFERS.with(|v| v.borrow().clone())
+        }
+
+        /// Chamadas do vault ao `token` (`balance_of` + `transfer`).
+        pub fn psp22_calls(token: AccountId) -> u32 {
+            PSP22_CALLS.with(|m| m.borrow().get(&token).copied().unwrap_or(0))
+        }
+
+        /// `balance_of` visto pelo contrato: conta a chamada; `None` se
+        /// o token está em BALANCE_FAIL.
+        pub fn psp22_balance_of_checked(token: AccountId) -> Option<Balance> {
+            count_call(token);
+            if PSP22_BALANCE_FAIL.with(|s| s.borrow().contains(&token)) {
+                return None;
+            }
+            Some(psp22_balance(token))
+        }
+
+        /// `transfer` visto pelo contrato: conta a chamada; falha se o
+        /// token está em TRANSFER_FAIL ou o saldo não cobre; senão
+        /// debita o saldo mockado do vault e registra.
+        pub fn psp22_transfer(token: AccountId, to: AccountId, amount: Balance) -> bool {
+            count_call(token);
+            if PSP22_TRANSFER_FAIL.with(|s| s.borrow().contains(&token)) {
+                return false;
+            }
+            if let Some(moved) =
+                PSP22_TRANSFER_UNCONFIRMED.with(|m| m.borrow().get(&token).copied())
+            {
+                let balance = psp22_balance(token);
+                let moved = moved.unwrap_or(amount).min(balance);
+                set_psp22_balance(token, balance.saturating_sub(moved));
+                if moved > 0 {
+                    PSP22_TRANSFERS.with(|v| v.borrow_mut().push((token, to, moved)));
+                }
+                return false;
+            }
+            let balance = psp22_balance(token);
+            let Some(rest) = balance.checked_sub(amount) else {
+                return false;
+            };
+            set_psp22_balance(token, rest);
+            PSP22_TRANSFERS.with(|v| v.borrow_mut().push((token, to, amount)));
+            true
         }
 
         /// Quanto o router simulado credita de token_out ao vault no
@@ -2893,6 +3648,11 @@ pub mod copy_vault {
                 ROUTER_GET_AMOUNT_OUT_SELECTOR,
                 ink::selector_bytes!("get_amount_out"),
             );
+            // Saída in-kind: PSP22::transfer(to, value, data)
+            assert_eq!(
+                PSP22_TRANSFER_SELECTOR,
+                ink::selector_bytes!("PSP22::transfer"),
+            );
         }
 
         /// Os enums espelho devem ter exatamente os mesmos discriminantes
@@ -2952,6 +3712,9 @@ pub mod copy_vault {
             vault
                 .set_valuation_infra(factory_addr(), wnative_addr())
                 .unwrap();
+            // Allowlist: django/eve e os tokens de enchimento da lista
+            // permitidos antes do depósito (efeito imediato).
+            allow_test_tokens(&mut vault);
 
             // Charlie deposita 1000 LUNES
             set_caller(accounts.charlie);
@@ -3120,6 +3883,40 @@ pub mod copy_vault {
             AccountId::from([byte; 32])
         }
 
+        fn token_at(base: u8, i: u32) -> AccountId {
+            token(base.wrapping_add(i as u8))
+        }
+
+        /// Permite (como alice, sem depositantes ⇒ efeito imediato) os
+        /// tokens que os testes ADR-002 pré-existentes rastreiam/compram.
+        fn allow_test_tokens(vault: &mut CopyVault) {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut list = vec![
+                accounts.django,
+                accounts.eve,
+                token(0x01),
+                token(0x02),
+                token(0x0A),
+                token(0x0B),
+                token(0x0C),
+                token(0xEE),
+            ];
+            list.extend((0..constants::MAX_TRACKED_TOKENS).map(|i| token_at(0x10, i)));
+            let this = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            for t in list {
+                if t == this {
+                    // token(0x01) == alice == callee padrão do ambiente
+                    // off-chain: `set_token_allowed` recusa o próprio vault
+                    // (InvalidConfigAddress), então só nos testes legados
+                    // que usam esse id a permissão entra direto no storage.
+                    vault.allowed_tokens.insert(t, &0);
+                } else {
+                    assert_eq!(vault.set_token_allowed(t, true), Ok(()));
+                }
+            }
+        }
+
         /// Vault com infra de valuation configurada (sem depósito).
         fn vault_with_infra() -> (
             CopyVault,
@@ -3130,6 +3927,9 @@ pub mod copy_vault {
             vault
                 .set_valuation_infra(factory_addr(), wnative_addr())
                 .unwrap();
+            // Allowlist: os tokens usados pelos testes ADR-002 são
+            // permitidos antes de qualquer depósito (efeito imediato).
+            allow_test_tokens(&mut vault);
             (vault, accounts)
         }
 
@@ -3465,11 +4265,16 @@ pub mod copy_vault {
             test_mocks::set_psp22_balance(t, 1_000_000_000_000);
 
             // 5% das shares → payout = 55e9 ≤ 100e9 nativo. Fee de 20%
-            // sobre o lucro (55e9 - 5e9 basis) = 10e9 → net 45e9.
+            // sobre o lucro. CV-FEE-01: o custo das 5e9 shares é o
+            // proporcional EXATO do basis (charlie pagou 100e9 por
+            // 100e9 − MINIMUM_SHARES shares): piso(100e9 × 5e9 /
+            // 99_999_999_000) = 5_000_000_050 → lucro 49_999_999_950 →
+            // fee 9_999_999_990 → net 45_000_000_010 (antes 45e9 exatos
+            // porque o basis por share truncava para 1).
             set_caller(accounts.charlie);
             set_value(0);
             let result = vault.withdraw(5_000_000_000);
-            assert_eq!(result, Ok(45_000_000_000));
+            assert_eq!(result, Ok(45_000_000_010));
 
             let (shares, _) = vault.get_depositor_info(accounts.charlie).unwrap();
             assert_eq!(shares, 95_000_000_000 - constants::MINIMUM_SHARES);
@@ -4792,6 +5597,1930 @@ pub mod copy_vault {
             assert_eq!(vault.get_pending_router(), None);
             assert_eq!(vault.get_pending_valuation_infra(), None);
             assert_eq!(ink::env::test::recorded_events().count(), events_before);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // CV-FEE-01 — custo proporcional (multiplicar antes de dividir)
+        // ════════════════════════════════════════════════════════
+
+        /// Charlie entra com 100 LUNES (cota 1,0); doação leva o NAV a
+        /// 150 LUNES (cota 1,5); django entra com 30 LUNES → 20e9 shares
+        /// (basis 30e9). Saldo nativo final: 180 LUNES, total 120e9.
+        fn vault_with_django_at_price_1_5() -> (
+            CopyVault,
+            ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>,
+        ) {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_balance(contract_id, 150_000_000_000);
+            set_caller(accounts.django);
+            set_value(30_000_000_000);
+            set_balance(contract_id, 180_000_000_000);
+            assert_eq!(vault.deposit(), Ok(20_000_000_000));
+            set_value(0);
+            assert_eq!(vault.cost_basis.get(accounts.django), Some(30_000_000_000));
+            (vault, accounts)
+        }
+
+        /// D2 (1): cota comprada a 1,5 e resgatada a 1,5 → sem lucro, sem taxa.
+        #[ink::test]
+        fn test_fee_full_withdraw_bought_above_par_without_profit_is_zero() {
+            let (mut vault, accounts) = vault_with_django_at_price_1_5();
+
+            set_caller(accounts.django);
+            let unlock_at = vault.request_withdrawal(20_000_000_000).unwrap();
+            set_now(unlock_at);
+            assert_eq!(vault.withdraw(20_000_000_000), Ok(30_000_000_000));
+            assert_eq!(vault.total_fees_collected, 0);
+            assert_eq!(vault.cost_basis.get(accounts.django), None);
+        }
+
+        /// D2 (2): cota comprada abaixo de 1,0 (vault em prejuízo) e
+        /// resgatada ao mesmo preço → sem taxa (antes: payout INTEIRO
+        /// tratado como lucro).
+        #[ink::test]
+        fn test_fee_full_withdraw_bought_below_par_without_profit_is_zero() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            // Prejuízo: NAV 80 LUNES para 100e9 shares (cota 0,8).
+            set_balance(contract_id, 80_000_000_000);
+            set_caller(accounts.django);
+            set_value(40_000_000_000);
+            set_balance(contract_id, 120_000_000_000);
+            assert_eq!(vault.deposit(), Ok(50_000_000_000));
+            set_value(0);
+
+            let unlock_at = vault.request_withdrawal(50_000_000_000).unwrap();
+            set_now(unlock_at);
+            assert_eq!(vault.withdraw(50_000_000_000), Ok(40_000_000_000));
+            assert_eq!(vault.total_fees_collected, 0);
+        }
+
+        /// D2 (3): cota a 1,5, preço sobe a 2,0, saque PARCIAL de metade
+        /// → taxa = 20% do lucro real e a base remanescente é proporcional.
+        #[ink::test]
+        fn test_fee_partial_withdraw_charges_only_real_profit() {
+            let (mut vault, accounts) = vault_with_django_at_price_1_5();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+            set_balance(contract_id, 240_000_000_000); // cota 2,0
+
+            set_caller(accounts.django);
+            // payout 20e9; custo real 30e9 × 10/20 = 15e9; lucro 5e9;
+            // taxa 20% = 1e9; líquido 19e9.
+            assert_eq!(vault.withdraw(10_000_000_000), Ok(19_000_000_000));
+            assert_eq!(vault.total_fees_collected, 1_000_000_000);
+            assert_eq!(vault.cost_basis.get(accounts.django), Some(15_000_000_000));
+            assert_eq!(vault.shares.get(accounts.django), Some(10_000_000_000));
+        }
+
+        /// D2 (4): dois saques parciais seguidos pagam a mesma taxa que um
+        /// saque total da mesma posição (± 1 planck). Django e eve têm
+        /// posições idênticas; eve sai de uma vez, django em duas metades.
+        #[ink::test]
+        fn test_fee_two_partials_equal_one_full_withdraw() {
+            let (mut vault, accounts) = vault_with_django_at_price_1_5();
+            let contract_id = ink::env::test::callee::<ink::env::DefaultEnvironment>();
+
+            // eve entra ao mesmo preço 1,5: 30e9 → 20e9 shares.
+            set_caller(accounts.eve);
+            set_value(30_000_000_000);
+            set_balance(contract_id, 210_000_000_000);
+            assert_eq!(vault.deposit(), Ok(20_000_000_000));
+            set_value(0);
+
+            // Preço sobe a 2,0 (total 140e9 shares).
+            set_balance(contract_id, 280_000_000_000);
+
+            // eve: saque total (14% > 10% ⇒ cooldown).
+            let unlock_at = vault.request_withdrawal(20_000_000_000).unwrap();
+            set_now(unlock_at);
+            let fees_before = vault.total_fees_collected;
+            vault.withdraw(20_000_000_000).unwrap();
+            let fee_full = sub(vault.total_fees_collected, fees_before);
+            // 20% do lucro real (40e9 - 30e9).
+            assert_eq!(fee_full, 2_000_000_000);
+
+            // django: duas metades (cada uma < 10% do total).
+            set_caller(accounts.django);
+            let fees_before = vault.total_fees_collected;
+            vault.withdraw(10_000_000_000).unwrap();
+            vault.withdraw(10_000_000_000).unwrap();
+            let fee_partials = sub(vault.total_fees_collected, fees_before);
+
+            assert!(
+                fee_partials.abs_diff(fee_full) <= 1,
+                "parciais {} != total {}",
+                fee_partials,
+                fee_full
+            );
+            assert_eq!(vault.cost_basis.get(accounts.django), None);
+        }
+
+        // ════════════════════════════════════════════════════════
+        // Saída de emergência in-kind + allowlist de tokens
+        // ════════════════════════════════════════════════════════
+
+        type Accounts = ink::env::test::DefaultAccounts<ink::env::DefaultEnvironment>;
+
+        const C_DEP: Balance = 100_000_000_000;
+        const D_DEP: Balance = 50_000_000_000;
+        const W_BAL: Balance = 30_000_000_000;
+        const A_BAL: Balance = 60_000_000_000;
+        const B_BAL: Balance = 9_000_000_000;
+
+        fn ed() -> Balance {
+            ink::env::minimum_balance::<ink::env::DefaultEnvironment>()
+        }
+
+        fn contract() -> AccountId {
+            ink::env::test::callee::<ink::env::DefaultEnvironment>()
+        }
+
+        fn native_of(account: AccountId) -> Balance {
+            ink::env::test::get_account_balance::<ink::env::DefaultEnvironment>(account)
+                .unwrap_or(0)
+        }
+
+        /// Oráculo independente de `mul_div_floor` (sem estouro nos testes).
+        fn pro_rata(amount: Balance, s: Balance, total: Balance) -> Balance {
+            amount
+                .checked_mul(s)
+                .and_then(|p| p.checked_div(total))
+                .expect("pro_rata estourou")
+        }
+
+        fn add(a: Balance, b: Balance) -> Balance {
+            a.checked_add(b).expect("overflow no teste")
+        }
+
+        fn sub(a: Balance, b: Balance) -> Balance {
+            a.checked_sub(b).expect("underflow no teste")
+        }
+
+        /// `n` endereços que não são ativo do vault (0x40..).
+        fn junk_tokens(n: u8) -> Vec<AccountId> {
+            (0..n).map(|i| token(0x40u8.wrapping_add(i))).collect()
+        }
+
+        fn token_a() -> AccountId {
+            token(0x31)
+        }
+
+        fn token_b() -> AccountId {
+            token(0x32)
+        }
+
+        /// Permite `t` como admin do protocolo (alice).
+        fn allow_token(vault: &mut CopyVault, t: AccountId) {
+            set_caller(default_accounts().alice);
+            assert_eq!(vault.set_token_allowed(t, true), Ok(()));
+        }
+
+        fn events_since(start: usize) -> Vec<Event> {
+            ink::env::test::recorded_events()
+                .skip(start)
+                .map(|e| <Event as scale::Decode>::decode(&mut &e.data[..]).unwrap())
+                .collect()
+        }
+
+        /// Router + infra; tA (1:1) e tB (0,5) permitidos e rastreados;
+        /// charlie (100 LUNES) e django (50 LUNES) com o unlock de
+        /// emergência maduro. Saldos PSP22 do vault: wnative 30e9,
+        /// tA 60e9, tB 9e9. Nativo 150e9, total_shares 150e9.
+        fn inkind_vault() -> (CopyVault, Accounts) {
+            let (mut vault, accounts) = create_vault();
+            let contract_id = contract();
+            set_now(1_000);
+            set_caller(accounts.alice);
+            set_value(0);
+            vault.set_router(accounts.frank).unwrap();
+            vault
+                .set_valuation_infra(factory_addr(), wnative_addr())
+                .unwrap();
+            test_mocks::set_pair_reserves(token_a(), 1_000_000_000_000, 1_000_000_000_000);
+            test_mocks::set_pair_reserves(token_b(), 2_000_000_000_000, 1_000_000_000_000);
+            for t in [token_a(), token_b()] {
+                allow_token(&mut vault, t);
+                vault.add_tracked_token(t).unwrap();
+            }
+
+            set_caller(accounts.charlie);
+            set_value(C_DEP);
+            set_balance(contract_id, C_DEP);
+            vault.deposit().unwrap();
+            set_caller(accounts.django);
+            set_value(D_DEP);
+            set_balance(contract_id, C_DEP + D_DEP);
+            assert_eq!(vault.deposit(), Ok(D_DEP));
+            set_value(0);
+
+            test_mocks::set_psp22_balance(wnative_addr(), W_BAL);
+            test_mocks::set_psp22_balance(token_a(), A_BAL);
+            test_mocks::set_psp22_balance(token_b(), B_BAL);
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_caller(accounts.django);
+            vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            (vault, accounts)
+        }
+
+        /// (1) Pro-rata exato de nativo + wnative + 2 tokens com dois
+        /// depositantes; a soma paga nunca passa do saldo (R2).
+        #[ink::test]
+        fn test_inkind_exit_pays_exact_pro_rata_of_every_asset() {
+            let (mut vault, accounts) = inkind_vault();
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            let charlie_before = native_of(accounts.charlie);
+
+            set_caller(accounts.charlie);
+            let native_c = vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            assert_eq!(native_c, pro_rata(sub(C_DEP + D_DEP, ed()), s_c, total));
+            assert_eq!(native_of(accounts.charlie), add(charlie_before, native_c));
+            assert_eq!(
+                test_mocks::psp22_transfers(),
+                vec![
+                    (
+                        wnative_addr(),
+                        accounts.charlie,
+                        pro_rata(W_BAL, s_c, total)
+                    ),
+                    (token_a(), accounts.charlie, pro_rata(A_BAL, s_c, total)),
+                    (token_b(), accounts.charlie, pro_rata(B_BAL, s_c, total)),
+                ]
+            );
+            assert!(!vault.locked);
+            assert_eq!(vault.total_shares, sub(total, s_c));
+            assert_eq!(vault.shares.get(accounts.charlie), None);
+            assert_eq!(vault.cost_basis.get(accounts.charlie), None);
+            assert_eq!(vault.active_depositors, 1);
+            assert_eq!(vault.total_withdrawn, native_c);
+
+            // django sai em seguida, do que restou.
+            let total2 = vault.total_shares;
+            let native_left = native_of(contract());
+            set_caller(accounts.django);
+            let native_d = vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            assert_eq!(native_d, pro_rata(sub(native_left, ed()), D_DEP, total2));
+            assert!(add(native_c, native_d) <= sub(C_DEP + D_DEP, ed()));
+
+            let transfers = test_mocks::psp22_transfers();
+            for (t, initial) in [
+                (wnative_addr(), W_BAL),
+                (token_a(), A_BAL),
+                (token_b(), B_BAL),
+            ] {
+                let paid: Balance = transfers.iter().filter(|x| x.0 == t).map(|x| x.2).sum();
+                assert!(paid <= initial, "pago {} > saldo {}", paid, initial);
+                assert_eq!(test_mocks::psp22_balance(t), sub(initial, paid));
+                assert_eq!(vault.get_reserved_token(t), 0);
+            }
+            assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
+            assert_eq!(vault.active_depositors, 0);
+        }
+
+        /// (2) Achado #0: par sem reservas (equity falha) não impede a saída.
+        #[ink::test]
+        fn test_inkind_exit_works_when_equity_valuation_fails() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::clear_pair_reserves(token_a());
+            assert_eq!(
+                vault.get_vault_equity(),
+                Err(VaultError::ValuationUnavailable)
+            );
+
+            set_caller(accounts.charlie);
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .is_ok());
+            assert_eq!(vault.shares.get(accounts.charlie), None);
+            assert_eq!(test_mocks::psp22_transfers().len(), 3);
+        }
+
+        /// (3) Achado #3: funciona com o vault pausado e o trading parado.
+        #[ink::test]
+        fn test_inkind_exit_works_paused_and_halted() {
+            let (mut vault, accounts) = inkind_vault();
+            set_caller(accounts.alice);
+            vault.pause().unwrap();
+            vault.trading_halted = true;
+
+            set_caller(accounts.charlie);
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .is_ok());
+            assert_eq!(vault.shares.get(accounts.charlie), None);
+        }
+
+        /// (4) P2: poeira de wnative não bloqueia o último depositante.
+        #[ink::test]
+        fn test_inkind_exit_wnative_dust_does_not_block_last_depositor() {
+            let (mut vault, accounts) = vault_with_infra();
+            set_now(1_000);
+            set_caller(accounts.charlie);
+            set_value(C_DEP);
+            set_balance(contract(), C_DEP);
+            vault.deposit().unwrap();
+            set_value(0);
+            test_mocks::set_psp22_balance(wnative_addr(), 1);
+
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            let s = vault.shares.get(accounts.charlie).unwrap();
+            let total = vault.total_shares;
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Ok(pro_rata(sub(C_DEP, ed()), s, total))
+            );
+            // 1 planck × s / total arredonda para 0: nada a transferir.
+            assert!(test_mocks::psp22_transfers().is_empty());
+            assert_eq!(test_mocks::psp22_balance(wnative_addr()), 1);
+            assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
+        }
+
+        /// (5) O wrapper legado paga in-kind e devolve o nativo pago.
+        #[ink::test]
+        fn test_legacy_emergency_withdrawal_pays_in_kind() {
+            let (mut vault, accounts) = inkind_vault();
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+
+            set_caller(accounts.charlie);
+            assert_eq!(
+                vault.execute_emergency_withdrawal(),
+                Ok(pro_rata(sub(C_DEP + D_DEP, ed()), s_c, total))
+            );
+            assert_eq!(test_mocks::psp22_transfers().len(), 3);
+            assert_eq!(
+                test_mocks::psp22_balance(token_a()),
+                sub(A_BAL, pro_rata(A_BAL, s_c, total))
+            );
+        }
+
+        /// (6) Sem unlock, ou antes do prazo: erro sem escrita nenhuma.
+        #[ink::test]
+        fn test_inkind_exit_requires_matured_unlock() {
+            let (mut vault, accounts) = inkind_vault();
+            let shares_before = vault.shares.get(accounts.eve);
+            assert_eq!(shares_before, None);
+
+            // eve nunca pediu.
+            set_caller(accounts.eve);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Err(VaultError::EmergencyNotUnlocked)
+            );
+            assert!(!vault.locked);
+
+            // charlie pede de novo e tenta antes do novo prazo.
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at.saturating_sub(1));
+            let total = vault.total_shares;
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Err(VaultError::EmergencyNotUnlocked)
+            );
+            assert!(!vault.locked);
+            assert_eq!(vault.total_shares, total);
+            assert_eq!(
+                vault.shares.get(accounts.charlie),
+                Some(C_DEP - constants::MINIMUM_SHARES)
+            );
+            assert_eq!(
+                vault.emergency_unlocks.get(accounts.charlie),
+                Some(unlock_at)
+            );
+            assert!(test_mocks::psp22_transfers().is_empty());
+            assert_eq!(native_of(contract()), C_DEP + D_DEP);
+        }
+
+        /// (7) Saldo ilegível sem skip ⇒ TokenUnreadable, nenhuma escrita,
+        /// zero transfers, lock liberado.
+        #[ink::test]
+        fn test_inkind_exit_unreadable_token_without_skip_fails_clean() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_balance_fail(token_b(), true);
+            let total = vault.total_shares;
+            let equity = vault.total_equity;
+
+            set_caller(accounts.charlie);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Err(VaultError::TokenUnreadable)
+            );
+            assert!(!vault.locked);
+            assert_eq!(vault.total_shares, total);
+            assert_eq!(vault.total_equity, equity);
+            assert!(vault.shares.get(accounts.charlie).is_some());
+            assert!(vault.emergency_unlocks.get(accounts.charlie).is_some());
+            assert!(test_mocks::psp22_transfers().is_empty());
+            assert_eq!(native_of(contract()), C_DEP + D_DEP);
+            for t in [wnative_addr(), token_a(), token_b()] {
+                assert_eq!(vault.get_reserved_token(t), 0);
+            }
+        }
+
+        /// (8) O mesmo token em skip: Ok, zero chamadas ao token, evento
+        /// status 2 e o saldo do token fica no vault (para quem fica).
+        #[ink::test]
+        fn test_inkind_exit_skip_makes_zero_calls_to_token() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_balance_fail(token_b(), true);
+            let calls_before = test_mocks::psp22_calls(token_b());
+            let events_before = ink::env::test::recorded_events().count();
+
+            set_caller(accounts.charlie);
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(vec![token_b()])
+                .is_ok());
+            assert_eq!(test_mocks::psp22_calls(token_b()), calls_before);
+            assert_eq!(test_mocks::psp22_balance(token_b()), B_BAL);
+            assert!(test_mocks::psp22_transfers()
+                .iter()
+                .all(|x| x.0 != token_b()));
+
+            let skipped: Vec<_> = events_since(events_before)
+                .into_iter()
+                .filter_map(|e| match e {
+                    Event::EmergencyTokenSettled(s) if s.token == token_b() => Some(s),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(skipped.len(), 1);
+            assert_eq!(skipped[0].status, 2);
+            assert_eq!(skipped[0].amount, 0);
+            assert_eq!(skipped[0].depositor, accounts.charlie);
+        }
+
+        /// R1: com todos os ativos em skip, a saída não faz NENHUMA
+        /// chamada entre contratos e paga só o nativo.
+        #[ink::test]
+        fn test_inkind_exit_all_skipped_makes_no_cross_contract_call() {
+            let (mut vault, accounts) = inkind_vault();
+            let assets = [wnative_addr(), token_a(), token_b()];
+            for t in assets {
+                test_mocks::set_psp22_balance_fail(t, true);
+                test_mocks::set_psp22_transfer_fail(t, true);
+            }
+            let calls: Vec<u32> = assets.iter().map(|t| test_mocks::psp22_calls(*t)).collect();
+
+            set_caller(accounts.charlie);
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(assets.to_vec())
+                .is_ok());
+            let after: Vec<u32> = assets.iter().map(|t| test_mocks::psp22_calls(*t)).collect();
+            assert_eq!(after, calls);
+            assert_eq!(vault.shares.get(accounts.charlie), None);
+        }
+
+        /// (9) Transfer falho: Ok, crédito pendente == reserva == amt,
+        /// demais ativos pagos, cotas queimadas.
+        #[ink::test]
+        fn test_inkind_exit_failed_transfer_becomes_pending_credit() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            let amt = pro_rata(A_BAL, s_c, total);
+            let events_before = ink::env::test::recorded_events().count();
+
+            set_caller(accounts.charlie);
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .is_ok());
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), amt);
+            assert_eq!(vault.get_reserved_token(token_a()), amt);
+            assert_eq!(test_mocks::psp22_balance(token_a()), A_BAL);
+            assert_eq!(
+                test_mocks::psp22_transfers(),
+                vec![
+                    (
+                        wnative_addr(),
+                        accounts.charlie,
+                        pro_rata(W_BAL, s_c, total)
+                    ),
+                    (token_b(), accounts.charlie, pro_rata(B_BAL, s_c, total)),
+                ]
+            );
+            assert_eq!(vault.shares.get(accounts.charlie), None);
+            assert!(!vault.locked);
+            let pending: Vec<_> = events_since(events_before)
+                .into_iter()
+                .filter_map(|e| match e {
+                    Event::EmergencyTokenSettled(s) if s.token == token_a() => Some(s),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0].status, 1);
+            assert_eq!(pending[0].amount, amt);
+        }
+
+        /// (10) A segunda saída depois de (9) não distribui a reserva.
+        #[ink::test]
+        fn test_inkind_second_exit_excludes_reserved_amount() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            let amt_c = pro_rata(A_BAL, s_c, total);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+
+            test_mocks::set_psp22_transfer_fail(token_a(), false);
+            let total2 = vault.total_shares;
+            set_caller(accounts.django);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let amt_d = pro_rata(sub(A_BAL, amt_c), D_DEP, total2);
+            assert!(test_mocks::psp22_transfers().contains(&(token_a(), accounts.django, amt_d)));
+            assert_eq!(test_mocks::psp22_balance(token_a()), sub(A_BAL, amt_d));
+            // A reserva de charlie segue intacta e coberta pelo saldo.
+            assert_eq!(vault.get_reserved_token(token_a()), amt_c);
+            assert!(test_mocks::psp22_balance(token_a()) >= amt_c);
+        }
+
+        /// (11) Equity e o teto de amount_in do swap descontam a reserva.
+        #[ink::test]
+        fn test_reserved_tokens_excluded_from_equity_and_swap_balance() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let reserved = vault.get_reserved_token(token_a());
+            assert!(reserved > 0);
+
+            let native = native_of(contract());
+            let w = test_mocks::psp22_balance(wnative_addr());
+            let a_free = sub(A_BAL, reserved); // tA cotado 1:1
+            let b_value = test_mocks::psp22_balance(token_b()) / 2; // tB a 0,5
+            let expected = add(add(add(native, w), a_free), b_value);
+            assert_eq!(vault.get_vault_equity(), Ok(expected));
+            let (_, entries, total) = vault.get_equity_breakdown().unwrap();
+            assert_eq!(total, expected);
+            assert!(entries.contains(&(token_a(), a_free, a_free)));
+
+            // Vender mais que o saldo LIVRE falha antes de qualquer cap.
+            set_caller(accounts.bob);
+            assert_eq!(
+                vault.swap_through_router(token_a(), wnative_addr(), add(a_free, 1), 1),
+                Err(VaultError::InsufficientTokenBalance)
+            );
+            assert!(!vault.locked);
+        }
+
+        /// Untrack exige saldo LIVRE zero: saldo só reservado não prende o token.
+        #[ink::test]
+        fn test_untrack_allows_fully_reserved_balance() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_b(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let reserved = vault.get_reserved_token(token_b());
+            // Simula o leader vendendo todo o saldo livre de tB.
+            test_mocks::set_psp22_balance(token_b(), reserved);
+
+            set_caller(accounts.alice);
+            assert_eq!(vault.remove_tracked_token(token_b()), Ok(()));
+            // O credito pendente continua resgatável (token não rastreado).
+            test_mocks::set_psp22_transfer_fail(token_b(), false);
+            set_caller(accounts.charlie);
+            assert_eq!(vault.claim_pending_token(token_b()), Ok(reserved));
+            assert_eq!(vault.get_reserved_token(token_b()), 0);
+        }
+
+        /// (12) Claim: sucesso zera pendente e reserva; falha devolve
+        /// Ok(0) e mantém ambos; sem crédito ⇒ NothingToClaim sem escrita.
+        #[ink::test]
+        fn test_claim_pending_token() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let amt = vault.get_pending_token(token_a(), accounts.charlie);
+            assert!(amt > 0);
+
+            // Terceiro não tem crédito e não toca no de charlie.
+            set_caller(accounts.eve);
+            assert_eq!(
+                vault.claim_pending_token(token_a()),
+                Err(VaultError::NothingToClaim)
+            );
+            assert!(!vault.locked);
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), amt);
+
+            // Ainda falhando: Ok(0), estado igual (funciona pausado).
+            set_caller(accounts.alice);
+            vault.pause().unwrap();
+            set_caller(accounts.charlie);
+            let transfers_before = test_mocks::psp22_transfers().len();
+            assert_eq!(vault.claim_pending_token(token_a()), Ok(0));
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), amt);
+            assert_eq!(vault.get_reserved_token(token_a()), amt);
+            assert_eq!(test_mocks::psp22_transfers().len(), transfers_before);
+            assert!(!vault.locked);
+
+            // Token volta a funcionar: paga só ao caller e zera tudo.
+            test_mocks::set_psp22_transfer_fail(token_a(), false);
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.claim_pending_token(token_a()), Ok(amt));
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), 0);
+            assert_eq!(vault.get_reserved_token(token_a()), 0);
+            assert_eq!(
+                test_mocks::psp22_transfers().last(),
+                Some(&(token_a(), accounts.charlie, amt))
+            );
+            match events_since(events_before).as_slice() {
+                [Event::PendingTokenClaimed(e)] => {
+                    assert_eq!(e.account, accounts.charlie);
+                    assert_eq!(e.token, token_a());
+                    assert_eq!(e.amount, amt);
+                }
+                _ => panic!("esperado um PendingTokenClaimed"),
+            }
+
+            // Nada mais a resgatar.
+            assert_eq!(
+                vault.claim_pending_token(token_a()),
+                Err(VaultError::NothingToClaim)
+            );
+        }
+
+        /// (13) Segunda chamada do mesmo caller: erro, nenhum pagamento a mais.
+        #[ink::test]
+        fn test_inkind_exit_cannot_be_repeated() {
+            let (mut vault, accounts) = inkind_vault();
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let transfers = test_mocks::psp22_transfers().len();
+            let native = native_of(contract());
+
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Err(VaultError::EmergencyNotUnlocked)
+            );
+            // Mesmo com um unlock forjado, sem cotas não há pagamento.
+            vault.emergency_unlocks.insert(accounts.charlie, &0);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Err(VaultError::InsufficientShares)
+            );
+            assert_eq!(test_mocks::psp22_transfers().len(), transfers);
+            assert_eq!(native_of(contract()), native);
+            assert!(!vault.locked);
+        }
+
+        /// (14) Estado legado com wnative também rastreado: paga uma vez só.
+        #[ink::test]
+        fn test_inkind_exit_wnative_also_tracked_paid_once() {
+            let (mut vault, accounts) = inkind_vault();
+            let idx = vault.tracked_token_count;
+            vault.tracked_tokens.insert(idx, &wnative_addr());
+            vault.tracked_token_index.insert(wnative_addr(), &idx);
+            vault.tracked_token_count = idx.checked_add(1).unwrap();
+
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let w_transfers = test_mocks::psp22_transfers()
+                .iter()
+                .filter(|x| x.0 == wnative_addr())
+                .count();
+            assert_eq!(w_transfers, 1);
+            assert_eq!(vault.get_pending_token(wnative_addr(), accounts.charlie), 0);
+            assert_eq!(vault.get_reserved_token(wnative_addr()), 0);
+        }
+
+        /// (15)/(16) Último depositante: total_shares volta ao piso, a
+        /// fração das dead shares e o ED ficam no vault.
+        #[ink::test]
+        fn test_inkind_last_exit_leaves_dead_share_fraction_and_ed() {
+            let (mut vault, accounts) = inkind_vault();
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            set_caller(accounts.django);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+
+            assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
+            assert_eq!(vault.depositor_shares(), 0);
+            assert!(native_of(contract()) >= ed());
+            // A fração MINIMUM_SHARES / 150e9 de cada token fica.
+            for (t, initial) in [(token_a(), A_BAL), (wnative_addr(), W_BAL)] {
+                assert!(
+                    test_mocks::psp22_balance(t)
+                        >= pro_rata(initial, constants::MINIMUM_SHARES, C_DEP + D_DEP)
+                );
+            }
+        }
+
+        /// (17) Skip list maior que tracked_token_count + 1 ⇒ InvalidSkipList
+        /// sem escrita; exatamente count + 1 entradas é aceito.
+        #[ink::test]
+        fn test_inkind_exit_rejects_oversized_skip_list() {
+            let (mut vault, accounts) = inkind_vault();
+            let total = vault.total_shares;
+            set_caller(accounts.charlie);
+            let ten = junk_tokens(10);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(ten),
+                Err(VaultError::InvalidSkipList)
+            );
+            let four = junk_tokens(4);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(four),
+                Err(VaultError::InvalidSkipList)
+            );
+            assert!(!vault.locked);
+            assert_eq!(vault.total_shares, total);
+            assert!(test_mocks::psp22_transfers().is_empty());
+
+            // count (2) + 1 entradas, com lixo e duplicata: aceito; entradas
+            // que não são ativo do vault são ignoradas.
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(vec![token(0x40), token(0x40), token(0x41)])
+                .is_ok());
+            assert_eq!(test_mocks::psp22_transfers().len(), 3);
+        }
+
+        /// (18) total_equity e high_water_mark escalam por (total - s)/total.
+        #[ink::test]
+        fn test_inkind_exit_scales_equity_and_hwm() {
+            let (mut vault, accounts) = inkind_vault();
+            vault.total_equity = 300_000_000_007;
+            vault.high_water_mark = 400_000_000_009;
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            let rest = sub(total, s_c);
+
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            assert_eq!(vault.total_equity, pro_rata(300_000_000_007, rest, total));
+            assert_eq!(
+                vault.high_water_mark,
+                pro_rata(400_000_000_009, rest, total)
+            );
+        }
+
+        /// (19) Exatamente um Withdrawn e um EmergencyTokenSettled por
+        /// ativo liquidado (pago, pendente ou skip).
+        #[ink::test]
+        fn test_inkind_exit_events() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            let events_before = ink::env::test::recorded_events().count();
+
+            set_caller(accounts.charlie);
+            let native = vault
+                .execute_emergency_withdrawal_in_kind(vec![token_b()])
+                .unwrap();
+            let events = events_since(events_before);
+            let withdrawn: Vec<_> = events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Withdrawn(w) => Some(w),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(withdrawn.len(), 1);
+            assert_eq!(withdrawn[0].depositor, accounts.charlie);
+            assert_eq!(withdrawn[0].shares_burned, s_c);
+            assert_eq!(withdrawn[0].amount_received, native);
+            assert_eq!(withdrawn[0].performance_fee, 0);
+
+            let settled: Vec<(AccountId, Balance, u8)> = events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::EmergencyTokenSettled(s) => Some((s.token, s.amount, s.status)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                settled,
+                vec![
+                    (wnative_addr(), pro_rata(W_BAL, s_c, total), 0),
+                    (token_a(), pro_rata(A_BAL, s_c, total), 1),
+                    (token_b(), 0, 2),
+                ]
+            );
+            assert_eq!(events.len(), 4);
+        }
+
+        /// (20) mul_div_floor é exato mesmo quando a·b estoura u128.
+        #[ink::test]
+        fn test_mul_div_floor_handles_overflowing_product() {
+            assert_eq!(CopyVault::mul_div_floor(10, 3, 4), Ok(7));
+            assert_eq!(CopyVault::mul_div_floor(5, 0, 4), Ok(0));
+            assert_eq!(CopyVault::mul_div_floor(5, 7, 0), Err(VaultError::Overflow));
+            // u128::MAX = 3k (2^128 - 1 é múltiplo de 3).
+            let k = u128::MAX / 3;
+            let two_k = k.checked_mul(2).unwrap();
+            assert_eq!(CopyVault::mul_div_floor(u128::MAX, 2, 3), Ok(two_k));
+            assert_eq!(
+                CopyVault::mul_div_floor(u128::MAX.saturating_sub(1), 2, 3),
+                Ok(two_k.saturating_sub(1))
+            );
+            assert_eq!(
+                CopyVault::mul_div_floor(1u128 << 100, 1u128 << 60, 1u128 << 62),
+                Ok(1u128 << 98)
+            );
+            assert_eq!(
+                CopyVault::mul_div_floor(u128::MAX, u128::MAX, u128::MAX),
+                Ok(u128::MAX)
+            );
+            // Resultado que não cabe em u128 ⇒ Overflow (nunca trunca).
+            assert_eq!(
+                CopyVault::mul_div_floor(u128::MAX, 3, 2),
+                Err(VaultError::Overflow)
+            );
+        }
+
+        /// preview_emergency_exit espelha o cálculo da saída (None =
+        /// saldo ilegível) e não escreve.
+        #[ink::test]
+        fn test_preview_emergency_exit() {
+            let (mut vault, accounts) = inkind_vault();
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            test_mocks::set_psp22_balance_fail(token_b(), true);
+
+            let (native, legs) = vault.preview_emergency_exit(accounts.charlie);
+            assert_eq!(native, pro_rata(sub(C_DEP + D_DEP, ed()), s_c, total));
+            assert_eq!(
+                legs,
+                vec![
+                    (wnative_addr(), Some(pro_rata(W_BAL, s_c, total))),
+                    (token_a(), Some(pro_rata(A_BAL, s_c, total))),
+                    (token_b(), None),
+                ]
+            );
+            assert_eq!(vault.preview_emergency_exit(accounts.eve), (0, Vec::new()));
+
+            test_mocks::set_psp22_balance_fail(token_b(), false);
+            set_caller(accounts.charlie);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Ok(native)
+            );
+        }
+
+        // ── allowlist ──────────────────────────────────────────
+
+        /// (21) Só o admin do protocolo mexe na allowlist.
+        #[ink::test]
+        fn test_set_token_allowed_requires_protocol_admin() {
+            let (mut vault, accounts) = vault_with_infra();
+            for caller in [accounts.bob, accounts.charlie] {
+                set_caller(caller);
+                assert_eq!(
+                    vault.set_token_allowed(token_a(), true),
+                    Err(VaultError::NotAdmin)
+                );
+            }
+            assert!(!vault.is_token_allowed(token_a()));
+
+            set_caller(accounts.alice);
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.set_token_allowed(token_a(), true), Ok(()));
+            assert!(vault.is_token_allowed(token_a()));
+            match events_since(events_before).as_slice() {
+                [Event::TokenAllowlistChanged(e)] => {
+                    assert_eq!(e.token, token_a());
+                    assert!(e.allowed);
+                }
+                _ => panic!("esperado TokenAllowlistChanged"),
+            }
+
+            for caller in [accounts.bob, accounts.charlie] {
+                set_caller(caller);
+                assert_eq!(
+                    vault.set_token_allowed(token_a(), false),
+                    Err(VaultError::NotAdmin)
+                );
+            }
+            assert!(vault.is_token_allowed(token_a()));
+        }
+
+        /// (22) Sem depositantes: na hora. Com depositantes: só após
+        /// CONFIG_CHANGE_DELAY_MS.
+        #[ink::test]
+        fn test_set_token_allowed_delay_with_depositors() {
+            let (mut vault, accounts) = vault_with_infra();
+            set_now(1_000);
+            allow_token(&mut vault, token_a());
+            assert_eq!(vault.get_token_allowed_at(token_a()), Some(1_000));
+            assert!(vault.is_token_allowed(token_a()));
+
+            set_caller(accounts.charlie);
+            set_value(C_DEP);
+            set_balance(contract(), C_DEP);
+            vault.deposit().unwrap();
+            set_value(0);
+
+            allow_token(&mut vault, token_b());
+            let eta = 1_000 + constants::CONFIG_CHANGE_DELAY_MS;
+            assert_eq!(vault.get_token_allowed_at(token_b()), Some(eta));
+            assert!(!vault.is_token_allowed(token_b()));
+            test_mocks::set_pair_reserves(token_b(), 1_000_000_000_000, 1_000_000_000_000);
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.add_tracked_token(token_b()),
+                Err(VaultError::TokenNotAllowed)
+            );
+
+            set_now(eta - 1);
+            assert!(!vault.is_token_allowed(token_b()));
+            set_now(eta);
+            assert!(vault.is_token_allowed(token_b()));
+            assert_eq!(vault.add_tracked_token(token_b()), Ok(()));
+        }
+
+        /// (23) Re-permitir não reinicia o prazo; remover é imediato e
+        /// cancela o pendente.
+        #[ink::test]
+        fn test_set_token_allowed_idempotent_and_removal_immediate() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            set_caller(accounts.alice);
+            assert_eq!(vault.set_token_allowed(token_a(), true), Ok(()));
+            let eta = vault.get_token_allowed_at(token_a()).unwrap();
+            assert_eq!(eta, 1_000 + constants::CONFIG_CHANGE_DELAY_MS);
+
+            set_now(5_000);
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.set_token_allowed(token_a(), true), Ok(()));
+            assert_eq!(vault.get_token_allowed_at(token_a()), Some(eta));
+            assert_eq!(ink::env::test::recorded_events().count(), events_before);
+
+            // Remoção do pendente: na hora, com evento.
+            assert_eq!(vault.set_token_allowed(token_a(), false), Ok(()));
+            assert_eq!(vault.get_token_allowed_at(token_a()), None);
+            match events_since(events_before).as_slice() {
+                [Event::TokenAllowlistChanged(e)] => {
+                    assert_eq!(e.token, token_a());
+                    assert!(!e.allowed);
+                    assert_eq!(e.effective_at, 5_000);
+                }
+                _ => panic!("esperado TokenAllowlistChanged"),
+            }
+            set_now(eta);
+            assert!(!vault.is_token_allowed(token_a()));
+
+            // Remover o que não existe: Ok, sem evento.
+            let events_before = ink::env::test::recorded_events().count();
+            assert_eq!(vault.set_token_allowed(token_a(), false), Ok(()));
+            assert_eq!(ink::env::test::recorded_events().count(), events_before);
+        }
+
+        /// (24) Token não permitido não entra por add_tracked_token nem
+        /// pelo auto-track do swap.
+        #[ink::test]
+        fn test_unallowed_token_cannot_be_tracked_or_bought() {
+            let (mut vault, accounts) = setup_funded_vault_with_router();
+            let rogue = token(0x55);
+            test_mocks::set_pair_reserves(rogue, 1_000_000_000_000, 1_000_000_000_000);
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.add_tracked_token(rogue),
+                Err(VaultError::TokenNotAllowed)
+            );
+            set_caller(accounts.bob);
+            assert_eq!(
+                vault.add_tracked_token(rogue),
+                Err(VaultError::TokenNotAllowed)
+            );
+            assert_eq!(
+                vault.swap_through_router(accounts.django, rogue, 1_000_000_000, 900_000_000),
+                Err(VaultError::TokenNotAllowed)
+            );
+            assert!(!vault.locked);
+            assert!(!vault.is_tracked(rogue));
+            assert_eq!(test_mocks::psp22_balance(rogue), 0);
+        }
+
+        /// (25) Token rastreado e depois removido da allowlist: não pode
+        /// mais ser comprado; vender continua; segue no equity e na saída.
+        #[ink::test]
+        fn test_delisted_tracked_token_can_be_sold_not_bought() {
+            let (mut vault, accounts) = setup_funded_vault_with_router();
+            set_caller(accounts.bob);
+            vault
+                .swap_through_router(accounts.django, accounts.eve, 10_000_000_000, 9_000_000_000)
+                .unwrap();
+            assert!(vault.is_tracked(accounts.eve));
+
+            set_caller(accounts.alice);
+            vault.set_token_allowed(accounts.eve, false).unwrap();
+
+            set_caller(accounts.bob);
+            assert_eq!(
+                vault.swap_through_router(accounts.django, accounts.eve, 1_000_000_000, 1),
+                Err(VaultError::TokenNotAllowed)
+            );
+            assert!(!vault.locked);
+            // Vender eve (token_in) por django continua possível.
+            assert_eq!(
+                vault.swap_through_router(accounts.eve, accounts.django, 1_000_000_000, 1),
+                Ok(1)
+            );
+            assert!(vault.is_tracked(accounts.eve));
+            let (_, entries, _) = vault.get_equity_breakdown().unwrap();
+            assert!(entries.iter().any(|e| e.0 == accounts.eve));
+            let (_, legs) = vault.preview_emergency_exit(accounts.charlie);
+            assert!(legs.iter().any(|l| l.0 == accounts.eve));
+            // E não pode ser re-rastreado sem nova permissão.
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.add_tracked_token(accounts.eve),
+                Err(VaultError::TokenNotAllowed)
+            );
+        }
+
+        /// (26) wnative é implícito; endereço degenerado é recusado.
+        #[ink::test]
+        fn test_set_token_allowed_rejects_wnative_and_invalid_address() {
+            let (mut vault, accounts) = vault_with_infra();
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.set_token_allowed(wnative_addr(), true),
+                Err(VaultError::CannotTrackWnative)
+            );
+            assert_eq!(
+                vault.set_token_allowed(AccountId::from([0u8; 32]), true),
+                Err(VaultError::InvalidConfigAddress)
+            );
+            assert_eq!(
+                vault.set_token_allowed(contract(), true),
+                Err(VaultError::InvalidConfigAddress)
+            );
+            assert_eq!(vault.get_token_allowed_at(wnative_addr()), None);
+        }
+
+        /// (27) Depositar com unlock armado o remove: depósito a preço spot
+        /// seguido de saída in-kind imediata fica fechado.
+        #[ink::test]
+        fn test_deposit_clears_armed_emergency_unlock() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+
+            set_value(constants::MIN_DEPOSIT);
+            set_balance(contract(), C_DEP + constants::MIN_DEPOSIT);
+            vault.deposit().unwrap();
+            set_value(0);
+            assert_eq!(vault.emergency_unlocks.get(accounts.charlie), None);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Err(VaultError::EmergencyNotUnlocked)
+            );
+        }
+
+        // ── D3: troca de wnative com saldo ─────────────────────
+
+        fn new_factory() -> AccountId {
+            token(0xF1)
+        }
+
+        fn new_wnative() -> AccountId {
+            token(0xF2)
+        }
+
+        /// Infra configurada, `extra` permitidos, charlie depositado (1_000 ms).
+        fn d3_vault(extra: &[AccountId]) -> (CopyVault, Accounts) {
+            let (mut vault, accounts) = vault_with_infra();
+            set_now(1_000);
+            for t in extra {
+                allow_token(&mut vault, *t);
+            }
+            set_caller(accounts.charlie);
+            set_value(C_DEP);
+            set_balance(contract(), C_DEP);
+            vault.deposit().unwrap();
+            set_value(0);
+            (vault, accounts)
+        }
+
+        fn propose_and_apply_new_infra(vault: &mut CopyVault) {
+            set_caller(default_accounts().alice);
+            let eta = vault
+                .propose_valuation_infra(new_factory(), new_wnative())
+                .unwrap();
+            set_now(eta);
+            assert_eq!(vault.apply_valuation_infra(), Ok(()));
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(new_factory()), Some(new_wnative()))
+            );
+        }
+
+        /// D3 (a) Saldo no wnative antigo: vira rastreado, entra no NAV e
+        /// é pago na saída in-kind.
+        #[ink::test]
+        fn test_wnative_rotation_tracks_old_wnative_with_balance() {
+            let (mut vault, accounts) = d3_vault(&[]);
+            test_mocks::set_psp22_balance(wnative_addr(), W_BAL);
+            // Par antigo↔novo na factory nova (cotação 1:1).
+            test_mocks::set_pair_reserves(wnative_addr(), 1_000_000_000_000, 1_000_000_000_000);
+            let events_before = ink::env::test::recorded_events().count();
+
+            propose_and_apply_new_infra(&mut vault);
+            assert_eq!(vault.get_tracked_tokens(), vec![wnative_addr()]);
+            assert!(events_since(events_before).iter().any(|e| matches!(
+                e,
+                Event::TrackedTokenAdded(t) if t.token == wnative_addr()
+            )));
+            assert_eq!(vault.get_vault_equity(), Ok(C_DEP + W_BAL));
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            let s = vault.shares.get(accounts.charlie).unwrap();
+            let total = vault.total_shares;
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            assert!(test_mocks::psp22_transfers().contains(&(
+                wnative_addr(),
+                accounts.charlie,
+                pro_rata(W_BAL, s, total)
+            )));
+        }
+
+        /// D3 (b) Saldo zero no wnative antigo: nada rastreado.
+        #[ink::test]
+        fn test_wnative_rotation_with_zero_balance_tracks_nothing() {
+            let (mut vault, _) = d3_vault(&[]);
+            propose_and_apply_new_infra(&mut vault);
+            assert_eq!(vault.get_tracked_tokens(), Vec::<AccountId>::new());
+            assert_eq!(vault.get_vault_equity(), Ok(C_DEP));
+        }
+
+        /// D3 (c) Novo wnative que era rastreado: sai da lista e o NAV não
+        /// o conta duas vezes.
+        #[ink::test]
+        fn test_wnative_rotation_untracks_new_wnative() {
+            let (mut vault, _) = d3_vault(&[new_wnative()]);
+            set_caller(default_accounts().alice);
+            // Rastreado a 0,5 sob a infra antiga.
+            test_mocks::set_pair_reserves(new_wnative(), 2_000_000_000_000, 1_000_000_000_000);
+            vault.add_tracked_token(new_wnative()).unwrap();
+            test_mocks::set_psp22_balance(new_wnative(), 10_000_000_000);
+            assert_eq!(vault.get_vault_equity(), Ok(C_DEP + 5_000_000_000));
+            let events_before = ink::env::test::recorded_events().count();
+
+            propose_and_apply_new_infra(&mut vault);
+            assert_eq!(vault.get_tracked_tokens(), Vec::<AccountId>::new());
+            assert!(!vault.is_tracked(new_wnative()));
+            assert!(events_since(events_before).iter().any(|e| matches!(
+                e,
+                Event::TrackedTokenRemoved(t) if t.token == new_wnative()
+            )));
+            // Agora 1:1 como wnative, uma vez só.
+            assert_eq!(vault.get_vault_equity(), Ok(C_DEP + 10_000_000_000));
+        }
+
+        /// D3 (d) Lista cheia (8) + saldo no antigo: o apply funciona e a
+        /// lista fica com 9; a saída in-kind enxerga os 10 ativos.
+        #[ink::test]
+        fn test_wnative_rotation_can_exceed_max_tracked() {
+            let full: Vec<AccountId> = (0..constants::MAX_TRACKED_TOKENS)
+                .map(|i| token_at(0x10, i))
+                .collect();
+            let (mut vault, accounts) = d3_vault(&full);
+            set_caller(accounts.alice);
+            for t in &full {
+                test_mocks::set_pair_reserves(*t, 1_000_000_000_000, 1_000_000_000_000);
+                vault.add_tracked_token(*t).unwrap();
+            }
+            test_mocks::set_psp22_balance(wnative_addr(), W_BAL);
+
+            propose_and_apply_new_infra(&mut vault);
+            assert_eq!(vault.tracked_token_count, constants::MAX_TRACKED_TOKENS + 1);
+            assert!(vault.is_tracked(wnative_addr()));
+            // Sem par antigo↔novo o NAV fica fechado; com o par (1:1) o
+            // saldo do antigo entra uma vez só.
+            assert_eq!(
+                vault.get_vault_equity(),
+                Err(VaultError::ValuationUnavailable)
+            );
+            test_mocks::set_pair_reserves(wnative_addr(), 1_000_000_000_000, 1_000_000_000_000);
+            assert_eq!(vault.get_vault_equity(), Ok(C_DEP + W_BAL));
+            // Nada novo entra acima do teto.
+            let extra = token(0x60);
+            allow_token(&mut vault, extra);
+            test_mocks::set_pair_reserves(extra, 1_000_000_000_000, 1_000_000_000_000);
+            set_now(vault.get_token_allowed_at(extra).unwrap());
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.add_tracked_token(extra),
+                Err(VaultError::TooManyTrackedTokens)
+            );
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            // count (9) + 1 = 10 entradas na skip list é o limite.
+            let skip = junk_tokens(10);
+            assert!(vault.execute_emergency_withdrawal_in_kind(skip).is_ok());
+            assert!(test_mocks::psp22_transfers()
+                .iter()
+                .any(|x| x.0 == wnative_addr()));
+        }
+
+        /// D3 (e) Leitura do saldo do antigo falha: rastreia mesmo assim.
+        #[ink::test]
+        fn test_wnative_rotation_tracks_old_wnative_when_unreadable() {
+            let (mut vault, _) = d3_vault(&[]);
+            test_mocks::set_psp22_balance_fail(wnative_addr(), true);
+            propose_and_apply_new_infra(&mut vault);
+            assert_eq!(vault.get_tracked_tokens(), vec![wnative_addr()]);
+            // Ilegível ⇒ NAV fechado (nunca valuation parcial); quando o
+            // saldo volta a ser lido como zero, o NAV reabre.
+            assert_eq!(
+                vault.get_vault_equity(),
+                Err(VaultError::ValuationUnavailable)
+            );
+            test_mocks::set_psp22_balance_fail(wnative_addr(), false);
+            assert_eq!(vault.get_vault_equity(), Ok(C_DEP));
+        }
+
+        /// D3 (f) Mesma regra pelo set_valuation_infra sem depositantes;
+        /// re-configurar o MESMO wnative não rastreia nada.
+        #[ink::test]
+        fn test_wnative_rotation_via_immediate_setter() {
+            let (mut vault, accounts) = vault_with_infra();
+            allow_token(&mut vault, new_wnative());
+            test_mocks::set_pair_reserves(new_wnative(), 1_000_000_000_000, 1_000_000_000_000);
+            vault.add_tracked_token(new_wnative()).unwrap();
+            test_mocks::set_psp22_balance(wnative_addr(), 7);
+
+            set_caller(accounts.alice);
+            // Mesmo wnative: só troca a factory.
+            assert_eq!(
+                vault.set_valuation_infra(new_factory(), wnative_addr()),
+                Ok(())
+            );
+            assert_eq!(vault.get_tracked_tokens(), vec![new_wnative()]);
+
+            assert_eq!(
+                vault.set_valuation_infra(new_factory(), new_wnative()),
+                Ok(())
+            );
+            assert_eq!(vault.get_tracked_tokens(), vec![wnative_addr()]);
+            assert_eq!(
+                vault.get_valuation_infra(),
+                (Some(new_factory()), Some(new_wnative()))
+            );
+            // O antigo (7 plancks) é rastreado comum: sem par não há NAV;
+            // com par 1:1 entra pelo valor cotado, uma vez.
+            assert_eq!(
+                vault.get_vault_equity(),
+                Err(VaultError::ValuationUnavailable)
+            );
+            test_mocks::set_pair_reserves(wnative_addr(), 1_000_000_000_000, 1_000_000_000_000);
+            assert_eq!(vault.get_vault_equity(), Ok(add(native_of(contract()), 7)));
+        }
+
+        // ── Rodada de correção 1 ───────────────────────────────
+
+        /// Soma do que `to` recebeu de `t` (transfers que moveram saldo).
+        fn paid_to(t: AccountId, to: AccountId) -> Balance {
+            test_mocks::psp22_transfers()
+                .iter()
+                .filter(|x| x.0 == t && x.1 == to)
+                .map(|x| x.2)
+                .sum()
+        }
+
+        /// FIX1-M1 (saída): transfer que MOVE o valor mas devolve retorno
+        /// não confirmado (decode falho) é tratado como pago — nenhum
+        /// crédito pendente fantasma, reserva zerada, nada a resgatar.
+        #[ink::test]
+        fn test_inkind_exit_unconfirmed_transfer_that_moved_is_paid_once() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_unconfirmed(token_a(), None);
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            let amt = pro_rata(A_BAL, s_c, total);
+            let events_before = ink::env::test::recorded_events().count();
+
+            set_caller(accounts.charlie);
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .is_ok());
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), 0);
+            assert_eq!(vault.get_reserved_token(token_a()), 0);
+            assert_eq!(test_mocks::psp22_balance(token_a()), sub(A_BAL, amt));
+            assert_eq!(paid_to(token_a(), accounts.charlie), amt);
+            let settled: Vec<_> = events_since(events_before)
+                .into_iter()
+                .filter_map(|e| match e {
+                    Event::EmergencyTokenSettled(s) if s.token == token_a() => Some(s),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(settled.len(), 1);
+            assert_eq!(settled[0].status, 0);
+            assert_eq!(settled[0].amount, amt);
+
+            for _ in 0..3 {
+                assert_eq!(
+                    vault.claim_pending_token(token_a()),
+                    Err(VaultError::NothingToClaim)
+                );
+            }
+            assert_eq!(paid_to(token_a(), accounts.charlie), amt);
+            assert!(!vault.locked);
+        }
+
+        /// FIX1-M1 (claim): com o token movendo e reportando falha, o
+        /// claim conta como pago e não pode ser repetido — o total pago
+        /// nunca passa do crédito.
+        #[ink::test]
+        fn test_claim_unconfirmed_transfer_that_moved_is_not_repeatable() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let amt = vault.get_pending_token(token_a(), accounts.charlie);
+            assert!(amt > 0);
+
+            test_mocks::set_psp22_transfer_fail(token_a(), false);
+            test_mocks::set_psp22_transfer_unconfirmed(token_a(), None);
+            let mut claimed: Balance = 0;
+            for _ in 0..4 {
+                if let Ok(x) = vault.claim_pending_token(token_a()) {
+                    claimed = add(claimed, x);
+                }
+            }
+            assert_eq!(claimed, amt);
+            assert_eq!(paid_to(token_a(), accounts.charlie), amt);
+            assert_eq!(test_mocks::psp22_balance(token_a()), sub(A_BAL, amt));
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), 0);
+            assert_eq!(vault.get_reserved_token(token_a()), 0);
+            assert!(!vault.locked);
+        }
+
+        /// FIX1-M1: retorno não confirmado e saldo que não bate (nem
+        /// inalterado nem `antes − amount`), ou saldo ilegível ⇒ falha
+        /// FECHADA com `TransferFailed` (on-chain reverte a mensagem
+        /// inteira, inclusive o movimento do token).
+        #[ink::test]
+        fn test_unconfirmed_transfer_with_unexpected_balance_fails_closed() {
+            // Saída: o token move 1 planck e reporta falha.
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_unconfirmed(token_a(), Some(1));
+            set_caller(accounts.charlie);
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Err(VaultError::TransferFailed)
+            );
+            assert!(!vault.locked);
+        }
+
+        #[ink::test]
+        fn test_claim_unconfirmed_transfer_fails_closed_when_unverifiable() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let amt = vault.get_pending_token(token_a(), accounts.charlie);
+            assert!(amt > 0);
+
+            // Move 1 planck e reporta falha: saldo diverge ⇒ Err.
+            test_mocks::set_psp22_transfer_fail(token_a(), false);
+            test_mocks::set_psp22_transfer_unconfirmed(token_a(), Some(1));
+            assert_eq!(
+                vault.claim_pending_token(token_a()),
+                Err(VaultError::TransferFailed)
+            );
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), amt);
+            assert_eq!(vault.get_reserved_token(token_a()), amt);
+            assert!(!vault.locked);
+
+            // Falha sem saldo legível: não dá para provar que nada saiu.
+            test_mocks::clear_psp22_transfer_unconfirmed(token_a());
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            test_mocks::set_psp22_balance_fail(token_a(), true);
+            assert_eq!(
+                vault.claim_pending_token(token_a()),
+                Err(VaultError::TransferFailed)
+            );
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), amt);
+            assert_eq!(vault.get_reserved_token(token_a()), amt);
+            assert!(!vault.locked);
+        }
+
+        /// FIX1-M2 (mutante M02b): a reserva de WNATIVE também sai do NAV
+        /// e do breakdown.
+        #[ink::test]
+        fn test_reserved_wnative_excluded_from_equity() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(wnative_addr(), true);
+            let total = vault.total_shares;
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let reserved = vault.get_reserved_token(wnative_addr());
+            assert_eq!(reserved, pro_rata(W_BAL, s_c, total));
+            assert_eq!(test_mocks::psp22_balance(wnative_addr()), W_BAL);
+
+            let w_free = sub(W_BAL, reserved);
+            let native = native_of(contract());
+            let a = test_mocks::psp22_balance(token_a()); // 1:1
+            let b_value = test_mocks::psp22_balance(token_b()) / 2; // 0,5
+            let expected = add(add(add(native, w_free), a), b_value);
+            assert_eq!(vault.get_vault_equity(), Ok(expected));
+            let (_, entries, breakdown_total) = vault.get_equity_breakdown().unwrap();
+            assert_eq!(breakdown_total, expected);
+            assert!(entries.contains(&(wnative_addr(), w_free, w_free)));
+        }
+
+        /// Estado legado wnative == rastreado, montado à mão.
+        fn track_wnative_legacy(vault: &mut CopyVault) {
+            let idx = vault.tracked_token_count;
+            vault.tracked_tokens.insert(idx, &wnative_addr());
+            vault.tracked_token_index.insert(wnative_addr(), &idx);
+            vault.tracked_token_count = idx.checked_add(1).unwrap();
+        }
+
+        /// FIX1-M3 (mutante M18): com wnative também rastreado, um
+        /// depositante MINORITÁRIO (os dois transfers caberiam no saldo)
+        /// recebe a perna de wnative uma única vez, sem crédito/reserva.
+        #[ink::test]
+        fn test_inkind_minority_exit_wnative_also_tracked_paid_once() {
+            let (mut vault, accounts) = inkind_vault();
+            track_wnative_legacy(&mut vault);
+            let total = vault.total_shares;
+            let s_d = vault.shares.get(accounts.django).unwrap();
+
+            set_caller(accounts.django);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let w: Vec<_> = test_mocks::psp22_transfers()
+                .into_iter()
+                .filter(|x| x.0 == wnative_addr())
+                .collect();
+            assert_eq!(
+                w,
+                vec![(wnative_addr(), accounts.django, pro_rata(W_BAL, s_d, total))]
+            );
+            assert_eq!(vault.get_pending_token(wnative_addr(), accounts.django), 0);
+            assert_eq!(vault.get_reserved_token(wnative_addr()), 0);
+        }
+
+        /// FIX1-M4 (mutante M19): o MESMO credor que sai duas vezes com o
+        /// token falhando acumula o crédito (soma, não sobrescreve), e a
+        /// reserva continua igual ao crédito; o claim paga a soma.
+        #[ink::test]
+        fn test_inkind_same_creditor_accumulates_pending() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let first = vault.get_pending_token(token_a(), accounts.charlie);
+            assert!(first > 0);
+
+            // Redeposita, arma o unlock de novo e sai outra vez.
+            set_value(C_DEP);
+            set_balance(contract(), add(native_of(contract()), C_DEP));
+            vault.deposit().unwrap();
+            set_value(0);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            let total = vault.total_shares;
+            let s2 = vault.shares.get(accounts.charlie).unwrap();
+            let second = pro_rata(sub(A_BAL, first), s2, total);
+            assert!(second > 0);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+
+            let pending = vault.get_pending_token(token_a(), accounts.charlie);
+            assert_eq!(pending, add(first, second));
+            assert_eq!(vault.get_reserved_token(token_a()), pending);
+
+            test_mocks::set_psp22_transfer_fail(token_a(), false);
+            assert_eq!(vault.claim_pending_token(token_a()), Ok(pending));
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), 0);
+            assert_eq!(vault.get_reserved_token(token_a()), 0);
+            assert_eq!(test_mocks::psp22_balance(token_a()), sub(A_BAL, pending));
+        }
+
+        /// FIX1-L (mutante M24): a saída de emergência apaga o pedido de
+        /// saque grande do caller (redepósito não herda cooldown vencido).
+        #[ink::test]
+        fn test_inkind_exit_clears_withdrawal_request() {
+            let (mut vault, accounts) = inkind_vault();
+            set_caller(accounts.charlie);
+            let s_c = vault.shares.get(accounts.charlie).unwrap();
+            vault.request_withdrawal(s_c).unwrap();
+            assert!(vault.get_withdrawal_request(accounts.charlie).is_some());
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            assert_eq!(vault.get_withdrawal_request(accounts.charlie), None);
+        }
+
+        /// FIX1-L: dois credores no mesmo token ⇒ reserva == soma dos
+        /// créditos (invariante 8); claim com saldo do token menor que o
+        /// crédito devolve Ok(0) e mantém tudo.
+        #[ink::test]
+        fn test_two_pending_creditors_and_short_balance_claim() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            set_caller(accounts.django);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let p_c = vault.get_pending_token(token_a(), accounts.charlie);
+            let p_d = vault.get_pending_token(token_a(), accounts.django);
+            assert!(p_c > 0 && p_d > 0);
+            assert_eq!(vault.get_reserved_token(token_a()), add(p_c, p_d));
+
+            // Token "encolhe" abaixo do crédito de charlie.
+            test_mocks::set_psp22_transfer_fail(token_a(), false);
+            test_mocks::set_psp22_balance(token_a(), sub(p_c, 1));
+            set_caller(accounts.charlie);
+            assert_eq!(vault.claim_pending_token(token_a()), Ok(0));
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), p_c);
+            assert_eq!(vault.get_reserved_token(token_a()), add(p_c, p_d));
+
+            test_mocks::set_psp22_balance(token_a(), A_BAL);
+            assert_eq!(vault.claim_pending_token(token_a()), Ok(p_c));
+            assert_eq!(vault.get_reserved_token(token_a()), p_d);
+            set_caller(accounts.django);
+            assert_eq!(vault.claim_pending_token(token_a()), Ok(p_d));
+            assert_eq!(vault.get_reserved_token(token_a()), 0);
+        }
+
+        /// FIX1-L: get_token_valuation usa o saldo LIVRE, como o equity.
+        #[ink::test]
+        fn test_get_token_valuation_uses_free_balance() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            set_caller(accounts.charlie);
+            vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .unwrap();
+            let reserved = vault.get_reserved_token(token_a());
+            assert!(reserved > 0);
+            // tA cotado 1:1.
+            assert_eq!(
+                vault.get_token_valuation(token_a()),
+                Ok(sub(A_BAL, reserved))
+            );
+        }
+
+        /// FIX1-L: estado legado wnative == rastreado — o NAV conta o
+        /// wnative uma vez só (1:1), como a saída in-kind paga uma vez.
+        #[ink::test]
+        fn test_equity_counts_wnative_once_when_also_tracked() {
+            let (mut vault, _) = inkind_vault();
+            let expected = add(add(add(native_of(contract()), W_BAL), A_BAL), B_BAL / 2);
+            assert_eq!(vault.get_vault_equity(), Ok(expected));
+            track_wnative_legacy(&mut vault);
+            assert_eq!(vault.get_vault_equity(), Ok(expected));
+            let (_, entries, total) = vault.get_equity_breakdown().unwrap();
+            assert_eq!(total, expected);
+            assert_eq!(entries.iter().filter(|e| e.0 == wnative_addr()).count(), 1);
+        }
+
+        /// FIX1-L (D3): troca com saldo (1 planck basta) e SEM par
+        /// antigo↔novo na factory nova: NAV, depósito e des-rastreio
+        /// ficam fechados; a saída in-kind segue funcionando.
+        #[ink::test]
+        fn test_wnative_rotation_with_balance_without_pair() {
+            let (mut vault, accounts) = d3_vault(&[]);
+            test_mocks::set_psp22_balance(wnative_addr(), 1);
+            propose_and_apply_new_infra(&mut vault);
+            assert_eq!(vault.get_tracked_tokens(), vec![wnative_addr()]);
+            assert_eq!(
+                vault.get_vault_equity(),
+                Err(VaultError::ValuationUnavailable)
+            );
+            set_caller(accounts.alice);
+            assert_eq!(
+                vault.remove_tracked_token(wnative_addr()),
+                Err(VaultError::TokenHasBalance)
+            );
+            set_caller(accounts.django);
+            set_value(D_DEP);
+            set_balance(contract(), add(native_of(contract()), D_DEP));
+            assert_eq!(vault.deposit(), Err(VaultError::ValuationUnavailable));
+            set_value(0);
+            set_balance(contract(), C_DEP);
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            let s = vault.shares.get(accounts.charlie).unwrap();
+            let total = vault.total_shares;
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(Vec::new()),
+                Ok(pro_rata(sub(C_DEP, ed()), s, total))
+            );
+        }
+
+        /// FIX1-L: o preço da cota de quem fica não cai após saída in-kind
+        /// paga, pendente e com skip (eq1·t0 >= eq0·t1).
+        #[ink::test]
+        fn test_inkind_exit_never_lowers_remaining_share_price() {
+            let (mut vault, accounts) = inkind_vault();
+            // Terceiro depositante para sobrar alguém depois de duas saídas.
+            set_caller(accounts.eve);
+            set_value(D_DEP);
+            set_balance(contract(), add(native_of(contract()), D_DEP));
+            vault.deposit().unwrap();
+            set_value(0);
+
+            let price_ok = |eq0: Balance, t0: Balance, eq1: Balance, t1: Balance| {
+                eq1.checked_mul(t0).unwrap() >= eq0.checked_mul(t1).unwrap()
+            };
+            // charlie: tA pendente, tB em skip; django: tudo pago.
+            test_mocks::set_psp22_transfer_fail(token_a(), true);
+            for (who, skip) in [
+                (accounts.charlie, vec![token_b()]),
+                (accounts.django, Vec::new()),
+            ] {
+                if who == accounts.django {
+                    test_mocks::set_psp22_transfer_fail(token_a(), false);
+                }
+                let eq0 = vault.get_vault_equity().unwrap();
+                let t0 = vault.total_shares;
+                set_caller(who);
+                vault.execute_emergency_withdrawal_in_kind(skip).unwrap();
+                let eq1 = vault.get_vault_equity().unwrap();
+                let t1 = vault.total_shares;
+                assert!(
+                    price_ok(eq0, t0, eq1, t1),
+                    "cota caiu: {eq0}/{t0} -> {eq1}/{t1}"
+                );
+            }
+        }
+
+        /// FIX1-L (CV-FEE-01, números ímpares): em parciais, cada custo é
+        /// o PISO de basis·s/cotas, a base remanescente é a diferença
+        /// exata, a soma dos custos fecha na base e cada taxa é
+        /// bps × (payout − custo).
+        #[ink::test]
+        fn test_fee_odd_partials_cost_is_floor_and_sums_to_basis() {
+            let (mut vault, accounts) = vault_with_single_depositor();
+            let contract_id = contract();
+            set_balance(contract_id, 150_000_000_007);
+            set_caller(accounts.django);
+            set_value(33_333_333_331);
+            set_balance(contract_id, 183_333_333_338);
+            vault.deposit().unwrap();
+            set_value(0);
+            let basis = vault.cost_basis.get(accounts.django).unwrap();
+            assert_eq!(basis, 33_333_333_331);
+            // Preço sobe para um NAV ímpar.
+            set_balance(contract_id, 300_000_000_011);
+
+            let mut cost_sum: Balance = 0;
+            let parts = [5_000_000_003, 4_999_999_999, 7_777_777_777];
+            for part in parts {
+                let cs = vault.shares.get(accounts.django).unwrap();
+                let b = vault.cost_basis.get(accounts.django).unwrap();
+                let cost = pro_rata(b, part, cs);
+                let fees_before = vault.total_fees_collected;
+                let net = vault.withdraw(part).unwrap();
+                let fee = sub(vault.total_fees_collected, fees_before);
+                let payout = add(net, fee);
+                let expected_fee = sub(payout, cost)
+                    .checked_mul(vault.performance_fee_bps as u128)
+                    .and_then(|x| x.checked_div(constants::BPS as u128))
+                    .unwrap();
+                assert_eq!(fee, expected_fee);
+                assert_eq!(vault.cost_basis.get(accounts.django), Some(sub(b, cost)));
+                cost_sum = add(cost_sum, cost);
+            }
+            // Último saque leva o resto: custo == base remanescente.
+            let rest = vault.shares.get(accounts.django).unwrap();
+            let b = vault.cost_basis.get(accounts.django).unwrap();
+            let unlock_at = vault.request_withdrawal(rest).unwrap();
+            set_now(unlock_at);
+            vault.withdraw(rest).unwrap();
+            cost_sum = add(cost_sum, b);
+            assert_eq!(cost_sum, basis);
+            assert_eq!(vault.cost_basis.get(accounts.django), None);
+        }
+
+        /// FIX1-L: domínio de `mul_div_floor` na saída (`s <= total <
+        /// 2^64`): nem o maior saldo possível estoura, porque `r·s <
+        /// total² < 2^128`. Fora do domínio (`r·b >= 2^128`) a falha é
+        /// fechada (`Overflow`), nunca um valor truncado.
+        #[ink::test]
+        fn test_mul_div_floor_share_domain_never_overflows() {
+            // d = 2^64 − 1 e u128::MAX = d · (2^64 + 1).
+            let d = u128::from(u64::MAX);
+            let two64 = 1u128 << 64;
+            assert_eq!(CopyVault::mul_div_floor(u128::MAX, d, d), Ok(u128::MAX));
+            assert_eq!(CopyVault::mul_div_floor(u128::MAX, 1, d), Ok(add(two64, 1)));
+            // (2^64 + 1)(2^64 − 2) = 2^128 − 2^64 − 2.
+            assert_eq!(
+                CopyVault::mul_div_floor(u128::MAX, sub(d, 1), d),
+                Ok(sub(sub(u128::MAX, two64), 1))
+            );
+            // a = 2^64·d + (d − 1), resto máximo: piso = 2^128 − 2^64 − 3.
+            assert_eq!(
+                CopyVault::mul_div_floor(sub(u128::MAX, 1), sub(d, 1), d),
+                Ok(sub(sub(u128::MAX, two64), 2))
+            );
+            // Varredura: sempre Ok, nunca acima de `a`, monótono em `s`
+            // e `s == d` devolve `a`.
+            let third = d.checked_div(3).unwrap();
+            for a in [
+                u128::MAX,
+                sub(u128::MAX, 1),
+                add(1u128 << 127, 12_345),
+                add(two64, 7),
+            ] {
+                let mut prev: Balance = 0;
+                for s in [1, 2, 1_000, third, sub(d, 1), d] {
+                    let got = CopyVault::mul_div_floor(a, s, d).unwrap();
+                    assert!(got <= a);
+                    assert!(got >= prev);
+                    prev = got;
+                }
+                assert_eq!(prev, a);
+            }
+            // Fora do domínio: d = 2^127, a = d − 1 (q = 0, r = a), b = 4
+            // ⇒ r·b >= 2^128. O valor real (3) caberia; falha fechada.
+            let big = 1u128 << 127;
+            assert_eq!(
+                CopyVault::mul_div_floor(sub(big, 1), 4, big),
+                Err(VaultError::Overflow)
+            );
+        }
+
+        /// FIX1-L: token com saldo gigante (u128::MAX) não derruba a
+        /// saída com `Overflow` no domínio suportado: a prévia traz o
+        /// valor e a saída paga o piso exato, uma vez.
+        #[ink::test]
+        fn test_inkind_exit_with_giant_token_balance_does_not_overflow() {
+            let (mut vault, accounts) = inkind_vault();
+            test_mocks::set_psp22_balance(token_a(), u128::MAX);
+            let s = vault.shares.get(accounts.charlie).unwrap();
+            let total = vault.total_shares;
+            // Oráculo: u128::MAX = q·total + r ⇒ piso = q·s + piso(r·s/total).
+            let q = u128::MAX.checked_div(total).unwrap();
+            let r = u128::MAX.checked_rem(total).unwrap();
+            let expected = add(q.checked_mul(s).unwrap(), pro_rata(r, s, total));
+
+            let (_, legs) = vault.preview_emergency_exit(accounts.charlie);
+            assert!(legs.contains(&(token_a(), Some(expected))));
+
+            set_caller(accounts.charlie);
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(Vec::new())
+                .is_ok());
+            assert_eq!(paid_to(token_a(), accounts.charlie), expected);
+            assert_eq!(
+                test_mocks::psp22_balance(token_a()),
+                sub(u128::MAX, expected)
+            );
+            assert_eq!(vault.get_pending_token(token_a(), accounts.charlie), 0);
+            assert_eq!(vault.get_reserved_token(token_a()), 0);
+        }
+
+        /// FIX1-L: todos saem pulando o mesmo ativo. O ativo pulado fica
+        /// inteiro no vault, livre, lastreando só as MINIMUM_SHARES dead
+        /// shares (ninguém o resgata). O próximo depositante entra pelo
+        /// NAV: recebe poucas cotas de preço alto e não perde mais que o
+        /// arredondamento de uma cota.
+        #[ink::test]
+        fn test_all_depositors_skip_same_token_value_stays_with_dead_shares() {
+            let (mut vault, accounts) = inkind_vault();
+            for who in [accounts.charlie, accounts.django] {
+                set_caller(who);
+                vault
+                    .execute_emergency_withdrawal_in_kind(vec![token_b()])
+                    .unwrap();
+            }
+            assert_eq!(vault.total_shares, constants::MINIMUM_SHARES);
+            assert_eq!(vault.active_depositors, 0);
+            assert_eq!(test_mocks::psp22_balance(token_b()), B_BAL);
+            assert_eq!(vault.get_reserved_token(token_b()), 0);
+            for who in [accounts.charlie, accounts.django] {
+                assert_eq!(paid_to(token_b(), who), 0);
+                assert_eq!(vault.get_pending_token(token_b(), who), 0);
+            }
+            // tB vale 0,5: o valor pulado segue inteiro no NAV.
+            let eq0 = vault.get_vault_equity().unwrap();
+            assert!(eq0 >= B_BAL.checked_div(2).unwrap());
+
+            set_caller(accounts.eve);
+            set_value(D_DEP);
+            set_balance(contract(), add(native_of(contract()), D_DEP));
+            let minted = vault.deposit().unwrap();
+            set_value(0);
+            assert_eq!(minted, pro_rata(D_DEP, constants::MINIMUM_SHARES, eq0));
+            let eq1 = vault.get_vault_equity().unwrap();
+            assert_eq!(eq1, add(eq0, D_DEP));
+            let total1 = vault.total_shares;
+            let value = pro_rata(minted, eq1, total1);
+            let share_price = eq1.checked_div(total1).unwrap();
+            assert!(value <= D_DEP);
+            assert!(sub(D_DEP, value) <= add(share_price, 1));
+        }
+
+        /// FIX1-L (D3): duas rotações de wnative com saldo e lista cheia.
+        /// A lista chega a MAX_TRACKED_TOKENS + 2 — não há teto rígido,
+        /// cada rotação custa admin + timelock —, o limite da skip list
+        /// acompanha (`count + 1`) e a saída in-kind paga os dois
+        /// wnatives antigos.
+        #[ink::test]
+        fn test_two_wnative_rotations_grow_list_and_exit_still_pays() {
+            const W2_BAL: Balance = 5_000_000_000;
+            let full: Vec<AccountId> = (0..constants::MAX_TRACKED_TOKENS)
+                .map(|i| token_at(0x10, i))
+                .collect();
+            let (mut vault, accounts) = d3_vault(&full);
+            set_caller(accounts.alice);
+            for t in &full {
+                test_mocks::set_pair_reserves(*t, 1_000_000_000_000, 1_000_000_000_000);
+                vault.add_tracked_token(*t).unwrap();
+            }
+            test_mocks::set_psp22_balance(wnative_addr(), W_BAL);
+            propose_and_apply_new_infra(&mut vault);
+            assert_eq!(vault.tracked_token_count, constants::MAX_TRACKED_TOKENS + 1);
+
+            test_mocks::set_psp22_balance(new_wnative(), W2_BAL);
+            set_caller(accounts.alice);
+            let eta = vault
+                .propose_valuation_infra(token(0xF3), token(0xF4))
+                .unwrap();
+            set_now(eta);
+            assert_eq!(vault.apply_valuation_infra(), Ok(()));
+            assert_eq!(vault.tracked_token_count, constants::MAX_TRACKED_TOKENS + 2);
+            assert!(vault.is_tracked(wnative_addr()));
+            assert!(vault.is_tracked(new_wnative()));
+
+            set_caller(accounts.charlie);
+            let unlock_at = vault.request_emergency_withdrawal().unwrap();
+            set_now(unlock_at);
+            let s = vault.shares.get(accounts.charlie).unwrap();
+            let total = vault.total_shares;
+            // wnative atual + 10 rastreados = 11 ativos na prévia.
+            assert_eq!(vault.preview_emergency_exit(accounts.charlie).1.len(), 11);
+            // Limite da skip list = count (10) + 1.
+            assert_eq!(
+                vault.execute_emergency_withdrawal_in_kind(junk_tokens(12)),
+                Err(VaultError::InvalidSkipList)
+            );
+            assert!(vault
+                .execute_emergency_withdrawal_in_kind(junk_tokens(11))
+                .is_ok());
+            assert_eq!(
+                paid_to(wnative_addr(), accounts.charlie),
+                pro_rata(W_BAL, s, total)
+            );
+            assert_eq!(
+                paid_to(new_wnative(), accounts.charlie),
+                pro_rata(W2_BAL, s, total)
+            );
         }
     }
 }
