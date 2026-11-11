@@ -7,11 +7,12 @@ import {
   MarginOpenPositionSchema,
   MarginClosePositionSchema,
   MarginLiquidatePositionSchema,
+  signedAddressFor,
+  ss58Address,
 } from '../utils/validation';
 import {
   getSignedAuthInput,
   verifyWalletActionSignature,
-  verifyWalletReadSignature,
 } from '../middleware/auth';
 import {
   readAuthSchema,
@@ -23,7 +24,7 @@ import { z } from 'zod';
 const router = Router();
 
 const MarginOverviewReadSchema = z.object({
-  address: z.string().min(8).max(128),
+  address: ss58Address,
   nonce: z.string().min(8),
   timestamp: z.coerce.number().int().positive(),
   signature: z.string().min(8),
@@ -44,7 +45,8 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
     const auth = await verifyWalletReadAccess(req, {
       action: 'margin.overview',
-      address: parsed.data.address,
+      // As sent: the signed `address:` line may be hex or another prefix.
+      address: signedAddressFor(req.query.address, parsed.data.address),
       nonce: parsed.data.nonce,
       timestamp: parsed.data.timestamp,
       signature: parsed.data.signature,
@@ -112,6 +114,7 @@ router.post(
       const auth = await verifyWalletActionSignature({
         action: 'margin.collateral.deposit',
         address: parsed.data.address,
+        signedAddress: signedAddressFor(req.body?.address, parsed.data.address),
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,
@@ -145,6 +148,7 @@ router.post(
       const auth = await verifyWalletActionSignature({
         action: 'margin.collateral.withdraw',
         address: parsed.data.address,
+        signedAddress: signedAddressFor(req.body?.address, parsed.data.address),
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,
@@ -180,6 +184,7 @@ router.post(
       const auth = await verifyWalletActionSignature({
         action: 'margin.position.open',
         address: parsed.data.address,
+        signedAddress: signedAddressFor(req.body?.address, parsed.data.address),
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,
@@ -220,6 +225,7 @@ router.post(
       const auth = await verifyWalletActionSignature({
         action: 'margin.position.close',
         address: parsed.data.address,
+        signedAddress: signedAddressFor(req.body?.address, parsed.data.address),
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,
@@ -251,6 +257,10 @@ router.post(
       const auth = await verifyWalletActionSignature({
         action: 'margin.position.liquidate',
         address: parsed.data.liquidatorAddress,
+        signedAddress: signedAddressFor(
+          req.body?.liquidatorAddress,
+          parsed.data.liquidatorAddress,
+        ),
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,

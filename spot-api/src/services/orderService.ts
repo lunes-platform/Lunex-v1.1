@@ -25,7 +25,12 @@
  */
 import prisma from '../db';
 import { orderbookManager, MatchResult } from '../utils/orderbook';
-import { CreateOrderInput } from '../utils/validation';
+import {
+  accountAddressFilter,
+  CreateOrderInput,
+  isSameAccount,
+  toCanonicalAddress,
+} from '../utils/validation';
 import { computeOrderHash, decimalToNumber } from '../utils/helpers';
 import { tradeService } from './tradeService';
 import { Decimal } from '@prisma/client/runtime/library';
@@ -374,7 +379,14 @@ export const orderService = {
   /**
    * Create a new order, attempt matching, persist to DB
    */
-  async createOrder(input: CreateOrderInput) {
+  async createOrder(rawInput: CreateOrderInput) {
+    // M-09: one string per key for storage, ban check, balance reservation
+    // and self-trade comparison. Agent API-key orders reach here with
+    // `agent.walletAddress`, which no request schema normalized.
+    const makerAddress = toCanonicalAddress(rawInput.makerAddress);
+    if (!makerAddress) throw ApiError.badRequest('Invalid maker address');
+    const input: CreateOrderInput = { ...rawInput, makerAddress };
+
     if (input.expiresAt && new Date(input.expiresAt).getTime() <= Date.now()) {
       throw ApiError.badRequest('Order already expired');
     }
@@ -502,7 +514,8 @@ export const orderService = {
   async cancelOrder(orderId: string, makerAddress: string) {
     const order = await prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw ApiError.notFound('Order not found');
-    if (order.makerAddress !== makerAddress)
+    // Account ids, not strings: the order may be stored under another prefix.
+    if (!isSameAccount(order.makerAddress, makerAddress))
       throw ApiError.forbidden('Not order owner');
     if (order.status === 'FILLED')
       throw ApiError.conflict('Order already filled');
@@ -519,7 +532,7 @@ export const orderService = {
         where: { id: orderId },
       });
       if (!lockedOrder) throw ApiError.notFound('Order not found');
-      if (lockedOrder.makerAddress !== makerAddress)
+      if (!isSameAccount(lockedOrder.makerAddress, makerAddress))
         throw ApiError.forbidden('Not order owner');
       if (lockedOrder.status === 'FILLED')
         throw ApiError.conflict('Order already filled');
@@ -558,7 +571,10 @@ export const orderService = {
     limit = 50,
     offset = 0,
   ) {
-    const where: Prisma.OrderWhereInput = { makerAddress };
+    // M-09: canonical rows plus legacy rows under the string given.
+    const where: Prisma.OrderWhereInput = {
+      makerAddress: accountAddressFilter(makerAddress),
+    };
     if (status) where.status = status as OrderStatus;
 
     const orders = await prisma.order.findMany({

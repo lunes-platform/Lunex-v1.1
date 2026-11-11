@@ -1,4 +1,111 @@
+import { decodeAddress, encodeAddress } from '@polkadot/util-crypto';
 import { z } from 'zod';
+
+/**
+ * SS58 prefix every wallet address is stored and compared in (M-09). There is
+ * no network-prefix setting in config: 42 (generic Substrate) is what the
+ * backend already produces (Keyring default) and what seeds and deploy
+ * manifests use. The Lunes chain spec declares 57
+ * (docs/PRD_LUNES_NATIVE_ASSETS.md); switching to it needs a data migration.
+ */
+export const CANONICAL_SS58_PREFIX = 42;
+
+/**
+ * Prefixes a wallet may have written into the `address:` line of a signed
+ * message (generic and Lunes). Auth tries these when the canonical form does
+ * not verify, so normalizing the request field does not break signatures.
+ */
+export const SIGNING_SS58_PREFIXES: readonly number[] = [
+  CANONICAL_SS58_PREFIX,
+  57,
+];
+
+/** 32-byte account id of an SS58 (or 0x hex) address, or null if invalid. */
+export function decodeAccountId(address: string): Uint8Array | null {
+  try {
+    const publicKey = decodeAddress(address);
+    return publicKey.length === 32 ? publicKey : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Same account re-encoded with CANONICAL_SS58_PREFIX, or null if invalid. */
+export function toCanonicalAddress(address: string): string | null {
+  const publicKey = decodeAccountId(address);
+  return publicKey ? encodeAddress(publicKey, CANONICAL_SS58_PREFIX) : null;
+}
+
+/**
+ * Every string the same account may be stored or signed under: the input as
+ * given, then its encoding in each SIGNING_SS58_PREFIXES (canonical first).
+ * An undecodable input yields just itself, so legacy raw rows still match.
+ */
+export function accountAddressVariants(address: string): string[] {
+  const publicKey = decodeAccountId(address);
+  if (!publicKey) return [address];
+  return [
+    ...new Set([
+      address,
+      ...SIGNING_SS58_PREFIXES.map((prefix) =>
+        encodeAddress(publicKey, prefix),
+      ),
+    ]),
+  ];
+}
+
+/**
+ * Prisma string filter for every row of an account: `{ in: variants }`, or
+ * plain equality when the input is undecodable (legacy raw rows). Rows in an
+ * encoding outside the variants (hex/other prefix, not the input) need the
+ * data migration.
+ */
+export function accountAddressFilter(
+  address: string,
+): string | { in: string[] } {
+  const variants = accountAddressVariants(address);
+  return variants.length === 1 ? variants[0] : { in: variants };
+}
+
+/** Same account id (any SS58 prefix); plain string equality if undecodable. */
+export function isSameAccount(a: string, b: string): boolean {
+  const left = toCanonicalAddress(a);
+  return left !== null ? left === toCanonicalAddress(b) : a === b;
+}
+
+/**
+ * The address string the client wrote in the `address:` line it signed: the
+ * raw request field (hex, any SS58 prefix) when it is the same account as
+ * the canonical one, otherwise the canonical address. Only rebuilds the
+ * signed message; identity stays canonical.
+ */
+export function signedAddressFor(raw: unknown, canonical: string): string {
+  return typeof raw === 'string' && isSameAccount(raw, canonical)
+    ? raw
+    : canonical;
+}
+
+/**
+ * Wallet address field: accepts any SS58 prefix (or a hex account id) and
+ * outputs the canonical encoding, so one key is one identity for bans,
+ * limits, nonces and balance reservation.
+ */
+export const ss58Address = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .transform((value, ctx) => {
+    const canonical = toCanonicalAddress(value);
+    if (!canonical) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Invalid SS58 address',
+      });
+      return z.NEVER;
+    }
+    return canonical;
+  });
 
 const SignedWalletActionSchema = z.object({
   nonce: z.string().min(8),
@@ -77,12 +184,12 @@ export const CreateOrderSchema = z.object({
   nonce: z.string().min(1),
   timestamp: z.coerce.number().int().positive(),
   signature: z.string().min(1),
-  makerAddress: z.string().min(1),
+  makerAddress: ss58Address,
   expiresAt: z.string().datetime().optional(),
 });
 
 export const CancelOrderSchema = SignedWalletActionSchema.extend({
-  makerAddress: z.string().min(1),
+  makerAddress: ss58Address,
 });
 
 export const MarginPriceHealthQuerySchema = z.object({
@@ -95,7 +202,7 @@ export const MarginPriceHealthResetSchema = z.object({
 
 export const MarginCollateralSchema = z
   .object({
-    address: z.string().min(3),
+    address: ss58Address,
     token: z.string().trim().min(2).max(32).default('USDT'),
     amount: z.string().min(1),
   })
@@ -103,7 +210,7 @@ export const MarginCollateralSchema = z
 
 export const MarginOpenPositionSchema = z
   .object({
-    address: z.string().min(3),
+    address: ss58Address,
     pairSymbol: z.string().min(3),
     side: z.enum(['BUY', 'SELL']),
     collateralAmount: z.string().min(1),
@@ -113,13 +220,13 @@ export const MarginOpenPositionSchema = z
 
 export const MarginClosePositionSchema = z
   .object({
-    address: z.string().min(3),
+    address: ss58Address,
   })
   .merge(SignedWalletActionSchema);
 
 export const MarginLiquidatePositionSchema = z
   .object({
-    liquidatorAddress: z.string().min(3),
+    liquidatorAddress: ss58Address,
   })
   .merge(SignedWalletActionSchema);
 

@@ -4,9 +4,11 @@ import request from 'supertest';
 const mockPrisma = {
   $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   agent: {
+    findMany: jest.fn(),
     updateMany: jest.fn(),
   },
   bannedWallet: {
+    findMany: jest.fn(),
     upsert: jest.fn(),
     deleteMany: jest.fn(),
   },
@@ -33,6 +35,11 @@ jest.mock('../../config', () => ({
 
 import adminRouter from '../../routes/admin';
 
+// Valid SS58 (M-09: undecodable admin input is 400) and its prefix-57 form.
+const WALLET = '5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY';
+const WALLET_57 = '6mfqoTMHrMeVMyKwjqomUjVomPMJ4AjdCm1VReFtk7Be8wqr';
+const OTHER_WALLET = '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty';
+
 const app = express();
 app.use(express.json());
 app.use('/api/v1/admin', adminRouter);
@@ -40,10 +47,17 @@ app.use('/api/v1/admin', adminRouter);
 describe('Admin wallet risk API', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // Agents are matched by decoded account (any stored encoding), then
+    // updated by id. Another account's agent must not be touched.
+    mockPrisma.agent.findMany.mockResolvedValue([
+      { id: 'agent-57', walletAddress: WALLET_57 },
+      { id: 'agent-other', walletAddress: OTHER_WALLET },
+    ]);
+    mockPrisma.bannedWallet.findMany.mockResolvedValue([]);
     mockPrisma.agent.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.bannedWallet.upsert.mockResolvedValue({
       id: 'ban-1',
-      address: 'wallet-1',
+      address: WALLET,
       reason: 'market abuse',
       bannedBy: 'admin-1',
     });
@@ -52,20 +66,20 @@ describe('Admin wallet risk API', () => {
 
   it('bans a wallet through a protected backend endpoint', async () => {
     const res = await request(app)
-      .post('/api/v1/admin/wallets/wallet-1/ban')
+      .post(`/api/v1/admin/wallets/${WALLET}/ban`)
       .set('Authorization', 'Bearer test-admin-secret-local-only-000000000001')
       .send({ reason: 'market abuse', bannedBy: 'admin-1' });
 
     expect(res.status).toBe(200);
     expect(res.body.wallet).toEqual({
-      address: 'wallet-1',
+      address: WALLET,
       isBanned: true,
       reason: 'market abuse',
     });
     expect(mockPrisma.bannedWallet.upsert).toHaveBeenCalledWith({
-      where: { address: 'wallet-1' },
+      where: { address: WALLET },
       create: {
-        address: 'wallet-1',
+        address: WALLET,
         reason: 'market abuse',
         bannedBy: 'admin-1',
       },
@@ -75,33 +89,33 @@ describe('Admin wallet risk API', () => {
       },
     });
     expect(mockPrisma.agent.updateMany).toHaveBeenCalledWith({
-      where: { walletAddress: 'wallet-1' },
+      where: { id: { in: ['agent-57'] } },
       data: { isBanned: true, banReason: 'market abuse' },
     });
   });
 
   it('unbans a wallet through a protected backend endpoint', async () => {
     const res = await request(app)
-      .delete('/api/v1/admin/wallets/wallet-1/ban')
+      .delete(`/api/v1/admin/wallets/${WALLET}/ban`)
       .set('Authorization', 'Bearer test-admin-secret-local-only-000000000001');
 
     expect(res.status).toBe(200);
     expect(res.body.wallet).toEqual({
-      address: 'wallet-1',
+      address: WALLET,
       isBanned: false,
     });
     expect(mockPrisma.bannedWallet.deleteMany).toHaveBeenCalledWith({
-      where: { address: 'wallet-1' },
+      where: { address: { in: [WALLET, WALLET_57] } },
     });
     expect(mockPrisma.agent.updateMany).toHaveBeenCalledWith({
-      where: { walletAddress: 'wallet-1' },
+      where: { id: { in: ['agent-57'] } },
       data: { isBanned: false, banReason: null },
     });
   });
 
   it('requires admin authentication', async () => {
     const res = await request(app)
-      .post('/api/v1/admin/wallets/wallet-1/ban')
+      .post(`/api/v1/admin/wallets/${WALLET}/ban`)
       .send({ reason: 'market abuse', bannedBy: 'admin-1' });
 
     expect(res.status).toBe(401);

@@ -33,6 +33,10 @@ pub mod spot_settlement {
     /// Canonical 32-byte order hash.
     type OrderHash = [u8; 32];
 
+    /// A-06: pending attestor key rotation in storage form
+    /// `(sec1_tag_byte, x_coordinate, effective_at_ms)`.
+    type PendingAttestorKey = (u8, [u8; 32], u64);
+
     // ========================================
     // PSP22 ERROR TYPE (DEFINIDO LOCALMENTE)
     // ========================================
@@ -175,6 +179,21 @@ pub mod spot_settlement {
         /// mark the trade SETTLED (confirm via `is_fill_settled`), not retry.
         /// Appended LAST so existing variant indices stay unchanged.
         TradeAlreadySettled,
+        /// A-06: the 48h timelock of a pending attestor key change has not
+        /// expired yet. Appended LAST so existing variant indices stay unchanged.
+        AttestorKeyTimelockNotExpired,
+        /// A-06: execute/cancel called with no pending attestor key change.
+        NoPendingAttestorKeyChange,
+        /// A-06: `initialize_attestor_key` called while a key is already
+        /// active; from then on only propose → 48h → execute can change it.
+        AttestorKeyAlreadySet,
+        /// The attestor key passed to `initialize_attestor_key` /
+        /// `propose_attestor_key_change` is not a compressed SEC1 secp256k1
+        /// key (first byte must be 0x02 or 0x03). Only the tag is checked;
+        /// it does NOT prove the point is on the curve or that the attestor
+        /// holds the secret key. Appended LAST so existing variant indices
+        /// stay unchanged.
+        InvalidAttestorKey,
     }
 
     // ========================================
@@ -308,6 +327,8 @@ pub mod spot_settlement {
     /// Emitted whenever the owner sets/rotates the ECDSA attestor public key
     /// (ADR-001, option c). Indexers/alerting MUST watch this event: a key
     /// rotation is a privileged, security-sensitive operation.
+    /// A-06: emitted only by `execute_attestor_key_change`, i.e. when the new
+    /// key actually becomes active (after the 48h timelock).
     #[ink(event)]
     pub struct AttestorKeyChanged {
         /// New compressed secp256k1 public key of the attestor service.
@@ -315,6 +336,76 @@ pub mod spot_settlement {
         /// Owner account that performed the change.
         #[ink(topic)]
         pub changed_by: AccountId,
+    }
+
+    // Events below are appended AFTER every pre-existing event so the ink! 4
+    // event enum indices of the existing events stay unchanged.
+
+    /// Emitted when the contract is paused (M-06).
+    #[ink(event)]
+    pub struct Paused {
+        /// Account that paused the contract: the owner or a registered
+        /// relayer (off-chain kill switch).
+        #[ink(topic)]
+        pub changed_by: AccountId,
+    }
+
+    /// Emitted when the contract is unpaused (M-06).
+    #[ink(event)]
+    pub struct Unpaused {
+        /// Owner account that unpaused the contract.
+        #[ink(topic)]
+        pub changed_by: AccountId,
+    }
+
+    /// A-06: a new attestor key was proposed. It only becomes active via
+    /// `execute_attestor_key_change` at/after `effective_at`; until then the
+    /// current key keeps being the only one accepted. Alerting MUST watch
+    /// this event — it opens the 48h window for users to react/withdraw.
+    #[ink(event)]
+    pub struct AttestorKeyChangeProposed {
+        /// Proposed compressed secp256k1 public key.
+        pub attestor_pubkey: [u8; 33],
+        /// Earliest block timestamp (ms) at which the change can be executed.
+        pub effective_at: u64,
+        /// Owner account that proposed the change.
+        #[ink(topic)]
+        pub proposed_by: AccountId,
+    }
+
+    /// A-06: a pending attestor key change was cancelled before execution.
+    #[ink(event)]
+    pub struct AttestorKeyChangeCancelled {
+        /// The proposed key that will NOT become active.
+        pub attestor_pubkey: [u8; 33],
+        /// Owner account that cancelled the proposal.
+        #[ink(topic)]
+        pub cancelled_by: AccountId,
+    }
+
+    /// A proposal to DISABLE the fail-closed signature gate was recorded by
+    /// `propose_disable_enforcement`. It only takes effect via
+    /// `execute_disable_enforcement` at/after `effective_at`. Alerting MUST
+    /// watch this event — it opens the 48h window for users to react/withdraw
+    /// before settlement stops requiring the attestor's signature.
+    /// Appended LAST so existing event indices stay unchanged.
+    #[ink(event)]
+    pub struct EnforcementDisableProposed {
+        /// Earliest block timestamp (ms) at which the disable can be executed.
+        pub effective_at: u64,
+        /// Owner account that proposed the disable.
+        #[ink(topic)]
+        pub proposed_by: AccountId,
+    }
+
+    /// A pending disable-enforcement proposal was cancelled by
+    /// `cancel_disable_enforcement` (only emitted when one was pending).
+    /// Appended LAST so existing event indices stay unchanged.
+    #[ink(event)]
+    pub struct EnforcementDisableCancelled {
+        /// Owner account that cancelled the proposal.
+        #[ink(topic)]
+        pub cancelled_by: AccountId,
     }
 
     // ========================================
@@ -368,25 +459,35 @@ pub mod spot_settlement {
         /// independent attestor service (ADR-001, option c — 2-of-2
         /// attestation). Stored split as `(sec1_tag_byte, x_coordinate)`
         /// because ink! 4.x only implements `StorageLayout` for arrays up to
-        /// 32 bytes; the public ABI (`set_attestor_key`/`get_attestor_key`)
-        /// always speaks `[u8; 33]`.
+        /// 32 bytes; the public ABI (`propose_attestor_key_change`/
+        /// `get_attestor_key`) always speaks `[u8; 33]`.
         /// `None` (the default) keeps `settle_trade` blocked with
         /// `SignatureVerificationUnavailable` while enforcement is active.
-        /// Only the owner can set it, and every change emits
-        /// `AttestorKeyChanged`.
+        /// Set once by `initialize_attestor_key` (owner, only while `None`),
+        /// then only changed by `execute_attestor_key_change` (owner, after
+        /// the 48h timelock — A-06); every change emits `AttestorKeyChanged`.
         attestor_pubkey: Option<(u8, [u8; 32])>,
         /// Deadline timestamp (ms) for a pending disable-enforcement proposal.
         /// `None` means no proposal is active. Set by `propose_disable_enforcement`,
         /// cleared by `execute_disable_enforcement` or `cancel_disable_enforcement`.
         pending_enforcement_off: Option<u64>,
         /// Minimum delay (ms) between proposing and executing a disable-enforcement
-        /// transition. Immutable after construction: 48 * 3_600_000 = 172_800_000 ms.
+        /// transition or an attestor key rotation (A-06).
+        /// Immutable after construction: 48 * 3_600_000 = 172_800_000 ms.
         enforcement_timelock_ms: u64,
         /// BE-07 per-trade idempotency: trade keys (see `build_trade_key`) of
         /// every successfully settled fill. Prevents a resubmitted
         /// `settle_trade` from settling the same fill twice while both orders
         /// still have remaining amount. Appended LAST in the storage struct.
         settled_trades: Mapping<[u8; 32], bool>,
+        /// A-06: pending attestor key rotation as
+        /// `(sec1_tag_byte, x_coordinate, effective_at_ms)` — same split
+        /// storage form as `attestor_pubkey`. Set by
+        /// `propose_attestor_key_change`, applied by
+        /// `execute_attestor_key_change` once `block_timestamp >=
+        /// effective_at_ms` (same `enforcement_timelock_ms` delay), cleared by
+        /// `cancel_attestor_key_change`. Appended LAST in the storage struct.
+        pending_attestor_key: Option<PendingAttestorKey>,
     }
 
     // ========================================
@@ -423,6 +524,7 @@ pub mod spot_settlement {
                 pending_enforcement_off: None,
                 enforcement_timelock_ms: 48 * 3_600_000,
                 settled_trades: Mapping::default(),
+                pending_attestor_key: None,
             }
         }
 
@@ -571,11 +673,11 @@ pub mod spot_settlement {
         // WITHDRAW FUNCTIONS
         // ========================================
 
-        /// Withdraw native LUNES from the vault
+        /// Withdraw native LUNES from the vault.
+        /// M-06: intentionally NOT gated by `paused` — the pause blocks new
+        /// exposure (deposits/settlement) but must never trap user funds.
         #[ink(message)]
         pub fn withdraw_native(&mut self, amount: Balance) -> Result<(), SpotError> {
-            self.ensure_not_paused()?;
-
             if amount == 0 {
                 return Err(SpotError::ZeroAmount);
             }
@@ -606,14 +708,14 @@ pub mod spot_settlement {
             Ok(())
         }
 
-        /// Withdraw PSP22 tokens from the vault
+        /// Withdraw PSP22 tokens from the vault.
+        /// M-06: intentionally NOT gated by `paused` (see `withdraw_native`).
         #[ink(message)]
         pub fn withdraw_psp22(
             &mut self,
             token: AccountId,
             amount: Balance,
         ) -> Result<(), SpotError> {
-            self.ensure_not_paused()?;
             self.acquire_lock()?;
 
             if amount == 0 {
@@ -682,7 +784,9 @@ pub mod spot_settlement {
         // ========================================
 
         /// Settle a matched trade between maker and taker orders.
-        /// Can only be called by authorized relayers or the contract owner.
+        /// Can only be called by authorized relayers. A-06: the owner is NOT
+        /// allowed (role separation — the owner manages the attestor key, so
+        /// it must not also be able to submit settlements).
         ///
         /// The relayer provides the two matched orders and the fill amount/price.
         /// The contract validates everything and atomically transfers balances.
@@ -695,7 +799,7 @@ pub mod spot_settlement {
             fill_price: Balance,
         ) -> Result<(), SpotError> {
             self.ensure_not_paused()?;
-            self.ensure_relayer_or_owner()?;
+            self.ensure_relayer()?;
 
             // --- Per-trade idempotency (BE-07) ---
             // Reject an exact resubmission of a fill that already settled.
@@ -970,10 +1074,10 @@ pub mod spot_settlement {
         // ========================================
 
         /// Cancel an order on-chain. Only the order maker can cancel.
+        /// M-06: intentionally NOT gated by `paused` — cancelling only
+        /// reduces the maker's exposure, so it must work during an incident.
         #[ink(message)]
         pub fn cancel_order(&mut self, nonce: u64) -> Result<(), SpotError> {
-            self.ensure_not_paused()?;
-
             let caller = self.env().caller();
 
             if self.used_nonces.get((caller, nonce)).unwrap_or(false) {
@@ -994,10 +1098,14 @@ pub mod spot_settlement {
             Ok(())
         }
 
+        /// Cancel an order on behalf of its maker. Relayer only (A-06: the
+        /// owner is not allowed). Like `cancel_order`, intentionally NOT
+        /// gated by `paused`: cancelling only reduces the maker's exposure,
+        /// and this is the path the product (spot-api) uses to cancel, so it
+        /// must keep working during an incident.
         #[ink(message)]
         pub fn cancel_order_for(&mut self, maker: AccountId, nonce: u64) -> Result<(), SpotError> {
-            self.ensure_not_paused()?;
-            self.ensure_relayer_or_owner()?;
+            self.ensure_relayer()?;
 
             if self.used_nonces.get((maker, nonce)).unwrap_or(false) {
                 return Err(SpotError::OrderAlreadyFilled);
@@ -1104,19 +1212,34 @@ pub mod spot_settlement {
         // ADMIN FUNCTIONS
         // ========================================
 
-        /// Pause the contract
+        /// Pause the contract. Blocks deposits and `settle_trade`;
+        /// withdrawals, the maker's own `cancel_order` and the relayer's
+        /// `cancel_order_for` keep working (M-06). Emits `Paused`.
+        ///
+        /// Callable by the owner OR any registered relayer: the off-chain
+        /// kill switch (spot-api) signs with the relayer key, and pausing
+        /// only ever reduces what the contract does. Unpausing stays
+        /// owner-only (see `unpause`).
         #[ink(message)]
         pub fn pause(&mut self) -> Result<(), SpotError> {
-            self.ensure_owner()?;
+            self.ensure_owner_or_relayer()?;
             self.paused = true;
+            self.env().emit_event(Paused {
+                changed_by: self.env().caller(),
+            });
             Ok(())
         }
 
-        /// Unpause the contract
+        /// Unpause the contract. Owner only — a relayer can pause but never
+        /// lift a pause, so a hot relayer key cannot undo an incident
+        /// response. Emits `Unpaused`.
         #[ink(message)]
         pub fn unpause(&mut self) -> Result<(), SpotError> {
             self.ensure_owner()?;
             self.paused = false;
+            self.env().emit_event(Unpaused {
+                changed_by: self.env().caller(),
+            });
             Ok(())
         }
 
@@ -1482,26 +1605,40 @@ pub mod spot_settlement {
 
         /// Begin the two-step disable-enforcement flow. Owner only.
         /// Records `block_timestamp + enforcement_timelock_ms` as the execution
-        /// deadline in `pending_enforcement_off`. The proposal can be cancelled
-        /// at any time with `cancel_disable_enforcement`.
+        /// deadline in `pending_enforcement_off` and emits
+        /// `EnforcementDisableProposed`. Re-proposing overwrites the deadline
+        /// (and emits again). The proposal can be cancelled at any time with
+        /// `cancel_disable_enforcement`.
         #[ink(message)]
         pub fn propose_disable_enforcement(&mut self) -> Result<(), SpotError> {
             self.ensure_owner()?;
-            self.pending_enforcement_off = Some(
-                self.env()
-                    .block_timestamp()
-                    .saturating_add(self.enforcement_timelock_ms),
-            );
+            let effective_at = self
+                .env()
+                .block_timestamp()
+                .saturating_add(self.enforcement_timelock_ms);
+            self.pending_enforcement_off = Some(effective_at);
+            self.env().emit_event(EnforcementDisableProposed {
+                effective_at,
+                proposed_by: self.env().caller(),
+            });
             Ok(())
         }
 
         /// Cancel a pending disable-enforcement proposal. Owner only.
         /// Clears `pending_enforcement_off`; a subsequent
         /// `execute_disable_enforcement` will return `NoPendingEnforcementDisable`.
+        /// Emits `EnforcementDisableCancelled` only when a proposal was
+        /// actually pending; with nothing pending it is a silent no-op (`Ok`).
         #[ink(message)]
         pub fn cancel_disable_enforcement(&mut self) -> Result<(), SpotError> {
             self.ensure_owner()?;
+            if self.pending_enforcement_off.is_none() {
+                return Ok(());
+            }
             self.pending_enforcement_off = None;
+            self.env().emit_event(EnforcementDisableCancelled {
+                cancelled_by: self.env().caller(),
+            });
             Ok(())
         }
 
@@ -1542,6 +1679,16 @@ pub mod spot_settlement {
             (pubkey[0], x)
         }
 
+        /// Rejeita chave cujo byte de tag não seja 0x02/0x03 (SEC1 comprimida).
+        /// Checagem mínima: não prova que o ponto está na curva nem posse da
+        /// chave privada — o deploy deve liquidar um trade de fumaça.
+        fn ensure_valid_attestor_key(pubkey: &[u8; 33]) -> Result<(), SpotError> {
+            if pubkey[0] != 0x02 && pubkey[0] != 0x03 {
+                return Err(SpotError::InvalidAttestorKey);
+            }
+            Ok(())
+        }
+
         /// Rebuild the 33-byte compressed SEC1 pubkey from its storage form.
         fn join_pubkey(tag: u8, x: [u8; 32]) -> [u8; 33] {
             let mut pubkey = [0u8; 33];
@@ -1558,22 +1705,120 @@ pub mod spot_settlement {
                 .map(|(tag, x)| Self::join_pubkey(tag, x))
         }
 
-        /// Register/rotate the ECDSA attestor public key (ADR-001, option c).
-        /// Owner only. Every change emits `AttestorKeyChanged` so indexers
-        /// and alerting can audit key rotations on-chain.
+        // ========================================
+        // ATTESTOR KEY ROTATION (A-06, TIMELOCK 48H)
+        // ========================================
+        //
+        // O PRIMEIRO registro da chave (enquanto `attestor_pubkey` é `None`)
+        // é imediato e único via `initialize_attestor_key`: sem chave, o
+        // settlement em modo enforced nunca foi possível e a chave nunca volta
+        // a `None`. Toda rotação posterior passa pelo MESMO timelock de
+        // `enforcement_timelock_ms` usado para desligar o enforcement:
+        // propor → esperar 48h → efetivar. A chave atual continua sendo a
+        // única aceita até a efetivação, e o evento
+        // `AttestorKeyChangeProposed` abre a janela para os usuários sacarem
+        // (saque funciona mesmo com o contrato pausado — M-06).
+
+        /// One-time bootstrap of the FIRST attestor key. Owner only; succeeds
+        /// only while no key is active (`AttestorKeyAlreadySet` otherwise),
+        /// sets it immediately and emits `AttestorKeyChanged`. Does not touch
+        /// `pending_attestor_key`.
         ///
-        /// While `signature_verification_enforced == true`, settlement only
-        /// becomes possible AFTER this key is set — and every settled order
-        /// must carry an ECDSA attestation recoverable to this key.
+        /// Residual risk: deposits made before the first key is registered get
+        /// no 48h notice — ops must register the key in the deploy sequence,
+        /// before opening deposits.
+        ///
+        /// Returns `InvalidAttestorKey` (without consuming the one-time
+        /// bootstrap) if the key's tag byte is not 0x02/0x03.
         #[ink(message)]
-        pub fn set_attestor_key(&mut self, pubkey: [u8; 33]) -> Result<(), SpotError> {
+        pub fn initialize_attestor_key(&mut self, pubkey: [u8; 33]) -> Result<(), SpotError> {
             self.ensure_owner()?;
+            if self.attestor_pubkey.is_some() {
+                return Err(SpotError::AttestorKeyAlreadySet);
+            }
+            Self::ensure_valid_attestor_key(&pubkey)?;
             self.attestor_pubkey = Some(Self::split_pubkey(&pubkey));
             self.env().emit_event(AttestorKeyChanged {
                 attestor_pubkey: pubkey,
                 changed_by: self.env().caller(),
             });
             Ok(())
+        }
+
+        /// Begin a two-step attestor key rotation (ADR-001, option c). Owner
+        /// only. Records the key and `block_timestamp + enforcement_timelock_ms`
+        /// in `pending_attestor_key` and emits `AttestorKeyChangeProposed`.
+        /// Re-proposing overwrites the pending proposal and restarts the delay.
+        /// The active key is NOT changed here. Returns `InvalidAttestorKey`
+        /// (leaving any pending proposal untouched) if the key's tag byte is
+        /// not 0x02/0x03.
+        #[ink(message)]
+        pub fn propose_attestor_key_change(&mut self, pubkey: [u8; 33]) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            Self::ensure_valid_attestor_key(&pubkey)?;
+            let effective_at = self
+                .env()
+                .block_timestamp()
+                .checked_add(self.enforcement_timelock_ms)
+                .ok_or(SpotError::Overflow)?;
+            let (tag, x) = Self::split_pubkey(&pubkey);
+            self.pending_attestor_key = Some((tag, x, effective_at));
+            self.env().emit_event(AttestorKeyChangeProposed {
+                attestor_pubkey: pubkey,
+                effective_at,
+                proposed_by: self.env().caller(),
+            });
+            Ok(())
+        }
+
+        /// Cancel a pending attestor key rotation. Owner only. Emits
+        /// `AttestorKeyChangeCancelled`; returns `NoPendingAttestorKeyChange`
+        /// if nothing is pending.
+        #[ink(message)]
+        pub fn cancel_attestor_key_change(&mut self) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            let (tag, x, _) = self
+                .pending_attestor_key
+                .ok_or(SpotError::NoPendingAttestorKeyChange)?;
+            self.pending_attestor_key = None;
+            self.env().emit_event(AttestorKeyChangeCancelled {
+                attestor_pubkey: Self::join_pubkey(tag, x),
+                cancelled_by: self.env().caller(),
+            });
+            Ok(())
+        }
+
+        /// Complete a pending attestor key rotation. Owner only. Requires an
+        /// active proposal whose `effective_at` has been reached; replaces
+        /// `attestor_pubkey` and emits `AttestorKeyChanged`.
+        ///
+        /// While `signature_verification_enforced == true`, settlement only
+        /// becomes possible AFTER a key is active — and every settled order
+        /// must carry an ECDSA attestation recoverable to that key.
+        #[ink(message)]
+        pub fn execute_attestor_key_change(&mut self) -> Result<(), SpotError> {
+            self.ensure_owner()?;
+            let (tag, x, effective_at) = self
+                .pending_attestor_key
+                .ok_or(SpotError::NoPendingAttestorKeyChange)?;
+            if self.env().block_timestamp() < effective_at {
+                return Err(SpotError::AttestorKeyTimelockNotExpired);
+            }
+            self.attestor_pubkey = Some((tag, x));
+            self.pending_attestor_key = None;
+            self.env().emit_event(AttestorKeyChanged {
+                attestor_pubkey: Self::join_pubkey(tag, x),
+                changed_by: self.env().caller(),
+            });
+            Ok(())
+        }
+
+        /// Returns the pending attestor key and the timestamp (ms) from which
+        /// it can be executed, or `None` if no rotation is pending.
+        #[ink(message)]
+        pub fn pending_attestor_key(&self) -> Option<([u8; 33], u64)> {
+            self.pending_attestor_key
+                .map(|(tag, x, effective_at)| (Self::join_pubkey(tag, x), effective_at))
         }
 
         fn ensure_owner(&self) -> Result<(), SpotError> {
@@ -1590,15 +1835,25 @@ pub mod spot_settlement {
             Ok(())
         }
 
-        fn ensure_relayer_or_owner(&self) -> Result<(), SpotError> {
-            let caller = self.env().caller();
-            if caller == self.owner {
-                return Ok(());
-            }
-            if self.relayers.get(caller).unwrap_or(false) {
+        /// A-06: only registered relayers. The owner is deliberately NOT
+        /// accepted here (it used to be), so a compromised owner key cannot
+        /// submit settlements directly.
+        fn ensure_relayer(&self) -> Result<(), SpotError> {
+            if self.relayers.get(self.env().caller()).unwrap_or(false) {
                 return Ok(());
             }
             Err(SpotError::AccessDenied)
+        }
+
+        /// Owner or a registered relayer. Used ONLY by `pause` (the
+        /// off-chain kill switch signs with the relayer key); anything that
+        /// can widen exposure (`unpause`, relayer/key/fee admin) stays
+        /// owner-only.
+        fn ensure_owner_or_relayer(&self) -> Result<(), SpotError> {
+            if self.env().caller() == self.owner {
+                return Ok(());
+            }
+            self.ensure_relayer()
         }
     }
 
@@ -1692,6 +1947,13 @@ pub mod spot_settlement {
             ink::env::account_id::<ink::env::DefaultEnvironment>()
         }
 
+        /// Dedicated relayer account (A-06): `settle_trade` and
+        /// `cancel_order_for` are relayer-only, so the owner (alice) must NOT
+        /// be the account that settles in tests.
+        fn relayer_id() -> AccountId {
+            default_accounts().eve
+        }
+
         fn create_contract() -> SpotSettlement {
             let accounts = default_accounts();
             set_caller(accounts.alice);
@@ -1706,6 +1968,9 @@ pub mod spot_settlement {
             contract
                 .execute_disable_enforcement()
                 .expect("owner executes disable after delay");
+            contract
+                .add_relayer(relayer_id())
+                .expect("owner registers the relayer");
             // Give the contract some native balance for withdraw tests
             set_account_balance(get_contract_id(), 100_000_000_000);
             contract
@@ -1782,6 +2047,10 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            contract
+                .add_relayer(relayer_id())
+                .expect("owner registers the relayer");
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
                 Err(SpotError::SignatureVerificationUnavailable)
@@ -1797,7 +2066,8 @@ pub mod spot_settlement {
             set_caller(accounts.alice);
             let mut contract = SpotSettlement::new(treasury_id());
 
-            // Propose the disable (emits nothing).
+            // Propose the disable (emits EnforcementDisableProposed; counted
+            // before `events_before` below).
             assert!(contract.propose_disable_enforcement().is_ok());
             // Advance past the 48-hour deadline.
             let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
@@ -1844,6 +2114,38 @@ pub mod spot_settlement {
 
         // ─── ECDSA Attestation Tests (ADR-001, option c — 2-of-2) ───
 
+        /// Same 48h delay the contract applies to every timelocked admin action.
+        const TIMELOCK_MS: u64 = 48 * 3_600_000;
+
+        fn advance_past_timelock() {
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + TIMELOCK_MS + 1);
+        }
+
+        /// Full A-06 rotation flow as the owner (alice): propose, wait 48h,
+        /// execute. Leaves alice as the caller.
+        fn activate_attestor_key(contract: &mut SpotSettlement, pubkey: [u8; 33]) {
+            set_caller(default_accounts().alice);
+            contract
+                .propose_attestor_key_change(pubkey)
+                .expect("owner proposes the attestor key");
+            advance_past_timelock();
+            contract
+                .execute_attestor_key_change()
+                .expect("owner executes the attestor key change after 48h");
+        }
+
+        /// Second deterministic attestor keypair (rotation target / rogue key).
+        fn second_attestor_secret() -> secp256k1::SecretKey {
+            secp256k1::SecretKey::from_slice(&[0x24u8; 32])
+                .expect("0x24*32 is a valid secp256k1 secret key")
+        }
+
+        fn second_attestor_pubkey() -> [u8; 33] {
+            let secp = secp256k1::Secp256k1::new();
+            secp256k1::PublicKey::from_secret_key(&secp, &second_attestor_secret()).serialize()
+        }
+
         /// Enforced-mode contract (the production default) with the test
         /// attestor key registered and bob/charlie funded for a BUY/SELL
         /// match (base = 0xBB, quote = 0xCC).
@@ -1852,9 +2154,10 @@ pub mod spot_settlement {
             set_caller(accounts.alice);
             let mut contract = SpotSettlement::new(treasury_id());
             assert!(contract.is_signature_verification_enforced());
+            activate_attestor_key(&mut contract, attestor_pubkey());
             contract
-                .set_attestor_key(attestor_pubkey())
-                .expect("owner can register the attestor key");
+                .add_relayer(relayer_id())
+                .expect("owner registers the relayer");
 
             let base = AccountId::from([0xBB; 32]);
             let quote = AccountId::from([0xCC; 32]);
@@ -1915,6 +2218,7 @@ pub mod spot_settlement {
             let quote = AccountId::from([0xCC; 32]);
             let (maker_order, taker_order) = attested_order_pair();
 
+            set_caller(relayer_id());
             // Enforcement stays ON — the real ECDSA recover path must pass.
             assert_eq!(
                 contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
@@ -1947,6 +2251,7 @@ pub mod spot_settlement {
                 .expect("0x24*32 is a valid secp256k1 secret key");
             maker_order.attestation = sign_attestation_with(&maker_order, &rogue_secret);
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
                 Err(SpotError::AttestationInvalid)
@@ -1969,6 +2274,7 @@ pub mod spot_settlement {
             // so the recovered pubkey no longer matches the attestor's.
             maker_order.price = maker_order.price.wrapping_add(1);
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
                 Err(SpotError::AttestationInvalid)
@@ -1996,6 +2302,10 @@ pub mod spot_settlement {
                 .insert((accounts.charlie, base), &5_000_000_000);
             let (maker_order, taker_order) = attested_order_pair();
 
+            contract
+                .add_relayer(relayer_id())
+                .expect("owner registers the relayer");
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
                 Err(SpotError::SignatureVerificationUnavailable)
@@ -2010,18 +2320,25 @@ pub mod spot_settlement {
             set_caller(accounts.alice);
             let mut contract = SpotSettlement::new(treasury_id());
 
-            // Non-owner cannot register an attestor key.
+            // Non-owner cannot propose an attestor key.
             set_caller(accounts.bob);
             assert_eq!(
-                contract.set_attestor_key(attestor_pubkey()),
+                contract.propose_attestor_key_change(attestor_pubkey()),
                 Err(SpotError::AccessDenied)
             );
             assert_eq!(contract.get_attestor_key(), None);
+            assert_eq!(contract.pending_attestor_key(), None);
 
-            // Owner can, and the change is audited via AttestorKeyChanged.
+            // Owner can (A-06: even the FIRST key goes through the 48h
+            // timelock), and the activation is audited via AttestorKeyChanged.
             set_caller(accounts.alice);
+            assert!(contract
+                .propose_attestor_key_change(attestor_pubkey())
+                .is_ok());
+            assert_eq!(contract.get_attestor_key(), None);
+            advance_past_timelock();
             let events_before = test::recorded_events().count();
-            assert!(contract.set_attestor_key(attestor_pubkey()).is_ok());
+            assert!(contract.execute_attestor_key_change().is_ok());
             assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
 
             let events: Vec<_> = test::recorded_events().collect();
@@ -2049,6 +2366,7 @@ pub mod spot_settlement {
             maker_order.signature = [0u8; 64];
             maker_order.attestation = sign_attestation(&maker_order);
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
                 Err(SpotError::InvalidSignature)
@@ -2189,6 +2507,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             let result =
                 contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000);
             assert!(result.is_ok());
@@ -2478,6 +2797,7 @@ pub mod spot_settlement {
             let fill_amount = 1_000_000_000; // 10.0 base
             let fill_price = 200_000_000; // 2.0
 
+            set_caller(relayer_id());
             let result = contract.settle_trade(maker_order, taker_order, fill_amount, fill_price);
             assert!(result.is_ok());
 
@@ -2538,6 +2858,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(order1, order2, 1_000_000_000, 100_000_000),
                 Err(SpotError::SelfTrade)
@@ -2581,6 +2902,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(order1, order2, 1_000_000_000, 100_000_000),
                 Err(SpotError::SideMismatch)
@@ -2621,6 +2943,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(order1, order2, 1_000_000_000, 100_000_000),
                 Err(SpotError::TokenMismatch)
@@ -2669,6 +2992,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker, taker, 1_000_000_000, 200_000_000),
                 Err(SpotError::InsufficientBalance)
@@ -2696,7 +3020,7 @@ pub mod spot_settlement {
             contract.cancel_order(1).unwrap();
 
             // Try to settle with Bob's cancelled order
-            set_caller(accounts.alice);
+            set_caller(relayer_id());
 
             let maker = SignedOrder {
                 maker: accounts.bob,
@@ -2878,6 +3202,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             // Try to fill 10.0 base but maker only has 5.0 remaining
             assert_eq!(
                 contract.settle_trade(maker, taker, 1_000_000_000, 100_000_000),
@@ -2930,6 +3255,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             // Fill price 200M < seller's ask 300M
             assert_eq!(
                 contract.settle_trade(maker, taker, 1_000_000_000, 200_000_000),
@@ -2981,6 +3307,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker, taker, 1_000_000_000, 300_000_000),
                 Err(SpotError::PriceMismatch)
@@ -3035,6 +3362,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker, taker, 1_000_000_000, 200_000_000),
                 Err(SpotError::InvalidSignature)
@@ -3090,6 +3418,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker, taker, 1_000_000, 100_000_000),
                 Err(SpotError::Overflow)
@@ -3148,6 +3477,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             // Fill only 500M out of 2B (partial)
             let result = contract.settle_trade(maker, taker, 500_000_000, 100_000_000);
             assert!(result.is_ok());
@@ -3211,6 +3541,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker.clone(), taker.clone(), 600_000_000, 100_000_000),
                 Ok(())
@@ -3304,6 +3635,7 @@ pub mod spot_settlement {
             let quote = maker.quote_token;
             let base = maker.base_token;
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker.clone(), taker.clone(), 500_000_000, 100_000_000),
                 Ok(())
@@ -3347,6 +3679,7 @@ pub mod spot_settlement {
             // A failed attempt (buyer unfunded) must NOT burn the trade key,
             // otherwise a legitimate retry after funding would be blocked.
             contract.balances.insert((accounts.bob, quote), &0);
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker.clone(), taker.clone(), 500_000_000, 100_000_000),
                 Err(SpotError::InsufficientBalance)
@@ -3388,6 +3721,7 @@ pub mod spot_settlement {
             let mut contract = create_contract();
             let (maker, taker) = funded_partial_pair(&mut contract);
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker.clone(), taker.clone(), 500_000_000, 100_000_000),
                 Ok(())
@@ -3444,6 +3778,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker.clone(), taker.clone(), 600_000_000, 100_000_000),
                 Ok(())
@@ -3531,6 +3866,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             contract
                 .settle_trade(maker, taker, 1_000_000_000, 200_000_000)
                 .unwrap();
@@ -3538,7 +3874,8 @@ pub mod spot_settlement {
             let fees = contract.get_collected_fees(quote);
             assert!(fees > 0);
 
-            // Withdraw fees to treasury
+            // Withdraw fees to treasury (owner-only)
+            set_caller(accounts.alice);
             contract.withdraw_fees(quote).unwrap();
             assert_eq!(contract.get_collected_fees(quote), 0);
             assert_eq!(contract.get_balance(treasury_id(), quote), fees);
@@ -3610,6 +3947,7 @@ pub mod spot_settlement {
                 attestation: no_attestation(),
             };
 
+            set_caller(relayer_id());
             assert_eq!(
                 contract.settle_trade(maker, taker, 1_000_000_000, 100_000_000),
                 Err(SpotError::ContractPaused)
@@ -3794,6 +4132,658 @@ pub mod spot_settlement {
                 Err(SpotError::NoPendingEnforcementDisable),
             );
             assert!(contract.is_signature_verification_enforced());
+        }
+
+        // ─── A-06: settlement is relayer-only (owner removed) ───
+
+        /// The owner key alone must not be able to settle: even with valid
+        /// attestations, `settle_trade` from the owner returns `AccessDenied`
+        /// and touches nothing; the registered relayer still settles.
+        #[ink::test]
+        fn test_owner_cannot_settle_trade_but_relayer_can() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+            let base = AccountId::from([0xBB; 32]);
+            let quote = AccountId::from([0xCC; 32]);
+            let (maker_order, taker_order) = attested_order_pair();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                contract.settle_trade(
+                    maker_order.clone(),
+                    taker_order.clone(),
+                    1_000_000_000,
+                    200_000_000
+                ),
+                Err(SpotError::AccessDenied)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, quote), 10_000_000_000);
+            assert_eq!(contract.get_balance(accounts.charlie, base), 5_000_000_000);
+
+            set_caller(relayer_id());
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Ok(())
+            );
+            assert_eq!(contract.get_balance(accounts.bob, base), 1_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_owner_cannot_cancel_order_for() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                contract.cancel_order_for(accounts.charlie, 7),
+                Err(SpotError::AccessDenied)
+            );
+            assert!(!contract.is_nonce_cancelled(accounts.charlie, 7));
+        }
+
+        // ─── M-06: pause never traps user funds ───
+
+        /// Pause blocks new exposure (deposit/settle) but a user can always
+        /// withdraw their free native balance.
+        #[ink::test]
+        fn test_withdraw_native_from_free_balance_works_while_paused() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+
+            set_caller(accounts.bob);
+            set_value(1_000_000_000);
+            contract.deposit_native().unwrap();
+
+            set_caller(accounts.alice);
+            contract.pause().unwrap();
+
+            set_caller(accounts.bob);
+            assert_eq!(contract.withdraw_native(400_000_000), Ok(()));
+            assert_eq!(
+                contract.get_balance(accounts.bob, native_token()),
+                600_000_000
+            );
+        }
+
+        /// `withdraw_psp22` is no longer gated by the pause. The off-chain
+        /// test env cannot execute the PSP22 cross-contract call, so this
+        /// proves the gate is gone via the validations that run before it.
+        #[ink::test]
+        fn test_withdraw_psp22_is_not_blocked_by_pause() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+            let token = AccountId::from([0xCC; 32]);
+            contract.balances.insert((accounts.bob, token), &5_000_000);
+
+            set_caller(accounts.alice);
+            contract.pause().unwrap();
+
+            set_caller(accounts.bob);
+            assert_eq!(
+                contract.withdraw_psp22(token, 0),
+                Err(SpotError::ZeroAmount)
+            );
+            assert_eq!(
+                contract.withdraw_psp22(token, 6_000_000),
+                Err(SpotError::WithdrawExceedsBalance)
+            );
+            assert_eq!(contract.get_balance(accounts.bob, token), 5_000_000);
+        }
+
+        #[ink::test]
+        fn test_cancel_order_by_maker_works_while_paused() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+
+            set_caller(accounts.alice);
+            contract.pause().unwrap();
+
+            set_caller(accounts.bob);
+            assert_eq!(contract.cancel_order(3), Ok(()));
+            assert!(contract.is_nonce_cancelled(accounts.bob, 3));
+        }
+
+        #[ink::test]
+        fn test_deposit_psp22_blocked_while_paused() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+
+            set_caller(accounts.alice);
+            contract.pause().unwrap();
+
+            set_caller(accounts.bob);
+            assert_eq!(
+                contract.deposit_psp22(AccountId::from([0xCC; 32]), 5_000_000),
+                Err(SpotError::ContractPaused)
+            );
+        }
+
+        type Event = <SpotSettlement as ::ink::reflect::ContractEventBase>::Type;
+
+        fn last_event() -> Event {
+            let events: Vec<_> = test::recorded_events().collect();
+            <Event as scale::Decode>::decode(&mut &events.last().expect("an event").data[..])
+                .expect("event must decode")
+        }
+
+        #[ink::test]
+        fn test_pause_and_unpause_emit_events() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+            set_caller(accounts.alice);
+
+            assert!(contract.pause().is_ok());
+            match last_event() {
+                Event::Paused(e) => assert_eq!(e.changed_by, accounts.alice),
+                _ => panic!("expected Paused event"),
+            }
+
+            assert!(contract.unpause().is_ok());
+            match last_event() {
+                Event::Unpaused(e) => assert_eq!(e.changed_by, accounts.alice),
+                _ => panic!("expected Unpaused event"),
+            }
+        }
+
+        // ─── A-06: attestor key rotation goes through the 48h timelock ───
+
+        /// Orders attested by the CURRENT key keep settling while a rotation
+        /// is pending; the proposed key is not trusted before execution.
+        #[ink::test]
+        fn test_attestor_key_proposal_does_not_change_active_key_before_timelock() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+            let base = AccountId::from([0xBB; 32]);
+
+            set_caller(accounts.alice);
+            assert!(contract
+                .propose_attestor_key_change(second_attestor_pubkey())
+                .is_ok());
+            let deadline = ink::env::block_timestamp::<ink::env::DefaultEnvironment>()
+                .checked_add(TIMELOCK_MS)
+                .unwrap();
+            assert_eq!(
+                contract.pending_attestor_key(),
+                Some((second_attestor_pubkey(), deadline))
+            );
+            match last_event() {
+                Event::AttestorKeyChangeProposed(e) => {
+                    assert_eq!(e.attestor_pubkey, second_attestor_pubkey());
+                    assert_eq!(e.effective_at, deadline);
+                    assert_eq!(e.proposed_by, accounts.alice);
+                }
+                _ => panic!("expected AttestorKeyChangeProposed event"),
+            }
+
+            // Still the old key; executing early fails and changes nothing.
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(deadline - 1);
+            assert_eq!(
+                contract.execute_attestor_key_change(),
+                Err(SpotError::AttestorKeyTimelockNotExpired)
+            );
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+
+            // Orders attested by the proposed key are rejected...
+            let (mut maker_order, mut taker_order) = attested_order_pair();
+            maker_order.attestation =
+                sign_attestation_with(&maker_order, &second_attestor_secret());
+            taker_order.attestation =
+                sign_attestation_with(&taker_order, &second_attestor_secret());
+            set_caller(relayer_id());
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Err(SpotError::AttestationInvalid)
+            );
+            // ...while orders attested by the current key still settle.
+            let (maker_order, taker_order) = attested_order_pair();
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Ok(())
+            );
+            assert_eq!(contract.get_balance(accounts.bob, base), 1_000_000_000);
+        }
+
+        #[ink::test]
+        fn test_attestor_key_rotation_takes_effect_after_timelock() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+
+            set_caller(accounts.alice);
+            assert!(contract
+                .propose_attestor_key_change(second_attestor_pubkey())
+                .is_ok());
+            advance_past_timelock();
+            assert!(contract.execute_attestor_key_change().is_ok());
+            assert_eq!(contract.get_attestor_key(), Some(second_attestor_pubkey()));
+            assert_eq!(contract.pending_attestor_key(), None);
+            match last_event() {
+                Event::AttestorKeyChanged(e) => {
+                    assert_eq!(e.attestor_pubkey, second_attestor_pubkey());
+                    assert_eq!(e.changed_by, accounts.alice);
+                }
+                _ => panic!("expected AttestorKeyChanged event"),
+            }
+            // A second execute has nothing left to apply.
+            assert_eq!(
+                contract.execute_attestor_key_change(),
+                Err(SpotError::NoPendingAttestorKeyChange)
+            );
+
+            // The old key is no longer trusted; the new one is.
+            set_caller(relayer_id());
+            let (maker_order, taker_order) = attested_order_pair();
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Err(SpotError::AttestationInvalid)
+            );
+            let (mut maker_order, mut taker_order) = attested_order_pair();
+            maker_order.attestation =
+                sign_attestation_with(&maker_order, &second_attestor_secret());
+            taker_order.attestation =
+                sign_attestation_with(&taker_order, &second_attestor_secret());
+            assert_eq!(
+                contract.settle_trade(maker_order, taker_order, 1_000_000_000, 200_000_000),
+                Ok(())
+            );
+        }
+
+        #[ink::test]
+        fn test_cancelled_attestor_key_proposal_has_no_effect() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+
+            set_caller(accounts.alice);
+            assert_eq!(
+                contract.cancel_attestor_key_change(),
+                Err(SpotError::NoPendingAttestorKeyChange)
+            );
+            assert!(contract
+                .propose_attestor_key_change(second_attestor_pubkey())
+                .is_ok());
+            assert!(contract.cancel_attestor_key_change().is_ok());
+            assert_eq!(contract.pending_attestor_key(), None);
+            match last_event() {
+                Event::AttestorKeyChangeCancelled(e) => {
+                    assert_eq!(e.attestor_pubkey, second_attestor_pubkey());
+                    assert_eq!(e.cancelled_by, accounts.alice);
+                }
+                _ => panic!("expected AttestorKeyChangeCancelled event"),
+            }
+
+            advance_past_timelock();
+            assert_eq!(
+                contract.execute_attestor_key_change(),
+                Err(SpotError::NoPendingAttestorKeyChange)
+            );
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+        }
+
+        #[ink::test]
+        fn test_non_owner_cannot_manage_attestor_key_change() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+            set_caller(accounts.alice);
+            assert!(contract
+                .propose_attestor_key_change(second_attestor_pubkey())
+                .is_ok());
+            advance_past_timelock();
+
+            // Neither a user nor the relayer can touch the rotation.
+            for caller in [accounts.bob, relayer_id()] {
+                set_caller(caller);
+                assert_eq!(
+                    contract.propose_attestor_key_change(attestor_pubkey()),
+                    Err(SpotError::AccessDenied)
+                );
+                assert_eq!(
+                    contract.execute_attestor_key_change(),
+                    Err(SpotError::AccessDenied)
+                );
+                assert_eq!(
+                    contract.cancel_attestor_key_change(),
+                    Err(SpotError::AccessDenied)
+                );
+            }
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+            assert!(contract.pending_attestor_key().is_some());
+        }
+
+        // ─── A-06: one-time bootstrap of the FIRST attestor key ───
+
+        #[ink::test]
+        fn test_initialize_attestor_key_sets_first_key_immediately() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+            assert_eq!(contract.get_attestor_key(), None);
+
+            assert_eq!(contract.initialize_attestor_key(attestor_pubkey()), Ok(()));
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+            assert_eq!(contract.pending_attestor_key(), None);
+            match last_event() {
+                Event::AttestorKeyChanged(e) => {
+                    assert_eq!(e.attestor_pubkey, attestor_pubkey());
+                    assert_eq!(e.changed_by, accounts.alice);
+                }
+                _ => panic!("expected AttestorKeyChanged event"),
+            }
+        }
+
+        #[ink::test]
+        fn test_initialize_attestor_key_rejected_once_a_key_is_active() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+
+            // Key installed via the bootstrap itself.
+            let mut contract = SpotSettlement::new(treasury_id());
+            assert_eq!(contract.initialize_attestor_key(attestor_pubkey()), Ok(()));
+            assert_eq!(
+                contract.initialize_attestor_key(second_attestor_pubkey()),
+                Err(SpotError::AttestorKeyAlreadySet)
+            );
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+
+            // Key installed via propose → 48h → execute.
+            let mut contract = create_enforced_contract_with_attestor();
+            set_caller(accounts.alice);
+            assert_eq!(
+                contract.initialize_attestor_key(second_attestor_pubkey()),
+                Err(SpotError::AttestorKeyAlreadySet)
+            );
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+        }
+
+        #[ink::test]
+        fn test_non_owner_cannot_initialize_attestor_key() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            for caller in [accounts.bob, relayer_id()] {
+                set_caller(caller);
+                assert_eq!(
+                    contract.initialize_attestor_key(attestor_pubkey()),
+                    Err(SpotError::AccessDenied)
+                );
+            }
+            assert_eq!(contract.get_attestor_key(), None);
+        }
+
+        #[ink::test]
+        fn test_rotation_after_initialize_still_requires_timelock() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+            assert_eq!(contract.initialize_attestor_key(attestor_pubkey()), Ok(()));
+
+            assert!(contract
+                .propose_attestor_key_change(second_attestor_pubkey())
+                .is_ok());
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + TIMELOCK_MS - 1);
+            assert_eq!(
+                contract.execute_attestor_key_change(),
+                Err(SpotError::AttestorKeyTimelockNotExpired)
+            );
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+
+            test::set_block_timestamp::<ink::env::DefaultEnvironment>(now + TIMELOCK_MS);
+            assert_eq!(contract.execute_attestor_key_change(), Ok(()));
+            assert_eq!(contract.get_attestor_key(), Some(second_attestor_pubkey()));
+        }
+
+        // ─── Kill switch: a registered relayer may pause, only the owner unpauses ───
+
+        /// The off-chain kill switch signs with the relayer key, so a
+        /// registered relayer must be able to pause (and the event records it).
+        #[ink::test]
+        fn test_registered_relayer_can_pause() {
+            let mut contract = create_contract();
+
+            set_caller(relayer_id());
+            assert_eq!(contract.pause(), Ok(()));
+            assert!(contract.is_paused());
+            match last_event() {
+                Event::Paused(e) => assert_eq!(e.changed_by, relayer_id()),
+                _ => panic!("expected Paused event"),
+            }
+        }
+
+        /// Unpausing stays owner-only: a relayer key (hot, in spot-api) must
+        /// never be able to lift an incident pause.
+        #[ink::test]
+        fn test_relayer_cannot_unpause() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+
+            set_caller(relayer_id());
+            assert_eq!(contract.pause(), Ok(()));
+            let events_before = test::recorded_events().count();
+            assert_eq!(contract.unpause(), Err(SpotError::AccessDenied));
+            assert!(contract.is_paused());
+            assert_eq!(test::recorded_events().count(), events_before);
+
+            set_caller(accounts.alice);
+            assert_eq!(contract.unpause(), Ok(()));
+            assert!(!contract.is_paused());
+        }
+
+        #[ink::test]
+        fn test_unregistered_account_cannot_pause() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+            let events_before = test::recorded_events().count();
+
+            for caller in [accounts.bob, accounts.charlie, accounts.django] {
+                set_caller(caller);
+                assert_eq!(contract.pause(), Err(SpotError::AccessDenied));
+            }
+            assert!(!contract.is_paused());
+            assert_eq!(test::recorded_events().count(), events_before);
+        }
+
+        #[ink::test]
+        fn test_removed_relayer_cannot_pause() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+
+            set_caller(accounts.alice);
+            assert_eq!(contract.remove_relayer(relayer_id()), Ok(()));
+            assert!(!contract.is_relayer(relayer_id()));
+
+            set_caller(relayer_id());
+            assert_eq!(contract.pause(), Err(SpotError::AccessDenied));
+            assert!(!contract.is_paused());
+        }
+
+        // ─── Relayer cancellation keeps working during a pause ───
+
+        /// `cancel_order_for` only reduces exposure, so it must work while
+        /// paused (it is the cancellation path the product uses). It stays
+        /// relayer-only.
+        #[ink::test]
+        fn test_cancel_order_for_works_while_paused() {
+            let accounts = default_accounts();
+            let mut contract = create_contract();
+
+            set_caller(accounts.alice);
+            assert_eq!(contract.pause(), Ok(()));
+
+            set_caller(relayer_id());
+            assert_eq!(contract.cancel_order_for(accounts.charlie, 7), Ok(()));
+            assert!(contract.is_nonce_cancelled(accounts.charlie, 7));
+            match last_event() {
+                Event::OrderCancelled(e) => {
+                    assert_eq!(e.maker, accounts.charlie);
+                    assert_eq!(e.nonce, 7);
+                }
+                _ => panic!("expected OrderCancelled event"),
+            }
+
+            // Still relayer-only while paused: neither a user nor the owner.
+            for caller in [accounts.bob, accounts.alice] {
+                set_caller(caller);
+                assert_eq!(
+                    contract.cancel_order_for(accounts.charlie, 8),
+                    Err(SpotError::AccessDenied)
+                );
+            }
+            assert!(!contract.is_nonce_cancelled(accounts.charlie, 8));
+        }
+
+        // ─── Disable-enforcement proposals are announced on-chain ───
+
+        /// `propose_disable_enforcement` opens a 48h window, so it must emit
+        /// an event (like `AttestorKeyChangeProposed`) instead of being
+        /// visible only by polling `pending_enforcement_off`.
+        #[ink::test]
+        fn test_propose_disable_enforcement_emits_event() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+            let now = ink::env::block_timestamp::<ink::env::DefaultEnvironment>();
+            let events_before = test::recorded_events().count();
+
+            assert_eq!(contract.propose_disable_enforcement(), Ok(()));
+            assert_eq!(
+                test::recorded_events().count(),
+                events_before.checked_add(1).unwrap()
+            );
+            let deadline = now.checked_add(TIMELOCK_MS).unwrap();
+            assert_eq!(contract.pending_enforcement_off(), Some(deadline));
+            match last_event() {
+                Event::EnforcementDisableProposed(e) => {
+                    assert_eq!(e.effective_at, deadline);
+                    assert_eq!(e.proposed_by, accounts.alice);
+                }
+                _ => panic!("expected EnforcementDisableProposed event"),
+            }
+            // Proposing does not change the mode.
+            assert!(contract.is_signature_verification_enforced());
+        }
+
+        #[ink::test]
+        fn test_cancel_disable_enforcement_emits_event() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+
+            assert_eq!(contract.propose_disable_enforcement(), Ok(()));
+            let events_before = test::recorded_events().count();
+            assert_eq!(contract.cancel_disable_enforcement(), Ok(()));
+            assert_eq!(
+                test::recorded_events().count(),
+                events_before.checked_add(1).unwrap()
+            );
+            assert_eq!(contract.pending_enforcement_off(), None);
+            match last_event() {
+                Event::EnforcementDisableCancelled(e) => {
+                    assert_eq!(e.cancelled_by, accounts.alice);
+                }
+                _ => panic!("expected EnforcementDisableCancelled event"),
+            }
+
+            // Cancelling with nothing pending stays a no-op (Ok) and emits
+            // nothing, so the event always means a real proposal died.
+            let events_before = test::recorded_events().count();
+            assert_eq!(contract.cancel_disable_enforcement(), Ok(()));
+            assert_eq!(test::recorded_events().count(), events_before);
+        }
+
+        #[ink::test]
+        fn test_non_owner_disable_enforcement_calls_emit_nothing() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+            assert_eq!(contract.propose_disable_enforcement(), Ok(()));
+            let events_before = test::recorded_events().count();
+
+            for caller in [accounts.bob, relayer_id()] {
+                set_caller(caller);
+                assert_eq!(
+                    contract.propose_disable_enforcement(),
+                    Err(SpotError::AccessDenied)
+                );
+                assert_eq!(
+                    contract.cancel_disable_enforcement(),
+                    Err(SpotError::AccessDenied)
+                );
+            }
+            assert_eq!(test::recorded_events().count(), events_before);
+            assert!(contract.pending_enforcement_off().is_some());
+        }
+
+        // ─── Attestor key must be a compressed SEC1 point (tag 0x02/0x03) ───
+
+        fn with_tag(tag: u8) -> [u8; 33] {
+            let mut key = attestor_pubkey();
+            key[0] = tag;
+            key
+        }
+
+        #[ink::test]
+        fn test_initialize_attestor_key_rejects_invalid_tag() {
+            let accounts = default_accounts();
+            set_caller(accounts.alice);
+            let mut contract = SpotSettlement::new(treasury_id());
+            let events_before = test::recorded_events().count();
+
+            for tag in [0x00u8, 0x01, 0x04, 0x06, 0xFF] {
+                assert_eq!(
+                    contract.initialize_attestor_key(with_tag(tag)),
+                    Err(SpotError::InvalidAttestorKey)
+                );
+            }
+            assert_eq!(
+                contract.initialize_attestor_key([0u8; 33]),
+                Err(SpotError::InvalidAttestorKey)
+            );
+            assert_eq!(contract.get_attestor_key(), None);
+            assert_eq!(test::recorded_events().count(), events_before);
+
+            // A rejected key does not burn the one-time bootstrap.
+            assert_eq!(contract.initialize_attestor_key(attestor_pubkey()), Ok(()));
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+        }
+
+        #[ink::test]
+        fn test_initialize_attestor_key_accepts_both_compressed_tags() {
+            let accounts = default_accounts();
+            for tag in [0x02u8, 0x03] {
+                set_caller(accounts.alice);
+                let mut contract = SpotSettlement::new(treasury_id());
+                assert_eq!(contract.initialize_attestor_key(with_tag(tag)), Ok(()));
+                assert_eq!(contract.get_attestor_key(), Some(with_tag(tag)));
+            }
+        }
+
+        #[ink::test]
+        fn test_propose_attestor_key_change_rejects_invalid_tag() {
+            let accounts = default_accounts();
+            let mut contract = create_enforced_contract_with_attestor();
+            set_caller(accounts.alice);
+
+            // An existing valid proposal must survive a rejected one.
+            assert_eq!(
+                contract.propose_attestor_key_change(second_attestor_pubkey()),
+                Ok(())
+            );
+            let pending = contract.pending_attestor_key();
+            assert!(pending.is_some());
+            let events_before = test::recorded_events().count();
+
+            for tag in [0x00u8, 0x01, 0x04, 0xFF] {
+                let mut bad = second_attestor_pubkey();
+                bad[0] = tag;
+                assert_eq!(
+                    contract.propose_attestor_key_change(bad),
+                    Err(SpotError::InvalidAttestorKey)
+                );
+            }
+            assert_eq!(contract.pending_attestor_key(), pending);
+            assert_eq!(contract.get_attestor_key(), Some(attestor_pubkey()));
+            assert_eq!(test::recorded_events().count(), events_before);
         }
     }
 }

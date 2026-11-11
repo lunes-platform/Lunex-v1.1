@@ -16,8 +16,8 @@
 //! - r  = interest rate in basis points
 //!
 //! ## Access Roles
-//! - `owner`   — deploy, deposit, withdraw, set_manager
-//! - `manager` — update_curve_parameters within guardrails set by owner
+//! - `owner`   — deploy, deposit, withdraw, set_manager, asymmetric_swap
+//! - `manager` — update_curve_parameters within guardrails set by owner, asymmetric_swap
 
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
 #![allow(unexpected_cfgs)] // ink! interno gera cfg conditions que não podem ser suprimidas de outra forma
@@ -391,7 +391,7 @@ mod asymmetric_pair {
             Ok(())
         }
 
-        // ── Public: Swap ─────────────────────────────────────────
+        // ── Manager / Owner Action: Swap ─────────────────────────
 
         /// Execute an asymmetric swap against the curve.
         ///
@@ -399,8 +399,14 @@ mod asymmetric_pair {
         /// `is_buy = false` → caller sends base token, receives quote token
         ///
         /// Returns the amount of liquidity available (output) for `amount_in`.
+        ///
+        /// Callable by owner or manager only (M-08): the contract moves no PSP22
+        /// tokens, so an open call would let anyone consume `max_capacity_x0`
+        /// for free and lock or skew the strategy.
         #[ink(message)]
         pub fn asymmetric_swap(&mut self, amount_in: u128, is_buy: bool) -> Result<u128> {
+            self.only_owner_or_manager()?;
+
             if self.locked {
                 return Err(Error::Reentrancy);
             }
@@ -509,6 +515,15 @@ mod asymmetric_pair {
             }
             Ok(())
         }
+
+        fn only_owner_or_manager(&self) -> Result<()> {
+            let caller = self.env().caller();
+            let is_manager = self.manager.map(|m| m == caller).unwrap_or(false);
+            if caller != self.owner && !is_manager {
+                return Err(Error::Unauthorized);
+            }
+            Ok(())
+        }
     }
 
     // ─── Unit Tests ──────────────────────────────────────────────
@@ -611,6 +626,50 @@ mod asymmetric_pair {
             test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
             let result = c.withdraw(1 * PLANCK);
             assert_eq!(result, Err(Error::Unauthorized));
+        }
+
+        #[ink::test]
+        fn asymmetric_swap_rejects_unauthorized_caller() {
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let mut c = default_contract();
+            c.deploy_liquidity(1_000 * PLANCK, 500 * PLANCK).unwrap();
+            c.set_manager(Some(accounts.bob), Guardrails::default())
+                .unwrap();
+
+            // M-08: conta arbitrária (nem owner nem manager) não pode consumir capacidade
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.charlie);
+            assert_eq!(
+                c.asymmetric_swap(10 * PLANCK, true),
+                Err(Error::Unauthorized)
+            );
+            assert_eq!(
+                c.asymmetric_swap(10 * PLANCK, false),
+                Err(Error::Unauthorized)
+            );
+            assert_eq!(c.get_buy_curve().current_volume, 0);
+            assert_eq!(c.get_sell_curve().current_volume, 0);
+
+            // A rejeição não pode deixar o reentrancy guard travado
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
+            assert!(c.asymmetric_swap(10 * PLANCK, true).is_ok());
+        }
+
+        #[ink::test]
+        fn asymmetric_swap_allowed_for_owner_and_manager() {
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
+            let mut c = default_contract();
+            c.deploy_liquidity(1_000 * PLANCK, 500 * PLANCK).unwrap();
+            c.set_manager(Some(accounts.bob), Guardrails::default())
+                .unwrap();
+
+            // Owner (deployer = alice)
+            assert!(c.asymmetric_swap(10 * PLANCK, true).is_ok());
+            assert_eq!(c.get_buy_curve().current_volume, 10 * PLANCK);
+
+            // Manager
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.bob);
+            assert!(c.asymmetric_swap(5 * PLANCK, true).is_ok());
+            assert_eq!(c.get_buy_curve().current_volume, 15 * PLANCK);
         }
 
         #[ink::test]

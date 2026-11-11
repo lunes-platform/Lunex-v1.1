@@ -1,9 +1,9 @@
 const mockPrisma = {
   bannedWallet: {
-    findUnique: jest.fn(),
+    findFirst: jest.fn(),
   },
   agent: {
-    findUnique: jest.fn(),
+    findFirst: jest.fn(),
   },
 };
 
@@ -17,8 +17,8 @@ import { walletRiskService } from '../services/walletRiskService';
 describe('walletRiskService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPrisma.bannedWallet.findUnique.mockResolvedValue(null);
-    mockPrisma.agent.findUnique.mockResolvedValue(null);
+    mockPrisma.bannedWallet.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
   });
 
   it('allows wallets with no wallet or agent ban record', async () => {
@@ -28,7 +28,7 @@ describe('walletRiskService', () => {
   });
 
   it('blocks wallets listed in the admin wallet ban registry', async () => {
-    mockPrisma.bannedWallet.findUnique.mockResolvedValue({
+    mockPrisma.bannedWallet.findFirst.mockResolvedValue({
       address: 'banned-wallet',
       reason: 'market abuse',
     });
@@ -39,7 +39,7 @@ describe('walletRiskService', () => {
   });
 
   it('blocks banned agent wallets from signed financial actions', async () => {
-    mockPrisma.agent.findUnique.mockResolvedValue({
+    mockPrisma.agent.findFirst.mockResolvedValue({
       isBanned: true,
       banReason: 'market abuse',
     });

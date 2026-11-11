@@ -13,7 +13,9 @@ import {
 import { executionLayerService } from '../services/executionLayerService';
 import { settlementService } from '../services/settlementService';
 import prisma from '../db';
+import { Decimal } from '@prisma/client/runtime/library';
 import { log } from '../utils/logger';
+import { accountAddressFilter, isSameAccount } from '../utils/validation';
 
 const router = Router();
 
@@ -110,7 +112,7 @@ async function emitCopyTradeSignalIfLeader(
 
   // Defense in depth: an agent may only signal for its OWN leader. A link to
   // a leader whose address is not the agent's wallet never emits signals.
-  if (agent.leader.address !== agent.walletAddress) return null;
+  if (!isSameAccount(agent.leader.address, agent.walletAddress)) return null;
 
   const amountValue = Number.parseFloat(trade.amount);
   const amountOutMin =
@@ -415,23 +417,22 @@ router.get(
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const agent = req.agent!;
+      // M-09: new rows are canonical, legacy rows keep the agent's raw string.
+      const account = accountAddressFilter(agent.walletAddress);
 
-      const [balances, openOrders, recentTrades] = await Promise.all([
+      const [balanceRows, openOrders, recentTrades] = await Promise.all([
         prisma.userBalance.findMany({
-          where: { address: agent.walletAddress },
+          where: { address: account },
         }),
         prisma.order.count({
           where: {
-            makerAddress: agent.walletAddress,
+            makerAddress: account,
             status: { in: ['OPEN', 'PARTIAL'] },
           },
         }),
         prisma.trade.findMany({
           where: {
-            OR: [
-              { makerAddress: agent.walletAddress },
-              { takerAddress: agent.walletAddress },
-            ],
+            OR: [{ makerAddress: account }, { takerAddress: account }],
           },
           orderBy: { createdAt: 'desc' },
           take: 10,
@@ -446,15 +447,31 @@ router.get(
         }),
       ]);
 
+      // One entry per token even when the account has rows in two encodings.
+      const byToken = new Map<
+        string,
+        { available: Decimal; locked: Decimal }
+      >();
+      for (const row of balanceRows) {
+        const entry = byToken.get(row.token);
+        byToken.set(row.token, {
+          available: (entry?.available ?? new Decimal(0)).plus(
+            row.available.toString(),
+          ),
+          locked: (entry?.locked ?? new Decimal(0)).plus(row.locked.toString()),
+        });
+      }
+      const balances = [...byToken].map(([token, entry]) => ({
+        token,
+        available: parseFloat(entry.available.toString()),
+        locked: parseFloat(entry.locked.toString()),
+      }));
+
       res.json({
         agentId: agent.id,
         walletAddress: agent.walletAddress,
         stakingTier: agent.stakingTier,
-        balances: balances.map((b) => ({
-          token: b.token,
-          available: parseFloat(b.available.toString()),
-          locked: parseFloat(b.locked.toString()),
-        })),
+        balances,
         openOrders,
         recentTrades: recentTrades.map((t) => ({
           id: t.id,

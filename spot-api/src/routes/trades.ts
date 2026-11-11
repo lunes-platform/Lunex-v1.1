@@ -4,11 +4,10 @@ import {
   parsePairSymbol,
   RetryTradeSettlementsSchema,
   TradeSettlementQuerySchema,
+  signedAddressFor,
+  ss58Address,
 } from '../utils/validation';
-import {
-  getSignedAuthInput,
-  verifyWalletReadSignature,
-} from '../middleware/auth';
+import { getSignedAuthInput } from '../middleware/auth';
 import {
   readAuthSchema,
   verifyWalletReadAccess,
@@ -19,7 +18,7 @@ import { z } from 'zod';
 const router = Router();
 
 const SignedTradesReadSchema = z.object({
-  address: z.string().min(8).max(128),
+  address: ss58Address,
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   nonce: z.string().min(8),
@@ -125,7 +124,9 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     }
     const auth = await verifyWalletReadAccess(req, {
       action: 'trades.list',
-      address: parsed.data.address,
+      // As sent: the signed `address:` line may be hex or another prefix.
+      // Read auth canonicalizes it for the nonce and session match.
+      address: signedAddressFor(req.query.address, parsed.data.address),
       nonce: parsed.data.nonce,
       timestamp: parsed.data.timestamp,
       signature: parsed.data.signature,

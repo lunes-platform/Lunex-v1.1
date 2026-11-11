@@ -191,7 +191,7 @@ describe('Auth attack simulation E2E', () => {
     const res = await request(app)
       .post('/api/v1/margin/collateral/deposit')
       .send({
-        address: 'victim-wallet-address',
+        address: '5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty',
         token: 'USDT',
         amount: '1000',
         ...signedBody,
@@ -211,7 +211,7 @@ describe('Auth attack simulation E2E', () => {
     const res = await request(app)
       .post('/api/v1/margin/positions')
       .send({
-        address: 'trader-wallet-123',
+        address: '5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y',
         pairSymbol: 'LUNES/USDT',
         side: 'BUY',
         collateralAmount: '500',

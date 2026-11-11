@@ -9,12 +9,19 @@ jest.mock('../db', () => ({
   default: {
     agent: {
       findUnique: jest.fn(),
+      // M-09: duplicate check and wallet-ban lookup (no rows → undefined).
+      findFirst: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
     },
     leader: {
       findUnique: jest.fn(),
+    },
+    // M-09: createApiKey/verifyApiKey also run walletRiskService.
+    bannedWallet: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     agentApiKey: {
       findFirst: jest.fn(),

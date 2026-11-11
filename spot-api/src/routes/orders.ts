@@ -1,6 +1,11 @@
 import { NextFunction, Router, Request, Response } from 'express';
 import { orderService } from '../services/orderService';
-import { CreateOrderSchema, CancelOrderSchema } from '../utils/validation';
+import {
+  CreateOrderSchema,
+  CancelOrderSchema,
+  signedAddressFor,
+  ss58Address,
+} from '../utils/validation';
 import {
   checkSignedTimestamp,
   verifySpotOrderSignature,
@@ -19,7 +24,7 @@ import { z } from 'zod';
 const router = Router();
 
 const SignedReadSchema = z.object({
-  makerAddress: z.string().min(8).max(128),
+  makerAddress: ss58Address,
   status: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
@@ -111,6 +116,11 @@ router.delete(
       const auth = await verifyWalletActionSignature({
         action: 'orders.cancel',
         address: parsed.data.makerAddress,
+        // The schema canonicalized the field; the wallet signed it as sent.
+        signedAddress: signedAddressFor(
+          req.body?.makerAddress,
+          parsed.data.makerAddress,
+        ),
         nonce: parsed.data.nonce,
         timestamp: parsed.data.timestamp,
         signature: parsed.data.signature,
@@ -153,7 +163,12 @@ router.get('/', async (req: Request, res: Response, next: NextFunction) => {
 
     const auth = await verifyWalletReadAccess(req, {
       action: 'orders.list',
-      address: parsed.data.makerAddress,
+      // As sent: the signed `address:` line may be hex or another prefix.
+      // Read auth canonicalizes it for the nonce and session match.
+      address: signedAddressFor(
+        req.query.makerAddress,
+        parsed.data.makerAddress,
+      ),
       nonce: parsed.data.nonce,
       timestamp: parsed.data.timestamp,
       signature: parsed.data.signature,

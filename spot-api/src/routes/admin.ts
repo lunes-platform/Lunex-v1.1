@@ -2,7 +2,10 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { requireAdmin } from '../middleware/adminGuard';
 import { walletRiskService } from '../services/walletRiskService';
-import { emergencyService } from '../services/emergencyService';
+import {
+  emergencyService,
+  type EmergencyComponentStatus,
+} from '../services/emergencyService';
 import { log } from '../utils/logger';
 
 const router = Router();
@@ -63,6 +66,26 @@ router.delete(
 // rejects orders + settlements when paused. copy_vault and staking are
 // reported as "not wired" until their pause flow is integrated here.
 
+/**
+ * 2xx only when the contract state was confirmed. Ambiguous (broadcast, not
+ * finalized) → 202; method/contract not available → 503; anything else → 502.
+ */
+function sendEmergencyResult(
+  res: Response,
+  result: EmergencyComponentStatus,
+  expectedPaused: boolean,
+) {
+  if (result.pending) {
+    return res.status(202).json({ ok: false, ...result });
+  }
+  if (result.error || result.paused !== expectedPaused) {
+    return res
+      .status(result.available ? 502 : 503)
+      .json({ ok: false, ...result });
+  }
+  return res.json({ ok: true, ...result });
+}
+
 router.get(
   '/emergency/status',
   requireAdmin,
@@ -94,7 +117,7 @@ router.post(
       );
 
       const result = await emergencyService.pauseSpot();
-      res.json(result);
+      sendEmergencyResult(res, result, true);
     } catch (err) {
       next(err);
     }
@@ -119,7 +142,7 @@ router.post(
       );
 
       const result = await emergencyService.unpauseSpot();
-      res.json(result);
+      sendEmergencyResult(res, result, false);
     } catch (err) {
       next(err);
     }
